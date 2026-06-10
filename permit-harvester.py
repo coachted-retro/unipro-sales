@@ -11,8 +11,7 @@ TARGET_ZIPS = [z.strip() for z in os.environ.get("TARGET_ZIPS", "").split(",") i
 
 KEYWORDS = ["HOOD", "SUPPRESSION", "KITCHEN", "EXHAUST", "RESTAURANT", "ANSUL", "RANGE"]
 
-QUERY = "SELECT * FROM permits WHERE permitissuedate >= current_date - 7 ORDER BY permitissuedate DESC LIMIT 1000"
-
+QUERY = "SELECT * FROM li_permits WHERE permitissuedate >= current_date - 7 ORDER BY permitissuedate DESC LIMIT 1000"
 
 def fetch_permits():
     url = CARTO + "?" + urllib.parse.urlencode({"q": QUERY})
