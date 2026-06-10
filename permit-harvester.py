@@ -1,13 +1,7 @@
 #!/usr/bin/env python3
-"""
-UniPro permit harvester — pulls last 7 days of Philadelphia L&I permits
-(mechanical / fire suppression / kitchen-related commercial work) from the
-city's public Carto API and posts them as new leads to the Apps Script backend.
-
-Runs on a schedule via GitHub Actions (see permit-harvester.yml).
-Required env var: SHEET_API_URL  (your deployed Apps Script web app /exec URL)
-Optional env var: TARGET_ZIPS    (comma-separated, e.g. "19154,19114,19115" — empty = all Philly)
-"""
+"""UniPro permit harvester - pulls last 7 days of Philadelphia L&I permits
+and posts them as new leads to the Apps Script backend.
+Required env var: SHEET_API_URL. Optional: TARGET_ZIPS (comma-separated)."""
 import os, sys, json, time
 import urllib.request, urllib.parse
 
@@ -15,7 +9,6 @@ CARTO = "https://phl.carto.com/api/v2/sql"
 SHEET_API = os.environ.get("SHEET_API_URL", "").strip()
 TARGET_ZIPS = [z.strip() for z in os.environ.get("TARGET_ZIPS", "").split(",") if z.strip()]
 
-# Keywords that indicate a kitchen build-out or fire-protection-relevant scope.
 SCOPE_KEYWORDS = ["HOOD", "SUPPRESSION", "KITCHEN", "EXHAUST", "RESTAURANT", "ANSUL", "RANGE"]
 
 QUERY = """
@@ -86,14 +79,16 @@ def post_leads(leads):
 
 def main():
     if not SHEET_API:
-        print("ERROR: SHEET_API_URL env var not set"); sys.exit(1)
+        print("ERROR: SHEET_API_URL env var not set")
+        sys.exit(1)
     rows = fetch_permits()
     print(f"Fetched {len(rows)} permits from Carto")
     if TARGET_ZIPS:
         rows = [p for p in rows if str(p.get("zip", ""))[:5] in TARGET_ZIPS]
         print(f"{len(rows)} after zip filter {TARGET_ZIPS}")
     if not rows:
-        print("No matching permits this week."); return
+        print("No matching permits this week.")
+        return
     leads = [permit_to_lead(p) for p in rows]
     res = post_leads(leads)
     print("Backend response:", res)
