@@ -77,6 +77,11 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--red)}
 .checks label{display:inline-flex;align-items:center;gap:5px;margin:0;background:var(--bg);border:1.5px solid var(--line);border-radius:6px;padding:7px 10px;cursor:pointer;font-size:12.5px;text-transform:none;letter-spacing:0;font-weight:500;color:var(--ink)}
 .checks input{width:auto;accent-color:var(--red)}
 .checks label.on{border-color:var(--red);background:#FBEFF1}
+.sysbar{display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+.sysbar select{flex:1;min-width:180px;font-family:'Barlow';font-size:14px;padding:9px 10px;border:1.5px solid var(--line);border-radius:6px;background:#fff;font-weight:600}
+.sysbar input{flex:2;min-width:170px;font-size:14px;padding:9px 10px;border:1.5px solid var(--line);border-radius:6px}
+#zipBox{flex:1;min-width:140px;font-variant-numeric:tabular-nums}
+.sysbar select:focus,.sysbar input:focus{outline:none;border-color:var(--red)}
 .filterbar{display:flex;gap:6px;overflow-x:auto;padding:4px 0 10px;-webkit-overflow-scrolling:touch}
 .fbtn{flex:none;background:var(--panel);border:1.5px solid var(--line);border-radius:99px;padding:6px 13px;font-size:13px;font-weight:600;cursor:pointer;color:var(--ink-soft)}
 .fbtn.active{border-color:var(--ink);background:var(--ink);color:#fff}
@@ -157,6 +162,20 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--red)}
       <button class="btn ghost" id="sfBtn">Salesforce CSV</button>
       <button class="btn ghost" id="importBtn">Import CSV</button>
       <input type="file" id="importFile" accept=".csv" style="display:none">
+    </div>
+    <div class="sysbar">
+      <select id="sysFilter" aria-label="Filter by system type">
+        <option value="all">All systems / types</option>
+        <option value="hood">Hood systems</option>
+        <option value="suppression">Suppression / Ansul</option>
+        <option value="kitchen">Kitchen / restaurant build-outs</option>
+        <option value="exhaust">Exhaust / ventilation</option>
+        <option value="extinguisher">Extinguishers</option>
+        <option value="stainless">Stainless / dish room</option>
+        <option value="sprinklerfire">Other fire (sprinkler/alarm refs)</option>
+      </select>
+      <input id="searchBox" type="search" placeholder="Search name, address, contractor, scope...">
+      <input id="zipBox" type="search" inputmode="numeric" placeholder="Zip(s): 19135, 19136 or 1913">
     </div>
     <div class="filterbar" id="filterBar"></div>
     <div id="leadList"></div>
@@ -362,6 +381,41 @@ function syncFromSheet(){ if(!SHEET_API) return;
 var SERVICES=['Hood Fabrication','Hood Install','Suppression Service','Suppression Install','Extinguishers','Exit / E-Lighting','Stainless Fab (tables/walls/dish)'];
 var STATUS_LABEL={new:'New',contacted:'Contacted',visit:'Site Visit',quoted:'Quoted',won:'Won',lost:'Lost'};
 var leads=[], editingId=null, activeFilter='open';
+var sysFilter='all', searchTerm='', zipTerms=[];
+function leadZip(l){
+  var m=(l.address||'').match(/\b(\d{5})(?:-\d{4})?\s*$/);
+  if(m) return m[1];
+  var any=(l.address||'').match(/\b(\d{5})\b/);
+  return any?any[1]:'';
+}
+function matchesZip(l){
+  if(!zipTerms.length) return true;
+  var z=leadZip(l);
+  if(!z) return false;
+  return zipTerms.some(function(t){return z.indexOf(t)===0;});
+}
+var SYS_KEYWORDS={
+  hood:['HOOD'],
+  suppression:['SUPPRESSION','ANSUL','WET CHEMICAL'],
+  kitchen:['KITCHEN','RESTAURANT','COMMERCIAL COOKING','FOOD'],
+  exhaust:['EXHAUST','VENTILATION','DUCT'],
+  extinguisher:['EXTINGUISH'],
+  stainless:['STAINLESS','DISH'],
+  sprinklerfire:['SPRINKLER','FIRE ALARM','FIRE SUPPRESS','STANDPIPE']
+};
+function leadHaystack(l){
+  return ((l.business||'')+' '+(l.contact||'')+' '+(l.address||'')+' '+(l.source||'')+' '+(l.notes||'')+' '+((l.services||[]).join(' '))).toUpperCase();
+}
+function matchesSys(l){
+  if(sysFilter==='all') return true;
+  var kws=SYS_KEYWORDS[sysFilter]||[];
+  var hay=leadHaystack(l);
+  return kws.some(function(k){return hay.indexOf(k)>-1;});
+}
+function matchesSearch(l){
+  if(!searchTerm) return true;
+  return leadHaystack(l).indexOf(searchTerm)>-1;
+}
 
 function load(){ try{ leads=JSON.parse(localStorage.getItem(KEY))||[]; }catch(e){ leads=[]; } }
 function save(){ try{ localStorage.setItem(KEY,JSON.stringify(leads)); }catch(e){ alert('Could not save — storage may be full.'); } }
@@ -414,6 +468,7 @@ function dueClass(l){
 }
 
 function matchesFilter(l){
+  if(!matchesSys(l)||!matchesSearch(l)||!matchesZip(l)) return false;
   if(activeFilter==='all') return true;
   if(activeFilter==='open') return l.status!=='won'&&l.status!=='lost';
   if(activeFilter==='due') return dueClass(l)!=='';
@@ -667,6 +722,13 @@ document.getElementById('sfBtn').addEventListener('click',function(){
   a.href=URL.createObjectURL(blob);
   a.download='unipro-salesforce-leads-'+todayStr()+'.csv';
   a.click();
+});
+
+document.getElementById('sysFilter').addEventListener('change',function(){ sysFilter=this.value; renderPipeline(); });
+document.getElementById('searchBox').addEventListener('input',function(){ searchTerm=this.value.trim().toUpperCase(); renderPipeline(); });
+document.getElementById('zipBox').addEventListener('input',function(){
+  zipTerms=this.value.split(',').map(function(t){return t.trim();}).filter(function(t){return /^\d{2,5}$/.test(t);});
+  renderPipeline();
 });
 
 load(); renderAll(); syncFromSheet();
