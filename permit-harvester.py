@@ -1,67 +1,72 @@
 #!/usr/bin/env python3
 """UniPro permit harvester - pulls last 7 days of Philadelphia L&I permits
-and posts them as new leads to the Apps Script backend.
+and posts kitchen/fire-relevant ones as leads to the Apps Script backend.
 Required env var: SHEET_API_URL. Optional: TARGET_ZIPS (comma-separated)."""
 import os, sys, json, time
-import urllib.request, urllib.parse
+import urllib.request, urllib.parse, urllib.error
 
 CARTO = "https://phl.carto.com/api/v2/sql"
 SHEET_API = os.environ.get("SHEET_API_URL", "").strip()
 TARGET_ZIPS = [z.strip() for z in os.environ.get("TARGET_ZIPS", "").split(",") if z.strip()]
 
-SCOPE_KEYWORDS = ["HOOD", "SUPPRESSION", "KITCHEN", "EXHAUST", "RESTAURANT", "ANSUL", "RANGE"]
+KEYWORDS = ["HOOD", "SUPPRESSION", "KITCHEN", "EXHAUST", "RESTAURANT", "ANSUL", "RANGE"]
 
-QUERY = """
-SELECT permitnumber, permittype, permitdescription, typeofwork,
-       approvedscopeofwork, address, zip, contractorname, opa_owner,
-       permitissuedate, status
-FROM permits
-WHERE permitissuedate >= current_date - 7
-  AND (commercialorresidential ILIKE '%COMMERCIAL%' OR commercialorresidential IS NULL)
-  AND (
-        permittype ILIKE '%MECHANICAL%'
-     OR permittype ILIKE '%FIRE%'
-     OR {scope_clause}
-  )
-ORDER BY permitissuedate DESC
-LIMIT 300
-""".strip()
-
-
-def build_query():
-    scope = " OR ".join(
-        f"approvedscopeofwork ILIKE '%{kw}%'" for kw in SCOPE_KEYWORDS
-    )
-    return QUERY.format(scope_clause="(" + scope + ")")
+QUERY = "SELECT * FROM permits WHERE permitissuedate >= current_date - 7 ORDER BY permitissuedate DESC LIMIT 1000"
 
 
 def fetch_permits():
-    url = CARTO + "?" + urllib.parse.urlencode({"q": build_query()})
+    url = CARTO + "?" + urllib.parse.urlencode({"q": QUERY})
     req = urllib.request.Request(url, headers={"User-Agent": "UniPro-harvester/1.0"})
-    with urllib.request.urlopen(req, timeout=60) as r:
-        data = json.loads(r.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            data = json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        print("CARTO ERROR", e.code, ":", e.read().decode()[:800])
+        sys.exit(1)
     return data.get("rows", [])
 
 
+def text(p, key):
+    v = p.get(key)
+    return str(v).strip() if v is not None else ""
+
+
+def is_relevant(p):
+    com = text(p, "commercialorresidential").upper()
+    if com and "COMMERCIAL" not in com:
+        return False
+    blob = " ".join([
+        text(p, "permittype"), text(p, "permitdescription"),
+        text(p, "typeofwork"), text(p, "approvedscopeofwork"),
+    ]).upper()
+    if "MECHANICAL" in text(p, "permittype").upper():
+        return True
+    if "FIRE" in text(p, "permittype").upper():
+        return True
+    return any(kw in blob for kw in KEYWORDS)
+
+
 def permit_to_lead(p):
-    scope = (p.get("approvedscopeofwork") or p.get("permitdescription") or "").strip()
-    issued = (p.get("permitissuedate") or "")[:10]
+    num = text(p, "permitnumber") or text(p, "objectid")
+    scope = text(p, "approvedscopeofwork") or text(p, "permitdescription")
+    issued = text(p, "permitissuedate")[:10]
     today = time.strftime("%Y-%m-%d")
+    addr = text(p, "address")
     return {
-        "id": "PH" + str(p.get("permitnumber", "")).replace(" ", ""),
-        "sourceRef": "permit:" + str(p.get("permitnumber", "")),
-        "business": (p.get("opa_owner") or "New build at " + (p.get("address") or "unknown address")).strip()[:80],
-        "contact": (p.get("contractorname") or "").strip()[:60],
+        "id": "PH" + num.replace(" ", ""),
+        "sourceRef": "permit:" + num,
+        "business": (text(p, "opa_owner") or ("New build at " + (addr or "unknown address")))[:80],
+        "contact": text(p, "contractorname")[:60],
         "phone": "",
         "email": "",
-        "address": ((p.get("address") or "") + ", Philadelphia PA " + str(p.get("zip") or "")).strip(", "),
+        "address": (addr + ", Philadelphia PA " + text(p, "zip")).strip(", "),
         "territory": "Philadelphia",
         "type": "New build / permit",
-        "source": "Philly permit " + (p.get("permittype") or ""),
+        "source": "Philly permit " + text(p, "permittype"),
         "services": ["Hood Fabrication", "Suppression Install"],
         "status": "new",
         "next": today,
-        "notes": ("Permit " + str(p.get("permitnumber", "")) + " issued " + issued + ". Scope: " + scope)[:480],
+        "notes": ("Permit " + num + " issued " + issued + ". Scope: " + scope)[:480],
         "created": today,
         "updated": today,
     }
@@ -73,8 +78,12 @@ def post_leads(leads):
         SHEET_API, data=body, method="POST",
         headers={"Content-Type": "text/plain;charset=utf-8"},
     )
-    with urllib.request.urlopen(req, timeout=60) as r:
-        return json.loads(r.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            return json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        print("BACKEND ERROR", e.code, ":", e.read().decode()[:800])
+        sys.exit(1)
 
 
 def main():
@@ -82,10 +91,12 @@ def main():
         print("ERROR: SHEET_API_URL env var not set")
         sys.exit(1)
     rows = fetch_permits()
-    print(f"Fetched {len(rows)} permits from Carto")
+    print(f"Fetched {len(rows)} total permits from the last 7 days")
+    rows = [p for p in rows if is_relevant(p)]
+    print(f"{len(rows)} look kitchen/fire relevant")
     if TARGET_ZIPS:
-        rows = [p for p in rows if str(p.get("zip", ""))[:5] in TARGET_ZIPS]
-        print(f"{len(rows)} after zip filter {TARGET_ZIPS}")
+        rows = [p for p in rows if text(p, "zip")[:5] in TARGET_ZIPS]
+        print(f"{len(rows)} after zip filter")
     if not rows:
         print("No matching permits this week.")
         return
