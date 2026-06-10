@@ -338,6 +338,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--red)}
     <input id="f_source" placeholder="e.g. eCLIPSE permit, LHU list, hood cleaner referral">
     <label>Services needed</label>
     <div class="checks" id="svcChecks"></div>
+    <input id="f_otherSvc" placeholder="Describe the other service..." style="display:none;margin-top:8px">
     <div class="row2">
       <div><label>Status</label>
         <select id="f_status">
@@ -365,7 +366,16 @@ var KEY='unipro_leads_v1';
    cloud sync across devices. Leave empty for local-only mode. */
 var SHEET_API='https://script.google.com/macros/s/AKfycbyCfOABOFS4eQaTaphxbuDGvooi42f_gf95WYl9Hjxs8_-sGcMuuuTIaDnnemo8_eAu/exec';
 function pushLead(l){ if(!SHEET_API) return;
-  fetch(SHEET_API,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action:'saveLead',lead:l})}).catch(function(e){console.warn('Sheet sync failed',e);});
+  l._synced=false; save();
+  var payload={action:'saveLead',lead:l};
+  delete payload.lead; payload.lead=JSON.parse(JSON.stringify(l)); delete payload.lead._synced;
+  fetch(SHEET_API,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(payload)})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      if(d&&d.ok){ l._synced=true; save(); }
+      else { alert('Cloud sync issue: '+((d&&d.error)||'unknown')+'. Lead kept locally; will retry on next load.'); }
+    })
+    .catch(function(e){ alert('Cloud sync failed (lead kept on this device; will retry on next load).'); console.warn(e); });
 }
 function pushDelete(id){ if(!SHEET_API) return;
   fetch(SHEET_API,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action:'deleteLead',id:id})}).catch(function(e){console.warn('Sheet sync failed',e);});
@@ -375,10 +385,17 @@ function pushBatch(arr){ if(!SHEET_API) return;
 }
 function syncFromSheet(){ if(!SHEET_API) return;
   fetch(SHEET_API+'?action=getLeads').then(function(r){return r.json();}).then(function(d){
-    if(d&&d.ok&&Array.isArray(d.leads)){ leads=d.leads; save(); renderAll(); }
+    if(d&&d.ok&&Array.isArray(d.leads)){
+      var sheetIds={};
+      d.leads.forEach(function(l){ sheetIds[l.id]=true; });
+      var pending=leads.filter(function(l){ return l._synced===false && !sheetIds[l.id]; });
+      leads=d.leads.concat(pending);
+      save(); renderAll();
+      pending.forEach(function(l){ pushLead(l); });
+    }
   }).catch(function(e){console.warn('Sheet load failed — using local data',e);});
 }
-var SERVICES=['Hood Fabrication','Hood Install','Suppression Service','Suppression Install','Extinguishers','Exit / E-Lighting','Stainless Fab (tables/walls/dish)'];
+var SERVICES=['Hood Fabrication','Hood Install','Suppression Service','Suppression Install','Suppression Inspection','Extinguishers','Extinguisher Inspection','Exit / E-Lighting','Stainless Fab (tables/walls/dish)','Other'];
 var STATUS_LABEL={new:'New',contacted:'Contacted',visit:'Site Visit',quoted:'Quoted',won:'Won',lost:'Lost'};
 var leads=[], editingId=null, activeFilter='open';
 var sysFilter='all', searchTerm='', zipTerms=[];
@@ -440,7 +457,9 @@ document.querySelectorAll('.tab').forEach(function(t){
   SERVICES.forEach(function(s){
     var lab=document.createElement('label');
     var cb=document.createElement('input'); cb.type='checkbox'; cb.value=s;
-    cb.addEventListener('change',function(){ lab.classList.toggle('on',cb.checked); });
+    cb.addEventListener('change',function(){ lab.classList.toggle('on',cb.checked);
+      if(cb.value==='Other'){ document.getElementById('f_otherSvc').style.display=cb.checked?'block':'none'; }
+    });
     lab.appendChild(cb); lab.appendChild(document.createTextNode(s));
     wrap.appendChild(lab);
   });
@@ -558,10 +577,16 @@ function openModal(id){
   document.getElementById('f_status').value=l?l.status:'new';
   document.getElementById('f_next').value=l?l.next:'';
   document.getElementById('f_notes').value=l?l.notes:'';
+  var otherEntry=(l&&l.services)?l.services.filter(function(x){return x.indexOf('Other')===0;})[0]:null;
   document.querySelectorAll('#svcChecks input').forEach(function(cb){
     cb.checked=!!(l&&l.services&&l.services.indexOf(cb.value)>-1);
+    if(cb.value==='Other'&&otherEntry) cb.checked=true;
     cb.parentElement.classList.toggle('on',cb.checked);
   });
+  var of=document.getElementById('f_otherSvc');
+  of.value=(otherEntry&&otherEntry.indexOf('Other: ')===0)?otherEntry.slice(7):'';
+  of.style.display=otherEntry?'block':'none';
+  if(!otherEntry){ of.style.display='none'; of.value=''; }
   document.getElementById('overlay').classList.add('open');
 }
 function closeModal(){ document.getElementById('overlay').classList.remove('open'); editingId=null; }
@@ -574,6 +599,11 @@ document.getElementById('saveBtn').addEventListener('click',function(){
   var biz=document.getElementById('f_business').value.trim();
   if(!biz){ alert('Business name is required.'); return; }
   var svcs=[]; document.querySelectorAll('#svcChecks input').forEach(function(cb){ if(cb.checked) svcs.push(cb.value); });
+  var otherIdx=svcs.indexOf('Other');
+  if(otherIdx>-1){
+    var otherTxt=document.getElementById('f_otherSvc').value.trim();
+    if(otherTxt) svcs[otherIdx]='Other: '+otherTxt;
+  }
   var data={
     business:biz,
     contact:document.getElementById('f_contact').value.trim(),
