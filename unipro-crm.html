@@ -1380,6 +1380,17 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--red)}
   </div>
 </div></div>
 
+<!-- DUPLICATE CHECK MODAL -->
+<div class="overlay" id="dupOv"><div class="modal">
+  <h2>Possible duplicate found</h2>
+  <p class="sub">This matches an account already in your database. Go to the existing account instead of creating a new one — or continue if this is genuinely a different location/contact.</p>
+  <div id="dupList"></div>
+  <div class="toolbar" style="margin-top:12px">
+    <button class="btn ghost" id="dupCancel">Back to edit</button>
+    <button class="btn" style="background:var(--orange);margin-left:auto" id="dupCreateNew">Create new account anyway</button>
+  </div>
+</div></div>
+
 <!-- WEEKLY REPORT MODAL -->
 <div class="overlay" id="wOv"><div class="modal">
   <h2>Weekly Report</h2>
@@ -1519,7 +1530,72 @@ function openAcct(id){
   document.getElementById('aOv').classList.add('open');
 }
 function closeA(){document.getElementById('aOv').classList.remove('open');openAcctId=null;renderAll();}
+function normPhone(s){return String(s||'').replace(/\D/g,'').replace(/^1(\d{10})$/,'$1');}
+function normEmail(s){return String(s||'').trim().toLowerCase();}
+function normName(s){
+  return String(s||'').toLowerCase()
+    .replace(/[^a-z0-9 ]/g,' ')
+    .replace(/\b(llc|inc|incorporated|corp|corporation|co|ltd|the)\b/g,'')
+    .replace(/\s+/g,' ').trim();
+}
+function normAddr(s){
+  return String(s||'').toLowerCase()
+    .replace(/[^a-z0-9 ]/g,' ')
+    .replace(/\b(street|st|avenue|ave|road|rd|drive|dr|lane|ln|boulevard|blvd|highway|hwy|suite|ste|unit|apt|apartment|floor|fl)\b/g,'')
+    .replace(/\s+/g,' ').trim();
+}
+function findDuplicates(cand,excludeId){
+  var cn=normName(cand.name), ca=normAddr(cand.addr), cp=normPhone(cand.phone), ce=normEmail(cand.email);
+  var out=[];
+  DB.accounts.forEach(function(a){
+    if(excludeId&&a.id===excludeId)return;
+    var hits=[];
+    if(cp&&normPhone(a.phone)===cp)hits.push('phone number');
+    if(ce&&normEmail(a.email)===ce)hits.push('email');
+    if(cn&&normName(a.name)===cn)hits.push('business name');
+    if(ca&&ca===normAddr(a.addr))hits.push('address');
+    if(hits.length)out.push({acct:a,hits:hits});
+  });
+  return out;
+}
+function showDupCheck(dups){
+  var list=document.getElementById('dupList');list.innerHTML='';
+  dups.forEach(function(d){
+    var box=document.createElement('div');box.className='card';box.style.marginBottom='8px';
+    box.innerHTML='<div class="lead-top"><div><div class="nm">'+esc(d.acct.name)+'</div>'
+      +'<div class="meta">'+esc(d.acct.addr||'')+'</div>'
+      +'<div class="meta">'+esc(d.acct.contact||'')+' '+esc(d.acct.phone||'')+(d.acct.email?' · '+esc(d.acct.email):'')+'</div>'
+      +'<div class="due over" style="margin-top:4px">Matched on: '+esc(d.hits.join(', '))+'</div></div></div>';
+    var b=document.createElement('button');b.className='btn primary small';b.style.marginTop='6px';b.textContent='Go to this account';
+    b.addEventListener('click',function(){
+      document.getElementById('dupOv').classList.remove('open');
+      closeA();
+      openAcct(d.acct.id);
+    });
+    box.appendChild(b);
+    list.appendChild(box);
+  });
+  document.getElementById('dupOv').classList.add('open');
+}
+document.getElementById('dupCancel').addEventListener('click',function(){
+  document.getElementById('dupOv').classList.remove('open');
+});
+document.getElementById('dupCreateNew').addEventListener('click',function(){
+  document.getElementById('dupOv').classList.remove('open');
+  proceedSaveAccount();
+});
 function saveAccount(){
+  var name=document.getElementById('a_name').value.trim();
+  if(!name){alert('Business name is required.');return;}
+  if(!openAcctId){
+    var cand={name:name,addr:document.getElementById('a_addr').value.trim(),
+      phone:document.getElementById('a_phone').value.trim(),email:document.getElementById('a_email').value.trim()};
+    var dups=findDuplicates(cand,null);
+    if(dups.length){showDupCheck(dups);return;}
+  }
+  proceedSaveAccount();
+}
+function proceedSaveAccount(){
   var name=document.getElementById('a_name').value.trim();
   if(!name){alert('Business name is required.');return;}
   var a=openAcctId?acctById(openAcctId):null;
