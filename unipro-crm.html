@@ -1411,7 +1411,10 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--red)}
   </div>
   <div class="row2">
     <div><label>Source</label><input id="l_source" placeholder="Permit, tag audit, referral..."></div>
-    <div><label>Next action date</label><input id="l_next" type="date"></div>
+    <div class="row2" style="margin:0">
+      <div><label>Next action date</label><input id="l_next" type="date"></div>
+      <div><label>Time</label><input id="l_nextTime" type="time"></div>
+    </div>
   </div>
   <label>Rep / owner</label><input id="l_rep" placeholder="Defaults to the rep in Goals">
   <label>Services</label>
@@ -1464,6 +1467,11 @@ function uid(p){return p+Date.now().toString(36)+Math.random().toString(36).slic
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function today(){return new Date().toISOString().slice(0,10);}
 function plusDays(d,n){var x=new Date(d+'T12:00:00');x.setDate(x.getDate()+n);return x.toISOString().slice(0,10);}
+function fmtTime(t){
+  if(!t)return'';
+  var p=t.split(':');var h=parseInt(p[0],10);var m=p[1];var ap=h>=12?'PM':'AM';var h12=h%12;if(h12===0)h12=12;
+  return h12+':'+m+' '+ap;
+}
 function plusMonths(d,n){var x=new Date(d+'T12:00:00');x.setMonth(x.getMonth()+n);return x.toISOString().slice(0,10);}
 function acctById(id){return DB.accounts.find(function(a){return a.id===id;});}
 function siteFor(id){return DB.sites.find(function(s){return s.accountId===id;});}
@@ -1636,7 +1644,7 @@ function icsAcct(){
   cb.addEventListener('change',function(){lab.style.borderColor=cb.checked?'var(--red)':'var(--line)';});
   lab.appendChild(cb);lab.appendChild(document.createTextNode(s));w.appendChild(lab);
 });})();
-function openLead(id,forAcct){
+function openLead(id,forAcct,presetDate){
   openLeadId=id||null;
   document.getElementById('lTitle').textContent=id?'Lead / Opportunity':'New Lead';
   document.getElementById('lDel').style.display=id?'inline-block':'none';
@@ -1651,7 +1659,8 @@ function openLead(id,forAcct){
   document.getElementById('l_value').value=l?(l.value||''):'';
   document.getElementById('l_source').value=l?(l.source||''):'';
   document.getElementById('l_rep').value=l?(l.rep||goalsObj().rep||''):(goalsObj().rep||'');
-  document.getElementById('l_next').value=l?(l.next||''):'';
+  document.getElementById('l_next').value=l?(l.next||''):(presetDate||'');
+  document.getElementById('l_nextTime').value=l?(l.nextTime||''):'';
   document.getElementById('l_notes').value=l?(l.notes||''):'';
   document.getElementById('l_lostwhy').value=l?(l.lostReason||''):'';
   document.getElementById('lostWrap').style.display=(l&&l.stage==='lost')?'block':'none';
@@ -1893,6 +1902,7 @@ function saveLead(){
   l.source=document.getElementById('l_source').value.trim();
   l.rep=document.getElementById('l_rep').value.trim();
   l.next=document.getElementById('l_next').value;
+  l.nextTime=document.getElementById('l_nextTime').value;
   l.notes=document.getElementById('l_notes').value.trim();
   if(l.stage==='lost'){
     var why=document.getElementById('l_lostwhy').value;
@@ -1941,7 +1951,7 @@ function leadCard(l,inModal){
     +'<div class="meta">'+esc(a.terr||'')+(l.source?' · via '+esc(l.source):'')+(l.value?' · '+fmtMoney(l.value)+'/yr':'')+'</div>'
     +(l.notes?'<div class="meta">'+esc(l.notes)+'</div>':'')
     +((l.services&&l.services.length)?'<div>'+l.services.map(function(s){return'<span class="svc">'+esc(s)+'</span>';}).join('')+'</div>':'')
-    +(l.next?'<div class="due '+dc+'">'+(dc==='over'?'⚠ OVERDUE — ':dc==='today'?'● TODAY — ':'Next: ')+esc(l.next)+'</div>':'')
+    +(l.next?'<div class="due '+dc+'"><span>'+(dc==='over'?'⚠ OVERDUE — ':dc==='today'?'● TODAY — ':'Next: ')+esc(l.next)+(l.nextTime?' \u00b7 '+esc(fmtTime(l.nextTime)):'')+'</span></div>':'')
     +'</div><div style="text-align:right"><span class="tag s-'+esc(l.stage)+'">'+esc(STAGE_LABEL[l.stage])+'</span>'
     +((l.stage==='quoted'&&l.updated&&l.updated<plusDays(today(),-30))?'<span class="stale">Stale 30d+</span>':'')
     +((l.stage==='lost'&&l.lostReason)?'<div class="meta" style="margin-top:4px">'+esc(l.lostReason)+'</div>':'')
@@ -2932,6 +2942,9 @@ function apptsByDay(){
     if(!l.next||l.stage==='won'||l.stage==='lost')return;
     (m[l.next]=m[l.next]||[]).push(l);
   });
+  Object.keys(m).forEach(function(d){
+    m[d].sort(function(x,y){return (x.nextTime||'99:99')<(y.nextTime||'99:99')?-1:1;});
+  });
   return m;
 }
 function renderCal(){
@@ -2948,7 +2961,11 @@ function renderCal(){
     var cell=document.createElement('div');
     cell.className='cd'+(d.getMonth()!==mo?' dim':'')+(ds===today()?' today':'')+(ds===selDay?' sel':'');
     cell.innerHTML=d.getDate()+((appts[ds]&&appts[ds].length)?'<span class="cnt">'+appts[ds].length+'</span>':'');
-    (function(dstr){cell.addEventListener('click',function(){selDay=dstr;renderCal();});})(ds);
+    cell.title='Click to view · Double-click to add an appointment';
+    (function(dstr){
+      cell.addEventListener('click',function(){selDay=dstr;renderCal();});
+      cell.addEventListener('dblclick',function(){selDay=dstr;renderCal();openLead(null,null,dstr);});
+    })(ds);
     grid.appendChild(cell);
   }
   renderDayPanel(appts);
@@ -2978,7 +2995,15 @@ function nearbyFor(acctId,max){
 function gcalLead(l){
   var a=acctById(l.accountId)||{};
   if(!l.next){alert('Set a next-action date on this lead first.');return;}
-  var d1=l.next.replace(/-/g,''), d2=plusDays(l.next,1).replace(/-/g,'');
+  var d1,d2;
+  if(l.nextTime){
+    var hm=l.nextTime.split(':');var sh=parseInt(hm[0],10),sm=parseInt(hm[1],10);
+    var eh=sh+1,em=sm;if(eh>23){eh=23;em=59;}
+    d1=l.next.replace(/-/g,'')+'T'+String(sh).padStart(2,'0')+String(sm).padStart(2,'0')+'00';
+    d2=l.next.replace(/-/g,'')+'T'+String(eh).padStart(2,'0')+String(em).padStart(2,'0')+'00';
+  }else{
+    d1=l.next.replace(/-/g,'');d2=plusDays(l.next,1).replace(/-/g,'');
+  }
   var url='https://calendar.google.com/calendar/render?action=TEMPLATE'
     +'&text='+encodeURIComponent('UniPro: '+(a.name||'appointment'))
     +'&dates='+d1+'/'+d2
@@ -2995,7 +3020,7 @@ function renderDayPanel(appts){
   list.forEach(function(l){
     var a=acctById(l.accountId)||{};
     var box=document.createElement('div');box.className='card';box.style.marginBottom='8px';
-    box.innerHTML='<div class="lead-top"><div><div class="nm">'+esc(a.name||'?')+'</div>'
+    box.innerHTML='<div class="lead-top"><div><div class="nm">'+(l.nextTime?'<span class="tag" style="background:var(--ink);color:#fff;margin-right:6px">'+esc(fmtTime(l.nextTime))+'</span>':'')+esc(a.name||'?')+'</div>'
       +'<div class="meta">'+esc(a.addr||'')+'</div>'
       +'<div class="meta">'+esc(a.contact||'')+' '+esc(a.phone||'')+'</div></div>'
       +'<span class="tag s-'+esc(l.stage)+'">'+esc(STAGE_LABEL[l.stage])+'</span></div>';
