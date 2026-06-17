@@ -2300,7 +2300,15 @@ document.querySelectorAll('.tab').forEach(function(t){t.addEventListener('click'
   renderAll();window.scrollTo(0,0);
   if(t.dataset.v==='bids'){setTimeout(renderBidCharts,50);}
   if(t.dataset.v==='goals'){setTimeout(function(){loadGoalsUI();},100);}
-  if(t.dataset.v==='map'){setTimeout(function(){renderMap();if(terrMap)terrMap.invalidateSize();},60);}
+  if(t.dataset.v==='map'){
+    setTimeout(function(){
+      renderMap();
+      // Force Leaflet to recalculate size after tab is visible
+      if(terrMap){ terrMap.invalidateSize(true); }
+      setTimeout(function(){ if(terrMap) terrMap.invalidateSize(true); }, 200);
+      setTimeout(function(){ if(terrMap) terrMap.invalidateSize(true); }, 500);
+    },100);
+  }
 });});
 
 /* ---- modal sub-tabs ---- */
@@ -3538,13 +3546,22 @@ var ZIPLL={
 };
 var terrMap=null, mapLayer=null;
 function initMap(){
-  if(terrMap)return;
-  terrMap=L.map('terrMap').setView([40.15,-74.95],9);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:18,attribution:'&copy; OpenStreetMap'}).addTo(terrMap);
-  mapLayer=L.layerGroup().addTo(terrMap);
+  if(terrMap) return;
+  var el = document.getElementById('terrMap');
+  if(!el || el.offsetHeight === 0) return; // not visible yet
+  terrMap = L.map('terrMap', {zoomControl:true, scrollWheelZoom:true}).setView([40.15,-74.95],9);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+    maxZoom:18,
+    attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+  }).addTo(terrMap);
+  mapLayer = L.layerGroup().addTo(terrMap);
 }
 function renderMap(){
   if(!document.getElementById('terrMap'))return;
+  // Retry if element not yet visible
+  if(!terrMap && document.getElementById('terrMap').offsetHeight===0){
+    setTimeout(renderMap, 150); return;
+  }
   initMap();
   mapLayer.clearLayers();
   var horizon=plusDays(today(),60);
