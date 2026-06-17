@@ -12,7 +12,605 @@
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js">
+// ══════════════════════════════════════════
+// GOALS & FORECAST — FULL PERFORMANCE PAGE
+// ══════════════════════════════════════════
+
+var goalsChartRevenue = null;
+var goalsChartLoss = null;
+var goalsChartGauge = null;
+
+// ── SAMPLE SALES REP LEADERBOARD DATA ──
+var SALES_REPS = [
+  { name:'Ted Scholl', initials:'TS', closed:84200, quota:80000, accts:12, me:true },
+  { name:'Rep B', initials:'RB', closed:76400, quota:80000, accts:9, me:false },
+  { name:'Rep C', initials:'RC', closed:91800, quota:80000, accts:14, me:false },
+  { name:'Rep D', initials:'RD', closed:58300, quota:80000, accts:7, me:false },
+  { name:'Rep E', initials:'RE', closed:102100, quota:80000, accts:16, me:false },
+];
+
+function goalsObj(){
+  var q=curQuarter(),y=today().slice(0,4);
+  DB.goals=DB.goals||{};DB.goals.q=DB.goals.q||{};DB.goals.a=DB.goals.a||{};
+  DB.goals.q[q]=DB.goals.q[q]||{};DB.goals.a[y]=DB.goals.a[y]||{};
+  return DB.goals;
+}
+
+function loadGoalsUI(){
+  var G=goalsObj(),q=curQuarter(),y=today().slice(0,4);
+  var fields=['rep','comm','mgr','wvisits','wcalls','wemails','b100','b110','b120','adollar'];
+  fields.forEach(function(f){ var el=document.getElementById('g_'+f); if(el) el.value=G[f]||''; });
+  var Q=G.q[q]||{};
+  ['dollar','accts','ret','mdollar'].forEach(function(k){ var el=document.getElementById('g_q'+k||'g_m'+k); if(el) el.value=Q[k]||''; });
+  var qdEl=document.getElementById('g_qdollar'); if(qdEl) qdEl.value=Q.dollar||'';
+  var qaEl=document.getElementById('g_qaccts'); if(qaEl) qaEl.value=Q.accts||'';
+  var qrEl=document.getElementById('g_qret'); if(qrEl) qrEl.value=Q.ret||'';
+  var qmEl=document.getElementById('g_mdollar'); if(qmEl) qmEl.value=Q.mdollar||'';
+  var A=G.a[y]||{};
+  var adEl=document.getElementById('g_adollar'); if(adEl) adEl.value=A.dollar||'';
+  populateQuarterSelect();
+  renderGoalsDash();
+}
+
+function saveGoals(){
+  var G=goalsObj(),q=curQuarter(),y=today().slice(0,4);
+  ['rep','comm','mgr','wvisits','wcalls','wemails','b100','b110','b120','adollar'].forEach(function(f){
+    var el=document.getElementById('g_'+f); if(el) G[f]=el.value.trim();
+  });
+  G.q[q]=G.q[q]||{};
+  var qdEl=document.getElementById('g_qdollar'); if(qdEl) G.q[q].dollar=qdEl.value;
+  var qaEl=document.getElementById('g_qaccts'); if(qaEl) G.q[q].accts=qaEl.value;
+  var qrEl=document.getElementById('g_qret'); if(qrEl) G.q[q].ret=qrEl.value;
+  var qmEl=document.getElementById('g_mdollar'); if(qmEl) G.q[q].mdollar=qmEl.value;
+  G.a[y]=G.a[y]||{};
+  var adEl=document.getElementById('g_adollar'); if(adEl) G.a[y].dollar=adEl.value;
+  save(); alert('Goals saved.'); renderGoalsDash();
+}
+
+function showGoalsSetup(){
+  var p=document.getElementById('goalsSetupPanel');
+  if(p) p.open=true;
+  p.scrollIntoView({behavior:'smooth'});
+}
+
+function populateQuarterSelect(){
+  var sel=document.getElementById('g_quarterSelect');
+  if(!sel) return;
+  var q=curQuarter();
+  var quarters=[];
+  var now=new Date();
+  for(var i=3;i>=0;i--){
+    var d=new Date(now.getFullYear(),now.getMonth()-i*3,1);
+    var m=d.getMonth();
+    var qn='Q'+(Math.ceil((m+1)/3));
+    var label=d.getFullYear()+'-'+qn;
+    quarters.push(label);
+  }
+  sel.innerHTML=quarters.map(function(q2){
+    return '<option value="'+q2+'"'+(q2===q?' selected':'')+'>'+q2+'</option>';
+  }).join('');
+  var lbEl=document.getElementById('lbQtrLabel');
+  if(lbEl) lbEl.textContent=q;
+}
+
+function renderGoalsDash(){
+  if(!document.getElementById('view-goals')) return;
+  var G=goalsObj(),q=curQuarter();
+  var Q=G.q[q]||{};
+  var qGoal=Number(Q.dollar)||80000;
+  var mGoal=Number(Q.mdollar)||(qGoal/3);
+  var commRate=Number(G.comm||8)/100;
+
+  // ── Compute actuals from DB ──
+  var qr=quarterRange(q);
+  var wonThisQtr=DB.leads.filter(function(l){
+    return l.stage==='won'&&l.closed&&l.closed>=qr[0]&&l.closed<qr[1];
+  });
+  var closedQtr=wonThisQtr.reduce(function(s,l){return s+(Number(l.value)||0);},0);
+
+  var now=new Date();
+  var monthStart=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-01';
+  var wonThisMo=DB.leads.filter(function(l){
+    return l.stage==='won'&&l.closed&&l.closed>=monthStart;
+  });
+  var closedMo=wonThisMo.reduce(function(s,l){return s+(Number(l.value)||0);},0);
+
+  var openPipe=DB.leads.filter(function(l){return l.stage!=='won'&&l.stage!=='lost';});
+  var pipeVal=openPipe.reduce(function(s,l){return s+(Number(l.value)||0);},0);
+  var winRate=0;
+  var allClosed=DB.leads.filter(function(l){return l.stage==='won'||l.stage==='lost';});
+  if(allClosed.length>0) winRate=DB.leads.filter(function(l){return l.stage==='won';}).length/allClosed.length;
+  var forecast=closedQtr+(pipeVal*winRate);
+  var attainPct=qGoal>0?Math.min((closedQtr/qGoal)*100,150):0;
+  var toGoal=Math.max(0,qGoal-closedQtr);
+  var toNext=0,nextTierLabel='',nextBonus=0;
+  var b100=Number(G.b100||0),b110=Number(G.b110||0),b120=Number(G.b120||0);
+  if(attainPct<100){toNext=Math.max(0,qGoal-closedQtr);nextTierLabel='100%';nextBonus=b100;}
+  else if(attainPct<110){toNext=Math.max(0,qGoal*1.1-closedQtr);nextTierLabel='110%';nextBonus=b110;}
+  else if(attainPct<120){toNext=Math.max(0,qGoal*1.2-closedQtr);nextTierLabel='120%';nextBonus=b120;}
+  else{nextTierLabel='120%+ ✓ All tiers locked';toNext=0;}
+
+  // ── QUOTA GAUGE ──
+  drawQuotaGauge(attainPct);
+
+  // ── QUOTA HERO KPIs ──
+  var heroColor=attainPct>=100?'var(--green)':attainPct>=75?'var(--orange)':'var(--red)';
+  var heroCard=document.getElementById('quotaHeroCard');
+  if(heroCard) heroCard.style.borderColor=attainPct>=100?'var(--green)':attainPct>=75?'var(--orange)':'var(--red)';
+  var kpiGrid=document.getElementById('quotaKPIGrid');
+  if(kpiGrid){
+    var kpis=[
+      {val:fmtMoney(closedQtr),lbl:'Closed This Quarter',color:heroColor},
+      {val:fmtMoney(qGoal),lbl:'Quarterly Goal',color:'var(--ink)'},
+      {val:fmtMoney(toGoal),lbl:toGoal>0?'To Reach Goal':'Goal Reached ✓',color:toGoal>0?'var(--orange)':'var(--green)'},
+      {val:fmtMoney(forecast),lbl:'Projected Finish',color:forecast>=qGoal?'var(--green)':'var(--orange)'},
+      {val:toNext>0?fmtMoney(toNext)+' to '+nextTierLabel:'All Tiers Locked ✓',lbl:'Next Bonus Tier',color:'var(--purple,#7C3AED)'},
+      {val:fmtMoney(closedMo),lbl:'Closed This Month',color:'var(--blue)'},
+      {val:fmtMoney(Math.round(commRate*closedQtr)),lbl:'Commission Earned',color:'var(--green)'},
+      {val:Math.round(winRate*100)+'%',lbl:'Win Rate',color:winRate>=0.5?'var(--green)':'var(--orange)'},
+    ];
+    kpiGrid.innerHTML=kpis.map(function(k){
+      return '<div style="background:var(--bg);border-radius:8px;padding:12px 14px;border-top:2px solid '+k.color+'">' +
+        '<div style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:20px;color:'+k.color+'">'+k.val+'</div>' +
+        '<div style="font-size:10px;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-top:3px">'+k.lbl+'</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  // ── ENGINE 1: PROTECT (at-risk accounts) ──
+  var protect=document.getElementById('engineProtect');
+  if(protect){
+    var atRisk=atRiskCustomers().slice(0,5);
+    if(atRisk.length===0){
+      protect.innerHTML='<div style="color:var(--soft);font-size:12px;padding:8px 0">✓ All active accounts touched this quarter.</div>';
+    } else {
+      protect.innerHTML=atRisk.map(function(x){
+        var urgColor=x.days>60?'var(--red)':x.days>30?'var(--orange)':'var(--yellow)';
+        return '<div style="padding:8px 0;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:8px">' +
+          '<div>' +
+            '<div style="font-weight:700;font-size:12px">'+esc(x.a.name||'')+'</div>' +
+            '<div style="font-size:11px;color:var(--soft)">Last touch: '+esc(x.lt||'Never')+'</div>' +
+          '</div>' +
+          '<div style="text-align:right;flex-shrink:0">' +
+            '<span style="background:'+urgColor+';color:#fff;font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:10px;padding:2px 8px;border-radius:8px">'+x.days+'d ago</span>' +
+            '<div style="font-size:10px;color:var(--red);font-weight:700;margin-top:2px">CALL NOW</div>' +
+          '</div>' +
+        '</div>';
+      }).join('') +
+      '<button onclick="askCoachPreset(\'jeopardy\');document.getElementById(\'aiCoachOv\').classList.add(\'open\')" style="margin-top:10px;width:100%;background:var(--red);color:#fff;border:none;border-radius:6px;padding:8px;font-family:\'Barlow Condensed\',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">⚡ AI: How Do I Save These Accounts?</button>';
+    }
+  }
+
+  // ── ENGINE 2: EXPAND (cross-sell gaps) ──
+  var expand=document.getElementById('engineExpand');
+  if(expand){
+    var customers=DB.accounts.filter(function(a){return a.status==='Customer'&&!a.churned;});
+    var singleService=customers.filter(function(a){
+      var svcCount=DB.leads.filter(function(l){
+        return l.accountId===a.id&&l.stage==='won';
+      }).length;
+      return svcCount<=1;
+    }).slice(0,5);
+    if(singleService.length===0){
+      expand.innerHTML='<div style="color:var(--soft);font-size:12px;padding:8px 0">✓ All customers have multiple services.</div>';
+    } else {
+      expand.innerHTML=singleService.map(function(a){
+        var svcs=DB.leads.filter(function(l){return l.accountId===a.id&&l.stage==='won';}).map(function(l){return l.services&&l.services[0]||'';}).filter(Boolean);
+        var missing=['Fire','GTO','Chemical','Filters','Fab'].filter(function(s){return !svcs.some(function(v){return v.indexOf(s)>-1;});}).slice(0,2);
+        return '<div style="padding:8px 0;border-bottom:1px solid var(--line)">' +
+          '<div style="font-weight:700;font-size:12px">'+esc(a.name||'')+'</div>' +
+          '<div style="font-size:11px;color:var(--blue);margin-top:2px">Opportunity: '+(missing.join(' + ')||'Review services')+'</div>' +
+        '</div>';
+      }).join('') +
+      '<button onclick="askCoachPreset(\'expand\');document.getElementById(\'aiCoachOv\').classList.add(\'open\')" style="margin-top:10px;width:100%;background:var(--blue);color:#fff;border:none;border-radius:6px;padding:8px;font-family:\'Barlow Condensed\',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">⚡ AI: Cross-Sell Strategy</button>';
+    }
+  }
+
+  // ── ENGINE 3: GROW (new leads) ──
+  var grow=document.getElementById('engineGrow');
+  if(grow){
+    var hotLeads=DB.leads.filter(function(l){return l.stage!=='won'&&l.stage!=='lost';})
+      .sort(function(a,b){return (Number(b.value)||0)-(Number(a.value)||0);}).slice(0,5);
+    if(hotLeads.length===0){
+      grow.innerHTML='<div style="color:var(--soft);font-size:12px;padding:8px 0">No open leads. Add from the Pipeline tab or Bid Board.</div>';
+    } else {
+      grow.innerHTML=hotLeads.map(function(l){
+        var acc=acctById(l.accountId)||{};
+        var stageColors={new:'var(--soft)',visit:'var(--blue)',estimate:'var(--orange)'};
+        var stageColor=stageColors[l.stage]||'var(--green)';
+        return '<div style="padding:8px 0;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:8px">' +
+          '<div>' +
+            '<div style="font-weight:700;font-size:12px">'+esc(acc.name||'Unknown')+'</div>' +
+            '<div style="font-size:11px;color:'+stageColor+';text-transform:capitalize">'+esc(l.stage||'new')+'</div>' +
+          '</div>' +
+          '<div style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:16px;color:var(--green)">'+fmtMoney(Number(l.value)||0)+'</div>' +
+        '</div>';
+      }).join('') +
+      '<button onclick="askCoachPreset(\'grow\');document.getElementById(\'aiCoachOv\').classList.add(\'open\')" style="margin-top:10px;width:100%;background:var(--green);color:#fff;border:none;border-radius:6px;padding:8px;font-family:\'Barlow Condensed\',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">⚡ AI: How Do I Close These Leads?</button>';
+    }
+  }
+
+  // ── REVENUE CHART ──
+  renderRevenueChart(closedQtr,qGoal);
+
+  // ── PIPELINE FUNNEL ──
+  var funnelEl=document.getElementById('goalsFunnel');
+  if(funnelEl){
+    var stages2=[
+      {label:'New Leads',count:DB.leads.filter(function(l){return l.stage==='new';}).length,color:'var(--blue)'},
+      {label:'In Progress',count:DB.leads.filter(function(l){return l.stage==='visit'||l.stage==='estimate';}).length,color:'var(--orange)'},
+      {label:'Open Pipeline',count:openPipe.length,color:'var(--yellow)'},
+      {label:'Won This Qtr',count:wonThisQtr.length,color:'var(--green)'},
+    ];
+    var maxCount=Math.max.apply(null,stages2.map(function(s){return s.count;}));
+    funnelEl.innerHTML=stages2.map(function(s){
+      var w=maxCount>0?Math.max(Math.round(s.count/maxCount*100),5):5;
+      return '<div style="margin-bottom:8px">' +
+        '<div style="display:flex;justify-content:space-between;font-size:10px;color:var(--soft);font-weight:700;letter-spacing:.06em;text-transform:uppercase;margin-bottom:3px"><span>'+s.label+'</span><span style="color:var(--ink)">'+s.count+'</span></div>' +
+        '<div style="background:#EEF0F2;border-radius:4px;height:28px;overflow:hidden"><div style="width:'+w+'%;height:100%;background:'+s.color+';border-radius:4px;display:flex;align-items:center;padding-left:8px;font-family:\'Barlow Condensed\',sans-serif;font-weight:700;font-size:12px;color:#fff">'+s.count+'</div></div>' +
+      '</div>';
+    }).join('');
+  }
+
+  // ── ACTIVITY BARS ──
+  var actEl=document.getElementById('activityBars');
+  if(actEl){
+    var wv=Number(G.wvisits||10),wc=Number(G.wcalls||25),we=Number(G.wemails||25);
+    var tpThisWeek=DB.tps.filter(function(t){
+      var d=new Date(t.date+'T12:00:00');
+      var wd=new Date(); wd.setHours(12,0,0,0);
+      var diff=(wd-d)/(1000*60*60*24);
+      return diff<=7;
+    });
+    var actualVisits=tpThisWeek.filter(function(t){return (t.type||'').toLowerCase().indexOf('visit')>-1||t.type==='call';}).length;
+    var actualCalls=tpThisWeek.filter(function(t){return (t.type||'').toLowerCase().indexOf('call')>-1;}).length;
+    var actualEmails=tpThisWeek.filter(function(t){return (t.type||'').toLowerCase().indexOf('email')>-1;}).length;
+    var acts=[
+      {label:'Site Visits',actual:actualVisits,target:wv},
+      {label:'Calls',actual:actualCalls,target:wc},
+      {label:'Emails',actual:actualEmails,target:we},
+    ];
+    actEl.innerHTML=acts.map(function(a){
+      var pct=a.target>0?Math.min(Math.round(a.actual/a.target*100),100):0;
+      var barColor=pct>=100?'var(--green)':pct>=60?'var(--orange)':'var(--red)';
+      return '<div style="margin-bottom:10px">' +
+        '<div style="display:flex;justify-content:space-between;font-size:11px;font-weight:700;color:var(--soft);margin-bottom:3px;text-transform:uppercase;letter-spacing:.06em"><span>'+a.label+'</span><span style="color:var(--ink)">'+a.actual+' / '+a.target+'</span></div>' +
+        '<div style="background:#EEF0F2;border-radius:5px;height:10px;overflow:hidden"><div style="width:'+pct+'%;height:100%;background:'+barColor+';border-radius:5px;transition:width .4s"></div></div>' +
+      '</div>';
+    }).join('');
+    var streak=document.getElementById('activityStreak');
+    if(streak) streak.textContent=tpThisWeek.length+' touchpoints logged this week';
+    var paceEl=document.getElementById('paceCheck');
+    if(paceEl){
+      var dayOfWeek=new Date().getDay()||7;
+      var paceExpected=Math.round((wv/5)*dayOfWeek);
+      var paceColor=actualVisits>=paceExpected?'var(--green)':actualVisits>=(paceExpected*0.7)?'var(--orange)':'var(--red)';
+      var paceLabel=actualVisits>=paceExpected?'ON PACE':'BEHIND PACE';
+      paceEl.innerHTML='<div style="display:flex;align-items:center;gap:10px">' +
+        '<span style="background:'+paceColor+';color:#fff;font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:11px;letter-spacing:.10em;text-transform:uppercase;padding:5px 14px;border-radius:6px">'+paceLabel+'</span>' +
+        '<span style="font-size:12px;color:var(--soft)">Expected '+paceExpected+' visits by today · You have '+actualVisits+'</span>' +
+      '</div>';
+    }
+  }
+
+  // ── SALES LEADERBOARD ──
+  var lbEl=document.getElementById('salesLbRows');
+  if(lbEl){
+    var sortedReps=SALES_REPS.slice().sort(function(a,b){return b.closed-a.closed;});
+    lbEl.innerHTML=sortedReps.map(function(r,i){
+      var attain=r.quota>0?Math.round(r.closed/r.quota*100):0;
+      var attainColor=attain>=100?'var(--green)':attain>=75?'var(--orange)':'var(--red)';
+      var rankIcon=i===0?'🥇':i===1?'🥈':i===2?'🥉':'#'+(i+1);
+      return '<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);'+(r.me?'background:#FFF8F8':'')+'">'+
+        '<div style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:16px;width:28px;text-align:center">'+rankIcon+'</div>'+
+        '<div style="width:30px;height:30px;border-radius:50%;background:'+(r.me?'var(--red)':'var(--blue)')+';display:flex;align-items:center;justify-content:center;font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:11px;color:#fff;flex-shrink:0">'+r.initials+'</div>'+
+        '<div style="flex:1;min-width:0">'+
+          '<div style="font-size:13px;font-weight:'+(r.me?'800':'600')+'">'+r.name+(r.me?' (You)':'')+'</div>'+
+          '<div style="font-size:10px;color:var(--soft)">'+r.accts+' accounts</div>'+
+        '</div>'+
+        '<div style="text-align:right;flex-shrink:0">'+
+          '<div style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:16px;color:'+attainColor+'">'+attain+'%</div>'+
+          '<div style="font-size:10px;color:var(--soft)">'+fmtMoney(r.closed)+'</div>'+
+        '</div>'+
+      '</div>';
+    }).join('');
+  }
+
+  // ── WIN/LOSS KPIs ──
+  var wlEl=document.getElementById('winLossKPIs');
+  if(wlEl){
+    var wonAll=DB.leads.filter(function(l){return l.stage==='won';}).length;
+    var lostAll=DB.leads.filter(function(l){return l.stage==='lost';}).length;
+    var totalClosed2=wonAll+lostAll;
+    var avgDeal=wonAll>0?Math.round(DB.leads.filter(function(l){return l.stage==='won';}).reduce(function(s,l){return s+(Number(l.value)||0);},0)/wonAll):0;
+    var wlKpis=[
+      {val:wonAll,lbl:'Deals Won',color:'var(--green)'},
+      {val:lostAll,lbl:'Deals Lost',color:'var(--red)'},
+      {val:totalClosed2>0?Math.round(wonAll/totalClosed2*100)+'%':'—',lbl:'Win Rate',color:'var(--blue)'},
+      {val:fmtMoney(avgDeal),lbl:'Avg Deal Size',color:'var(--ink)'},
+    ];
+    wlEl.innerHTML=wlKpis.map(function(k){
+      return '<div style="background:var(--bg);border-radius:6px;padding:10px 12px;text-align:center">'+
+        '<div style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:22px;color:'+k.color+'">'+k.val+'</div>'+
+        '<div style="font-size:10px;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-top:3px">'+k.lbl+'</div>'+
+      '</div>';
+    }).join('');
+  }
+
+  // ── LOSS REASONS CHART ──
+  renderLossChart();
+
+  // ── COMMISSION CALCULATOR ──
+  var commEl=document.getElementById('commissionCalc');
+  if(commEl){
+    var comm=Math.round(commRate*closedQtr);
+    var bonusTier=attainPct>=120?'120%':attainPct>=110?'110%':attainPct>=100?'100%':'Not yet';
+    var bonusAmt=attainPct>=120?b120:attainPct>=110?b110:attainPct>=100?b100:0;
+    var totalComp=comm+bonusAmt;
+    commEl.innerHTML=[
+      {label:'Closed Revenue',val:fmtMoney(closedQtr),color:'var(--ink)'},
+      {label:'Commission Rate',val:(commRate*100).toFixed(1)+'%',color:'var(--soft)'},
+      {label:'Commission Earned',val:fmtMoney(comm),color:'var(--green)'},
+      {label:'Bonus Tier Reached',val:bonusTier,color:bonusAmt>0?'var(--yellow)':'var(--soft)'},
+      {label:'Bonus Amount',val:bonusAmt>0?fmtMoney(bonusAmt):'—',color:'var(--orange)'},
+      {label:'Total Q Comp',val:fmtMoney(totalComp),color:'var(--blue)'},
+    ].map(function(row,i){
+      return '<div style="display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:'+(i<5?'1px solid var(--line)':'none')+'">' +
+        '<span style="font-size:12px;color:var(--soft)">'+row.label+'</span>' +
+        '<span style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:'+(i===5?'22':'16')+'px;color:'+row.color+'">'+row.val+'</span>' +
+      '</div>';
+    }).join('') +
+    '<div style="margin-top:12px;background:#EEF0F2;border-radius:8px;overflow:hidden;height:10px">' +
+      '<div style="width:'+Math.min(attainPct,100)+'%;height:100%;background:'+(attainPct>=100?'var(--green)':attainPct>=75?'var(--orange)':'var(--red)')+'"></div>' +
+    '</div>' +
+    '<div style="font-size:11px;color:var(--soft);margin-top:5px">'+Math.round(attainPct)+'% of quota · '+fmtMoney(toNext)+' to '+nextTierLabel+'</div>';
+  }
+}
+
+function drawQuotaGauge(pct){
+  var canvas=document.getElementById('quotaGauge');
+  if(!canvas||!canvas.getContext) return;
+  var ctx=canvas.getContext('2d');
+  var W=canvas.width,H=canvas.height;
+  ctx.clearRect(0,0,W,H);
+  var cx=W/2,cy=H-10,r=80;
+  var startA=Math.PI,endA=2*Math.PI;
+  var fillColor=pct>=100?'#1E7B3C':pct>=75?'#D8690B':'#C8102E';
+
+  // Background arc
+  ctx.beginPath();ctx.arc(cx,cy,r,startA,endA);
+  ctx.strokeStyle='#EEF0F2';ctx.lineWidth=16;ctx.lineCap='round';ctx.stroke();
+
+  // Fill arc
+  var fillEnd=startA+(pct/100)*(endA-startA);
+  ctx.beginPath();ctx.arc(cx,cy,r,startA,Math.min(fillEnd,endA));
+  ctx.strokeStyle=fillColor;ctx.lineWidth=16;ctx.lineCap='round';ctx.stroke();
+
+  // Center text
+  ctx.fillStyle='#1A1D21';
+  ctx.font='bold 22px "Barlow Condensed",sans-serif';
+  ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText(Math.round(pct)+'%',cx,cy-18);
+  ctx.font='11px Barlow,sans-serif';
+  ctx.fillStyle='#5A616B';
+  ctx.fillText('of quota',cx,cy+2);
+}
+
+function renderRevenueChart(closedQtr,qGoal){
+  var canvas=document.getElementById('revenueChart');
+  if(!canvas) return;
+  var months=['Jan','Feb','Mar','Apr','May','Jun'];
+  var now=new Date();
+  var labels=[],wonData=[],targetData=[];
+  var mGoal=qGoal/3;
+  for(var i=5;i>=0;i--){
+    var d=new Date(now.getFullYear(),now.getMonth()-i,1);
+    labels.push(d.toLocaleString('default',{month:'short'}));
+    var y=d.getFullYear(),m=d.getMonth();
+    var moWon=DB.leads.filter(function(l){
+      if(l.stage!=='won'||!l.closed) return false;
+      var ld=new Date(l.closed+'T12:00:00');
+      return ld.getFullYear()===y&&ld.getMonth()===m;
+    }).reduce(function(s,l){return s+(Number(l.value)||0);},0);
+    wonData.push(Math.round(moWon/1000*10)/10);
+    targetData.push(Math.round(mGoal/1000*10)/10);
+  }
+  if(goalsChartRevenue){goalsChartRevenue.destroy();goalsChartRevenue=null;}
+  goalsChartRevenue=new Chart(canvas,{
+    type:'bar',
+    data:{labels:labels,datasets:[
+      {label:'Closed ($K)',data:wonData,backgroundColor:'rgba(30,123,60,.7)',borderRadius:4,order:2},
+      {type:'line',label:'Target ($K)',data:targetData,borderColor:'rgba(200,16,46,.7)',borderDash:[6,3],borderWidth:2,pointRadius:0,fill:false,order:1}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{position:'bottom',labels:{font:{family:'Barlow',size:10},boxWidth:10,padding:8}}},
+      scales:{
+        x:{grid:{display:false},ticks:{font:{size:10}}},
+        y:{ticks:{callback:function(v){return '$'+v+'K'},font:{size:10}},grid:{color:'rgba(0,0,0,.06)'}}
+      }
+    }
+  });
+}
+
+function renderLossChart(){
+  var canvas=document.getElementById('lossReasonsChart');
+  if(!canvas) return;
+  var lossMap={price:'Price',relationship:'Relationship',timing:'Timing',scope:'Scope',competitor:'Competitor',unknown:'Unknown'};
+  var counts={};
+  DB.leads.filter(function(l){return l.stage==='lost'&&l.lossReason;}).forEach(function(l){
+    var r=lossMap[l.lossReason]||l.lossReason||'Unknown';
+    counts[r]=(counts[r]||0)+1;
+  });
+  var entries=Object.entries(counts).sort(function(a,b){return b[1]-a[1];});
+  if(goalsChartLoss){goalsChartLoss.destroy();goalsChartLoss=null;}
+  if(entries.length===0){
+    canvas.parentElement.innerHTML='<div style="height:140px;display:flex;align-items:center;justify-content:center;color:var(--soft);font-size:12px">No lost deals recorded yet</div>';
+    return;
+  }
+  goalsChartLoss=new Chart(canvas,{
+    type:'bar',
+    data:{labels:entries.map(function(e){return e[0];}),
+      datasets:[{data:entries.map(function(e){return e[1];}),backgroundColor:'rgba(200,16,46,.7)',borderRadius:4}]},
+    options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false}},
+      scales:{x:{ticks:{font:{size:10}},grid:{color:'rgba(0,0,0,.06)'}},y:{ticks:{font:{size:10}},grid:{display:false}}}
+    }
+  });
+}
+
+// ══════════════════════════════════════════
+// AI SALES COACH
+// ══════════════════════════════════════════
+
+var coachContext = {};
+
+function loadCoachPrompts(){
+  var bar=document.getElementById('aiCoachPromptBar');
+  if(!bar) return;
+  var presets=[
+    {label:'🎯 Daily Focus',key:'daily_focus'},
+    {label:'🛡 Save At-Risk Accounts',key:'jeopardy'},
+    {label:'📈 Cross-Sell Strategy',key:'expand'},
+    {label:'🚀 Close These Leads',key:'grow'},
+    {label:'📉 Why Am I Losing Deals?',key:'loss_pattern'},
+    {label:'📞 Cold Call Script',key:'cold_call'},
+    {label:'💰 Hit My Goal',key:'hit_goal'},
+    {label:'📅 Build My Week',key:'weekly_plan'},
+  ];
+  bar.innerHTML=presets.map(function(p){
+    return '<button onclick="askCoachPreset(\''+p.key+'\')" style="background:#2A2E33;border:1px solid #3A3E43;color:#BFC4CA;font-family:\'Barlow Condensed\',sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;padding:5px 11px;border-radius:5px;cursor:pointer;transition:all .12s;white-space:nowrap">'+p.label+'</button>';
+  }).join('');
+}
+
+function buildCoachContext(){
+  var G=goalsObj(),q=curQuarter();
+  var Q=G.q[q]||{};
+  var qGoal=Number(Q.dollar)||80000;
+  var qr=quarterRange(q);
+  var wonQtr=DB.leads.filter(function(l){return l.stage==='won'&&l.closed&&l.closed>=qr[0]&&l.closed<qr[1];});
+  var closedQtr=wonQtr.reduce(function(s,l){return s+(Number(l.value)||0);},0);
+  var openLeads=DB.leads.filter(function(l){return l.stage!=='won'&&l.stage!=='lost';});
+  var pipeVal=openLeads.reduce(function(s,l){return s+(Number(l.value)||0);},0);
+  var allClosed=DB.leads.filter(function(l){return l.stage==='won'||l.stage==='lost';});
+  var winRate=allClosed.length>0?Math.round(DB.leads.filter(function(l){return l.stage==='won';}).length/allClosed.length*100):0;
+  var atRisk=atRiskCustomers();
+  var customers=DB.accounts.filter(function(a){return a.status==='Customer'&&!a.churned;});
+  var singleSvc=customers.filter(function(a){
+    return DB.leads.filter(function(l){return l.accountId===a.id&&l.stage==='won';}).length<=1;
+  });
+  var topLeads=openLeads.sort(function(a,b){return (Number(b.value)||0)-(Number(a.value)||0);}).slice(0,5);
+  var lostDeals=DB.leads.filter(function(l){return l.stage==='lost';});
+  var lossReasons={};
+  lostDeals.forEach(function(l){var r=l.lossReason||'unknown';lossReasons[r]=(lossReasons[r]||0)+1;});
+
+  return {
+    repName: G.rep||'the rep',
+    quarter: q,
+    qGoal: qGoal,
+    closedQtr: closedQtr,
+    attainPct: qGoal>0?Math.round(closedQtr/qGoal*100):0,
+    toGoal: Math.max(0,qGoal-closedQtr),
+    pipeVal: pipeVal,
+    winRate: winRate,
+    openLeads: openLeads.length,
+    atRiskCount: atRisk.length,
+    atRiskAccounts: atRisk.slice(0,3).map(function(x){return x.a.name+' ('+x.days+'d no contact)';}),
+    singleSvcCount: singleSvc.length,
+    singleSvcAccounts: singleSvc.slice(0,3).map(function(a){return a.name;}),
+    topLeads: topLeads.map(function(l){var a=acctById(l.accountId)||{};return (a.name||'Unknown')+': $'+(Number(l.value)||0).toLocaleString()+' ('+l.stage+')';}),
+    lossReasons: JSON.stringify(lossReasons),
+    totalAccounts: DB.accounts.length,
+    customerCount: customers.length,
+  };
+}
+
+function getCoachPrompt(key, customQ){
+  var ctx=buildCoachContext();
+  var ctxStr='LIVE REP DATA:\n'+
+    'Rep: '+ctx.repName+'\n'+
+    'Quarter: '+ctx.quarter+'\n'+
+    'Quota: $'+ctx.qGoal.toLocaleString()+'\n'+
+    'Closed This Quarter: $'+ctx.closedQtr.toLocaleString()+' ('+ctx.attainPct+'% attainment)\n'+
+    'To Goal: $'+ctx.toGoal.toLocaleString()+'\n'+
+    'Open Pipeline: '+ctx.openLeads+' leads worth $'+ctx.pipeVal.toLocaleString()+'\n'+
+    'Win Rate: '+ctx.winRate+'%\n'+
+    'At-Risk Accounts: '+ctx.atRiskCount+' — '+ctx.atRiskAccounts.join(', ')+'\n'+
+    'Single-Service Accounts (Cross-sell opportunity): '+ctx.singleSvcCount+' — '+ctx.singleSvcAccounts.join(', ')+'\n'+
+    'Top Open Leads: '+ctx.topLeads.join(' | ')+'\n'+
+    'Loss Reasons: '+ctx.lossReasons+'\n';
+
+  var systemBase='You are an expert sales coach for Termac Family of Companies — a commercial fire protection, grease trap, chemical supply, and fabrication services company covering Eastern PA, NJ, DE, MD, and DC. You know their specific services: NFPA fire suppression inspections and repairs (UniPro/Quality III), grease trap pumping (GTO), chemical/dishwasher leasing (Termac), filter exchange (Filter Man), and stainless steel fabrication (AllPro). You coach '+ctx.repName+'. Be direct, specific, and use the rep\'s actual numbers. No generic sales advice. Tell them exactly what to do, in what order, with specific account names from the data. Format responses clearly with numbered steps.';
+
+  var prompts={
+    daily_focus: systemBase+'\n\n'+ctxStr+'\nBased on this rep\'s current numbers and pipeline, give them their TOP 3 PRIORITIES for today. Be specific — name accounts, explain why each is the priority, and give them the opening line to use when they call. Then give one stretch goal if they finish early.',
+    jeopardy: systemBase+'\n\n'+ctxStr+'\nThe rep has '+ctx.atRiskCount+' at-risk accounts with no contact this quarter. These accounts are the most likely to churn. Give the rep a specific save plan: which account to call first and why, what to say to open the conversation, how to re-establish value, and what follow-up to schedule. Give a script outline for the first call.',
+    expand: systemBase+'\n\n'+ctxStr+'\nThe rep has '+ctx.singleSvcCount+' existing customers using only one service. These are the easiest deals to close — no cold call needed. Identify the top 3 cross-sell opportunities based on what services they likely need, draft a one-sentence opener for each, and explain the financial impact to the rep of converting each one to a multi-service account.',
+    grow: systemBase+'\n\n'+ctxStr+'\nThe rep has these open leads: '+ctx.topLeads.join(', ')+'. Based on stage and value, tell the rep exactly how to advance each one. What\'s the specific next action for each? Give a priority order. Which one is most likely to close this quarter and what does the rep need to do THIS WEEK to make it happen?',
+    loss_pattern: systemBase+'\n\n'+ctxStr+'\nThe rep\'s loss reasons are: '+ctx.lossReasons+'. Identify the pattern. What is the rep doing wrong or what objection are they failing to handle? Give 3 specific tactics to address the most common loss reason. Include a rebuttal script for the top objection in the context of fire protection services.',
+    cold_call: systemBase+'\n\n'+ctxStr+'\nWrite a 60-second cold call script for a new commercial kitchen prospect who came from a new restaurant permit or liquor license approval. The script should: open with relevance to their situation (new opening, compliance requirements), establish credibility quickly, create urgency without being pushy, and ask for a site walkthrough. Tone: professional but warm. This is not a robocall — it should sound human.',
+    hit_goal: systemBase+'\n\n'+ctxStr+'\nThe rep needs $'+ctx.toGoal.toLocaleString()+' more to hit their quota. Based on the current pipeline and win rate, tell them: Is it mathematically possible? What combination of open leads would get them there? Which specific deals should they accelerate and how? What new leads should they add to the pipeline this week to cover the gap?',
+    weekly_plan: systemBase+'\n\n'+ctxStr+'\nBuild a specific 5-day plan for this rep. Day by day (Monday through Friday), tell them: what accounts to call, which leads to advance, what prospecting to do, and when to do admin. Account for the at-risk accounts, the cross-sell opportunities, and the highest-value open leads. This plan should get them closer to their quota goal by Friday.',
+  };
+
+  if(key==='custom') return systemBase+'\n\n'+ctxStr+'\n'+customQ;
+  return prompts[key]||prompts.daily_focus;
+}
+
+function askCoachPreset(key){
+  var content=document.getElementById('aiCoachContent');
+  if(!content) return;
+  content.innerHTML='<div style="color:#8A909A;font-style:italic;display:flex;align-items:center;gap:8px"><span style="width:14px;height:14px;border:2px solid #444;border-top-color:var(--red);border-radius:50%;animation:spin .7s linear infinite;display:inline-block"></span> Analyzing your pipeline and building a personalized plan...</div>';
+  var prompt=getCoachPrompt(key,'');
+  callCoachAPI(prompt);
+}
+
+function askCoach(){
+  var q=(document.getElementById('aiCoachQ').value||'').trim();
+  if(!q) return askCoachPreset('daily_focus');
+  var content=document.getElementById('aiCoachContent');
+  content.innerHTML='<div style="color:#8A909A;font-style:italic;display:flex;align-items:center;gap:8px"><span style="width:14px;height:14px;border:2px solid #444;border-top-color:var(--red);border-radius:50%;animation:spin .7s linear infinite;display:inline-block"></span> Thinking...</div>';
+  callCoachAPI(getCoachPrompt('custom',q));
+}
+
+function callCoachAPI(prompt){
+  var content=document.getElementById('aiCoachContent');
+  fetch('https://api.anthropic.com/v1/messages',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1000,messages:[{role:'user',content:prompt}]})
+  }).then(function(r){return r.json();}).then(function(data){
+    var text=(data.content&&data.content.find(function(b){return b.type==='text';})||{}).text||'No response.';
+    renderCoachResponse(text);
+  }).catch(function(){
+    content.innerHTML='<div style="color:#8A909A;font-size:12px">Connection error. Check API access.</div>';
+  });
+}
+
+function renderCoachResponse(text){
+  var content=document.getElementById('aiCoachContent');
+  var lines=text.split('\n').filter(function(l){return l.trim();});
+  var html='';
+  lines.forEach(function(line){
+    var stepM=line.match(/^(\d+)[\.\)]/);
+    if(stepM){
+      var body=line.replace(/^\d+[\.\)]\s*/,'');
+      var boldM=body.match(/^\*\*([^*]+)\*\*:?(.*)/);
+      if(boldM){
+        html+='<div style="background:#252A30;border-radius:7px;padding:9px 12px;margin-bottom:7px;border-left:3px solid var(--red);display:flex;gap:8px"><span style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:10px;color:var(--red);letter-spacing:.10em;text-transform:uppercase;white-space:nowrap;margin-top:1px">Step '+stepM[1]+'</span><span><strong style="color:#fff">'+boldM[1]+'</strong>'+boldM[2]+'</span></div>';
+      } else {
+        html+='<div style="background:#252A30;border-radius:7px;padding:9px 12px;margin-bottom:7px;border-left:3px solid var(--red);display:flex;gap:8px"><span style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:10px;color:var(--red);letter-spacing:.10em;text-transform:uppercase;white-space:nowrap;margin-top:1px">Step '+stepM[1]+'</span><span>'+body+'</span></div>';
+      }
+    } else if(line.startsWith('#')){
+      html+='<div style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:13px;color:#E5E7EB;margin:12px 0 6px">'+line.replace(/#+\s*/,'')+'</div>';
+    } else {
+      html+='<p style="margin-bottom:8px;color:#BFC4CA;font-size:12px;line-height:1.6">'+line+'</p>';
+    }
+  });
+  content.innerHTML=html||'<p style="color:#BFC4CA;font-size:13px">'+text+'</p>';
+}
+
+</script>
 <style>
 :root{--bg:#EEF0F2;--panel:#FFF;--ink:#1A1D21;--soft:#5A616B;--line:#D7DBE0;--red:#C8102E;--yellow:#F2B705;
 --green:#1E7B3C;--blue:#1B5FA8;--orange:#D8690B;--gray:#6B7280;--radius:10px;--shadow:0 1px 3px rgba(26,29,33,.08),0 4px 14px rgba(26,29,33,.06)}
@@ -173,6 +771,69 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--red)}
 .bid-stat-tile{background:var(--panel);border-radius:8px;box-shadow:var(--shadow);padding:14px 16px;text-align:center;border-top:3px solid transparent}
 .bid-stat-val{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:26px;line-height:1}
 .bid-stat-lbl{font-size:10px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.08em;margin-top:4px}
+
+/* ── GOALS & FORECAST ── */
+.goals-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:18px}
+@media(max-width:860px){.goals-grid{grid-template-columns:1fr}}
+.goals-col{display:flex;flex-direction:column;gap:14px}
+.goal-panel{background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
+.goal-panel-hdr{padding:12px 16px;border-bottom:1.5px solid var(--line);display:flex;align-items:center;justify-content:space-between}
+.goal-panel-hdr h3{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px;letter-spacing:.10em;text-transform:uppercase}
+.goal-panel-body{padding:14px 16px}
+
+/* GAUGE */
+.gauge-container{display:flex;flex-direction:column;align-items:center;padding:10px 0 6px}
+.gauge-arc-wrap{position:relative;width:160px;height:90px;overflow:hidden;margin:0 auto}
+.gauge-arc-bg{width:160px;height:160px;border-radius:50%;border:18px solid #EEF0F2;position:absolute;top:0;left:0;clip-path:polygon(0 0,100% 0,100% 55%,0 55%)}
+.gauge-arc-fill{width:160px;height:160px;border-radius:50%;border:18px solid var(--green);position:absolute;top:0;left:0;clip-path:polygon(0 0,100% 0,100% 55%,0 55%);transform-origin:80px 80px;transition:transform .6s ease}
+.gauge-needle{position:absolute;bottom:0;left:50%;width:2px;height:72px;background:#1A1D21;transform-origin:bottom center;transform:translateX(-50%) rotate(-90deg);border-radius:2px;transition:transform .6s ease}
+.gauge-val-big{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:32px;text-align:center;line-height:1;margin-top:4px}
+.gauge-pct{font-size:12px;color:var(--soft);text-align:center;margin-top:2px}
+
+/* PROGRESS BARS */
+.prog-row{margin-bottom:12px}
+.prog-label-row{display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px}
+.prog-label{font-weight:700;color:var(--ink)}
+.prog-nums{color:var(--soft)}
+.prog-track{height:10px;background:#EEF0F2;border-radius:5px;overflow:hidden;position:relative}
+.prog-fill{height:100%;border-radius:5px;transition:width .5s ease}
+.prog-marker{position:absolute;top:-3px;bottom:-3px;width:2px;background:#1A1D21;border-radius:1px}
+.prog-sublabel{font-size:10px;color:var(--soft);margin-top:3px}
+
+/* FUEL / ENGINE / FINISH cards */
+.three-col{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:18px}
+@media(max-width:860px){.three-col{grid-template-columns:1fr}}
+.fuel-card{background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;border-top:4px solid var(--blue)}
+.fuel-card.engine{border-top-color:var(--orange)}
+.fuel-card.finish{border-top-color:var(--green)}
+.fuel-card-title{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft);margin-bottom:12px;display:flex;align-items:center;gap:6px}
+.activity-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.activity-label{font-size:13px;color:var(--ink);font-weight:600}
+.activity-val{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:18px}
+
+/* FORECAST TABLE */
+.forecast-table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:4px}
+.forecast-table th{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--soft);padding:8px 10px;background:#F8F9FA;border-bottom:1.5px solid var(--line);text-align:left}
+.forecast-table td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:middle}
+.forecast-table tr:last-child td{border-bottom:none}
+.forecast-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+.fb-ahead{background:#E7F5EC;color:var(--green)}
+.fb-behind{background:#FEE9EC;color:var(--red)}
+.fb-watch{background:#FEF9E6;color:#92600A}
+.fb-ontrack{background:#EBF2FD;color:var(--blue)}
+
+/* COMMISSION BOX */
+.comm-box{background:#1A1D21;border-radius:8px;padding:14px 16px;color:#fff;margin-top:4px}
+.comm-earned{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:36px;color:#22c55e;line-height:1}
+.comm-sub{font-size:11px;color:#8A909A;margin-top:4px}
+.comm-row{display:flex;justify-content:space-between;font-size:12px;margin-top:8px;padding-top:8px;border-top:1px solid #2A2E33}
+.comm-lbl{color:#8A909A}.comm-amt{color:#fff;font-weight:700}
+
+/* INPUT SECTION */
+.goals-input-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:18px}
+@media(max-width:720px){.goals-input-grid{grid-template-columns:1fr}}
+.goals-input-panel{background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 18px}
+.goals-input-panel h3{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--soft);margin-bottom:12px}
 </style>
 </head>
 <body>
@@ -212,6 +873,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--red)}
   <button class="tab" data-v="map">🗺 Territory Map</button>
   <button class="tab" data-v="survey">📋 Site Survey</button>
   <button class="tab" data-v="bids">🎯 Bid Board</button>
+  <button class="tab" data-v="goals">🏁 Goals &amp; Forecast</button>
 </div>
 
 
@@ -1224,59 +1886,190 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--red)}
 </section>
 
 <section id="view-goals" class="view">
-  <h2>Rep profile &amp; commission</h2>
-  <div class="card">
-    <div class="row3">
-      <div><label>Sales rep name</label><input id="g_rep" placeholder="Ted Scholl"></div>
-      <div><label>Commission rate (%)</label><input id="g_comm" inputmode="decimal" placeholder="e.g. 8"></div>
-      <div><label>Manager email (weekly report)</label><input id="g_mgr" inputmode="email" placeholder="manager@termac.com"></div>
+<section id="view-goals" class="view">
+
+  <!-- ══ AI COACH MODAL ══ -->
+  <div class="overlay" id="aiCoachOv" style="z-index:600">
+    <div class="modal" style="max-width:660px;background:#1A1D21;border:1.5px solid var(--red);border-radius:14px;padding:0;overflow:hidden">
+      <div style="background:linear-gradient(135deg,#C8102E,#8B0B1F);padding:16px 20px;display:flex;align-items:center;justify-content:space-between">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:16px;letter-spacing:.08em;text-transform:uppercase;color:#fff;display:flex;align-items:center;gap:8px">⚡ AI Sales Coach</div>
+        <button onclick="document.getElementById('aiCoachOv').classList.remove('open')" style="background:none;border:none;color:rgba(255,255,255,.7);font-size:22px;cursor:pointer">✕</button>
+      </div>
+      <div style="padding:14px 20px 0">
+        <div id="aiCoachPromptBar" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px"></div>
+        <div id="aiCoachInput" style="display:flex;gap:8px;margin-bottom:12px">
+          <input id="aiCoachQ" placeholder="Ask anything — what should I focus on today?" style="flex:1;background:#252A30;border:1px solid #3A3E43;border-radius:8px;padding:10px 14px;color:#E5E7EB;font-size:13px;font-family:inherit;outline:none">
+          <button onclick="askCoach()" style="background:var(--red);color:#fff;border:none;border-radius:8px;padding:10px 18px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12px;letter-spacing:.10em;text-transform:uppercase;cursor:pointer">Ask</button>
+        </div>
+      </div>
+      <div id="aiCoachContent" style="padding:0 20px 20px;color:#D0D5DC;font-size:13px;line-height:1.65;min-height:140px;max-height:380px;overflow-y:auto"></div>
+      <div style="padding:10px 20px 14px;border-top:1px solid #2A2E33;display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:10px;color:#555B65;letter-spacing:.04em">Powered by Claude · Context: your live pipeline + accounts</span>
+        <button onclick="askCoach()" id="aiCoachRegen" style="background:#2A2E33;border:1px solid #3A3E43;color:#BFC4CA;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.10em;text-transform:uppercase;padding:6px 14px;border-radius:6px;cursor:pointer">↺ Regenerate</button>
+      </div>
     </div>
   </div>
-  <h2>Weekly activity targets (the fuel)</h2>
-  <div class="card"><div class="row3">
-    <div><label>Site visits / week</label><input id="g_wvisits" inputmode="numeric" placeholder="10"></div>
-    <div><label>Calls / week</label><input id="g_wcalls" inputmode="numeric" placeholder="25"></div>
-    <div><label>Emails / week</label><input id="g_wemails" inputmode="numeric" placeholder="25"></div>
-  </div></div>
-  <h2 id="gQTitle">Quarterly goals</h2>
-  <div class="card">
-    <div class="row2">
-      <div><label>Quarterly $ goal</label><input id="g_qdollar" inputmode="numeric"></div>
-      <div><label>New accounts goal</label><input id="g_qaccts" inputmode="numeric"></div>
+
+  <!-- ══ PAGE HEADER ══ -->
+  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:20px">
+    <div>
+      <h2 style="margin:0" id="g_pageTitle">Goals, Forecast &amp; Performance</h2>
+      <div style="font-size:12px;color:var(--ink-soft);margin-top:3px">Three engines: Protect accounts · Expand relationships · Grow new business</div>
     </div>
-    <div class="row2">
-      <div><label>Retention goal (%)</label><input id="g_qret" inputmode="numeric"></div>
-      <div><label>Customer loyalty score goal</label><input id="g_qloy" inputmode="numeric" placeholder="e.g. 9 of 10"></div>
-    </div>
-    <p class="sub" style="margin-top:8px">Retention and loyalty actuals now compute automatically — retention from customer churn (mark an account "Former customer"), loyalty from touch coverage of active customers each quarter.</p>
-  </div>
-  <h2>Annual goals</h2>
-  <div class="card">
-    <div class="row2">
-      <div><label>Annual $ goal</label><input id="g_adollar" inputmode="numeric"></div>
-      <div><label>New accounts goal (year)</label><input id="g_aaccts" inputmode="numeric"></div>
-    </div>
-    <div class="row2">
-      <div><label>Retention goal (%)</label><input id="g_aret" inputmode="numeric"></div>
-      <div><label>Loyalty score goal</label><input id="g_aloy" inputmode="numeric"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <select id="g_quarterSelect" onchange="renderGoalsDash()" style="font-size:12px;padding:6px 10px;border:1px solid var(--line);border-radius:6px;background:var(--panel)"></select>
+      <button class="btn primary" onclick="document.getElementById('aiCoachOv').classList.add('open');loadCoachPrompts();askCoachPreset('daily_focus')" style="background:var(--red);color:#fff;display:flex;align-items:center;gap:6px">⚡ AI Sales Coach</button>
+      <button class="btn" onclick="showGoalsSetup()" style="background:var(--bg)">⚙ Set Goals</button>
     </div>
   </div>
-  <h2>Bonus tiers (quarterly quota attainment)</h2>
-  <div class="card"><div class="row3">
-    <div><label>Bonus at 100% ($)</label><input id="g_b100" inputmode="numeric"></div>
-    <div><label>Bonus at 110% ($)</label><input id="g_b110" inputmode="numeric"></div>
-    <div><label>Bonus at 120% ($)</label><input id="g_b120" inputmode="numeric"></div>
+
+  <!-- ══ QUOTA ATTAINMENT HERO ══ -->
+  <div style="display:grid;grid-template-columns:auto 1fr;gap:16px;margin-bottom:16px;background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px;border-top:4px solid var(--green)" id="quotaHeroCard">
+    <div style="text-align:center;min-width:180px">
+      <canvas id="quotaGauge" width="180" height="110"></canvas>
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px;letter-spacing:.10em;text-transform:uppercase;color:var(--soft);margin-top:4px">Quota Attainment</div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;align-content:center" id="quotaKPIGrid"></div>
   </div>
-  <p class="sub">Hit 110% and the 110% bonus replaces the 100% bonus (enter cumulative totals if they add up).</p></div>
-  <h2>Annual bonus tiers (year-end milestone)</h2>
-  <div class="card"><div class="row3">
-    <div><label>Bonus at 100% ($)</label><input id="g_ab100" inputmode="numeric"></div>
-    <div><label>Bonus at 110% ($)</label><input id="g_ab110" inputmode="numeric"></div>
-    <div><label>Bonus at 120% ($)</label><input id="g_ab120" inputmode="numeric"></div>
+
+  <!-- ══ THREE ENGINES ══ -->
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:18px" id="threeEngines">
+
+    <!-- ENGINE 1: PROTECT -->
+    <div style="background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;border-top:4px solid var(--red)">
+      <div style="background:#1C0A0E;padding:12px 16px;display:flex;align-items:center;justify-content:space-between">
+        <div>
+          <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px;color:var(--red);letter-spacing:.10em;text-transform:uppercase">🛡 Engine 1 — Protect</div>
+          <div style="font-size:11px;color:#8A909A;margin-top:2px">Accounts in jeopardy</div>
+        </div>
+        <button onclick="askCoachPreset('jeopardy');document.getElementById('aiCoachOv').classList.add('open')" style="background:var(--red);color:#fff;border:none;border-radius:6px;padding:5px 10px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">⚡ AI Plan</button>
+      </div>
+      <div id="engineProtect" style="padding:10px 14px 14px"></div>
+    </div>
+
+    <!-- ENGINE 2: EXPAND -->
+    <div style="background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;border-top:4px solid var(--blue)">
+      <div style="background:#0D1C2E;padding:12px 16px;display:flex;align-items:center;justify-content:space-between">
+        <div>
+          <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px;color:#5B9FE8;letter-spacing:.10em;text-transform:uppercase">📈 Engine 2 — Expand</div>
+          <div style="font-size:11px;color:#8A909A;margin-top:2px">Cross-sell opportunities</div>
+        </div>
+        <button onclick="askCoachPreset('expand');document.getElementById('aiCoachOv').classList.add('open')" style="background:var(--blue);color:#fff;border:none;border-radius:6px;padding:5px 10px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">⚡ AI Plan</button>
+      </div>
+      <div id="engineExpand" style="padding:10px 14px 14px"></div>
+    </div>
+
+    <!-- ENGINE 3: GROW -->
+    <div style="background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;border-top:4px solid var(--green)">
+      <div style="background:#091C0F;padding:12px 16px;display:flex;align-items:center;justify-content:space-between">
+        <div>
+          <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px;color:#4DC77A;letter-spacing:.10em;text-transform:uppercase">🚀 Engine 3 — Grow</div>
+          <div style="font-size:11px;color:#8A909A;margin-top:2px">New leads &amp; pipeline</div>
+        </div>
+        <button onclick="askCoachPreset('grow');document.getElementById('aiCoachOv').classList.add('open')" style="background:var(--green);color:#fff;border:none;border-radius:6px;padding:5px 10px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">⚡ AI Plan</button>
+      </div>
+      <div id="engineGrow" style="padding:10px 14px 14px"></div>
+    </div>
+
   </div>
-  <p class="sub">Measured against the annual $ goal above — the year-end number to chase after the quarterly checks clear.</p></div>
-  <div class="toolbar"><button class="btn primary" onclick="saveGoals()">Save Goals</button></div>
-  <p class="sub">Dollar and new-account attainment compute automatically from won deals and account create dates. Retention and loyalty are entered as actuals until service history lives in the system to compute them.</p>
+
+  <!-- ══ CHARTS ROW ══ -->
+  <div style="display:grid;grid-template-columns:2fr 1fr;gap:14px;margin-bottom:16px">
+
+    <!-- Revenue trend + forecast -->
+    <div style="background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px">
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--soft);margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
+        Monthly Revenue vs Target
+        <span style="font-size:10px;font-weight:600;text-transform:none;letter-spacing:0;color:var(--soft)">Closed won · 6-month rolling</span>
+      </div>
+      <div style="position:relative;height:180px"><canvas id="revenueChart"></canvas></div>
+    </div>
+
+    <!-- Pipeline funnel -->
+    <div style="background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px">
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--soft);margin-bottom:12px">Pipeline Funnel</div>
+      <div id="goalsFunnel"></div>
+    </div>
+
+  </div>
+
+  <!-- ══ ACTIVITY + LEADERBOARD ROW ══ -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">
+
+    <!-- Activity tracker -->
+    <div style="background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px">
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--soft);margin-bottom:14px;display:flex;justify-content:space-between;align-items:center">
+        Weekly Activity — The Fuel
+        <span id="activityStreak" style="font-size:11px;font-weight:700;color:var(--orange)"></span>
+      </div>
+      <div id="activityBars"></div>
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
+        <div style="font-size:11px;font-weight:700;color:var(--soft);letter-spacing:.06em;text-transform:uppercase;margin-bottom:8px">Pace Check — This Week</div>
+        <div id="paceCheck"></div>
+      </div>
+    </div>
+
+    <!-- Sales leaderboard -->
+    <div style="background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden">
+      <div style="background:#1A1D21;padding:12px 16px;display:flex;align-items:center;justify-content:space-between">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12px;letter-spacing:.10em;text-transform:uppercase;color:var(--yellow)">🏆 Sales Leaderboard — <span id="lbQtrLabel"></span></div>
+        <span style="font-size:10px;color:#8A909A">Company sees this</span>
+      </div>
+      <div id="salesLbRows"></div>
+    </div>
+
+  </div>
+
+  <!-- ══ WIN/LOSS + COMMISSION ROW ══ -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">
+
+    <!-- Win/loss analysis -->
+    <div style="background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px">
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--soft);margin-bottom:12px">Win / Loss Analysis</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px" id="winLossKPIs"></div>
+      <div style="position:relative;height:140px"><canvas id="lossReasonsChart"></canvas></div>
+    </div>
+
+    <!-- Commission + bonus calculator -->
+    <div style="background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px">
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--soft);margin-bottom:14px">Commission &amp; Bonus Calculator</div>
+      <div id="commissionCalc"></div>
+    </div>
+
+  </div>
+
+  <!-- ══ GOALS SETUP (collapsible) ══ -->
+  <details id="goalsSetupPanel" style="background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;margin-bottom:20px">
+    <summary style="padding:14px 18px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);cursor:pointer;list-style:none;border-bottom:1px solid var(--line)">⚙ Goals Setup — Click to expand</summary>
+    <div style="padding:18px">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:14px">
+        <div><label>Sales Rep Name</label><input id="g_rep" placeholder="Ted Scholl"></div>
+        <div><label>Commission Rate (%)</label><input id="g_comm" inputmode="decimal" placeholder="e.g. 8"></div>
+        <div><label>Manager Email</label><input id="g_mgr" inputmode="email" placeholder="manager@termac.com"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:14px">
+        <div><label>Quarterly $ Goal</label><input id="g_qdollar" inputmode="numeric"></div>
+        <div><label>New Accounts Goal</label><input id="g_qaccts" inputmode="numeric"></div>
+        <div><label>Retention Goal (%)</label><input id="g_qret" inputmode="numeric"></div>
+        <div><label>Monthly $ Goal</label><input id="g_mdollar" inputmode="numeric" placeholder="Qtr ÷ 3"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:14px">
+        <div><label>Weekly Site Visits Target</label><input id="g_wvisits" inputmode="numeric" placeholder="10"></div>
+        <div><label>Weekly Calls Target</label><input id="g_wcalls" inputmode="numeric" placeholder="25"></div>
+        <div><label>Weekly Emails Target</label><input id="g_wemails" inputmode="numeric" placeholder="25"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:8px">
+        <div><label>Bonus at 100% ($)</label><input id="g_b100" inputmode="numeric"></div>
+        <div><label>Bonus at 110% ($)</label><input id="g_b110" inputmode="numeric"></div>
+        <div><label>Bonus at 120% ($)</label><input id="g_b120" inputmode="numeric"></div>
+      </div>
+      <div><label>Annual $ Goal</label><input id="g_adollar" inputmode="numeric" style="max-width:220px"></div>
+      <div class="toolbar" style="margin-top:14px"><button class="btn primary" onclick="saveGoals()">Save Goals</button></div>
+    </div>
+  </details>
+
+</section>
+
 </section>
 
 
@@ -1304,7 +2097,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--red)}
 
       <!-- PIPELINE FUNNEL -->
       <div style="background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 18px">
-        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
           Bid Pipeline Funnel
           <span style="font-size:10px;font-weight:600;text-transform:none;letter-spacing:0;color:var(--ink-soft)" id="bidFunnelSub">This month</span>
         </div>
@@ -1313,7 +2106,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--red)}
 
       <!-- WIN/LOSS DONUT -->
       <div style="background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 18px">
-        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:10px">Win / Loss Split</div>
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:10px">Win / Loss Split</div>
         <div style="position:relative;height:140px"><canvas id="bidWinLossChart"></canvas></div>
         <div id="bidWinRateLbl" style="text-align:center;margin-top:8px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:22px;color:var(--green)">—</div>
         <div style="text-align:center;font-size:10px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.08em">Win Rate</div>
@@ -1321,7 +2114,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--red)}
 
       <!-- AVG BID SIZE + MARGIN GAUGES -->
       <div style="background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 18px">
-        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:12px">Bid Financials</div>
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:12px">Bid Financials</div>
         <div id="bidFinGauges" style="display:flex;flex-direction:column;gap:10px"></div>
       </div>
 
@@ -1332,19 +2125,19 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--red)}
 
       <!-- DOLLAR VOLUME BY MONTH -->
       <div style="background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 18px">
-        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:10px">Dollar Volume Submitted vs Won (Monthly)</div>
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:10px">Dollar Volume Submitted vs Won (Monthly)</div>
         <div style="position:relative;height:160px"><canvas id="bidVolumeChart"></canvas></div>
       </div>
 
       <!-- SOURCE BREAKDOWN -->
       <div style="background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 18px">
-        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:10px">Bids by Source</div>
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:10px">Bids by Source</div>
         <div style="position:relative;height:160px"><canvas id="bidSourceChart"></canvas></div>
       </div>
 
       <!-- LOSS REASON BREAKDOWN -->
       <div style="background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 18px">
-        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:10px">Loss Reasons</div>
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:10px">Loss Reasons</div>
         <div style="position:relative;height:160px"><canvas id="bidLossChart"></canvas></div>
       </div>
 
@@ -1355,13 +2148,13 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--red)}
 
       <!-- BID TYPE PERFORMANCE -->
       <div style="background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 18px">
-        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:10px">Win Rate by Bid Type</div>
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:10px">Win Rate by Bid Type</div>
         <div style="position:relative;height:160px"><canvas id="bidTypeChart"></canvas></div>
       </div>
 
       <!-- PENDING DECISION TABLE -->
       <div style="background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 18px">
-        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:10px">⏳ Pending Decisions — Upcoming</div>
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:10px">⏳ Pending Decisions — Upcoming</div>
         <div id="bidPendingList" style="font-size:12px"></div>
       </div>
 
@@ -1373,7 +2166,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--red)}
 
   <!-- HARVEST SOURCES PANEL -->
   <details style="margin-bottom:16px">
-    <summary style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft);cursor:pointer;padding:10px 14px;background:var(--panel);border-radius:8px;border:1px solid var(--line);list-style:none">
+    <summary style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft);cursor:pointer;padding:10px 14px;background:var(--panel);border-radius:8px;border:1px solid var(--line);list-style:none">
       ⚡ Harvest Sources — Click to expand bid intelligence feeds
     </summary>
     <div style="background:var(--panel);border:1px solid var(--line);border-top:none;border-radius:0 0 8px 8px;padding:14px">
@@ -1640,19 +2433,19 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--red)}
           <div id="extResult" style="display:none;background:var(--panel);border-radius:8px;padding:12px 14px;border:1.5px solid var(--green)">
             <div style="display:flex;gap:16px;flex-wrap:wrap;justify-content:space-between">
               <div style="text-align:center">
-                <div id="ext_count" style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:28px;color:var(--blue)">0</div>
+                <div id="ext_count" style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:28px;color:var(--blue)">0</div>
                 <div style="font-size:10px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.08em">Est. Extinguishers</div>
               </div>
               <div style="text-align:center">
-                <div id="ext_hoods_count" style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:28px;color:var(--orange)">0</div>
+                <div id="ext_hoods_count" style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:28px;color:var(--orange)">0</div>
                 <div style="font-size:10px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.08em">Hood Systems</div>
               </div>
               <div style="text-align:center">
-                <div id="ext_annual" style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:28px;color:var(--green)">$0</div>
+                <div id="ext_annual" style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:28px;color:var(--green)">$0</div>
                 <div style="font-size:10px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.08em">Est. Annual Revenue</div>
               </div>
               <div style="text-align:center">
-                <div id="ext_bid" style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:28px;color:var(--red)">$0</div>
+                <div id="ext_bid" style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:28px;color:var(--red)">$0</div>
                 <div style="font-size:10px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.08em">Est. Bid Amount</div>
               </div>
             </div>
@@ -1748,7 +2541,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--red)}
     </div>
 
     <div style="background:var(--bg);border-radius:8px;padding:12px 14px;margin:10px 0">
-      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:10px">Bid Financials</div>
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:10px">Bid Financials</div>
       <div class="row2">
         <div><label>Bid Amount ($)</label><input id="b_amount" type="number" placeholder="0" oninput="calcBidMargin()"></div>
         <div><label>Material Cost ($)</label><input id="b_material" type="number" placeholder="0" oninput="calcBidMargin()"></div>
@@ -1758,10 +2551,10 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--red)}
         <div><label>Other Cost ($)</label><input id="b_othercost" type="number" placeholder="0" oninput="calcBidMargin()"></div>
       </div>
       <div id="bidMarginCalc" style="display:none;margin-top:10px;background:var(--panel);border-radius:6px;padding:10px 12px;display:flex;gap:16px;flex-wrap:wrap">
-        <div style="text-align:center"><div id="bm_totalcost" style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:18px">$0</div><div style="font-size:10px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.08em">Total Cost</div></div>
-        <div style="text-align:center"><div id="bm_gp" style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:18px">$0</div><div style="font-size:10px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.08em">Gross Profit</div></div>
-        <div style="text-align:center"><div id="bm_margin" style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:18px">0%</div><div style="font-size:10px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.08em">Margin</div></div>
-        <div style="text-align:center"><div id="bm_pack" style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:18px">0%</div><div style="font-size:10px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.08em">Labor % of Cost</div></div>
+        <div style="text-align:center"><div id="bm_totalcost" style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:18px">$0</div><div style="font-size:10px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.08em">Total Cost</div></div>
+        <div style="text-align:center"><div id="bm_gp" style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:18px">$0</div><div style="font-size:10px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.08em">Gross Profit</div></div>
+        <div style="text-align:center"><div id="bm_margin" style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:18px">0%</div><div style="font-size:10px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.08em">Margin</div></div>
+        <div style="text-align:center"><div id="bm_pack" style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:18px">0%</div><div style="font-size:10px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.08em">Labor % of Cost</div></div>
       </div>
     </div>
 
@@ -3402,40 +4195,8 @@ function sendWeekly(){
 }
 
 /* ============ GOALS + PERFORMANCE ============ */
-function goalsObj(){var q=curQuarter(),y=today().slice(0,4);
-  DB.goals=DB.goals||{};DB.goals.q=DB.goals.q||{};DB.goals.a=DB.goals.a||{};
-  DB.goals.q[q]=DB.goals.q[q]||{};DB.goals.a[y]=DB.goals.a[y]||{};
-  return DB.goals;}
-function loadGoalsUI(){
-  var G=goalsObj(),q=curQuarter(),y=today().slice(0,4);
-  document.getElementById('gQTitle').textContent='Quarterly goals — '+q;
-  document.getElementById('g_rep').value=G.rep||'';
-  document.getElementById('g_comm').value=G.comm||'';
-  document.getElementById('g_mgr').value=G.mgr||'';
-  document.getElementById('g_wvisits').value=G.wvisits||'';
-  document.getElementById('g_wcalls').value=G.wcalls||'';
-  document.getElementById('g_wemails').value=G.wemails||'';
-  var Q=G.q[q];['dollar','accts','ret','loy'].forEach(function(k){
-    document.getElementById('g_q'+k).value=Q[k]||'';});
-  ['b100','b110','b120'].forEach(function(k){document.getElementById('g_'+k).value=G[k]||'';});
-  ['ab100','ab110','ab120'].forEach(function(k){document.getElementById('g_'+k).value=G[k]||'';});
-  var A=G.a[y];['dollar','accts','ret','loy'].forEach(function(k){
-    document.getElementById('g_a'+k).value=A[k]||'';});
-}
-function saveGoals(){
-  var G=goalsObj(),q=curQuarter(),y=today().slice(0,4);
-  G.rep=document.getElementById('g_rep').value.trim();
-  G.comm=document.getElementById('g_comm').value.trim();
-  G.mgr=document.getElementById('g_mgr').value.trim();
-  G.wvisits=document.getElementById('g_wvisits').value.trim();
-  G.wcalls=document.getElementById('g_wcalls').value.trim();
-  G.wemails=document.getElementById('g_wemails').value.trim();
-  ['dollar','accts','ret','loy'].forEach(function(k){G.q[q][k]=document.getElementById('g_q'+k).value.trim();});
-  ['b100','b110','b120'].forEach(function(k){G[k]=document.getElementById('g_'+k).value.trim();});
-  ['ab100','ab110','ab120'].forEach(function(k){G[k]=document.getElementById('g_'+k).value.trim();});
-  ['dollar','accts','ret','loy'].forEach(function(k){G.a[y][k]=document.getElementById('g_a'+k).value.trim();});
-  save();alert('Goals saved.');renderAll();
-}
+// Goals functions moved to end of script
+
 function customersAtStart(qKey){
   var r=quarterRange(qKey);
   return DB.accounts.filter(function(a){
@@ -4590,13 +5351,261 @@ function calcExtinguishers() {
   document.getElementById('extResult').style.display = 'block';
 }
 
-</script>
-<footer style="background:#111417;color:#5A616B;text-align:center;padding:14px 16px;font-family:Arial,sans-serif;font-size:11px;border-top:2px solid #C8102E;margin-top:32px">
-  <span style="color:#C8102E;font-weight:700;letter-spacing:1px">&copy; Termac Corporation &amp; Family of Companies</span>
-  &nbsp;&middot;&nbsp;
-  Platform designed and developed by <span style="color:#FFFFFF;font-weight:600">George E. Scholl (Ted)</span>
-  &nbsp;&middot;&nbsp;
-  All rights reserved
-</footer>
-</body>
-</html>
+
+
+// ══════════════════════════════════════════
+// GOALS & FORECAST DASHBOARD
+// ══════════════════════════════════════════
+var pipelineMiniChartInst = null;
+
+function loadGoalsDashboard() {
+  if (!document.getElementById('view-goals') || !document.getElementById('view-goals').classList.contains('active')) return;
+
+  loadGoalsUI(); // load saved inputs into fields
+
+  var G = goalsObj();
+  var q = (document.getElementById('g_quarterSelect') || {value: curQuarter()}).value || curQuarter();
+  var Q = G.q[q] || {};
+  var y = new Date().getFullYear().toString();
+  var A = G.a[y] || {};
+
+  var qDollarGoal  = parseFloat(Q.dollar)  || 0;
+  var qAcctsGoal   = parseFloat(Q.accts)   || 0;
+  var qRetGoal     = parseFloat(Q.ret)     || 90;
+  var qLoyGoal     = parseFloat(Q.loy)     || 9;
+  var aDollarGoal  = parseFloat(A.dollar)  || 0;
+  var aAcctsGoal   = parseFloat(A.accts)   || 0;
+  var commRate     = parseFloat(G.comm)    || 0;
+
+  // ── Pull actuals from leads/accounts ──────────────────────────────────────
+  // Quarter date range
+  var qRanges = {
+    Q1:{start:'01-01',end:'03-31'}, Q2:{start:'04-01',end:'06-30'},
+    Q3:{start:'07-01',end:'09-30'}, Q4:{start:'10-01',end:'12-31'}
+  };
+  var qr = qRanges[q] || qRanges.Q2;
+  var yr = new Date().getFullYear();
+  var qStart = new Date(yr+'-'+qr.start);
+  var qEnd   = new Date(yr+'-'+qr.end);
+  var today2 = new Date();
+
+  // Days elapsed in quarter
+  var qTotalDays = (qEnd - qStart) / (1000*60*60*24);
+  var qElapsed   = Math.min((today2 - qStart) / (1000*60*60*24), qTotalDays);
+  var qPct       = qElapsed / qTotalDays;
+
+  // Won revenue from accounts tagged this quarter
+  var wonRevenue = 0, newAcctsQtr = 0, newAcctsYr = 0;
+  (typeof accounts !== 'undefined' ? accounts : []).forEach(function(a) {
+    if (a.status === 'active') {
+      var cd = a.created ? new Date(a.created) : null;
+      if (cd) {
+        if (cd >= qStart && cd <= qEnd) newAcctsQtr++;
+        if (cd.getFullYear() === yr) newAcctsYr++;
+      }
+      var val = parseFloat(a.value) || 0;
+      if (a.stage === 'Won' || a.status === 'active') wonRevenue += val;
+    }
+  });
+  (typeof leads !== 'undefined' ? leads : []).forEach(function(l) {
+    if (l.status === 'won') {
+      var ld = l.closeDate ? new Date(l.closeDate) : (l.created ? new Date(l.created) : null);
+      if (ld && ld >= qStart && ld <= qEnd) wonRevenue += (parseFloat(l.value)||0);
+    }
+  });
+
+  // Pipeline value (open leads)
+  var pipelineOpen = 0, pipelineByStage = {};
+  var stageOrder = ['New Lead','Contacted','Qualified','Estimate Sent','Follow Up','Negotiating','Won'];
+  stageOrder.forEach(function(s){ pipelineByStage[s] = 0; });
+  (typeof leads !== 'undefined' ? leads : []).forEach(function(l) {
+    if (!['won','lost'].includes(l.status)) {
+      var v = parseFloat(l.value)||0;
+      pipelineOpen += v;
+      if (pipelineByStage[l.stage] !== undefined) pipelineByStage[l.stage] += v;
+    }
+  });
+
+  var attainment    = qDollarGoal > 0 ? (wonRevenue / qDollarGoal * 100) : 0;
+  var remaining     = Math.max(0, qDollarGoal - wonRevenue);
+  var projectedQtr  = qPct > 0 ? (wonRevenue / qPct) : 0;
+  var projectedYr   = qPct > 0 ? (wonRevenue * 4) : 0; // rough annual projection
+
+  // ── GAUGE ──────────────────────────────────────────────────────────────────
+  var gaugeColor = attainment >= 110 ? '#7C3AED' : attainment >= 100 ? 'var(--green)' : attainment >= 80 ? 'var(--orange)' : 'var(--red)';
+  var needleRot  = -90 + Math.min(attainment, 120) / 120 * 180;
+  var arcRot     = -90 + Math.min(attainment, 120) / 120 * 180;
+
+  var arcEl = document.getElementById('gaugeArcFill');
+  var needleEl = document.getElementById('gaugeNeedle');
+  var bigVal = document.getElementById('gaugeValBig');
+  if (arcEl) { arcEl.style.borderColor = gaugeColor; arcEl.style.transform = 'rotate('+arcRot+'deg)'; }
+  if (needleEl) { needleEl.style.transform = 'translateX(-50%) rotate('+needleRot+'deg)'; }
+  if (bigVal) { bigVal.textContent = Math.round(attainment)+'%'; bigVal.style.color = gaugeColor; }
+
+  var subtextEl = document.getElementById('gaugeSubtext');
+  if (subtextEl) subtextEl.textContent = attainment >= 100 ? '🎉 Goal Achieved!' : 'of '+q+' goal reached';
+
+  var fmt = function(n){ return '$'+Math.round(n).toLocaleString(); };
+  var el = function(id,v){ var e=document.getElementById(id); if(e) e.textContent=v; };
+  el('g_closedVal', fmt(wonRevenue));
+  el('g_remaining', fmt(remaining));
+  el('g_target', fmt(qDollarGoal));
+  el('g_forecastQtr', q+' '+yr);
+  el('g_yearLabel', yr);
+
+  // ── PROGRESS METERS ────────────────────────────────────────────────────────
+  var meters = [
+    { label:'Revenue', goal:qDollarGoal, actual:wonRevenue, fmt:function(v){return fmt(v);}, color:'var(--green)' },
+    { label:'New Accounts', goal:qAcctsGoal, actual:newAcctsQtr, fmt:function(v){return v;}, color:'var(--blue)' },
+    { label:'Pipeline Value', goal:qDollarGoal*1.5, actual:pipelineOpen, fmt:function(v){return fmt(v);}, color:'var(--orange)', note:'Target: 1.5× quota' },
+    { label:'Projected Close', goal:qDollarGoal, actual:projectedQtr, fmt:function(v){return fmt(v);}, color:'var(--purple)', note:'At current pace' },
+  ];
+
+  var pmEl = document.getElementById('progressMeters');
+  if (pmEl) {
+    pmEl.innerHTML = meters.map(function(m) {
+      var pct = m.goal > 0 ? Math.min(Math.round(m.actual/m.goal*100),100) : 0;
+      var barColor = pct>=100?'var(--green)':pct>=75?'var(--blue)':pct>=50?'var(--orange)':'var(--red)';
+      return '<div class="prog-row">' +
+        '<div class="prog-label-row"><span class="prog-label">'+m.label+'</span><span class="prog-nums">'+m.fmt(m.actual)+' of '+m.fmt(m.goal)+'</span></div>' +
+        '<div class="prog-track"><div class="prog-fill" style="width:'+pct+'%;background:'+barColor+'"></div></div>' +
+        '<div class="prog-sublabel">'+(m.note||pct+'% of goal'+(m.goal>0?' · '+(m.goal-m.actual>0?m.fmt(m.goal-m.actual)+' to go':'✓ Hit!'):''))+'</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  // ── ANNUAL METERS ──────────────────────────────────────────────────────────
+  var annualM = [
+    { label:'Annual Revenue', goal:aDollarGoal, actual:wonRevenue*4, fmt:function(v){return fmt(v);}, color:'var(--green)', note:'Projected from Q pace' },
+    { label:'New Accounts (YTD)', goal:aAcctsGoal, actual:newAcctsYr, fmt:function(v){return v;}, color:'var(--blue)' },
+  ];
+  var amEl = document.getElementById('annualMeters');
+  if (amEl) {
+    amEl.innerHTML = annualM.map(function(m) {
+      var pct = m.goal > 0 ? Math.min(Math.round(m.actual/m.goal*100),100) : 0;
+      var barColor = pct>=100?'var(--green)':pct>=75?'var(--blue)':pct>=50?'var(--orange)':'var(--red)';
+      return '<div class="prog-row">' +
+        '<div class="prog-label-row"><span class="prog-label">'+m.label+'</span><span class="prog-nums">'+m.fmt(m.actual)+' of '+m.fmt(m.goal)+'</span></div>' +
+        '<div class="prog-track"><div class="prog-fill" style="width:'+pct+'%;background:'+barColor+'"></div></div>' +
+        '<div class="prog-sublabel">'+(m.note||pct+'% of annual goal')+'</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  // ── FORECAST TABLE ─────────────────────────────────────────────────────────
+  var paceStatus = function(actual, goal, pct) {
+    var needed = goal * pct;
+    if (actual >= goal) return { label:'Goal Hit', cls:'fb-ahead' };
+    if (actual >= needed * 1.05) return { label:'Ahead', cls:'fb-ahead' };
+    if (actual >= needed * 0.9) return { label:'On Track', cls:'fb-ontrack' };
+    if (actual >= needed * 0.75) return { label:'Watch', cls:'fb-watch' };
+    return { label:'Behind', cls:'fb-behind' };
+  };
+
+  var rows = [
+    { metric:'Revenue ($)', goal:fmt(qDollarGoal), current:fmt(wonRevenue), remaining:fmt(remaining), pace:fmt(projectedQtr)+' projected', status:paceStatus(wonRevenue, qDollarGoal, qPct) },
+    { metric:'New Accounts', goal:qAcctsGoal||'—', current:newAcctsQtr, remaining:Math.max(0,(qAcctsGoal||0)-newAcctsQtr), pace:Math.round(newAcctsQtr/Math.max(qPct,0.1))+' projected', status:paceStatus(newAcctsQtr, qAcctsGoal||1, qPct) },
+    { metric:'Retention (%)', goal:(qRetGoal||90)+'%', current:'Tracked in accounts', remaining:'—', pace:'—', status:{label:'Manual', cls:'fb-watch'} },
+    { metric:'Pipeline Value', goal:fmt(qDollarGoal*1.5), current:fmt(pipelineOpen), remaining:'—', pace:'Coverage: '+(qDollarGoal>0?Math.round(pipelineOpen/qDollarGoal*100)+'%':'—'), status:pipelineOpen>=(qDollarGoal*1.5)?{label:'Strong',cls:'fb-ahead'}:{label:'Build',cls:'fb-behind'} },
+  ];
+
+  var fbEl = document.getElementById('forecastBody');
+  if (fbEl) {
+    fbEl.innerHTML = rows.map(function(r) {
+      return '<tr>' +
+        '<td><strong>'+r.metric+'</strong></td>' +
+        '<td>'+r.goal+'</td>' +
+        '<td style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:15px">'+r.current+'</td>' +
+        '<td style="color:var(--red);font-weight:700">'+r.remaining+'</td>' +
+        '<td style="color:var(--soft)">'+r.pace+'</td>' +
+        '<td><span class="forecast-badge '+r.status.cls+'">'+r.status.label+'</span></td>' +
+      '</tr>';
+    }).join('');
+  }
+
+  // ── COMMISSION ─────────────────────────────────────────────────────────────
+  var commEarned = wonRevenue * (commRate / 100);
+  var commMonthly = commEarned / Math.max(qElapsed/30, 1);
+  var commAnnual = commEarned * 4;
+  el('commEarned', fmt(commEarned));
+  el('commBasis', 'Based on '+fmt(wonRevenue)+' closed · '+commRate+'% rate');
+  el('commMonthly', fmt(commMonthly)+'/mo');
+  el('commAnnual', fmt(commAnnual)+' projected');
+
+  // Bonus tiers
+  var bonusEl = document.getElementById('bonusTierDisplay');
+  if (bonusEl) {
+    var tiers = [
+      {pct:100, val:parseFloat(G.b100)||0, label:'100%'},
+      {pct:110, val:parseFloat(G.b110)||0, label:'110%'},
+      {pct:120, val:parseFloat(G.b120)||0, label:'120%'},
+    ];
+    bonusEl.innerHTML = tiers.map(function(t) {
+      var hit = attainment >= t.pct;
+      return '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line);font-size:12px">' +
+        '<span style="color:'+(hit?'var(--green)':'var(--soft)')+'">'+t.label+' attainment</span>' +
+        '<span style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:15px;color:'+(hit?'var(--green)':'var(--ink)')+'">'+fmt(t.val)+(hit?' ✓':'')+'</span>' +
+      '</div>';
+    }).join('');
+  }
+
+  // ── ENGINE STATS ───────────────────────────────────────────────────────────
+  var engEl = document.getElementById('engineStats');
+  if (engEl) {
+    var staleCount = (typeof leads !== 'undefined' ? leads : []).filter(function(l){
+      if(!l.updated && !l.created) return false;
+      var d = new Date(l.updated||l.created);
+      return (today2-d)/(1000*60*60*24) > 45 && !['won','lost'].includes(l.status);
+    }).length;
+    var openLeads = (typeof leads !== 'undefined' ? leads : []).filter(function(l){ return !['won','lost'].includes(l.status); }).length;
+    engEl.innerHTML =
+      '<div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:8px">' +
+        '<div style="text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:22px;color:var(--blue)">'+openLeads+'</div><div style="font-size:10px;color:var(--soft);text-transform:uppercase">Open Leads</div></div>' +
+        '<div style="text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:22px;color:var(--orange)">'+fmt(pipelineOpen)+'</div><div style="font-size:10px;color:var(--soft);text-transform:uppercase">Pipeline Value</div></div>' +
+        (staleCount>0?'<div style="text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:22px;color:var(--red)">'+staleCount+'</div><div style="font-size:10px;color:var(--soft);text-transform:uppercase">Stale (&gt;45d)</div></div>':'') +
+      '</div>';
+  }
+
+  // ── MINI PIPELINE CHART ────────────────────────────────────────────────────
+  var mpCanvas = document.getElementById('pipelineMiniChart');
+  if (mpCanvas) {
+    if (pipelineMiniChartInst) { pipelineMiniChartInst.destroy(); pipelineMiniChartInst = null; }
+    var stageLabels = Object.keys(pipelineByStage).filter(function(k){ return pipelineByStage[k]>0; });
+    var stageVals   = stageLabels.map(function(k){ return Math.round(pipelineByStage[k]/1000*10)/10; });
+    if (stageLabels.length > 0) {
+      pipelineMiniChartInst = new Chart(mpCanvas, {
+        type:'bar',
+        data:{ labels:stageLabels, datasets:[{ data:stageVals,
+          backgroundColor:['rgba(27,95,168,.5)','rgba(27,95,168,.6)','rgba(242,183,5,.7)','rgba(216,105,11,.7)','rgba(216,105,11,.8)','rgba(30,123,60,.8)'],
+          borderRadius:3 }]},
+        options:{ responsive:true, maintainAspectRatio:false,
+          plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:function(c){return ' $'+c.raw+'K'; }}}},
+          scales:{ x:{ grid:{display:false}, ticks:{font:{size:9}}},
+            y:{ ticks:{ callback:function(v){return '$'+v+'K';}, font:{size:9}}, grid:{color:'rgba(0,0,0,.06)'}} }
+        }
+      });
+    }
+  }
+
+  // ── FUEL BARS ──────────────────────────────────────────────────────────────
+  // Activity is manually tracked — show targets with placeholder actuals
+  var wv = parseFloat(G.wvisits)||10;
+  var wc = parseFloat(G.wcalls)||25;
+  var we = parseFloat(G.wemails)||25;
+  // Placeholder actuals (replace with real activity log in Phase B)
+  var avActual=7, acActual=19, aeActual=21;
+  var setBar = function(barId, pctId, actual, target, actualLabel) {
+    var pct = target>0?Math.min(Math.round(actual/target*100),100):0;
+    var barEl = document.getElementById(barId);
+    var pctEl = document.getElementById(pctId);
+    if(barEl) { barEl.style.width=pct+'%'; barEl.style.background=pct>=100?'var(--green)':pct>=75?'var(--blue)':'var(--orange)'; }
+    if(pctEl) { pctEl.textContent=actual+'/'+target; pctEl.style.color=pct>=100?'var(--green)':pct>=75?'var(--blue)':'var(--orange)'; }
+  };
+  setBar('fa_visits_bar','fa_visits_pct', avActual, wv);
+  setBar('fa_calls_bar','fa_calls_pct', acActual, wc);
+  setBar('fa_emails_bar','fa_emails_pct', aeActual, we);
+}
+
+// Override loadGoalsUI to also trigger dashboard
+var _origLoadGoalsUI = typeof loadGoalsUI === 'function' ? loadGoalsUI : function(){};
