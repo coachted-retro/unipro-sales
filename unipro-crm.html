@@ -2299,15 +2299,21 @@ document.querySelectorAll('.tab').forEach(function(t){t.addEventListener('click'
   t.classList.add('active');document.getElementById('view-'+t.dataset.v).classList.add('active');
   renderAll();window.scrollTo(0,0);
   if(t.dataset.v==='bids'){setTimeout(renderBidCharts,50);}
-  if(t.dataset.v==='goals'){setTimeout(function(){loadGoalsUI();},100);}
+  if(t.dataset.v==='goals'){setTimeout(function(){renderGoalsDash();},150);}
   if(t.dataset.v==='map'){
-    setTimeout(function(){
-      renderMap();
-      // Force Leaflet to recalculate size after tab is visible
-      if(terrMap){ terrMap.invalidateSize(true); }
-      setTimeout(function(){ if(terrMap) terrMap.invalidateSize(true); }, 200);
-      setTimeout(function(){ if(terrMap) terrMap.invalidateSize(true); }, 500);
-    },100);
+    // Poll until element is visible then init map
+    var _mapPoll = 0;
+    function _tryMap(){
+      var el = document.getElementById('terrMap');
+      if(el && el.offsetHeight > 0){
+        renderMap();
+        setTimeout(function(){ if(terrMap) terrMap.invalidateSize(true); }, 50);
+        setTimeout(function(){ if(terrMap) terrMap.invalidateSize(true); }, 300);
+      } else if(_mapPoll++ < 20){
+        setTimeout(_tryMap, 100);
+      }
+    }
+    setTimeout(_tryMap, 50);
   }
 });});
 
@@ -5442,6 +5448,9 @@ function renderRevenueChart(closedQtr,qGoal){
     targetData.push(Math.round(mGoal/1000*10)/10);
   }
   if(goalsChartRevenue){goalsChartRevenue.destroy();goalsChartRevenue=null;}
+  // Also destroy via Chart.js registry to prevent "already in use" error
+  var existingChart = Chart.getChart(canvas);
+  if(existingChart){ existingChart.destroy(); }
   goalsChartRevenue=new Chart(canvas,{
     type:'bar',
     data:{labels:labels,datasets:[
@@ -5473,6 +5482,7 @@ function renderLossChart(){
     canvas.parentElement.innerHTML='<div style="height:140px;display:flex;align-items:center;justify-content:center;color:var(--soft);font-size:12px">No lost deals recorded yet</div>';
     return;
   }
+  var _ec2=Chart.getChart(canvas); if(_ec2) _ec2.destroy();
   goalsChartLoss=new Chart(canvas,{
     type:'bar',
     data:{labels:entries.map(function(e){return e[0];}),
