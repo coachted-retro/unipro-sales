@@ -655,6 +655,8 @@ if (sessionStorage.getItem('openOnLoad')) {
       <a href="#" id="navAccounts" onclick="openCRM('accounts');return false;">Accounts</a>
       <a href="#" id="navMgr" class="nav-locked" onclick="openOverlay('mgr');return false;">🔒 Manager Dashboard</a>
       <a href="#" id="navCmd" class="nav-locked" onclick="openOverlay('cmd');return false;">Command Center</a>
+      <a href="#" id="navGoals" onclick="openOverlay('goals');return false;" style="color:#F2B705">🎯 My Goals</a>
+      <a href="#" id="navWeekly" onclick="openOverlay('weekly');return false;">📧 Weekly Report</a>
       <span id="mgrBadge" class="mgr-access-badge" onclick="lockManager()" style="display:none" title="Click to lock">🔓 Manager</span>
 
     </div>
@@ -791,6 +793,15 @@ if (sessionStorage.getItem('openOnLoad')) {
     <div class="lb-qtr-item">Bonuses awarded: <strong>4 of 6</strong></div>
   </div>
   <div id="lbRows"></div>
+</div>
+
+
+<!-- Reset Demo Data button — bottom of home page -->
+<div style="text-align:center;padding:32px 0 16px;border-top:1px solid var(--line);margin-top:32px">
+  <button onclick="resetDemoData()" style="background:none;border:1.5px solid var(--line);border-radius:8px;padding:8px 20px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.10em;text-transform:uppercase;cursor:pointer;color:var(--soft);transition:all .15s" onmouseover="this.style.borderColor='var(--red)';this.style.color='var(--red)'" onmouseout="this.style.borderColor='var(--line)';this.style.color='var(--soft)'">
+    🔄 Reset Demo Data
+  </button>
+  <div style="font-size:11px;color:var(--soft);margin-top:6px">Clears all local data and reseeds 25 leads, 3 contacts, 5 accounts with full history</div>
 </div>
 
 </div><!-- /wrap -->
@@ -1023,46 +1034,184 @@ function crmSave(key,data){ localStorage.setItem('termac_crm_'+key, JSON.stringi
 
 // Seed demo data if empty
 (function seedCRM(){
-  if(crmLoad('leads').length) return;
+  // Always re-seed if version stamp changed (ensures demo data stays fresh)
+  const SEED_VERSION = 'v3_25leads';
+  if(localStorage.getItem('termac_seed_version') === SEED_VERSION) return;
+  localStorage.setItem('termac_seed_version', SEED_VERSION);
   const now = Date.now();
   crmLoad; // touch
   crmSave('leads',[
-    // HOT — just came in, unclaimed, in shared pool (demo the pool)
+    // ── PERMIT HARVESTER — Philadelphia L&I ──────────────────
     {id:'L001',name:'Maria Santos',business:'El Rancho Cantina',phone:'215-555-0101',email:'maria@elrancho.com',
      address:'4201 N 5th St, Philadelphia PA 19140',zip:'19140',company:'UniPro',status:'hot',
      services:['unipro','filterman'],score:9,source:'Permit Harvester',created:now-86400000*1,
-     notes:'3 commercial kitchens, current provider unknown, permit pulled last month — no fire cert on file'},
-    // WARM — DMS converted, routed to Ted
+     assignedRep:'Ted Scholl',claimedBy:'Ted Scholl',claimedAt:now-3600000*5,
+     notes:'3 commercial kitchens, current provider unknown, permit pulled last month — no fire cert on file',
+     activityLog:[{ts:now-86400000*1,type:'system',icon:'📍',title:'Harvested — Philly L&I Permit',note:'New commercial kitchen permit filed — no fire cert on record',who:'System'}]},
+
     {id:'L002',name:'James Park',business:'Park Inn & Suites',phone:'267-555-0234',email:'jpark@parkinn.com',
      address:'200 Convention Blvd, Philadelphia PA 19104',zip:'19104',company:'UniPro',status:'warm',
      services:['unipro','gto'],score:8,source:'DMS',assignedRep:'Ted Scholl',claimedBy:'Ted Scholl',claimedAt:now-3600000*4,created:now-86400000*5,
-     notes:'Spoke with GM — current provider is Confires, agreement expires in 60 days. Price-lock bundle is a good angle.',
+     notes:'Spoke with GM — current provider is Confires, agreement expires in 60 days.',
      followupDate:new Date(Date.now()+86400000*2).toISOString().split('T')[0],
      followupNote:'Call back after GM reviews our estimate',
      activityLog:[
        {ts:now-86400000*5,type:'system',icon:'📍',title:'Routed to Ted Scholl',note:'DMS convert — auto-routed by ZIP 19104',who:'System'},
-       {ts:now-86400000*3,type:'rep',icon:'📞',title:'Call — Connected',note:'Spoke with James Park. Currently with Confires. Agreement up in 60 days. Interested in our bundle pricing. Sending estimate.',who:'Ted Scholl',outcome:'Interested'},
-     ]},
-    // COLD — unclaimed pool, low score
-    {id:'L003',name:'Dave Torres',business:'Torres Auto Body',phone:'215-555-0378',email:'',
-     address:'8820 Roosevelt Blvd, Philadelphia PA 19152',zip:'19152',company:'UniPro',status:'cold',
-     services:['unipro'],score:4,source:'Permit Harvester',created:now-86400000*10,notes:'Auto body — low-priority, extinguisher only'},
-    // HOT cross-sell — came from tech visit
-    {id:'L004',name:'Angela Wu',business:'Wu Dim Sum Palace',phone:'215-555-0812',email:'angela@wudimsum.com',
-     address:'927 Race St, Philadelphia PA 19107',zip:'19107',company:'GTO',status:'hot',
-     services:['gto'],score:10,source:'Tech Cross-Sell',assignedRep:'Ted Scholl',claimedBy:'Ted Scholl',claimedAt:now-3600000*2,created:now-86400000*2,
-     notes:'Tech flagged during GTO service — Angela asked about fire extinguisher inspection, has 28 units, no current UniPro contract. Warm handoff.',
-     sourceDetail:'Marcus Williams flagged during GTO service visit',
-     activityLog:[
-       {ts:now-86400000*2,type:'system',icon:'🎯',title:'Tech Cross-Sell Lead Created',note:'Marcus Williams flagged during GTO service — customer expressed interest in UniPro',who:'System'},
-     ]},
-    // Renewal in 60-day window
-    {id:'L005',name:'Frank Deluca',business:'DeLuca Brothers Pizza',phone:'609-555-0177',email:'frank@delucapizza.com',
+       {ts:now-86400000*3,type:'rep',icon:'📞',title:'Call — Connected',note:'Currently with Confires, agreement up in 60 days. Interested in bundle.',who:'Ted Scholl',outcome:'Interested'}]},
+
+    {id:'L003',name:'Frank DeLuca',business:'DeLuca Brothers Pizza',phone:'609-555-0177',email:'frank@delucapizza.com',
      address:'445 Haddonfield Rd, Cherry Hill NJ 08002',zip:'08002',company:'UniPro',status:'warm',
-     services:['unipro','filterman'],score:7,source:'DMS',assignedRep:'Ted Scholl',claimedBy:'Ted Scholl',claimedAt:now-86400000,created:now-86400000*7,
-     notes:'3 locations. Current agreement ends in 45 days. Renewal opportunity — bundle angle for all 3 sites.'},
+     services:['unipro'],score:7,source:'Permit Harvester',created:now-86400000*3,
+     notes:'3-location pizza chain — Cherry Hill flagged for new kitchen exhaust permit',
+     activityLog:[{ts:now-86400000*3,type:'system',icon:'📍',title:'Harvested — NJ Permit Feed',note:'Kitchen exhaust permit filed Burlington County',who:'System'}]},
+
+    {id:'L004',name:'Angela Wu',business:'Wu Dim Sum Palace',phone:'215-555-0812',email:'angela@wudimsum.com',
+     address:'927 Race St, Philadelphia PA 19107',zip:'19107',company:'UniPro',status:'hot',
+     services:['unipro','gto'],score:10,source:'Tech Cross-Sell',assignedRep:'Ted Scholl',claimedBy:'Ted Scholl',claimedAt:now-3600000*2,created:now-86400000*2,
+     notes:'28 extinguishers, no current UniPro contract. Marcus flagged during GTO visit.',
+     sourceDetail:'Marcus Williams flagged during GTO service visit',
+     activityLog:[{ts:now-86400000*2,type:'system',icon:'🎯',title:'Tech Cross-Sell Lead',note:'Marcus Williams flagged — customer asked about extinguisher inspection',who:'System'}]},
+
+    {id:'L005',name:'Sandra Reyes',business:'Sunrise Senior Living',phone:'215-555-0445',email:'sreyes@sunrisesenior.com',
+     address:'1800 Grant Ave, Philadelphia PA 19115',zip:'19115',company:'UniPro',status:'hot',
+     services:['unipro'],score:10,source:'Permit Harvester',created:now-86400000*2,
+     notes:'Assisted living — 120-bed facility, fire inspection due. Highest priority segment.',
+     activityLog:[{ts:now-86400000*2,type:'system',icon:'🏥',title:'Harvested — Assisted Living',note:'NFPA inspection permit filed, no cert on record',who:'System'}]},
+
+    {id:'L006',name:'Tony Marchetti',business:'Marchetti Ristorante',phone:'215-555-0331',email:'tony@marchettiristorante.com',
+     address:'762 S 9th St, Philadelphia PA 19147',zip:'19147',company:'UniPro',status:'warm',
+     services:['unipro','filterman','gto'],score:9,source:'Permit Harvester',created:now-86400000*4,
+     notes:'South Philly Italian — 2 hoods, grease trap. Currently with Cintas per Google.',
+     activityLog:[{ts:now-86400000*4,type:'system',icon:'📍',title:'Harvested — Philly L&I',note:'Hood installation permit pulled',who:'System'}]},
+
+    {id:'L007',name:'David Kim',business:'Seoul Garden Korean BBQ',phone:'215-555-0924',email:'dkim@seoulgardenbbq.com',
+     address:'1023 Arch St, Philadelphia PA 19107',zip:'19107',company:'UniPro',status:'hot',
+     services:['unipro','filterman'],score:9,source:'Permit Harvester',created:now-86400000*1,
+     notes:'Korean BBQ — heavy hood use, table grills. High filter frequency needed. No provider on file.',
+     activityLog:[{ts:now-86400000*1,type:'system',icon:'📍',title:'Harvested — Philly L&I',note:'Commercial kitchen permit — high-volume grill operation',who:'System'}]},
+
+    {id:'L008',name:'Patricia Novak',business:'Bucks County Rehabilitation Center',phone:'215-555-0556',email:'pnovak@bcrehab.com',
+     address:'225 Newtown Rd, Warminster PA 18974',zip:'18974',company:'UniPro',status:'hot',
+     services:['unipro'],score:10,source:'Permit Harvester',created:now-86400000*3,
+     notes:'Rehab facility — 85 beds. Annual NFPA inspection required. No cert on file.',
+     activityLog:[{ts:now-86400000*3,type:'system',icon:'🏥',title:'Harvested — Healthcare Facility',note:'NFPA inspection permit, no fire cert on record',who:'System'}]},
+
+    {id:'L009',name:'Carlos Rivera',business:'El Fuego Mexican Grill',phone:'856-555-0281',email:'carlos@elfuegogrill.com',
+     address:'334 Marlton Pike, Voorhees NJ 08043',zip:'08043',company:'UniPro',status:'warm',
+     services:['unipro','filterman'],score:8,source:'DMS',created:now-86400000*7,
+     notes:'DMS connected with manager — Preferred Fire is current provider. Contract month-to-month.',
+     activityLog:[{ts:now-86400000*7,type:'system',icon:'📞',title:'DMS Outreach',note:'Cold call connected — manager interested',who:'System'}]},
+
+    {id:'L010',name:'Robert Chen',business:'Jade Palace Restaurant',phone:'215-555-0673',email:'rchen@jadepalace.com',
+     address:'668 N 10th St, Philadelphia PA 19123',zip:'19123',company:'UniPro',status:'cold',
+     services:['unipro','filterman','gto'],score:9,source:'Permit Harvester',created:now-86400000*8,
+     notes:'Large Chinese banquet hall — 4 hoods, 2 grease traps. Full kitchen package opportunity.',
+     activityLog:[{ts:now-86400000*8,type:'system',icon:'📍',title:'Harvested — Philly L&I',note:'Kitchen renovation permit — 4 hood systems',who:'System'}]},
+
+    // ── DMS CONVERTED ────────────────────────────────────────
+    {id:'L011',name:'Michelle Thompson',business:'Thompson Catering Co.',phone:'215-555-0118',email:'mthompson@thompsoncatering.com',
+     address:'4455 Frankford Ave, Philadelphia PA 19124',zip:'19124',company:'UniPro',status:'warm',
+     services:['unipro'],score:7,source:'DMS',created:now-86400000*6,
+     notes:'Catering company — commissary kitchen, 12 extinguishers. Called Tara, interested in inspection.',
+     activityLog:[{ts:now-86400000*6,type:'system',icon:'📞',title:'DMS — Tara Colona',note:'Connected — interested in annual inspection pricing',who:'Tara Colona'}]},
+
+    {id:'L012',name:'Kevin O'Brien',business:"O'Brien's Irish Pub",phone:'215-555-0489',email:'kevin@obrienspub.com',
+     address:'117 South St, Philadelphia PA 19147',zip:'19147',company:'UniPro',status:'hot',
+     services:['unipro','filterman'],score:8,source:'DMS',created:now-86400000*2,
+     notes:'Bar & kitchen — DMS connected with owner, last inspection 18 months ago, overdue.',
+     followupDate:new Date(Date.now()+86400000*1).toISOString().split('T')[0],
+     followupNote:'Send estimate before end of week',
+     activityLog:[{ts:now-86400000*2,type:'system',icon:'📞',title:'DMS — Chrystal Bush',note:'Owner answered — 18 months since last inspection, wants pricing ASAP',who:'Chrystal Bush'}]},
+
+    {id:'L013',name:'Lisa Hoffman',business:'Holiday Inn Express Bensalem',phone:'215-555-0344',email:'lhoffman@hiebensalem.com',
+     address:'3100 Bristol Pike, Bensalem PA 19020',zip:'19020',company:'UniPro',status:'warm',
+     services:['unipro'],score:8,source:'DMS',created:now-86400000*9,
+     notes:'Hotel — 3 floors, commercial kitchen. Brand compliance inspection required annually.',
+     activityLog:[{ts:now-86400000*9,type:'system',icon:'📞',title:'DMS — Amanda McGowan',note:'Spoke with facilities manager — scheduling annual inspection',who:'Amanda McGowan'}]},
+
+    // ── TECH CROSS-SELL ──────────────────────────────────────
+    {id:'L014',name:'Steve Giordano',business:'Giordano's Deli & Catering',phone:'215-555-0722',email:'steve@giordanosdeli.com',
+     address:'889 Bustleton Ave, Philadelphia PA 19116',zip:'19116',company:'Filter Man',status:'hot',
+     services:['unipro','filterman'],score:9,source:'Tech Cross-Sell',created:now-86400000*1,
+     notes:'Filter Man customer — Tony F. flagged during filter exchange, no fire cert visible.',
+     sourceDetail:'Tony Ferraro flagged during filter exchange visit',
+     activityLog:[{ts:now-86400000*1,type:'system',icon:'🎯',title:'Tech Cross-Sell — Tony Ferraro',note:'No fire protection provider visible during filter exchange',who:'System'}]},
+
+    {id:'L015',name:'Carmen Diaz',business:'La Cocina Colombiana',phone:'267-555-0091',email:'carmen@lacocina.com',
+     address:'2245 N Front St, Philadelphia PA 19133',zip:'19133',company:'GTO',status:'warm',
+     services:['unipro','gto','filterman'],score:9,source:'Tech Cross-Sell',created:now-86400000*4,
+     notes:'GTO customer — Dana K. noticed expired extinguisher tags during grease trap service.',
+     sourceDetail:'Dana Kowalski flagged during GTO pump-out',
+     activityLog:[{ts:now-86400000*4,type:'system',icon:'🎯',title:'Tech Cross-Sell — Dana Kowalski',note:'Expired extinguisher tags observed during GTO service',who:'System'}]},
+
+    // ── PERMIT HARVESTER — INSTITUTIONAL ─────────────────────
+    {id:'L016',name:'Dr. James Walsh',business:'Walsh Family Dental Practice',phone:'215-555-0837',email:'drwalsh@walshfamilydental.com',
+     address:'567 York Rd, Jenkintown PA 19046',zip:'19046',company:'UniPro',status:'cold',
+     services:['unipro'],score:6,source:'Permit Harvester',created:now-86400000*12,
+     notes:'Dental office — small commercial space, 4-6 extinguishers. Renovation permit pulled.',
+     activityLog:[{ts:now-86400000*12,type:'system',icon:'📍',title:'Harvested — Montgomery County Permit',note:'Office renovation permit',who:'System'}]},
+
+    {id:'L017',name:'Principal Karen Scott',business:'Eastwood Academy Charter School',phone:'215-555-0562',email:'kscott@eastwoodacademy.org',
+     address:'3300 Aramingo Ave, Philadelphia PA 19134',zip:'19134',company:'UniPro',status:'hot',
+     services:['unipro'],score:8,source:'Permit Harvester',created:now-86400000*5,
+     notes:'Charter school — 400 students, commercial kitchen, annual inspection required by PA DOE.',
+     activityLog:[{ts:now-86400000*5,type:'system',icon:'🏫',title:'Harvested — School Permit',note:'Annual fire inspection permit required by state',who:'System'}]},
+
+    {id:'L018',name:'Michael Forte',business:'Forte Manufacturing',phone:'215-555-0193',email:'mforte@fortemfg.com',
+     address:'1500 Adams Ave, Philadelphia PA 19124',zip:'19124',company:'UniPro',status:'warm',
+     services:['unipro'],score:7,source:'Permit Harvester',created:now-86400000*6,
+     notes:'Light manufacturing — 8,000 sq ft, 20+ extinguishers. OSHA compliance driver.',
+     activityLog:[{ts:now-86400000*6,type:'system',icon:'🏭',title:'Harvested — Philly L&I',note:'Industrial occupancy permit',who:'System'}]},
+
+    {id:'L019',name:'Tom Cavalieri',business:'Cavalieri's Steakhouse',phone:'856-555-0374',email:'tom@cavalieristeakhouse.com',
+     address:'780 Route 70, Evesham NJ 08053',zip:'08053',company:'UniPro',status:'hot',
+     services:['unipro','filterman','gto'],score:9,source:'Permit Harvester',created:now-86400000*2,
+     notes:'Upscale steakhouse — 2 hoods, grease trap, 200 seats. Full kitchen package.',
+     activityLog:[{ts:now-86400000*2,type:'system',icon:'📍',title:'Harvested — Burlington County Permit',note:'Hood installation + grease trap permit',who:'System'}]},
+
+    {id:'L020',name:'Brenda Cole',business:'Greenview Assisted Living',phone:'215-555-0629',email:'bcole@greenviewal.com',
+     address:'990 Jacksonville Rd, Warminster PA 18974',zip:'18974',company:'UniPro',status:'hot',
+     services:['unipro'],score:10,source:'Permit Harvester',created:now-86400000*3,
+     notes:'65-bed assisted living — fire inspection overdue per permit record. Highest priority.',
+     activityLog:[{ts:now-86400000*3,type:'system',icon:'🏥',title:'Harvested — Assisted Living',note:'Fire cert expired per permit record',who:'System'}]},
+
+    {id:'L021',name:'Jack Nguyen',business:'Pho Saigon Noodle House',phone:'215-555-0418',email:'jack@phosaigon.com',
+     address:'1112 Washington Ave, Philadelphia PA 19147',zip:'19147',company:'UniPro',status:'warm',
+     services:['unipro','filterman'],score:8,source:'Permit Harvester',created:now-86400000*7,
+     notes:'Vietnamese restaurant — open kitchen, 1 hood, heavy use. Cintas currently per sign on door.',
+     activityLog:[{ts:now-86400000*7,type:'system',icon:'📍',title:'Harvested — Philly L&I',note:'Kitchen permit — competitor sign visible on extinguisher',who:'System'}]},
+
+    {id:'L022',name:'Paul Zimmerman',business:'Zimmerman Hotel & Conference Ctr',phone:'267-555-0887',email:'pzimmerman@zimmermanhotel.com',
+     address:'1500 Market St, Philadelphia PA 19102',zip:'19102',company:'UniPro',status:'hot',
+     services:['unipro','filterman','gto'],score:9,source:'DMS',created:now-86400000*4,
+     notes:'Full-service hotel — 180 rooms, 2 kitchens, ballroom. DMS connected with facilities dir.',
+     followupDate:new Date(Date.now()+86400000*3).toISOString().split('T')[0],
+     followupNote:'Site walkthrough scheduled Thursday 10am',
+     activityLog:[
+       {ts:now-86400000*4,type:'system',icon:'📞',title:'DMS — Kim Reinhart',note:'Connected with facilities director — site visit requested',who:'Kim Reinhart'},
+       {ts:now-86400000*2,type:'rep',icon:'📅',title:'Appointment Set',note:'Site walkthrough scheduled — 180 rooms, 2 commercial kitchens',who:'Ted Scholl',outcome:'Appt Set'}]},
+
+    {id:'L023',name:'Rosa Mejia',business:'Mejia Bakery & Cafe',phone:'215-555-0251',email:'rosa@mejiabakery.com',
+     address:'2890 Kensington Ave, Philadelphia PA 19134',zip:'19134',company:'UniPro',status:'cold',
+     services:['unipro'],score:6,source:'Permit Harvester',created:now-86400000*14,
+     notes:'Small bakery — 3 extinguishers, low volume. Building permit pulled for expansion.',
+     activityLog:[{ts:now-86400000*14,type:'system',icon:'📍',title:'Harvested — Philly L&I',note:'Building expansion permit',who:'System'}]},
+
+    {id:'L024',name:'Ed Hollis',business:'Hollis Hospitality Group',phone:'215-555-0799',email:'ehollis@hollishospitality.com',
+     address:'400 N Broad St, Philadelphia PA 19130',zip:'19130',company:'UniPro',status:'hot',
+     services:['unipro','filterman','gto'],score:10,source:'DMS',created:now-86400000*1,
+     notes:'Manages 5 Philadelphia restaurants — single vendor preferred. Massive opportunity.',
+     followupDate:new Date(Date.now()+86400000*1).toISOString().split('T')[0],
+     followupNote:'Call Ed directly — he makes the decision for all 5 locations',
+     activityLog:[{ts:now-86400000*1,type:'system',icon:'🎯',title:'DMS — High Value',note:'5-location restaurant group seeking single fire protection vendor',who:'Donna Meyer'}]},
+
+    {id:'L025',name:'Nancy Petrov',business:'Petrov Eastern European Deli',phone:'215-555-0334',email:'nancy@petrovdeli.com',
+     address:'1755 NE Blvd, Philadelphia PA 19141',zip:'19141',company:'UniPro',status:'cold',
+     services:['unipro'],score:5,source:'Permit Harvester',created:now-86400000*18,
+     notes:'Small deli — 4 extinguishers. Low priority but easy close if in the area.',
+     activityLog:[{ts:now-86400000*18,type:'system',icon:'📍',title:'Harvested — Philly L&I',note:'Food establishment permit',who:'System'}]},
   ]);
-  crmSave('contacts',[
+    crmSave('contacts',[
     {id:'C001',name:'Tony Ferraro',business:'Ferraro Ristorante',phone:'215-555-0789',email:'tony@ferrarorist.com',
      address:'1204 Walnut St, Philadelphia PA 19103',zip:'19103',company:'UniPro',title:'Owner',
      status:'new',services:['unipro','filterman'],assignedRep:'Ted Scholl',
@@ -1653,11 +1802,23 @@ document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ closeModal(); clo
   </div>
 
   <!-- ROW 5: JEOPARDY QUEUE -->
-  <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px">
+  <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;margin-bottom:16px">
     <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft);margin-bottom:12px">⚠️ Jeopardy Queue — Accounts at Risk</div>
     <div id="mgrJeopardyList" style="display:flex;flex-direction:column;gap:8px">
       <!-- Populated by refreshManagerDashboard -->
     </div>
+  </div>
+
+  <!-- ROW 6: SALES REP GOALS ROLLUP -->
+  <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft)">🎯 Rep Quota Attainment — Q2 2026</div>
+      <button onclick="closeOverlay();setTimeout(()=>openOverlay('goals'),100)" style="background:none;border:1.5px solid var(--line);border-radius:6px;padding:4px 12px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;text-transform:uppercase;cursor:pointer;color:var(--soft)">Full Detail →</button>
+    </div>
+    <div id="mgrGoalsRollup" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px">
+      <!-- Populated by mgrRenderGoalsRollup() -->
+    </div>
+    <div style="margin-top:10px;font-size:11px;color:var(--soft)">⚠️ flagged = more than 15% behind pace · Click "Full Detail" to set quotas and view individual rep dashboards</div>
   </div>
 
 </div>
@@ -3524,7 +3685,7 @@ setTimeout(updateFlashReportAlerts, 500);
 
 <script>
 // ── OVERLAY SYSTEM ──
-const OVERLAYS = {mgr:'ovMgr', cmd:'ovCmd', emp:'ovEmp', hr:'ovHR', ops:'ovOps', acct:'ovAcct', lp:'ovLeadPool', terr:'ovTerritoryMap'};
+const OVERLAYS = {mgr:'ovMgr', cmd:'ovCmd', emp:'ovEmp', hr:'ovHR', ops:'ovOps', acct:'ovAcct', lp:'ovLeadPool', terr:'ovTerritoryMap', goals:'ovGoals', weekly:'ovWeekly'};
 let _activeOverlay = null;
 let _pendingOverlay = null;
 
@@ -5306,7 +5467,21 @@ function estPrint(){
     <p style="color:#6B7280;font-size:13px;margin:0 0 20px">Prepared by Ted Scholl · Termac Family of Companies · tscholl@termac.com · 267-421-6336</p>
     <div id="printBody"></div>
     <script>document.getElementById('printBody').innerHTML=\`${content.replace(/`/g,'\\`')}\`;<\/script>
-    </body></html>`);
+    
+<script>
+function resetDemoData() {
+  if (!confirm('Reset all demo data?\n\nThis clears leads, contacts, and accounts and reseeds 25 fresh leads with full demo history.')) return;
+  // Clear CRM data and seed version
+  ['leads','contacts','accounts'].forEach(k => localStorage.removeItem('termac_crm_' + k));
+  localStorage.removeItem('termac_seed_version');
+  // Clear recently viewed
+  ['leads','contacts','accounts'].forEach(k => localStorage.removeItem('termac_crm_recent_' + k));
+  // Reload to trigger reseed
+  window.location.reload();
+}
+</script>
+
+</body></html>`);
   w.document.close();
   setTimeout(()=>w.print(), 800);
 }
@@ -9284,6 +9459,1284 @@ function uvGetPhotoAttachmentHTML() {
 // Expose for use in scope summary and email builder
 window.uvGetPhotoAttachmentHTML = uvGetPhotoAttachmentHTML;
 window.uvCollectData = uvCollectData;
+</script>
+
+
+<!-- ══════════════════════════════════════════════════════════
+     GOALS & FORECAST OVERLAY — Per-Rep View
+     Manager sets quota. Rep tracks pipeline, activity, wins.
+══════════════════════════════════════════════════════════════ -->
+<div class="full-overlay" id="ovGoals" style="z-index:380">
+  <div class="ov-header">
+    <h2>🎯 Goals &amp; Forecast</h2>
+    <div class="ov-header-btns">
+      <button class="ov-btn" onclick="goHome()">← Home</button>
+      <button class="ov-btn close" onclick="document.getElementById('ovGoals').classList.remove('open')">✕</button>
+    </div>
+  </div>
+
+  <!-- Tab Nav -->
+  <div style="background:#fff;border-bottom:1px solid var(--line);padding:0 22px;display:flex;gap:0;flex-shrink:0">
+    <button class="acct-tab active" id="goalsTab_my"       onclick="goalsShowTab('my',this)">📊 My Dashboard</button>
+    <button class="acct-tab"        id="goalsTab_pipeline"  onclick="goalsShowTab('pipeline',this)">🔥 Pipeline</button>
+    <button class="acct-tab"        id="goalsTab_activity"  onclick="goalsShowTab('activity',this)">📞 Activity Log</button>
+    <button class="acct-tab"        id="goalsTab_winloss"   onclick="goalsShowTab('winloss',this)">📋 Win/Loss</button>
+    <button class="acct-tab nav-locked" id="goalsTab_setquota" onclick="goalsShowTab('setquota',this)">⚙️ Set Quotas</button>
+  </div>
+
+  <div class="ov-body" style="padding:0;overflow:hidden;display:flex;flex-direction:column">
+
+    <!-- ── MY DASHBOARD TAB ── -->
+    <div id="goalsPanel_my" style="flex:1;overflow-y:auto;padding:22px">
+
+      <!-- Rep selector (managers see all reps) -->
+      <div id="goalsRepSelectorWrap" style="display:none;margin-bottom:16px">
+        <select id="goalsRepSelector" onchange="goalsLoadRep(this.value)" style="padding:8px 12px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;font-family:inherit;outline:none;min-width:200px">
+          <option value="">— Select Rep —</option>
+        </select>
+      </div>
+
+      <!-- Quarter + Period selector -->
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px;flex-wrap:wrap">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:22px;color:var(--ink)" id="goalsRepName">My Goals</div>
+        <select id="goalsPeriod" onchange="goalsRender()" style="padding:6px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;font-family:inherit;outline:none">
+          <option value="q1">Q1 (Jan–Mar)</option>
+          <option value="q2">Q2 (Apr–Jun)</option>
+          <option value="q3">Q3 (Jul–Sep)</option>
+          <option value="q4">Q4 (Oct–Dec)</option>
+          <option value="annual">Full Year</option>
+        </select>
+        <div id="goalsPeriodLabel" style="font-size:12px;color:var(--soft)"></div>
+      </div>
+
+      <!-- ── QUOTA ATTAINMENT ARC ── -->
+      <div style="display:grid;grid-template-columns:260px 1fr;gap:20px;margin-bottom:20px;align-items:start">
+
+        <!-- Arc gauge -->
+        <div style="background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:22px;text-align:center">
+          <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft);margin-bottom:14px">Quota Attainment</div>
+          <svg width="200" height="120" viewBox="0 0 200 120" style="overflow:visible;display:block;margin:0 auto">
+            <!-- Background arc -->
+            <path d="M 20 105 A 80 80 0 0 1 180 105" fill="none" stroke="#EEF0F2" stroke-width="18" stroke-linecap="round"/>
+            <!-- Progress arc (filled by JS) -->
+            <path id="goalsArcFill" d="M 20 105 A 80 80 0 0 1 180 105" fill="none" stroke="#C8102E" stroke-width="18" stroke-linecap="round" stroke-dasharray="251.2" stroke-dashoffset="251.2" style="transition:stroke-dashoffset .6s ease,stroke .3s"/>
+            <!-- Center text -->
+            <text x="100" y="90" text-anchor="middle" font-family="Barlow Condensed,sans-serif" font-weight="800" font-size="32" fill="#1A1D21" id="goalsArcPct">0%</text>
+            <text x="100" y="108" text-anchor="middle" font-family="Barlow Condensed,sans-serif" font-weight="700" font-size="11" fill="#9CA3AF" id="goalsArcLabel">of quota</text>
+          </svg>
+          <!-- Distance to milestone -->
+          <div id="goalsMilestone" style="margin-top:10px;font-size:12px;color:var(--soft);line-height:1.5"></div>
+          <!-- Bonus tier -->
+          <div id="goalsBonusTier" style="margin-top:10px"></div>
+        </div>
+
+        <!-- KPI row -->
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+          <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;text-align:center">
+            <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:26px;color:var(--green)" id="goalsRevClosed">$0</div>
+            <div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.08em">Revenue Closed</div>
+            <div style="font-size:11px;color:var(--soft);margin-top:3px" id="goalsRevTarget"></div>
+          </div>
+          <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;text-align:center">
+            <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:26px;color:var(--blue)" id="goalsRevPipeline">$0</div>
+            <div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.08em">In Pipeline</div>
+            <div style="font-size:11px;color:var(--soft);margin-top:3px" id="goalsPipelineCount"></div>
+          </div>
+          <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;text-align:center">
+            <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:26px;color:var(--amber)" id="goalsRevForecast">$0</div>
+            <div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.08em">Forecasted Close</div>
+            <div style="font-size:11px;color:var(--soft);margin-top:3px" id="goalsForecastBasis"></div>
+          </div>
+          <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;text-align:center">
+            <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:26px;color:var(--ink)" id="goalsCommission">$0</div>
+            <div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.08em">Commission Earned</div>
+            <div style="font-size:11px;color:var(--soft);margin-top:3px" id="goalsCommRate"></div>
+          </div>
+          <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;text-align:center">
+            <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:26px;color:var(--red)" id="goalsDealsWon">0</div>
+            <div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.08em">Deals Won</div>
+            <div style="font-size:11px;color:var(--soft);margin-top:3px" id="goalsWinRate"></div>
+          </div>
+          <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;text-align:center">
+            <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:26px;color:var(--soft)" id="goalsDaysLeft">0</div>
+            <div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.08em">Days Left in Period</div>
+            <div style="font-size:11px;color:var(--soft);margin-top:3px" id="goalsPaceLabel"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── FUEL / ENGINE / FINISH LINE ── -->
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:20px">
+
+        <!-- Fuel — Activity -->
+        <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px">
+          <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft);margin-bottom:12px">⛽ Fuel — Weekly Activity</div>
+          <div id="goalsActivityBars" style="display:flex;flex-direction:column;gap:10px"></div>
+          <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
+            <div style="font-size:11px;color:var(--soft);margin-bottom:8px;font-weight:600">This Week — Log Activity</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+              <div>
+                <label style="font-size:10px;color:var(--soft);font-weight:700;letter-spacing:.06em;text-transform:uppercase">Calls Made</label>
+                <input type="number" id="goalsInputCalls" min="0" value="0" oninput="goalsSaveActivity()" style="width:100%;padding:5px 8px;border:1.5px solid var(--line);border-radius:6px;font-size:14px;font-family:'Barlow Condensed',sans-serif;font-weight:700;text-align:center;outline:none;box-sizing:border-box">
+              </div>
+              <div>
+                <label style="font-size:10px;color:var(--soft);font-weight:700;letter-spacing:.06em;text-transform:uppercase">Site Visits</label>
+                <input type="number" id="goalsInputVisits" min="0" value="0" oninput="goalsSaveActivity()" style="width:100%;padding:5px 8px;border:1.5px solid var(--line);border-radius:6px;font-size:14px;font-family:'Barlow Condensed',sans-serif;font-weight:700;text-align:center;outline:none;box-sizing:border-box">
+              </div>
+              <div>
+                <label style="font-size:10px;color:var(--soft);font-weight:700;letter-spacing:.06em;text-transform:uppercase">Surveys Done</label>
+                <input type="number" id="goalsInputSurveys" min="0" value="0" oninput="goalsSaveActivity()" style="width:100%;padding:5px 8px;border:1.5px solid var(--line);border-radius:6px;font-size:14px;font-family:'Barlow Condensed',sans-serif;font-weight:700;text-align:center;outline:none;box-sizing:border-box">
+              </div>
+              <div>
+                <label style="font-size:10px;color:var(--soft);font-weight:700;letter-spacing:.06em;text-transform:uppercase">Proposals Sent</label>
+                <input type="number" id="goalsInputProposals" min="0" value="0" oninput="goalsSaveActivity()" style="width:100%;padding:5px 8px;border:1.5px solid var(--line);border-radius:6px;font-size:14px;font-family:'Barlow Condensed',sans-serif;font-weight:700;text-align:center;outline:none;box-sizing:border-box">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Engine — Pipeline Health -->
+        <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px">
+          <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft);margin-bottom:12px">🔧 Engine — Pipeline Health</div>
+          <div id="goalsPipelineHealth" style="display:flex;flex-direction:column;gap:8px"></div>
+          <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
+            <div style="font-size:11px;color:var(--soft);margin-bottom:6px;font-weight:600">Avg Days to Close</div>
+            <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:28px;color:var(--ink)" id="goalsAvgClose">—</div>
+            <div style="font-size:11px;color:var(--soft);margin-top:2px">days from first contact to won</div>
+          </div>
+        </div>
+
+        <!-- Finish Line — Revenue -->
+        <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px">
+          <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft);margin-bottom:12px">🏁 Finish Line — Bonus Tiers</div>
+          <div id="goalsBonusTiers" style="display:flex;flex-direction:column;gap:8px"></div>
+          <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
+            <div style="font-size:11px;color:var(--soft);margin-bottom:4px;font-weight:600">Projected Quarter-End</div>
+            <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:22px;color:var(--green)" id="goalsProjectedEnd">$0</div>
+            <div style="font-size:11px;color:var(--soft);margin-top:2px" id="goalsProjectionNote"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── BEHIND PROJECTION WARNING ── -->
+      <div id="goalsBehindWarning" style="display:none;background:#FEF2F2;border-radius:10px;border-left:4px solid var(--red);padding:14px 18px;margin-bottom:16px">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px;color:var(--red);margin-bottom:4px">⚠️ Behind Projection</div>
+        <div id="goalsBehindMsg" style="font-size:13px;color:var(--ink)"></div>
+      </div>
+
+    </div><!-- /goalsPanel_my -->
+
+    <!-- ── PIPELINE TAB ── -->
+    <div id="goalsPanel_pipeline" style="display:none;flex:1;overflow-y:auto;padding:22px">
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:22px;color:var(--ink);margin-bottom:16px">My Active Pipeline</div>
+      <div id="goalsPipelineList"></div>
+    </div>
+
+    <!-- ── ACTIVITY LOG TAB ── -->
+    <div id="goalsPanel_activity" style="display:none;flex:1;overflow-y:auto;padding:22px">
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:22px;color:var(--ink);margin-bottom:6px">Activity History</div>
+      <div style="font-size:13px;color:var(--soft);margin-bottom:16px">All logged calls, visits, surveys, and proposals — pulled from your CRM activity</div>
+      <div id="goalsActivityHistory"></div>
+    </div>
+
+    <!-- ── WIN/LOSS TAB ── -->
+    <div id="goalsPanel_winloss" style="display:none;flex:1;overflow-y:auto;padding:22px">
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:22px;color:var(--ink);margin-bottom:16px">Win / Loss Tracker</div>
+
+      <!-- Log a win or loss -->
+      <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:18px;margin-bottom:18px">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin-bottom:12px">Log a Deal Close</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px">
+          <div>
+            <label style="font-size:11px;color:var(--soft);font-weight:700;display:block;margin-bottom:4px">Business Name</label>
+            <input type="text" id="wlBizName" placeholder="Account name" style="width:100%;padding:7px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;font-family:inherit;outline:none;box-sizing:border-box">
+          </div>
+          <div>
+            <label style="font-size:11px;color:var(--soft);font-weight:700;display:block;margin-bottom:4px">Deal Value (Annual)</label>
+            <input type="number" id="wlValue" placeholder="0" style="width:100%;padding:7px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;font-family:inherit;outline:none;box-sizing:border-box">
+          </div>
+          <div>
+            <label style="font-size:11px;color:var(--soft);font-weight:700;display:block;margin-bottom:4px">Outcome</label>
+            <select id="wlOutcome" onchange="goalsToggleLossReason()" style="width:100%;padding:7px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;font-family:inherit;outline:none;box-sizing:border-box">
+              <option value="won">✅ Won</option>
+              <option value="lost">❌ Lost</option>
+            </select>
+          </div>
+        </div>
+        <div id="wlLossReasonWrap" style="display:none;margin-bottom:10px">
+          <label style="font-size:11px;color:var(--soft);font-weight:700;display:block;margin-bottom:4px">Loss Reason (required)</label>
+          <select id="wlLossReason" style="width:100%;padding:7px 10px;border:1.5px solid var(--red);border-radius:7px;font-size:13px;font-family:inherit;outline:none;box-sizing:border-box">
+            <option value="">— Select reason —</option>
+            <option>Price — Too expensive</option>
+            <option>Already under contract</option>
+            <option>No decision maker available</option>
+            <option>Chose competitor — Confires</option>
+            <option>Chose competitor — Cintas</option>
+            <option>Chose competitor — Preferred Fire</option>
+            <option>Chose competitor — Other</option>
+            <option>Not interested / No need</option>
+            <option>Timing — Not ready yet</option>
+            <option>Could not reach / Ghosted</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--soft);font-weight:700;display:block;margin-bottom:4px">Notes</label>
+          <input type="text" id="wlNotes" placeholder="Any context about this deal..." style="width:100%;padding:7px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;font-family:inherit;outline:none;box-sizing:border-box">
+        </div>
+        <button onclick="goalsLogWinLoss()" style="margin-top:12px;background:var(--red);color:#fff;border:none;border-radius:8px;padding:9px 20px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">Log Deal</button>
+      </div>
+
+      <!-- Win/Loss summary -->
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px">
+        <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;text-align:center">
+          <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:28px;color:var(--green)" id="wlWonCount">0</div>
+          <div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.08em">Deals Won</div>
+        </div>
+        <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;text-align:center">
+          <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:28px;color:var(--red)" id="wlLostCount">0</div>
+          <div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.08em">Deals Lost</div>
+        </div>
+        <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;text-align:center">
+          <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:28px;color:var(--blue)" id="wlWinRate">—%</div>
+          <div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.08em">Win Rate</div>
+        </div>
+      </div>
+
+      <!-- Loss reason breakdown -->
+      <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;margin-bottom:16px">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin-bottom:12px">Loss Reason Breakdown</div>
+        <div id="wlLossReasons" style="display:flex;flex-direction:column;gap:8px"></div>
+      </div>
+
+      <!-- Deal history -->
+      <div id="wlHistory"></div>
+    </div>
+
+    <!-- ── SET QUOTAS TAB (managers only) ── -->
+    <div id="goalsPanel_setquota" style="display:none;flex:1;overflow-y:auto;padding:22px">
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:22px;color:var(--ink);margin-bottom:6px">Set Quotas</div>
+      <div style="font-size:13px;color:var(--soft);margin-bottom:20px">Manager view — set quarterly and annual quotas per rep. Reps see their quota on their dashboard.</div>
+      <div id="goalsQuotaTable"></div>
+      <button onclick="goalsOpenSetQuotaModal()" style="margin-top:16px;background:var(--red);color:#fff;border:none;border-radius:8px;padding:10px 22px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">+ Set / Update Quota</button>
+    </div>
+
+  </div><!-- /ov-body -->
+</div>
+
+<!-- SET QUOTA MODAL -->
+<div class="act-modal-bg" id="goalsQuotaModal">
+  <div class="act-modal" style="width:min(480px,96vw)">
+    <div class="act-modal-header">
+      <h3>⚙️ Set Rep Quota</h3>
+      <button onclick="document.getElementById('goalsQuotaModal').classList.remove('open')" style="background:none;border:none;color:#BFC4CA;font-size:20px;cursor:pointer">✕</button>
+    </div>
+    <div class="act-modal-body">
+      <div class="act-field">
+        <label>Sales Rep</label>
+        <select id="sqRepSelect" style="width:100%;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;font-family:inherit;outline:none">
+          <option value="Ted Scholl">Ted Scholl</option>
+          <option value="J. Smith">J. Smith</option>
+          <option value="M. Johnson">M. Johnson</option>
+          <option value="S. Davis">S. Davis</option>
+        </select>
+      </div>
+      <div class="act-field">
+        <label>Period</label>
+        <select id="sqPeriod" style="width:100%;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;font-family:inherit;outline:none">
+          <option value="q1">Q1 2026</option>
+          <option value="q2">Q2 2026</option>
+          <option value="q3">Q3 2026</option>
+          <option value="q4">Q4 2026</option>
+          <option value="annual">Full Year 2026</option>
+        </select>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="act-field">
+          <label>Revenue Quota ($)</label>
+          <input type="number" id="sqRevQuota" placeholder="50000">
+        </div>
+        <div class="act-field">
+          <label>New Accounts Target</label>
+          <input type="number" id="sqAcctTarget" placeholder="12">
+        </div>
+        <div class="act-field">
+          <label>Commission Rate (%)</label>
+          <input type="number" id="sqCommRate" placeholder="8" step="0.5">
+        </div>
+        <div class="act-field">
+          <label>Calls/Week Target</label>
+          <input type="number" id="sqCallTarget" placeholder="50">
+        </div>
+        <div class="act-field">
+          <label>Visits/Week Target</label>
+          <input type="number" id="sqVisitTarget" placeholder="10">
+        </div>
+        <div class="act-field">
+          <label>Surveys/Week Target</label>
+          <input type="number" id="sqSurveyTarget" placeholder="5">
+        </div>
+      </div>
+      <div style="background:#EBF2FD;border-radius:8px;padding:12px 14px;font-size:12px;color:#1E40AF;margin-top:4px">
+        <strong>Bonus Tiers</strong> — automatically calculated:<br>
+        100% quota = $500 quarterly bonus<br>
+        110% quota = $1,000 quarterly bonus<br>
+        125% quota = $1,500 + annual override eligible
+      </div>
+    </div>
+    <div class="act-modal-footer">
+      <button class="act-cancel-btn" onclick="document.getElementById('goalsQuotaModal').classList.remove('open')">Cancel</button>
+      <button class="act-save-btn" onclick="goalsSaveQuota()">Save Quota</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     WEEKLY EMAIL MANAGER OVERLAY
+══════════════════════════════════════════════════════════════ -->
+<div class="full-overlay" id="ovWeekly" style="z-index:380">
+  <div class="ov-header">
+    <h2>📧 Weekly Report to Management</h2>
+    <div class="ov-header-btns">
+      <button class="ov-btn" onclick="goHome()">← Home</button>
+      <button class="ov-btn close" onclick="document.getElementById('ovWeekly').classList.remove('open')">✕</button>
+    </div>
+  </div>
+  <div class="ov-body" style="padding:24px;max-width:800px;margin:0 auto">
+
+    <div style="background:#1A1D21;border-radius:10px;padding:16px 20px;margin-bottom:20px;border-left:4px solid #F2B705">
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#F2B705;margin-bottom:4px">📅 Weekly Activity Report</div>
+      <div style="font-size:13px;color:#BFC4CA">Sent every Friday EOD to management. Complete the questionnaire below — it auto-compiles with your CRM activity data into one clean email.</div>
+    </div>
+
+    <!-- Auto-compiled stats -->
+    <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:18px;margin-bottom:16px">
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin-bottom:12px">Auto-Compiled This Week (from CRM)</div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px" id="weeklyAutoStats"></div>
+    </div>
+
+    <!-- Rep questionnaire -->
+    <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:18px;margin-bottom:16px">
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin-bottom:14px">Your Weekly Questionnaire</div>
+
+      <div class="act-field">
+        <label>🏆 Biggest Win This Week</label>
+        <textarea id="wqBigWin" rows="2" placeholder="Which account, deal, or conversation felt like a breakthrough?"></textarea>
+      </div>
+      <div class="act-field">
+        <label>🚧 Biggest Challenge or Obstacle</label>
+        <textarea id="wqChallenge" rows="2" placeholder="What got in the way this week? Competitor pushback, pricing objection, no-show?"></textarea>
+      </div>
+      <div class="act-field">
+        <label>🔥 Hottest Opportunity Right Now</label>
+        <textarea id="wqHotOpps" rows="2" placeholder="Which account is closest to closing? What's the next step?"></textarea>
+      </div>
+      <div class="act-field">
+        <label>🆘 Where Do You Need Help?</label>
+        <textarea id="wqNeedHelp" rows="2" placeholder="Pricing support, manager intro call, technical question, competitor intel?"></textarea>
+      </div>
+      <div class="act-field">
+        <label>🗓️ Key Focus for Next Week</label>
+        <textarea id="wqNextWeek" rows="2" placeholder="What's your #1 priority going into next week?"></textarea>
+      </div>
+      <div class="act-field">
+        <label>Confidence Level (1-10) — How do you feel about hitting quota?</label>
+        <div style="display:flex;gap:8px;margin-top:4px" id="wqConfidencePills">
+          ${Array.from({length:10},(_,i)=>`<span onclick="goalsPickConfidence(${i+1},this)" style="width:36px;height:36px;display:flex;align-items:center;justify-content:center;border-radius:50%;border:1.5px solid var(--line);font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:14px;cursor:pointer;transition:all .15s">${i+1}</span>`).join('')}
+        </div>
+      </div>
+    </div>
+
+    <!-- Recipients -->
+    <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:18px;margin-bottom:16px">
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin-bottom:10px">Send To</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px" id="weeklyRecipients">
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" checked value="sorielly@termac.com"> Sean O'Reilly</label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" checked value="torielly@termac.com"> Terence O'Reilly</label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" value="jkennedy@termac.com"> Jim Kennedy</label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" value="dmuracco@termac.com"> Dennis Muracco</label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" value="pbrahan@termac.com"> Paul Brahan</label>
+      </div>
+    </div>
+
+    <!-- Preview + Send -->
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <button onclick="weeklyPreview()" style="background:#fff;border:1.5px solid var(--line);border-radius:8px;padding:10px 22px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;color:var(--ink)">👁 Preview Email</button>
+      <button onclick="weeklySend()" style="background:var(--red);color:#fff;border:none;border-radius:8px;padding:10px 22px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">📧 Send to Management</button>
+      <button onclick="weeklySaveDraft()" style="background:none;border:1.5px solid var(--line);border-radius:8px;padding:10px 22px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;color:var(--soft)">💾 Save Draft</button>
+    </div>
+
+    <!-- Preview area -->
+    <div id="weeklyPreviewBox" style="display:none;margin-top:20px;background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:22px"></div>
+
+  </div>
+</div>
+
+
+<script>
+/* ══════════════════════════════════════════════════════════════
+   GOALS & FORECAST ENGINE
+   Manager sets quota → rep tracks everything else
+   Manager dashboard gets rollup + flag triggers
+══════════════════════════════════════════════════════════════ */
+
+// ── DEFAULT QUOTAS (managers override per rep) ──
+const GOALS_DEFAULTS = {
+  revQuota:      50000,   // quarterly revenue quota
+  acctTarget:    12,      // new accounts per quarter
+  commRate:      8,       // commission % on new revenue
+  callTarget:    50,      // calls per week
+  visitTarget:   10,      // site visits per week
+  surveyTarget:  5,       // surveys per week
+  proposalTarget:8,       // proposals per week
+  bonusTiers: [
+    { pct:100, label:'100% — Quota Hit',    bonus:500  },
+    { pct:110, label:'110% — Strong Month', bonus:1000 },
+    { pct:125, label:'125% — Elite',        bonus:1500 },
+  ],
+  flagBehindPct: 15       // flag rep if >15% behind pace
+};
+
+// ── STORAGE KEYS ──
+const GOALS_KEY      = 'termac_goals_data';
+const GOALS_QUOTA    = 'termac_goals_quotas';
+const GOALS_ACTIVITY = 'termac_goals_activity';
+const GOALS_WL       = 'termac_goals_winloss';
+
+let _goalsCurrentRep = null;  // null = current user, string = manager viewing a rep
+let _wqConfidence    = 0;
+
+// ── LOAD / SAVE ──
+function goalsGetQuota(rep, period) {
+  try {
+    const all = JSON.parse(localStorage.getItem(GOALS_QUOTA) || '{}');
+    const key = (rep || 'Ted Scholl') + '_' + (period || 'q2');
+    return { ...GOALS_DEFAULTS, ...(all[key] || {}) };
+  } catch(e) { return { ...GOALS_DEFAULTS }; }
+}
+
+function goalsSaveQuotaData(rep, period, data) {
+  try {
+    const all = JSON.parse(localStorage.getItem(GOALS_QUOTA) || '{}');
+    const key = (rep || 'Ted Scholl') + '_' + (period || 'q2');
+    all[key] = { ...data };
+    localStorage.setItem(GOALS_QUOTA, JSON.stringify(all));
+  } catch(e) {}
+}
+
+function goalsGetActivity(rep, weekKey) {
+  try {
+    const all = JSON.parse(localStorage.getItem(GOALS_ACTIVITY) || '{}');
+    const k = (rep || 'Ted Scholl') + '_' + (weekKey || goalsCurrentWeekKey());
+    return all[k] || { calls:0, visits:0, surveys:0, proposals:0 };
+  } catch(e) { return { calls:0, visits:0, surveys:0, proposals:0 }; }
+}
+
+function goalsSaveActivityData(rep, weekKey, data) {
+  try {
+    const all = JSON.parse(localStorage.getItem(GOALS_ACTIVITY) || '{}');
+    const k = (rep || 'Ted Scholl') + '_' + (weekKey || goalsCurrentWeekKey());
+    all[k] = data;
+    localStorage.setItem(GOALS_ACTIVITY, JSON.stringify(all));
+  } catch(e) {}
+}
+
+function goalsGetWinLoss(rep) {
+  try {
+    const all = JSON.parse(localStorage.getItem(GOALS_WL) || '{}');
+    return all[rep || 'Ted Scholl'] || [];
+  } catch(e) { return []; }
+}
+
+function goalsSaveWinLoss(rep, records) {
+  try {
+    const all = JSON.parse(localStorage.getItem(GOALS_WL) || '{}');
+    all[rep || 'Ted Scholl'] = records;
+    localStorage.setItem(GOALS_WL, JSON.stringify(all));
+  } catch(e) {}
+}
+
+function goalsCurrentWeekKey() {
+  const d = new Date();
+  const jan1 = new Date(d.getFullYear(), 0, 1);
+  const week = Math.ceil(((d - jan1) / 86400000 + jan1.getDay() + 1) / 7);
+  return d.getFullYear() + '_W' + week;
+}
+
+function goalsPeriodDates(period) {
+  const y = new Date().getFullYear();
+  const ranges = {
+    q1: { start: new Date(y,0,1),  end: new Date(y,2,31),  label:'Q1 2026', days:90 },
+    q2: { start: new Date(y,3,1),  end: new Date(y,5,30),  label:'Q2 2026', days:91 },
+    q3: { start: new Date(y,6,1),  end: new Date(y,8,30),  label:'Q3 2026', days:92 },
+    q4: { start: new Date(y,9,1),  end: new Date(y,11,31), label:'Q4 2026', days:92 },
+    annual: { start: new Date(y,0,1), end: new Date(y,11,31), label:'Full Year 2026', days:365 },
+  };
+  return ranges[period] || ranges.q2;
+}
+
+// ── TAB SWITCHING ──
+function goalsShowTab(tabId, btn) {
+  ['my','pipeline','activity','winloss','setquota'].forEach(t => {
+    const p = document.getElementById('goalsPanel_' + t);
+    const b = document.getElementById('goalsTab_' + t);
+    if (p) p.style.display = 'none';
+    if (b) b.classList.remove('active');
+  });
+  const panel = document.getElementById('goalsPanel_' + tabId);
+  if (panel) panel.style.display = 'flex';
+  if (btn) btn.classList.add('active');
+
+  if (tabId === 'my')       goalsRender();
+  if (tabId === 'pipeline') goalsRenderPipeline();
+  if (tabId === 'activity') goalsRenderActivityHistory();
+  if (tabId === 'winloss')  goalsRenderWinLoss();
+  if (tabId === 'setquota') goalsRenderQuotaTable();
+}
+
+// ── MAIN RENDER ──
+function goalsRender() {
+  const rep    = _goalsCurrentRep || (_currentUser?.name || 'Ted Scholl');
+  const period = document.getElementById('goalsPeriod')?.value || 'q2';
+  const quota  = goalsGetQuota(rep, period);
+  const pDates = goalsPeriodDates(period);
+  const now    = Date.now();
+
+  // Set rep name display
+  const nameEl = document.getElementById('goalsRepName');
+  if (nameEl) nameEl.textContent = rep === (_currentUser?.name || 'Ted Scholl') ? 'My Goals' : rep + ' — Goals';
+
+  // Period label
+  const labelEl = document.getElementById('goalsPeriodLabel');
+  if (labelEl) labelEl.textContent = pDates.label + ' · ' + pDates.days + ' days';
+
+  // Set current period in selector
+  const sel = document.getElementById('goalsPeriod');
+  if (sel && !sel.dataset.initialized) {
+    // Auto-select current quarter
+    const m = new Date().getMonth();
+    const curQ = m < 3 ? 'q1' : m < 6 ? 'q2' : m < 9 ? 'q3' : 'q4';
+    sel.value = curQ;
+    sel.dataset.initialized = '1';
+  }
+
+  // Pull CRM data for this rep
+  const accounts  = crmLoad('accounts');
+  const leads     = crmLoad('leads');
+  const wlRecords = goalsGetWinLoss(rep);
+
+  // Revenue closed = won deals logged + accounts with estimateAccepted
+  const wonDeals   = wlRecords.filter(r => r.outcome === 'won');
+  const revClosed  = wonDeals.reduce((s, r) => s + (r.value || 0), 0);
+  const dealsWon   = wonDeals.length;
+  const dealsLost  = wlRecords.filter(r => r.outcome === 'lost').length;
+  const winRate    = (dealsWon + dealsLost) > 0 ? Math.round((dealsWon / (dealsWon + dealsLost)) * 100) : 0;
+
+  // Pipeline = hot/warm leads assigned to rep with estimated value
+  const myLeads    = leads.filter(l => (l.assignedRep === rep || l.claimedBy === rep) && l.status !== 'lost');
+  const hotLeads   = myLeads.filter(l => l.status === 'hot');
+  const pipelineVal= myLeads.reduce((s, l) => s + (l.estimatedValue || 2400), 0); // $2,400 avg if no value
+
+  // Forecast = pipeline × win rate (min 30%)
+  const effectiveWR = Math.max(winRate / 100, 0.30);
+  const forecast    = Math.round(pipelineVal * effectiveWR);
+
+  // Commission
+  const commission  = Math.round(revClosed * (quota.commRate / 100));
+
+  // Days left in period
+  const daysLeft    = Math.max(0, Math.round((pDates.end - new Date()) / 86400000));
+  const daysDone    = pDates.days - daysLeft;
+  const paceExpected= Math.round(quota.revQuota * (daysDone / pDates.days));
+  const behindBy    = paceExpected - revClosed;
+  const behindPct   = paceExpected > 0 ? Math.round((behindBy / paceExpected) * 100) : 0;
+
+  // Attainment %
+  const attainPct   = quota.revQuota > 0 ? Math.round((revClosed / quota.revQuota) * 100) : 0;
+
+  // ── ARC GAUGE ──
+  const arcEl = document.getElementById('goalsArcFill');
+  const pctEl = document.getElementById('goalsArcPct');
+  const lblEl = document.getElementById('goalsArcLabel');
+  if (arcEl) {
+    const clampedPct = Math.min(attainPct, 100);
+    const dashLen    = 251.2;
+    const offset     = dashLen - (dashLen * clampedPct / 100);
+    arcEl.style.strokeDashoffset = offset;
+    arcEl.style.stroke = attainPct >= 100 ? '#1E7B3C' : attainPct >= 75 ? '#F59E0B' : '#C8102E';
+  }
+  if (pctEl) pctEl.textContent = attainPct + '%';
+  if (lblEl) lblEl.textContent = 'of $' + (quota.revQuota/1000).toFixed(0) + 'K quota';
+
+  // ── MILESTONE ──
+  const msEl = document.getElementById('goalsMilestone');
+  if (msEl) {
+    const toQuota = quota.revQuota - revClosed;
+    if (toQuota <= 0) {
+      msEl.innerHTML = '🎉 <strong>Quota hit!</strong> You're over target.';
+      msEl.style.color = '#1E7B3C';
+    } else {
+      msEl.innerHTML = `<strong>$${toQuota.toLocaleString()}</strong> to quota<br>
+        <span style="font-size:11px">Need $${Math.round(toQuota/Math.max(daysLeft,1)).toLocaleString()}/day to finish on time</span>`;
+      msEl.style.color = 'var(--soft)';
+    }
+  }
+
+  // ── KPI CARDS ──
+  const fmt$ = v => '$' + Number(v).toLocaleString();
+  const set  = (id, val) => { const el = document.getElementById(id); if(el) el.textContent = val; };
+  set('goalsRevClosed',   fmt$(revClosed));
+  set('goalsRevTarget',   'Target: ' + fmt$(quota.revQuota));
+  set('goalsRevPipeline', fmt$(pipelineVal));
+  set('goalsPipelineCount', myLeads.length + ' leads (' + hotLeads.length + ' hot)');
+  set('goalsRevForecast', fmt$(forecast));
+  set('goalsForecastBasis', winRate + '% win rate × pipeline');
+  set('goalsCommission',  fmt$(commission));
+  set('goalsCommRate',    quota.commRate + '% on $' + fmt$(revClosed) + ' closed');
+  set('goalsDealsWon',    dealsWon);
+  set('goalsWinRate',     winRate + '% win rate');
+  set('goalsDaysLeft',    daysLeft);
+  set('goalsPaceLabel',   daysDone + ' days done · pace: ' + fmt$(paceExpected) + ' expected');
+
+  // ── BEHIND WARNING ──
+  const warnEl = document.getElementById('goalsBehindWarning');
+  const warnMsg = document.getElementById('goalsBehindMsg');
+  if (warnEl && behindPct > (quota.flagBehindPct || 15) && daysDone > 14) {
+    warnEl.style.display = 'block';
+    if (warnMsg) warnMsg.textContent = `You're $${behindBy.toLocaleString()} behind pace (${behindPct}% gap). ` +
+      `At current pace you'll close $${Math.round(revClosed * (pDates.days / daysDone)).toLocaleString()} by period end — ` +
+      `$${Math.round(quota.revQuota - revClosed * (pDates.days / daysDone)).toLocaleString()} short of quota.`;
+  } else if (warnEl) {
+    warnEl.style.display = 'none';
+  }
+
+  // ── FUEL — ACTIVITY BARS ──
+  const weekAct   = goalsGetActivity(rep, goalsCurrentWeekKey());
+  const actBarsEl = document.getElementById('goalsActivityBars');
+  if (actBarsEl) {
+    const bars = [
+      { label:'Calls',    val:weekAct.calls    || 0, target:quota.callTarget    || 50, color:'#C8102E' },
+      { label:'Visits',   val:weekAct.visits   || 0, target:quota.visitTarget   || 10, color:'#1B5FA8' },
+      { label:'Surveys',  val:weekAct.surveys  || 0, target:quota.surveyTarget  || 5,  color:'#1E7B3C' },
+      { label:'Proposals',val:weekAct.proposals|| 0, target:quota.proposalTarget|| 8,  color:'#D8690B' },
+    ];
+    actBarsEl.innerHTML = bars.map(b => {
+      const pct   = Math.min(100, Math.round((b.val / b.target) * 100));
+      const color = b.val >= b.target ? '#1E7B3C' : b.val >= b.target * 0.7 ? '#F59E0B' : b.color;
+      return `<div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px">
+          <span style="font-weight:600;color:var(--ink)">${b.label}</span>
+          <span style="color:${color};font-weight:700;font-family:'Barlow Condensed',sans-serif">${b.val} / ${b.target}</span>
+        </div>
+        <div style="background:var(--line);border-radius:4px;height:8px;overflow:hidden">
+          <div style="background:${color};height:100%;width:${pct}%;transition:width .4s;border-radius:4px"></div>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  // Populate activity inputs
+  ['calls','visits','surveys','proposals'].forEach(k => {
+    const el = document.getElementById('goalsInput' + k.charAt(0).toUpperCase() + k.slice(1));
+    if (el) el.value = weekAct[k] || 0;
+  });
+
+  // ── ENGINE — PIPELINE HEALTH ──
+  const phEl = document.getElementById('goalsPipelineHealth');
+  if (phEl) {
+    const stageMap = {
+      hot:  { label:'Hot — Close Ready', count:0, color:'#C8102E' },
+      warm: { label:'Warm — In Convo',   count:0, color:'#F59E0B' },
+      cold: { label:'Cold — To Nurture', count:0, color:'#9CA3AF' },
+      new:  { label:'New — Unworked',    count:0, color:'#1B5FA8' },
+    };
+    myLeads.forEach(l => {
+      if (stageMap[l.status]) stageMap[l.status].count++;
+    });
+    phEl.innerHTML = Object.values(stageMap).map(st => `
+      <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:5px 0;border-bottom:1px solid var(--line)">
+        <span style="color:var(--soft)">${st.label}</span>
+        <span style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:16px;color:${st.color}">${st.count}</span>
+      </div>`).join('');
+
+    // Avg days to close
+    const closedWithDates = wonDeals.filter(d => d.daysToClose);
+    const avgClose = closedWithDates.length
+      ? Math.round(closedWithDates.reduce((s,d) => s + d.daysToClose, 0) / closedWithDates.length)
+      : 28; // default assumption
+    set('goalsAvgClose', avgClose);
+  }
+
+  // ── FINISH LINE — BONUS TIERS ──
+  const tiersEl = document.getElementById('goalsBonusTiers');
+  if (tiersEl) {
+    tiersEl.innerHTML = (quota.bonusTiers || GOALS_DEFAULTS.bonusTiers).map(tier => {
+      const tierRev  = Math.round(quota.revQuota * tier.pct / 100);
+      const reached  = revClosed >= tierRev;
+      const toGo     = Math.max(0, tierRev - revClosed);
+      return `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;background:${reached ? '#D1FAE5' : 'var(--bg)'};border:1.5px solid ${reached ? '#1E7B3C' : 'var(--line)'}">
+        <span style="font-size:18px">${reached ? '✅' : '🔒'}</span>
+        <div style="flex:1">
+          <div style="font-size:12px;font-weight:700;color:${reached ? '#065F46' : 'var(--ink)'}">${tier.label}</div>
+          <div style="font-size:11px;color:var(--soft)">${reached ? 'Bonus earned: $' + tier.bonus.toLocaleString() : '$' + toGo.toLocaleString() + ' to unlock +$' + tier.bonus.toLocaleString()}</div>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  // Projected end
+  const projectedRev = daysDone > 0 ? Math.round(revClosed * (pDates.days / daysDone)) : 0;
+  set('goalsProjectedEnd', fmt$(projectedRev));
+  const projEl = document.getElementById('goalsProjectionNote');
+  if (projEl) {
+    if (projectedRev >= quota.revQuota) {
+      projEl.textContent = '✅ On track to hit quota';
+      projEl.style.color = '#1E7B3C';
+    } else {
+      projEl.textContent = '$' + (quota.revQuota - projectedRev).toLocaleString() + ' short at current pace';
+      projEl.style.color = '#C8102E';
+    }
+  }
+}
+
+// ── SAVE ACTIVITY (from inputs) ──
+function goalsSaveActivity() {
+  const rep = _goalsCurrentRep || (_currentUser?.name || 'Ted Scholl');
+  const data = {
+    calls:     parseInt(document.getElementById('goalsInputCalls')?.value     || 0),
+    visits:    parseInt(document.getElementById('goalsInputVisits')?.value    || 0),
+    surveys:   parseInt(document.getElementById('goalsInputSurveys')?.value   || 0),
+    proposals: parseInt(document.getElementById('goalsInputProposals')?.value || 0),
+  };
+  goalsSaveActivityData(rep, goalsCurrentWeekKey(), data);
+  // Refresh bars without full re-render
+  setTimeout(goalsRender, 100);
+}
+
+// ── PIPELINE TAB ──
+function goalsRenderPipeline() {
+  const rep     = _goalsCurrentRep || (_currentUser?.name || 'Ted Scholl');
+  const leads   = crmLoad('leads');
+  const myLeads = leads.filter(l => (l.assignedRep === rep || l.claimedBy === rep));
+  const el      = document.getElementById('goalsPipelineList');
+  if (!el) return;
+
+  if (!myLeads.length) {
+    el.innerHTML = '<div style="text-align:center;padding:50px;color:var(--soft)">No leads in your pipeline yet. Claim leads from the shared pool.</div>';
+    return;
+  }
+
+  const statusColors = { hot:'#FEE2E2', warm:'#FEF3C7', cold:'#F3F4F6', new:'#DBEAFE' };
+  const statusText   = { hot:'var(--red)', warm:'#D8690B', cold:'var(--soft)', new:'#1B5FA8' };
+
+  el.innerHTML = myLeads.map(l => {
+    const val = l.estimatedValue || 2400;
+    const sc  = statusColors[l.status] || '#F3F4F6';
+    const tc  = statusText[l.status]   || 'var(--soft)';
+    return `<div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:14px 16px;margin-bottom:10px;display:flex;align-items:center;gap:14px">
+      <div style="flex:1">
+        <div style="font-weight:700;font-size:14px;color:var(--ink)">${l.name || l.business || '—'}</div>
+        <div style="font-size:12px;color:var(--soft);margin:2px 0">${l.business || ''} · ${l.address || l.zip || '—'}</div>
+        <div style="font-size:11px;color:var(--soft)">${l.notes ? l.notes.substring(0,80) + '…' : ''}</div>
+        ${l.followupDate ? `<div style="font-size:11px;color:#D8690B;margin-top:3px;font-weight:600">📅 Follow-up: ${l.followupDate}</div>` : ''}
+      </div>
+      <div style="text-align:right;flex-shrink:0">
+        <span style="background:${sc};color:${tc};border-radius:4px;padding:2px 9px;font-size:11px;font-weight:700;font-family:'Barlow Condensed',sans-serif;display:block;margin-bottom:5px">${(l.status||'new').toUpperCase()}</span>
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:16px;color:var(--green)">$${val.toLocaleString()}/yr</div>
+        <div style="font-size:10px;color:var(--soft)">est. value</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:5px;flex-shrink:0">
+        <button onclick="openLogModal('${l.id}','leads')" style="background:var(--red);color:#fff;border:none;border-radius:6px;padding:6px 12px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;text-transform:uppercase;cursor:pointer">Log</button>
+        <button onclick="openApptModal('${l.id}','leads')" style="background:#fff;border:1.5px solid var(--line);border-radius:6px;padding:5px 10px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;text-transform:uppercase;cursor:pointer;color:var(--soft)">Appt</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ── ACTIVITY HISTORY TAB ──
+function goalsRenderActivityHistory() {
+  const rep  = _goalsCurrentRep || (_currentUser?.name || 'Ted Scholl');
+  const logs = [];
+  const leads    = crmLoad('leads');
+  const accounts = crmLoad('accounts');
+  [...leads, ...accounts].forEach(r => {
+    (r.activityLog || []).forEach(e => {
+      if (e.who === rep || e.type === 'rep') {
+        logs.push({ ...e, recordName: r.name || r.business || '—' });
+      }
+    });
+  });
+  logs.sort((a,b) => (b.ts||0) - (a.ts||0));
+
+  const el = document.getElementById('goalsActivityHistory');
+  if (!el) return;
+  if (!logs.length) {
+    el.innerHTML = '<div style="color:var(--soft);text-align:center;padding:40px">No activity logged yet. Log calls and visits from your leads and accounts.</div>';
+    return;
+  }
+  el.innerHTML = logs.slice(0,50).map(e => `
+    <div style="display:flex;gap:12px;padding:10px 0;border-bottom:1px solid var(--line);font-size:12px">
+      <span style="font-size:18px;flex-shrink:0">${e.icon || '📌'}</span>
+      <div style="flex:1">
+        <div style="font-weight:600;color:var(--ink)">${e.title || e.note || '—'}</div>
+        <div style="color:var(--soft)">${e.recordName} · ${e.ts ? new Date(e.ts).toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'}</div>
+        ${e.note && e.title ? `<div style="color:var(--soft);margin-top:2px">${e.note}</div>` : ''}
+      </div>
+      ${e.outcome ? `<span style="background:var(--bg);border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700;height:fit-content;white-space:nowrap">${e.outcome}</span>` : ''}
+    </div>`).join('');
+}
+
+// ── WIN/LOSS TAB ──
+function goalsToggleLossReason() {
+  const outcome = document.getElementById('wlOutcome')?.value;
+  const wrap    = document.getElementById('wlLossReasonWrap');
+  if (wrap) wrap.style.display = outcome === 'lost' ? 'block' : 'none';
+}
+
+function goalsLogWinLoss() {
+  const outcome = document.getElementById('wlOutcome')?.value;
+  const reason  = document.getElementById('wlLossReason')?.value;
+  const biz     = document.getElementById('wlBizName')?.value.trim();
+  const val     = parseFloat(document.getElementById('wlValue')?.value || 0);
+  const notes   = document.getElementById('wlNotes')?.value.trim();
+
+  if (!biz) { alert('Enter business name.'); return; }
+  if (outcome === 'lost' && !reason) { alert('Select a loss reason.'); return; }
+
+  const rep     = _goalsCurrentRep || (_currentUser?.name || 'Ted Scholl');
+  const records = goalsGetWinLoss(rep);
+  const created = new Date().toISOString();
+  const daysToClose = Math.round(Math.random() * 20 + 10); // placeholder
+
+  records.push({ outcome, biz, value:val, reason:reason||'', notes, ts:Date.now(), created, daysToClose });
+  goalsSaveWinLoss(rep, records);
+
+  // Reset form
+  ['wlBizName','wlValue','wlNotes'].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
+  document.getElementById('wlOutcome').value = 'won';
+  document.getElementById('wlLossReasonWrap').style.display = 'none';
+
+  goalsRenderWinLoss();
+  goalsRender();
+
+  // Toast
+  const t = document.createElement('div');
+  t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1A1D21;color:#fff;border-radius:8px;padding:10px 20px;font-size:13px;font-weight:600;z-index:999';
+  t.textContent = outcome === 'won' ? '✅ Win logged — great work!' : '📋 Loss logged — reason captured';
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 2500);
+}
+
+function goalsRenderWinLoss() {
+  const rep     = _goalsCurrentRep || (_currentUser?.name || 'Ted Scholl');
+  const records = goalsGetWinLoss(rep);
+  const won     = records.filter(r => r.outcome === 'won');
+  const lost    = records.filter(r => r.outcome === 'lost');
+  const rate    = (won.length + lost.length) > 0 ? Math.round(won.length / (won.length + lost.length) * 100) : 0;
+
+  const set = (id, val) => { const el = document.getElementById(id); if(el) el.textContent = val; };
+  set('wlWonCount',  won.length);
+  set('wlLostCount', lost.length);
+  set('wlWinRate',   rate + '%');
+
+  // Loss reason breakdown
+  const lrEl = document.getElementById('wlLossReasons');
+  if (lrEl) {
+    const reasons = {};
+    lost.forEach(r => { reasons[r.reason || 'Unknown'] = (reasons[r.reason || 'Unknown'] || 0) + 1; });
+    if (Object.keys(reasons).length === 0) {
+      lrEl.innerHTML = '<div style="color:var(--soft);font-size:12px">No losses recorded yet.</div>';
+    } else {
+      const sorted = Object.entries(reasons).sort((a,b) => b[1]-a[1]);
+      lrEl.innerHTML = sorted.map(([reason, count]) => {
+        const pct = Math.round(count / lost.length * 100);
+        return `<div style="margin-bottom:6px">
+          <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
+            <span style="color:var(--ink)">${reason}</span>
+            <span style="font-weight:700;color:var(--red)">${count} (${pct}%)</span>
+          </div>
+          <div style="background:var(--line);border-radius:4px;height:6px">
+            <div style="background:var(--red);height:100%;width:${pct}%;border-radius:4px"></div>
+          </div>
+        </div>`;
+      }).join('');
+    }
+  }
+
+  // History
+  const histEl = document.getElementById('wlHistory');
+  if (histEl && records.length) {
+    histEl.innerHTML = '<div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px">' +
+      '<div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin-bottom:12px">Deal History</div>' +
+      [...records].reverse().map(r => `
+        <div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--line);font-size:12px">
+          <span style="font-size:18px">${r.outcome === 'won' ? '✅' : '❌'}</span>
+          <div style="flex:1">
+            <div style="font-weight:700">${r.biz}</div>
+            <div style="color:var(--soft)">${r.reason || ''} ${r.notes ? '· ' + r.notes : ''}</div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;color:${r.outcome==='won'?'var(--green)':'var(--red)'}">$${(r.value||0).toLocaleString()}</div>
+            <div style="font-size:10px;color:var(--soft)">${r.ts ? new Date(r.ts).toLocaleDateString() : ''}</div>
+          </div>
+        </div>`).join('') + '</div>';
+  }
+}
+
+// ── QUOTA TABLE (managers) ──
+function goalsRenderQuotaTable() {
+  const reps = ['Ted Scholl','J. Smith','M. Johnson','S. Davis'];
+  const period = document.getElementById('goalsPeriod')?.value || 'q2';
+  const el = document.getElementById('goalsQuotaTable');
+  if (!el) return;
+
+  el.innerHTML = `<div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);overflow:hidden">
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead>
+        <tr style="background:#1A1D21">
+          <th style="text-align:left;padding:10px 14px;color:#F2B705;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.12em;text-transform:uppercase">Rep</th>
+          <th style="text-align:right;padding:10px 14px;color:#F2B705;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.12em;text-transform:uppercase">Quota</th>
+          <th style="text-align:right;padding:10px 14px;color:#F2B705;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.12em;text-transform:uppercase">Closed</th>
+          <th style="text-align:right;padding:10px 14px;color:#F2B705;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.12em;text-transform:uppercase">Attainment</th>
+          <th style="text-align:right;padding:10px 14px;color:#F2B705;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.12em;text-transform:uppercase">Comm %</th>
+          <th style="text-align:center;padding:10px 14px;color:#F2B705;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.12em;text-transform:uppercase">Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${reps.map((rep, i) => {
+          const q = goalsGetQuota(rep, period);
+          const wl = goalsGetWinLoss(rep);
+          const closed = wl.filter(r=>r.outcome==='won').reduce((s,r)=>s+(r.value||0),0);
+          const att = q.revQuota > 0 ? Math.round(closed/q.revQuota*100) : 0;
+          // Pace check
+          const m = new Date().getMonth();
+          const curQ = m < 3 ? 'q1' : m < 6 ? 'q2' : m < 9 ? 'q3' : 'q4';
+          const pd = goalsPeriodDates(period);
+          const daysDone = Math.round((new Date() - pd.start) / 86400000);
+          const paceExp = q.revQuota > 0 ? Math.round(q.revQuota * (daysDone / pd.days)) : 0;
+          const behindPct = paceExp > 0 ? Math.round((paceExp - closed) / paceExp * 100) : 0;
+          const flagged = behindPct > (q.flagBehindPct || 15) && daysDone > 14;
+
+          return `<tr style="border-bottom:1px solid var(--line);${i%2===1?'background:#FAFBFC':''}${flagged?';background:#FEF2F2':''}">
+            <td style="padding:10px 14px;font-weight:700">${rep}${flagged?` <span style="background:#C8102E;color:#fff;border-radius:4px;padding:1px 6px;font-size:9px;font-weight:800;font-family:'Barlow Condensed',sans-serif;margin-left:6px">⚠️ BEHIND</span>`:''}</td>
+            <td style="padding:10px 14px;text-align:right">$${q.revQuota.toLocaleString()}</td>
+            <td style="padding:10px 14px;text-align:right;font-weight:700;color:var(--green)">$${closed.toLocaleString()}</td>
+            <td style="padding:10px 14px;text-align:right">
+              <div style="display:flex;align-items:center;gap:8px;justify-content:flex-end">
+                <div style="width:80px;background:var(--line);border-radius:4px;height:8px">
+                  <div style="background:${att>=100?'#1E7B3C':att>=75?'#F59E0B':'#C8102E'};height:100%;width:${Math.min(att,100)}%;border-radius:4px"></div>
+                </div>
+                <span style="font-weight:700;color:${att>=100?'#1E7B3C':att>=75?'#F59E0B':'#C8102E'}">${att}%</span>
+              </div>
+            </td>
+            <td style="padding:10px 14px;text-align:right">${q.commRate}%</td>
+            <td style="padding:10px 14px;text-align:center">
+              <span style="background:${att>=100?'#D1FAE5':flagged?'#FEE2E2':'#FEF3C7'};color:${att>=100?'#065F46':flagged?'#991B1B':'#92400E'};border-radius:4px;padding:2px 8px;font-size:10px;font-weight:800;font-family:'Barlow Condensed',sans-serif">
+                ${att>=100?'✅ HIT':flagged?'⚠️ BEHIND':'On Track'}
+              </span>
+            </td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+// ── SET QUOTA MODAL ──
+function goalsOpenSetQuotaModal() {
+  document.getElementById('goalsQuotaModal').classList.add('open');
+}
+
+function goalsSaveQuota() {
+  const rep    = document.getElementById('sqRepSelect')?.value;
+  const period = document.getElementById('sqPeriod')?.value;
+  const data   = {
+    revQuota:       parseFloat(document.getElementById('sqRevQuota')?.value    || GOALS_DEFAULTS.revQuota),
+    acctTarget:     parseInt(document.getElementById('sqAcctTarget')?.value     || GOALS_DEFAULTS.acctTarget),
+    commRate:       parseFloat(document.getElementById('sqCommRate')?.value     || GOALS_DEFAULTS.commRate),
+    callTarget:     parseInt(document.getElementById('sqCallTarget')?.value     || GOALS_DEFAULTS.callTarget),
+    visitTarget:    parseInt(document.getElementById('sqVisitTarget')?.value    || GOALS_DEFAULTS.visitTarget),
+    surveyTarget:   parseInt(document.getElementById('sqSurveyTarget')?.value   || GOALS_DEFAULTS.surveyTarget),
+    proposalTarget: parseInt(document.getElementById('sqSurveyTarget')?.value   || GOALS_DEFAULTS.proposalTarget),
+    bonusTiers:     GOALS_DEFAULTS.bonusTiers,
+    flagBehindPct:  15
+  };
+  goalsSaveQuotaData(rep, period, data);
+  document.getElementById('goalsQuotaModal').classList.remove('open');
+  goalsRenderQuotaTable();
+  const t = document.createElement('div');
+  t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1E7B3C;color:#fff;border-radius:8px;padding:10px 20px;font-size:13px;font-weight:600;z-index:999';
+  t.textContent = '✅ Quota saved for ' + rep;
+  document.body.appendChild(t); setTimeout(()=>t.remove(), 2500);
+}
+
+// ── CONFIDENCE PICKER ──
+function goalsPickConfidence(val, el) {
+  _wqConfidence = val;
+  document.querySelectorAll('#wqConfidencePills span').forEach((s,i) => {
+    const active = i < val;
+    s.style.background = active ? (val >= 7 ? '#1E7B3C' : val >= 5 ? '#F59E0B' : '#C8102E') : '';
+    s.style.color      = active ? '#fff' : '';
+    s.style.borderColor= active ? 'transparent' : 'var(--line)';
+  });
+}
+
+// ── GOALS OVERLAY OPEN HOOK ──
+const _origOpenOverlayGoals = window.openOverlay;
+window.openOverlay = function(key) {
+  if (key === 'goals') {
+    const el = document.getElementById('ovGoals');
+    if (el) {
+      el.classList.add('open');
+      // Show Set Quotas only for managers
+      const isManager = _currentUser?.role === 'manager' || sessionStorage.getItem('termac_mgr_unlocked') === '1';
+      const setQuotaTab = document.getElementById('goalsTab_setquota');
+      if (setQuotaTab) {
+        setQuotaTab.classList.toggle('nav-locked', !isManager);
+        setQuotaTab.style.opacity = isManager ? '1' : '.4';
+      }
+      // Show rep selector for managers
+      const repWrap = document.getElementById('goalsRepSelectorWrap');
+      if (repWrap && isManager) {
+        repWrap.style.display = 'block';
+        const sel = document.getElementById('goalsRepSelector');
+        if (sel && sel.options.length <= 1) {
+          ['Ted Scholl','J. Smith','M. Johnson','S. Davis'].forEach(r => {
+            const opt = document.createElement('option');
+            opt.value = opt.textContent = r;
+            sel.appendChild(opt);
+          });
+        }
+      }
+      goalsShowTab('my', document.getElementById('goalsTab_my'));
+      return;
+    }
+  }
+  if (key === 'weekly') {
+    const el = document.getElementById('ovWeekly');
+    if (el) { el.classList.add('open'); weeklyLoadData(); return; }
+  }
+  if (_origOpenOverlayGoals) _origOpenOverlayGoals(key);
+};
+
+function goalsLoadRep(rep) {
+  _goalsCurrentRep = rep || null;
+  goalsRender();
+}
+
+/* ──────────────────────────────────────
+   MANAGER DASHBOARD — Goals Rollup Panel
+   Added to refreshManagerDashboard()
+────────────────────────────────────── */
+function mgrRenderGoalsRollup() {
+  const reps    = ['Ted Scholl','J. Smith','M. Johnson','S. Davis'];
+  const period  = 'q2';
+  const pd      = goalsPeriodDates(period);
+  const daysDone= Math.max(1, Math.round((new Date() - pd.start) / 86400000));
+  const el      = document.getElementById('mgrGoalsRollup');
+  if (!el) return;
+
+  el.innerHTML = reps.map(rep => {
+    const q      = goalsGetQuota(rep, period);
+    const wl     = goalsGetWinLoss(rep);
+    const closed = wl.filter(r=>r.outcome==='won').reduce((s,r)=>s+(r.value||0),0);
+    const att    = q.revQuota > 0 ? Math.round(closed/q.revQuota*100) : 0;
+    const pace   = Math.round(q.revQuota * (daysDone / pd.days));
+    const behind = pace > 0 ? Math.round((pace - closed) / pace * 100) : 0;
+    const flagged= behind > 15 && daysDone > 14;
+    const color  = att >= 100 ? '#1E7B3C' : flagged ? '#C8102E' : '#F59E0B';
+
+    return `<div style="background:${flagged?'#FEF2F2':'#fff'};border-radius:10px;padding:14px 16px;border-left:4px solid ${color};box-shadow:0 1px 3px rgba(26,29,33,.08)">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
+        <div style="font-weight:700;font-size:13px;color:var(--ink)">${rep}</div>
+        ${flagged ? '<span style="background:#C8102E;color:#fff;border-radius:4px;padding:1px 7px;font-size:9px;font-weight:800;font-family:'Barlow Condensed',sans-serif">⚠️ BEHIND</span>' : ''}
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <div style="flex:1;background:var(--line);border-radius:4px;height:8px">
+          <div style="background:${color};height:100%;width:${Math.min(att,100)}%;border-radius:4px;transition:width .4s"></div>
+        </div>
+        <span style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:16px;color:${color}">${att}%</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--soft)">
+        <span>$${closed.toLocaleString()} of $${q.revQuota.toLocaleString()}</span>
+        ${flagged ? `<span style="color:#C8102E;font-weight:700">${behind}% behind pace</span>` : '<span style="color:var(--green)">On pace ✓</span>'}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// Hook into refreshManagerDashboard
+const _origRefreshMgr = window.refreshManagerDashboard;
+window.refreshManagerDashboard = function() {
+  if (_origRefreshMgr) _origRefreshMgr();
+  mgrRenderGoalsRollup();
+};
+
+/* ──────────────────────────────────────
+   WEEKLY EMAIL MANAGER
+────────────────────────────────────── */
+function weeklyLoadData() {
+  // Auto-compile CRM stats for this week
+  const now = Date.now();
+  const weekStart = now - 7 * 86400000;
+  const leads    = crmLoad('leads');
+  const accounts = crmLoad('accounts');
+
+  let calls = 0, visits = 0, surveys = 0, newLeads = 0;
+  [...leads, ...accounts].forEach(r => {
+    (r.activityLog||[]).forEach(e => {
+      if (e.ts > weekStart) {
+        if (e.type === 'rep') {
+          if (e.icon === '📞' || e.title?.includes('Call')) calls++;
+          if (e.icon === '🏢' || e.title?.includes('Visit')) visits++;
+        }
+      }
+    });
+    if (r.created > weekStart) newLeads++;
+  });
+
+  const rep    = _currentUser?.name || 'Ted Scholl';
+  const period = 'q2';
+  const weekAct = goalsGetActivity(rep, goalsCurrentWeekKey());
+  calls    = Math.max(calls,    weekAct.calls    || 0);
+  visits   = Math.max(visits,   weekAct.visits   || 0);
+  surveys  = weekAct.surveys   || 0;
+  const proposals = weekAct.proposals || 0;
+
+  const statsEl = document.getElementById('weeklyAutoStats');
+  if (statsEl) {
+    const stats = [
+      { label:'Calls Made',    val:calls },
+      { label:'Site Visits',   val:visits },
+      { label:'Surveys Done',  val:surveys },
+      { label:'New Leads',     val:newLeads },
+    ];
+    statsEl.innerHTML = stats.map(st => `
+      <div style="text-align:center;padding:12px;background:var(--bg);border-radius:8px">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:24px;color:var(--ink)">${st.val}</div>
+        <div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.06em">${st.label}</div>
+      </div>`).join('');
+  }
+
+  // Load saved draft
+  try {
+    const draft = JSON.parse(localStorage.getItem('weekly_draft_' + goalsCurrentWeekKey()) || '{}');
+    ['BigWin','Challenge','HotOpps','NeedHelp','NextWeek'].forEach(k => {
+      const el = document.getElementById('wq' + k);
+      if (el && draft[k]) el.value = draft[k];
+    });
+    if (draft.confidence) goalsPickConfidence(draft.confidence, null);
+  } catch(e) {}
+}
+
+function weeklySaveDraft() {
+  const data = {
+    BigWin:     document.getElementById('wqBigWin')?.value,
+    Challenge:  document.getElementById('wqChallenge')?.value,
+    HotOpps:    document.getElementById('wqHotOpps')?.value,
+    NeedHelp:   document.getElementById('wqNeedHelp')?.value,
+    NextWeek:   document.getElementById('wqNextWeek')?.value,
+    confidence: _wqConfidence,
+    savedAt:    Date.now()
+  };
+  localStorage.setItem('weekly_draft_' + goalsCurrentWeekKey(), JSON.stringify(data));
+  const t = document.createElement('div');
+  t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1A1D21;color:#fff;border-radius:8px;padding:10px 20px;font-size:13px;font-weight:600;z-index:999';
+  t.textContent = '💾 Draft saved';
+  document.body.appendChild(t); setTimeout(()=>t.remove(), 2000);
+}
+
+function weeklyBuildEmailBody() {
+  const rep   = _currentUser?.name || 'Ted Scholl';
+  const week  = goalsCurrentWeekKey().replace('_',' — ');
+  const wl    = goalsGetWinLoss(rep);
+  const wonWk = wl.filter(r => r.ts > Date.now() - 7*86400000 && r.outcome === 'won');
+  const lostWk= wl.filter(r => r.ts > Date.now() - 7*86400000 && r.outcome === 'lost');
+  const weekAct = goalsGetActivity(rep, goalsCurrentWeekKey());
+
+  const q = goalsGetQuota(rep, 'q2');
+  const totalClosed = wl.filter(r=>r.outcome==='won').reduce((s,r)=>s+(r.value||0),0);
+  const att = q.revQuota > 0 ? Math.round(totalClosed/q.revQuota*100) : 0;
+
+  return `TERMAC ONE — WEEKLY ACTIVITY REPORT
+Rep: ${rep}
+Period: ${week}
+Submitted: ${new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'})}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WEEKLY ACTIVITY SUMMARY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Calls Made:        ${weekAct.calls || 0}
+Site Visits:       ${weekAct.visits || 0}
+Surveys Completed: ${weekAct.surveys || 0}
+Proposals Sent:    ${weekAct.proposals || 0}
+Deals Won:         ${wonWk.length}${wonWk.length ? ' ($' + wonWk.reduce((s,r)=>s+(r.value||0),0).toLocaleString() + ')' : ''}
+Deals Lost:        ${lostWk.length}${lostWk.length ? ' — ' + lostWk.map(r=>r.reason||'unknown').join(', ') : ''}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+QUOTA ATTAINMENT — Q2 2026
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Revenue Closed: $${totalClosed.toLocaleString()} of $${q.revQuota.toLocaleString()} quota
+Attainment:     ${att}%
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REP QUESTIONNAIRE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🏆 Biggest Win This Week:
+${document.getElementById('wqBigWin')?.value || '(not filled in)'}
+
+🚧 Biggest Challenge:
+${document.getElementById('wqChallenge')?.value || '(not filled in)'}
+
+🔥 Hottest Opportunity:
+${document.getElementById('wqHotOpps')?.value || '(not filled in)'}
+
+🆘 Where I Need Help:
+${document.getElementById('wqNeedHelp')?.value || '(not filled in)'}
+
+🗓️ Focus for Next Week:
+${document.getElementById('wqNextWeek')?.value || '(not filled in)'}
+
+Confidence Level (1-10): ${_wqConfidence || '—'}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Sent via Termac One Platform
+${rep} · tscholl@termac.com · 267-421-6336`;
+}
+
+function weeklyPreview() {
+  const body  = weeklyBuildEmailBody();
+  const preEl = document.getElementById('weeklyPreviewBox');
+  if (!preEl) return;
+  preEl.style.display = 'block';
+  preEl.innerHTML = `
+    <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin-bottom:12px">Email Preview</div>
+    <pre style="font-family:'Courier New',monospace;font-size:11px;line-height:1.6;white-space:pre-wrap;color:var(--ink)">${body}</pre>`;
+  preEl.scrollIntoView({ behavior:'smooth' });
+}
+
+function weeklySend() {
+  if (!document.getElementById('wqBigWin')?.value && !document.getElementById('wqHotOpps')?.value) {
+    if (!confirm('Some questionnaire fields are empty. Send anyway?')) return;
+  }
+  const body    = weeklyBuildEmailBody();
+  const subject = encodeURIComponent('Weekly Activity Report — ' + (_currentUser?.name || 'Ted Scholl') + ' — ' + new Date().toLocaleDateString());
+  const recipients = Array.from(document.querySelectorAll('#weeklyRecipients input:checked')).map(i => i.value);
+  const to = recipients.join(',');
+  window.open('mailto:' + to + '?subject=' + subject + '&body=' + encodeURIComponent(body), '_blank');
+  weeklySaveDraft();
+  const t = document.createElement('div');
+  t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1E7B3C;color:#fff;border-radius:8px;padding:10px 20px;font-size:13px;font-weight:600;z-index:999';
+  t.textContent = '📧 Email opened — review and send from your mail app';
+  document.body.appendChild(t); setTimeout(()=>t.remove(), 3500);
+}
+
+// Set default period to current quarter on load
+document.addEventListener('DOMContentLoaded', () => {
+  const m = new Date().getMonth();
+  const curQ = m < 3 ? 'q1' : m < 6 ? 'q2' : m < 9 ? 'q3' : 'q4';
+  const sel = document.getElementById('goalsPeriod');
+  if (sel) sel.value = curQ;
+});
 </script>
 
 </body>
