@@ -1246,7 +1246,7 @@ function crmLoad(key){ try{ return JSON.parse(localStorage.getItem('termac_crm_'
 
 // ── DEMO DATA SEED ─────────────────────────────────────────────────────────
 // Pre-populates CRM with realistic demo data if no data exists yet
-(function seedDemoData() {
+function seedDemoData() {
   function crmHas(key) {
     try { const d = JSON.parse(localStorage.getItem('termac_crm_'+key)||'[]'); return d.length > 0; } catch(e) { return false; }
   }
@@ -1290,7 +1290,8 @@ function crmLoad(key){ try{ return JSON.parse(localStorage.getItem('termac_crm_'
     ]);
     console.log('Demo contacts seeded');
   }
-})();
+}
+seedDemoData();
 
 function crmSave(key,data){ localStorage.setItem('termac_crm_'+key, JSON.stringify(data)); }
 
@@ -5440,64 +5441,6 @@ function openSiteSurvey(id){
   document.getElementById('svDoneBizName').textContent = svState.bizName;
   document.getElementById('svOverlay').classList.add('open');
   svGotoStep(0);
-
-  // ── PRE-FILL CLIENT INFO FROM ACCOUNT RECORD ──────────────────────────────
-  // Run after svGotoStep so the fs-screen0 fields are visible/rendered
-  setTimeout(function() {
-    // Business Details
-    const setVal = (id, val) => { const el = document.getElementById(id); if (el && val) el.value = val; };
-
-    // Parse address components if stored as a single string
-    let city = r.city || '', state = r.state || '', zip = r.zip || '', address = r.address || '';
-    if (!city && address) {
-      // Try to parse "123 Main St, Philadelphia PA 19103"
-      const parts = address.split(',');
-      if (parts.length >= 2) {
-        const lastPart = parts[parts.length - 1].trim();
-        const stateZip = lastPart.match(/([A-Z]{2})\s+(\d{5})/);
-        if (stateZip) { state = stateZip[1]; zip = stateZip[2]; }
-        if (parts.length >= 3) {
-          city = parts[parts.length - 2].trim().replace(/\s+[A-Z]{2}\s+\d{5}/, '');
-        }
-        address = parts[0].trim();
-      }
-    }
-
-    setVal('fs_bizName',    r.name || r.business || '');
-    setVal('fs_bizAddress', address);
-    setVal('fs_bizCity',    city);
-    setVal('fs_bizZip',     zip);
-    if (state) {
-      const stateEl = document.getElementById('fs_bizState');
-      if (stateEl) stateEl.value = state;
-    }
-    setVal('fs_visitDate',  new Date().toISOString().slice(0,10));
-
-    // Contact Information — from account contact or linked contact record
-    const contact = r.contact || r.contactName || '';
-    const contactPhone = r.phone || r.contactPhone || '';
-    const contactEmail = r.email || r.contactEmail || '';
-    const contactTitle = r.title || r.contactTitle || '';
-
-    // Also check contacts CRM for a matching account contact
-    const contacts = crmLoad('contacts') || [];
-    const linked = contacts.find(c =>
-      c.company === (r.name || r.business) ||
-      c.accountId === id
-    );
-
-    setVal('fs_contactName',  linked ? linked.name : contact);
-    setVal('fs_contactTitle', linked ? (linked.title || contactTitle) : contactTitle);
-    setVal('fs_contactPhone', linked ? (linked.phone || contactPhone) : contactPhone);
-    setVal('fs_contactEmail', linked ? (linked.email || contactEmail) : contactEmail);
-
-    // Facility context from account record
-    if (r.vendor || r.currentVendor) setVal('fs_currentVendor', r.vendor || r.currentVendor);
-    if (r.source || r.leadSource)    setVal('fs_referredBy', r.source || r.leadSource);
-    if (r.notes)                     setVal('fs_generalObs', r.notes);
-
-  }, 150);
-  // ── END PRE-FILL ──────────────────────────────────────────────────────────
 }
 
 function svClose(){
@@ -6855,16 +6798,37 @@ function rptRender() {
   out.innerHTML = '<div style="text-align:center;padding:40px;color:var(--soft)">Building report...</div>';
   setTimeout(() => {
     try {
+      // Ensure demo data is seeded before rendering
+      const accts = crmLoad('accounts') || [];
+      if (accts.length === 0 || accts[0].healthScore === undefined) {
+        // Force reseed
+        if (typeof seedDemoData === 'function') seedDemoData();
+      }
+
       let html = '';
-      if (_rptCurrentCat === 'revenue')    html = rptBuildRevenue(filters);
+      if (_rptCurrentCat === 'revenue')         html = rptBuildRevenue(filters);
       else if (_rptCurrentCat === 'operations') html = rptBuildOperations(filters);
       else if (_rptCurrentCat === 'sales')      html = rptBuildSales(filters);
       else if (_rptCurrentCat === 'health')     html = rptBuildHealth(filters);
       else if (_rptCurrentCat === 'custom')     html = rptBuildCustom(filters);
+
+      if (!html) {
+        const acctCount = (crmLoad('accounts')||[]).length;
+        const leadCount = (crmLoad('leads')||[]).length;
+        html = '<div style="text-align:center;padding:60px;color:var(--soft)">'
+          + '<div style="font-size:48px;margin-bottom:16px">📋</div>'
+          + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:18px;margin-bottom:8px;color:var(--ink)">No Data to Report</div>'
+          + '<div style="font-size:13px;max-width:360px;margin:0 auto;line-height:1.7">'
+          + 'Found ' + acctCount + ' account(s) and ' + leadCount + ' lead(s) in CRM.<br>'
+          + 'Check date range filter or add accounts to the CRM to generate reports.</div>'
+          + '<button onclick="rptRender()" style="margin-top:20px;background:var(--red);color:#fff;border:none;border-radius:8px;padding:10px 24px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;cursor:pointer">↻ Retry</button>'
+          + '</div>';
+      }
       out.innerHTML = html;
       if (_rptCurrentCat === 'custom') { rptBuildCustomColumns(); }
     } catch(e) {
-      out.innerHTML = '<div style="color:var(--red);padding:20px">Error building report: ' + e.message + '</div>';
+      console.error('Report render error:', e);
+      out.innerHTML = '<div style="color:var(--red);padding:20px;font-family:Barlow,sans-serif"><strong>Report Error:</strong> ' + e.message + '<br><br><button onclick="rptRender()" style="background:var(--red);color:#fff;border:none;border-radius:6px;padding:8px 16px;cursor:pointer">Retry</button></div>';
     }
   }, 50);
 }
