@@ -1,0 +1,1341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Termac One — Command Center</title>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+:root{
+  --bg:#EEF0F2;--panel:#FFF;--ink:#1A1D21;--soft:#5A616B;--line:#D7DBE0;
+  --red:#C8102E;--yellow:#F2B705;--green:#1E7B3C;--blue:#1B5FA8;--orange:#D8690B;
+  --purple:#6B21A8;--teal:#0D7490;
+  --radius:10px;--shadow:0 1px 3px rgba(26,29,33,.08),0 4px 14px rgba(26,29,33,.06)
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Barlow',-apple-system,sans-serif;background:var(--bg);color:var(--ink);font-size:14px;line-height:1.45}
+
+/* NAV */
+.topnav{background:#1A1D21;border-bottom:3px solid var(--red);position:sticky;top:0;z-index:200}
+.topnav-inner{max-width:1380px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;padding:0 16px;height:48px}
+.topnav-brand{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--yellow);display:flex;align-items:center;gap:8px;text-decoration:none}
+.topnav-brand img{height:26px;width:26px;object-fit:contain}
+.topnav-links{display:flex;align-items:center;gap:2px}
+.topnav-links a{color:#BFC4CA;text-decoration:none;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.10em;text-transform:uppercase;padding:6px 12px;border-radius:6px;transition:background .12s,color .12s}
+.topnav-links a:hover{background:#2A2E33;color:#fff}
+.topnav-links a.active{background:var(--red);color:#fff}
+
+/* LAYOUT */
+.wrap{max-width:1380px;margin:0 auto;padding:20px 16px 60px}
+
+/* REDLINE STATUS BAR */
+.redline-bar{
+  background:#1A1D21;border-radius:var(--radius);padding:14px 20px;
+  display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:20px;
+  border-left:4px solid var(--red);
+}
+.redline-bar-label{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--yellow);margin-right:4px;white-space:nowrap}
+.rl-tile{
+  display:flex;align-items:center;gap:7px;background:#2A2E33;
+  border-radius:8px;padding:7px 14px;cursor:pointer;transition:background .12s;border:1.5px solid transparent;
+}
+.rl-tile:hover{background:#333840;border-color:#555}
+.rl-tile.breach{border-color:var(--red);background:#3A1A1E}
+.rl-tile.warn{border-color:var(--yellow);background:#2E2A14}
+.rl-tile.ok{border-color:var(--green);background:#152318}
+.rl-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+.rl-dot-red{background:var(--red);box-shadow:0 0 6px var(--red)}
+.rl-dot-yellow{background:var(--yellow);box-shadow:0 0 6px var(--yellow)}
+.rl-dot-green{background:#22c55e;box-shadow:0 0 6px #22c55e}
+.rl-metric{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px;color:#fff}
+.rl-lbl{font-size:10px;color:#8A909A;letter-spacing:.04em}
+.rl-val{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:16px}
+.rl-val-red{color:var(--red)}
+.rl-val-yellow{color:var(--yellow)}
+.rl-val-green{color:#22c55e}
+
+/* AI ALERT PANEL */
+.ai-panel{
+  display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:500;
+  background:rgba(0,0,0,.6);backdrop-filter:blur(4px);align-items:center;justify-content:center;
+}
+.ai-panel.open{display:flex}
+.ai-box{
+  background:#1A1D21;border-radius:14px;width:100%;max-width:620px;margin:20px;
+  border:1.5px solid var(--red);box-shadow:0 20px 60px rgba(0,0,0,.5);
+  overflow:hidden;
+}
+.ai-box-header{
+  background:linear-gradient(135deg,#C8102E,#8B0B1F);
+  padding:16px 20px;display:flex;align-items:center;justify-content:space-between;
+}
+.ai-box-header h3{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:16px;letter-spacing:.08em;text-transform:uppercase;color:#fff;display:flex;align-items:center;gap:8px}
+.ai-close{background:none;border:none;color:rgba(255,255,255,.7);font-size:22px;cursor:pointer;line-height:1;padding:2px 6px}
+.ai-close:hover{color:#fff}
+.ai-trigger-badge{background:rgba(0,0,0,.3);border-radius:6px;padding:8px 16px;margin:14px 20px 0;font-size:11px;color:#BFC4CA;letter-spacing:.04em}
+.ai-trigger-badge strong{color:var(--yellow)}
+.ai-content{padding:16px 20px;color:#D0D5DC;font-size:13px;line-height:1.6;min-height:120px}
+.ai-content .loading{color:#8A909A;font-style:italic;display:flex;align-items:center;gap:8px}
+.ai-spinner{width:14px;height:14px;border:2px solid #444;border-top-color:var(--red);border-radius:50%;animation:spin .7s linear infinite;display:inline-block}
+@keyframes spin{to{transform:rotate(360deg)}}
+.ai-action-list{margin-top:12px;list-style:none}
+.ai-action-list li{
+  background:#252A30;border-radius:8px;padding:10px 14px;margin-bottom:8px;
+  border-left:3px solid var(--red);font-size:13px;color:#E5E7EB;
+  display:flex;align-items:flex-start;gap:10px;
+}
+.ai-action-list li .step{
+  font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;
+  color:var(--red);letter-spacing:.10em;text-transform:uppercase;white-space:nowrap;margin-top:1px;
+}
+.ai-footer{padding:12px 20px 16px;border-top:1px solid #2A2E33;display:flex;align-items:center;justify-content:space-between;gap:12px}
+.ai-footer-note{font-size:10px;color:#555B65;letter-spacing:.04em}
+.ai-regen-btn{
+  background:#2A2E33;border:1px solid #3A3E43;color:#BFC4CA;
+  font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;
+  letter-spacing:.10em;text-transform:uppercase;padding:7px 16px;border-radius:6px;
+  cursor:pointer;transition:background .12s;
+}
+.ai-regen-btn:hover{background:#333840;color:#fff}
+
+/* SECTION HEADER */
+.section-hdr{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.20em;text-transform:uppercase;color:var(--soft);margin:24px 0 14px;padding-left:3px;display:flex;align-items:center;gap:10px}
+.section-hdr::after{content:'';flex:1;height:1px;background:var(--line)}
+
+/* COMMAND CENTER GRID */
+.cc-grid{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:auto auto;gap:16px;margin-bottom:24px}
+@media(max-width:860px){.cc-grid{grid-template-columns:1fr}}
+.cc-quad{background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px 20px 16px;position:relative;overflow:hidden}
+.cc-quad::before{content:'';position:absolute;top:0;left:0;right:0;height:3px}
+.cc-quad.quad-a::before{background:var(--blue)}
+.cc-quad.quad-b::before{background:var(--red)}
+.cc-quad.quad-c::before{background:var(--orange)}
+.cc-quad.quad-d::before{background:var(--purple)}
+.quad-label{
+  display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;
+}
+.quad-tag{
+  font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;
+  letter-spacing:.18em;text-transform:uppercase;color:#fff;
+  padding:3px 10px;border-radius:12px;
+}
+.tag-a{background:var(--blue)}.tag-b{background:var(--red)}
+.tag-c{background:var(--orange)}.tag-d{background:var(--purple)}
+.quad-title{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:15px;color:var(--ink)}
+.quad-sub{font-size:11px;color:var(--soft);margin-top:2px;margin-bottom:12px}
+.chart-wrap{position:relative}
+.h200{height:200px}.h220{height:220px}.h240{height:240px}
+
+/* HEAT MAP */
+.heatmap-wrap{overflow-x:auto}
+.heatmap-table{width:100%;border-collapse:collapse;font-size:11px}
+.heatmap-table th{
+  font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;
+  letter-spacing:.12em;text-transform:uppercase;color:var(--soft);
+  padding:6px 8px;text-align:center;white-space:nowrap;
+}
+.heatmap-table th.row-hdr{text-align:left;min-width:120px}
+.heatmap-table td{padding:4px 3px;text-align:center}
+.hm-cell{
+  width:38px;height:32px;border-radius:5px;display:inline-flex;
+  align-items:center;justify-content:center;font-family:'Barlow Condensed',sans-serif;
+  font-weight:700;font-size:11px;color:#fff;margin:1px;cursor:default;
+  transition:transform .1s;
+}
+.hm-cell:hover{transform:scale(1.12)}
+.hm-dark{background:#1E7B3C}
+.hm-mid{background:#2563EB}
+.hm-light{background:#D8690B;opacity:.7}
+.hm-empty{background:#EEF0F2;color:#9AA0A8}
+.hm-row-label{font-size:11px;font-weight:600;color:var(--ink);padding-left:4px;text-align:left;white-space:nowrap}
+
+/* TRIGGER TABLE */
+.trigger-table-wrap{background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;margin-bottom:20px}
+.trigger-table-hdr{padding:14px 18px;border-bottom:1.5px solid var(--line);display:flex;align-items:center;justify-content:space-between}
+.trigger-table-hdr h3{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px;letter-spacing:.08em;text-transform:uppercase}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);padding:9px 14px;background:#F8F9FA;border-bottom:1.5px solid var(--line)}
+td{padding:10px 14px;border-bottom:1px solid var(--line);font-size:13px;vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:#FAFBFC}
+.badge{display:inline-block;padding:2px 9px;border-radius:12px;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+.badge-red{background:#FEE9EC;color:var(--red)}
+.badge-yellow{background:#FEF9E6;color:#92600A}
+.badge-green{background:#E7F5EC;color:var(--green)}
+.ai-trigger-btn{
+  display:inline-flex;align-items:center;gap:5px;
+  background:#1A1D21;color:var(--yellow);border:1px solid #3A3E43;
+  font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;
+  letter-spacing:.10em;text-transform:uppercase;padding:5px 12px;border-radius:6px;
+  cursor:pointer;transition:background .12s;white-space:nowrap;
+}
+.ai-trigger-btn:hover{background:#252A30;border-color:var(--yellow)}
+.ai-trigger-btn .ai-icon{font-size:12px}
+
+/* FLASH REPORT */
+.flash-section{background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;margin-bottom:20px}
+.flash-hdr{background:#1A1D21;padding:14px 20px;display:flex;align-items:center;justify-content:space-between}
+.flash-hdr h3{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px;letter-spacing:.10em;text-transform:uppercase;color:#fff;display:flex;align-items:center;gap:8px}
+.flash-body{padding:16px 20px}
+.flash-row{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--line);gap:12px;flex-wrap:wrap}
+.flash-row:last-child{border-bottom:none}
+.flash-item-label{font-size:12px;color:var(--soft);font-weight:600}
+.flash-item-val{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:15px}
+.flash-item-status{font-size:11px;font-weight:700;padding:3px 10px;border-radius:10px}
+.status-breach{background:#FEE9EC;color:var(--red)}
+.status-warn{background:#FEF9E6;color:#92600A}
+.status-ok{background:#E7F5EC;color:var(--green)}
+
+/* GAP REVIEW */
+.gap-review-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:20px}
+.gap-card{background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;border-top:3px solid transparent}
+.gap-card.action{border-color:var(--red)}
+.gap-card.watch{border-color:var(--yellow)}
+.gap-card.clear{border-color:var(--green)}
+.gap-card-icon{font-size:22px;margin-bottom:8px}
+.gap-card h4{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px;color:var(--ink);margin-bottom:4px}
+.gap-card p{font-size:11px;color:var(--soft);line-height:1.5}
+
+footer{text-align:center;margin-top:40px;color:#9AA0A8;font-size:11px;letter-spacing:.06em}
+
+/* ── ALERT NOTIFICATION SYSTEM ── */
+.alert-banner-stack{position:fixed;top:52px;right:16px;z-index:300;display:flex;flex-direction:column;gap:8px;max-width:380px;width:100%}
+.alert-banner{
+  border-radius:10px;padding:12px 14px;box-shadow:0 4px 20px rgba(0,0,0,.25);
+  border-left:4px solid transparent;animation:slideIn .3s ease;
+  display:flex;align-items:flex-start;gap:10px;position:relative;
+}
+@keyframes slideIn{from{transform:translateX(120%);opacity:0}to{transform:translateX(0);opacity:1}}
+.alert-banner.yellow{background:#1C1A0E;border-color:var(--yellow)}
+.alert-banner.red{background:#1C0A0E;border-color:var(--red)}
+.alert-banner-icon{font-size:16px;flex-shrink:0;margin-top:1px}
+.alert-banner-body{flex:1;min-width:0}
+.alert-banner-title{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12px;letter-spacing:.10em;text-transform:uppercase}
+.alert-banner.yellow .alert-banner-title{color:var(--yellow)}
+.alert-banner.red .alert-banner-title{color:var(--red)}
+.alert-banner-metric{font-size:13px;color:#E5E7EB;margin-top:2px;font-weight:600}
+.alert-banner-val{font-size:11px;color:#9AA0A8;margin-top:1px}
+.alert-banner-actions{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.alert-btn{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;padding:4px 10px;border-radius:5px;cursor:pointer;border:none;transition:opacity .12s}
+.alert-btn:hover{opacity:.85}
+.alert-btn-ai{background:var(--red);color:#fff}
+.alert-btn.yellow-btn{background:var(--yellow);color:#1A1D21}
+.alert-btn-email{background:#2A2E33;color:#BFC4CA;border:1px solid #3A3E43}
+.alert-btn-dismiss{background:transparent;color:#555B65;border:1px solid #3A3E43;position:absolute;top:8px;right:8px;padding:2px 7px;font-size:11px}
+.alert-badge-count{
+  display:inline-flex;align-items:center;justify-content:center;
+  background:var(--red);color:#fff;border-radius:50%;
+  width:18px;height:18px;font-size:10px;font-weight:800;margin-left:6px;
+  font-family:'Barlow Condensed',sans-serif;vertical-align:middle;
+}
+
+/* ── PROFITABILITY LEAK DETECTOR ── */
+.leak-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px}
+@media(max-width:800px){.leak-grid{grid-template-columns:1fr}}
+.leak-panel{background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
+.leak-panel-hdr{padding:14px 18px;border-bottom:1.5px solid var(--line);display:flex;align-items:center;justify-content:space-between}
+.leak-panel-hdr h3{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px;letter-spacing:.10em;text-transform:uppercase;color:var(--ink)}
+.leak-metric{padding:12px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:12px}
+.leak-metric:last-child{border-bottom:none}
+.leak-metric-info{flex:1}
+.leak-metric-name{font-weight:700;font-size:13px;color:var(--ink)}
+.leak-metric-desc{font-size:11px;color:var(--soft);margin-top:2px}
+.leak-metric-right{display:flex;align-items:center;gap:10px;flex-shrink:0}
+.leak-val{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:20px}
+.leak-progress{width:80px;height:8px;background:#EEF0F2;border-radius:4px;overflow:hidden}
+.leak-progress-bar{height:100%;border-radius:4px;transition:width .4s}
+.leak-alert-btn{background:none;border:1px solid var(--line);border-radius:5px;padding:3px 8px;font-size:10px;font-weight:700;font-family:'Barlow Condensed',sans-serif;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;color:var(--soft);transition:all .12s}
+.leak-alert-btn:hover{border-color:var(--red);color:var(--red)}
+.tier-green{color:var(--green)}.tier-yellow{color:var(--yellow)}.tier-red{color:var(--red)}
+.tier-bar-green{background:var(--green)}.tier-bar-yellow{background:var(--yellow)}.tier-bar-red{background:var(--red)}
+
+/* ── FLASH REPORT UPGRADE ── */
+.flash-owner-flag{
+  background:var(--red);color:#fff;font-family:'Barlow Condensed',sans-serif;
+  font-weight:800;font-size:9px;letter-spacing:.12em;text-transform:uppercase;
+  padding:2px 8px;border-radius:3px;margin-left:8px;vertical-align:middle;
+}
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+
+<!-- ALERT NOTIFICATION STACK -->
+<div class="alert-banner-stack" id="alertBannerStack"></div>
+<nav class="topnav">
+  <div class="topnav-inner">
+    <a class="topnav-brand" href="termac-revenue-os.html">
+      <img src="data:image/png;base64,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pcNFqTGVgz09bqLULsrtlFJD6egBgNTqq+lINweQmAA/9CD9V/vYKK8P4AcBQxBESkNv3bp1m8lkspaUlNRs2LDhk/b29j2lpaWjp02bdlJzc/OOdevWfTh//vwbg8Fg32efffaqwWAwV1dXT549e/Z5r7zyym0TJkw4rrGxcTPDMBTmH06ePPkEg8FgLioqqt69e/cG1JJFRUUjq6urJ69bt+5DvV5vnDBhwnFtbW3ff/LJJwsrKyvHT5s27YRAINCLlfnbt29fja0FMzMzCyoqKsbV19d/Eg6HvVOmTDkZ54sejycvPz+/cu/evZtYlk3KreEpiqJilZWV42tra2vWrFnzdV1d3eyNGzd+Nm3atFNtNpv7gw8+eMbhcGRWVVVNrK2tnbVs2bIna2trZ7W3tzd5PJ48rCgwm8329vb2PXV1dRM7Ozt7ysrK8liWHbSyrFJg43tDIats9e90OlN/K+dhSosLxwJBEIDmHZIT/7bb7YPGJJJROT6VZMY4rV6vT5EFiaN0VA6lfFiWBbPZDMuWLdv1/PPP3zRt2rRTL7744qPT71d5bq1WCyTeCAYPsVq3sLAQLrzwwktHjx49/eWXX771k08+6WUYJkUkOck49XBR0ilNOvwOP8O5ntLExG2H6wc1IJot+BIoigKWZaG1tbVXq9XqiouLax566KHff/75569Onjz5hK+//vqd+++//7cmk8l2zjnn/Nnr9XZcccUVtUaj0RIOh72PPvropfv37981f/78G9ra2r6/6aabZm3btm11RkZG/p49e+qvvfbao0pLS0fbbDbyxhtvPHrTpk3/tFgsjltvvXXeypUrX589e/bZ1dXVk994442/Lly48E9HHXXUiV988cUb999//+/GjRs3hyRJzVdfffXWXXfddTqGXR566KHfvf/++09VVFSMC4fDPoIgiDvvvPPUu+666zSbzebCigO/39/92GOPXfbee+89YTabbVlZWUV+v5996KGHftfS0rKtpqZmis/n6zr//POLbDabO5lMJu69995zGhoa1p922mnXdHR0NN59991nLly48P+qqqomxmKx4I4dO75+9dVX76BpGmTHR8qa+LnfH44pjdy9XafTDfpBQT2URlNaVSRJplbeQotNGffGFXuRfDRNp9ofms1m+Oqrr+DOO+88NTMzs+CBBx5Yjt76QyFFY7ww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" alt="Termac">Termac One
+    </a>
+    <div class="topnav-links">
+      <a href="termac-revenue-os.html" >Home</a>
+      <a href="manager-dashboard.html" >Manager Dashboard</a>
+      <a href="command-center.html" class="active">Command Center</a>
+      <a href="termac-revenue-os.html#employee-portal" >Employee Portal</a>
+      <a href="termac-revenue-os.html#hr" >HR</a>
+    </div>
+  </div>
+</nav>
+
+<!-- AI ALERT PANEL -->
+<div class="ai-panel" id="aiPanel">
+  <div class="ai-box">
+    <div class="ai-box-header">
+      <h3>⚡ AI Action Advisor</h3>
+      <button class="ai-close" onclick="closeAI()">✕</button>
+    </div>
+    <div class="ai-trigger-badge" id="aiTriggerBadge">
+      <strong>Trigger:</strong> <span id="aiTriggerText">—</span>
+    </div>
+    <div class="ai-content" id="aiContent">
+      <div class="loading"><span class="ai-spinner"></span> Analyzing scenario and generating recommended actions…</div>
+    </div>
+    <div class="ai-footer">
+      <span class="ai-footer-note">Powered by Claude · Termac One</span>
+      <button class="ai-regen-btn" onclick="regenAI()">↺ Regenerate</button>
+    </div>
+  </div>
+</div>
+
+<div class="wrap">
+
+<!-- REDLINE STATUS BAR -->
+<div class="redline-bar">
+  <span class="redline-bar-label">⚡ Live Redlines</span>
+  <div class="rl-tile breach" onclick="fireAI('deficiency_conversion','41% — Below 45% Redline','Deficiency Conversion Rate')">
+    <span class="rl-dot rl-dot-red"></span>
+    <div><div class="rl-metric">Deficiency Conversion</div><div class="rl-val rl-val-red">41% <span style="font-size:10px;font-weight:400;color:#8A909A">/ 45% min</span></div></div>
+  </div>
+  <div class="rl-tile ok">
+    <span class="rl-dot rl-dot-green"></span>
+    <div><div class="rl-metric">Wrench Time</div><div class="rl-val rl-val-green">72% <span style="font-size:10px;font-weight:400;color:#8A909A">/ 65% min</span></div></div>
+  </div>
+  <div class="rl-tile warn" onclick="fireAI('report_latency','4.8hrs — Above 4hr Threshold','Report Delivery Latency')">
+    <span class="rl-dot rl-dot-yellow"></span>
+    <div><div class="rl-metric">Report Latency</div><div class="rl-val rl-val-yellow">4.8 hrs <span style="font-size:10px;font-weight:400;color:#8A909A">/ 4hr max</span></div></div>
+  </div>
+  <div class="rl-tile breach" onclick="fireAI('cross_service','2.1 — Below 2.5 Redline','Cross-Service Penetration')">
+    <span class="rl-dot rl-dot-red"></span>
+    <div><div class="rl-metric">Cross-Service Penetration</div><div class="rl-val rl-val-red">2.1 <span style="font-size:10px;font-weight:400;color:#8A909A">/ 2.5 min</span></div></div>
+  </div>
+
+  <div class="rl-tile ok" id="rl-ftfr" onclick="fireAI('ftfr','84% — Above 80% threshold','First-Time Fix Rate')">
+    <span class="rl-dot rl-dot-green"></span>
+    <div><div class="rl-metric">First-Time Fix Rate</div><div class="rl-val rl-val-green" id="rlv-ftfr">84% <span style="font-size:10px;font-weight:400;color:#8A909A">/ 80% min</span></div></div>
+  </div>
+  <div class="rl-tile warn" id="rl-quote-time" onclick="fireAI('quote_time','42hrs — Approaching 48hr limit','Deficiency-to-Quote Time')">
+    <span class="rl-dot rl-dot-yellow"></span>
+    <div><div class="rl-metric">Quote Issuance Time</div><div class="rl-val rl-val-yellow" id="rlv-quote-time">42 hrs <span style="font-size:10px;font-weight:400;color:#8A909A">/ 48hr max</span></div></div>
+  </div>
+  <div class="rl-tile warn" id="rl-renewal" onclick="fireAI('renewal_rate','87% — Yellow zone 85-90%','ITM Renewal Rate')">
+    <span class="rl-dot rl-dot-yellow"></span>
+    <div><div class="rl-metric">ITM Renewal Rate</div><div class="rl-val rl-val-yellow" id="rlv-renewal">87% <span style="font-size:10px;font-weight:400;color:#8A909A">/ 90% goal</span></div></div>
+  </div>
+  <div class="rl-tile ok" id="rl-material" onclick="fireAI('material_variance','3.1% — Watch zone','Material Usage Variance')">
+    <span class="rl-dot rl-dot-green"></span>
+    <div><div class="rl-metric">Material Variance</div><div class="rl-val rl-val-green" id="rlv-material">3.1% <span style="font-size:10px;font-weight:400;color:#8A909A">/ 5% max</span></div></div>
+  </div>
+  <div class="rl-tile breach" id="rl-rework" onclick="fireAI('rework_rate','2.4% — Above 2% redline','AllPro Rework Rate')">
+    <span class="rl-dot rl-dot-red"></span>
+    <div><div class="rl-metric">Rework Rate</div><div class="rl-val rl-val-red" id="rlv-rework">2.4% <span style="font-size:10px;font-weight:400;color:#8A909A">/ 2% max</span></div></div>
+  </div>
+  <div class="rl-tile warn" id="rl-cash-cycle" onclick="fireAI('cash_cycle','38 days — Yellow zone 37-45 days','Cash-to-Cash Cycle')">
+    <span class="rl-dot rl-dot-yellow"></span>
+    <div><div class="rl-metric">Cash-to-Cash Cycle</div><div class="rl-val rl-val-yellow" id="rlv-cash-cycle">38 days <span style="font-size:10px;font-weight:400;color:#8A909A">/ 45d max</span></div></div>
+  </div>
+  <div style="margin-left:auto;font-size:10px;color:#555B65;white-space:nowrap">
+    Click any tile for AI plan &nbsp;·&nbsp; 
+    <span id="alertCountBadge" style="display:none">Alerts: <span class="alert-badge-count" id="alertCount">0</span></span>
+  </div>
+</div>
+
+<!-- SECTION: COMMAND CENTER -->
+<div class="section-hdr">Command Center — Four Quadrant View</div>
+
+<div class="cc-grid">
+
+  <!-- QUAD A: WRENCH TIME -->
+  <div class="cc-quad quad-a">
+    <div class="quad-label">
+      <div>
+        <div class="quad-title">Quadrant A — Operational Efficiency</div>
+        <div class="quad-sub">Wrench Time vs Transit Time per Technician · Target: 70% / 30%</div>
+      </div>
+      <span class="quad-tag tag-a">Trip Stacking</span>
+    </div>
+    <div class="chart-wrap h220"><canvas id="wrenchChart"></canvas></div>
+  </div>
+
+  <!-- QUAD B: DEFICIENCY FUNNEL -->
+  <div class="cc-quad quad-b">
+    <div class="quad-label">
+      <div>
+        <div class="quad-title">Quadrant B — Deficiency Conversion Gap</div>
+        <div class="quad-sub">Identified → Quoted → Invoiced · Alert if bottom &lt; 45%</div>
+      </div>
+      <span class="quad-tag tag-b">Revenue View</span>
+    </div>
+    <div style="padding:10px 0 4px">
+      <!-- CSS Pyramid Funnel -->
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <div>
+          <div style="display:flex;justify-content:space-between;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;color:var(--soft);letter-spacing:.08em;text-transform:uppercase;margin-bottom:3px">
+            <span>Deficiencies Identified</span><span style="color:var(--ink)">142</span>
+          </div>
+          <div style="background:#EEF0F2;border-radius:4px;height:36px;overflow:hidden">
+            <div style="width:100%;height:100%;background:var(--blue);border-radius:4px;display:flex;align-items:center;padding-left:12px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:13px;color:#fff">142 deficiencies found</div>
+          </div>
+        </div>
+        <div>
+          <div style="display:flex;justify-content:space-between;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;color:var(--soft);letter-spacing:.08em;text-transform:uppercase;margin-bottom:3px">
+            <span>Quotes Sent</span><span style="color:var(--ink)">108 <span style="color:var(--soft);font-weight:400">(76%)</span></span>
+          </div>
+          <div style="background:#EEF0F2;border-radius:4px;height:36px;overflow:hidden">
+            <div style="width:76%;height:100%;background:var(--orange);border-radius:4px;display:flex;align-items:center;padding-left:12px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:13px;color:#fff">108 quoted</div>
+          </div>
+        </div>
+        <div>
+          <div style="display:flex;justify-content:space-between;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;color:var(--soft);letter-spacing:.08em;text-transform:uppercase;margin-bottom:3px">
+            <span>Approved</span><span style="color:var(--ink)">89 <span style="color:var(--soft);font-weight:400">(63%)</span></span>
+          </div>
+          <div style="background:#EEF0F2;border-radius:4px;height:36px;overflow:hidden">
+            <div style="width:63%;height:100%;background:var(--yellow);border-radius:4px;display:flex;align-items:center;padding-left:12px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:13px;color:var(--ink)">89 approved</div>
+          </div>
+        </div>
+        <div>
+          <div style="display:flex;justify-content:space-between;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;color:var(--soft);letter-spacing:.08em;text-transform:uppercase;margin-bottom:3px">
+            <span>Invoiced / Paid</span>
+            <span style="color:var(--red);font-weight:800">58 <span style="font-weight:400">(41%)</span> ⚠ BELOW 45%</span>
+          </div>
+          <div style="background:#EEF0F2;border-radius:4px;height:36px;overflow:hidden">
+            <div style="width:41%;height:100%;background:var(--red);border-radius:4px;display:flex;align-items:center;padding-left:12px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:13px;color:#fff">58 paid — REDLINE</div>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:10px;display:flex;justify-content:flex-end">
+        <button class="ai-trigger-btn" onclick="fireAI('deficiency_conversion','41% conversion — 34 approved jobs not yet invoiced, 19 quotes unaccepted','Deficiency Conversion Below 45%')">
+          <span class="ai-icon">⚡</span> Get AI Action Plan
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- QUAD C: COMMUNICATION GAP -->
+  <div class="cc-quad quad-c">
+    <div class="quad-label">
+      <div>
+        <div class="quad-title">Quadrant C — Communication Gap</div>
+        <div class="quad-sub">Service Completion → Report Delivered · Target: &lt;4 hours</div>
+      </div>
+      <span class="quad-tag tag-c">Feedback View</span>
+    </div>
+    <div class="chart-wrap h220"><canvas id="latencyChart"></canvas></div>
+    <div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center">
+      <span style="font-size:11px;color:var(--soft)">This week avg: <strong style="color:var(--orange)">4.8 hrs</strong> · 3 techs above threshold</span>
+      <button class="ai-trigger-btn" onclick="fireAI('report_latency','Avg 4.8hr report delivery — 3 technicians consistently above 4hr threshold this week','Report Delivery Latency Above 4 Hours')">
+        <span class="ai-icon">⚡</span> AI Fix Plan
+      </button>
+    </div>
+  </div>
+
+  <!-- QUAD D: CROSS-SERVICE HEAT MAP -->
+  <div class="cc-quad quad-d">
+    <div class="quad-label">
+      <div>
+        <div class="quad-title">Quadrant D — Account Penetration</div>
+        <div class="quad-sub">Cross-service engagement · Target: 2.5+ services / client</div>
+      </div>
+      <span class="quad-tag tag-d">Retention View</span>
+    </div>
+    <div class="heatmap-wrap">
+      <table class="heatmap-table">
+        <thead>
+          <tr>
+            <th class="row-hdr">Account</th>
+            <th>Fire</th>
+            <th>Grease</th>
+            <th>Chemical</th>
+            <th>Filters</th>
+            <th>Fab</th>
+            <th>Score</th>
+          </tr>
+        </thead>
+        <tbody id="heatmapBody"></tbody>
+      </table>
+    </div>
+    <div style="margin-top:10px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <div style="display:flex;gap:10px;font-size:10px;color:var(--soft)">
+        <span><span style="display:inline-block;width:10px;height:10px;background:var(--green);border-radius:2px;margin-right:3px"></span>Active</span>
+        <span><span style="display:inline-block;width:10px;height:10px;background:var(--blue);border-radius:2px;margin-right:3px"></span>Potential</span>
+        <span><span style="display:inline-block;width:10px;height:10px;background:var(--orange);border-radius:2px;margin-right:3px"></span>Lapsed</span>
+        <span><span style="display:inline-block;width:10px;height:10px;background:#EEF0F2;border:1px solid var(--line);border-radius:2px;margin-right:3px"></span>None</span>
+      </div>
+      <button class="ai-trigger-btn" onclick="fireAI('cross_service','2.1 avg services per client — 6 accounts have only 1 service, 3 accounts have 0 cross-sell engagement','Cross-Service Penetration Below 2.5')">
+        <span class="ai-icon">⚡</span> AI Cross-Sell Plan
+      </button>
+    </div>
+  </div>
+
+</div><!-- /cc-grid -->
+
+<!-- TRIGGER POINTS TABLE -->
+<div class="section-hdr">Redline Trigger Points &amp; Immediate Actions</div>
+<div class="trigger-table-wrap">
+  <div class="trigger-table-hdr">
+    <h3>Operational Trigger Log</h3>
+    <span style="font-size:11px;color:var(--soft)">Click ⚡ for AI-generated corrective action plan</span>
+  </div>
+  <table>
+    <thead><tr><th>Metric</th><th>Redline Threshold</th><th>Current Value</th><th>Status</th><th>Std. Action</th><th>AI Advisor</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>Deficiency Conversion</strong></td>
+        <td>Below 45%</td>
+        <td style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:16px;color:var(--red)">41%</td>
+        <td><span class="badge badge-red">BREACH</span></td>
+        <td style="font-size:12px">24-hr follow-up call on all outstanding quotes</td>
+        <td><button class="ai-trigger-btn" onclick="fireAI('deficiency_conversion','41% — 34 approved deficiency repairs not yet invoiced, 19 open quotes unaccepted past 5 days','Deficiency Conversion Below 45%')"><span class="ai-icon">⚡</span> AI Plan</button></td>
+      </tr>
+      <tr>
+        <td><strong>Wrench Time Utilization</strong></td>
+        <td>Below 65%</td>
+        <td style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:16px;color:var(--green)">72%</td>
+        <td><span class="badge badge-green">OK</span></td>
+        <td style="font-size:12px">Audit route logs for trip stacking failures</td>
+        <td><button class="ai-trigger-btn" onclick="fireAI('wrench_time_ok','72% wrench time — above threshold but Driver D trending down at 61% this week','Wrench Time Watch — Driver D')"><span class="ai-icon">⚡</span> AI Plan</button></td>
+      </tr>
+      <tr>
+        <td><strong>Report Delivery Latency</strong></td>
+        <td>Above 4 hours</td>
+        <td style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:16px;color:var(--yellow)">4.8 hrs</td>
+        <td><span class="badge badge-yellow">WARNING</span></td>
+        <td style="font-size:12px">Manual review of report queue; contact tech</td>
+        <td><button class="ai-trigger-btn" onclick="fireAI('report_latency','4.8hr avg — Techs B, D, F averaging 6.2hrs. Reports being written manually vs automated delivery','Report Delivery Latency Above 4 Hours')"><span class="ai-icon">⚡</span> AI Plan</button></td>
+      </tr>
+      <tr>
+        <td><strong>Cross-Service Penetration</strong></td>
+        <td>Below 2.5 services/client</td>
+        <td style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:16px;color:var(--red)">2.1</td>
+        <td><span class="badge badge-red">BREACH</span></td>
+        <td style="font-size:12px">Trigger Client Account Review for each single-service account</td>
+        <td><button class="ai-trigger-btn" onclick="fireAI('cross_service','2.1 avg — 6 accounts with only 1 service active. Top missed opportunity: GTO clients not on Chemical supply (Termac). 0 cross-sell from Filter Man to Fire Protection.','Cross-Service Penetration Below 2.5')"><span class="ai-icon">⚡</span> AI Plan</button></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- DAILY FLASH REPORT -->
+<div class="section-hdr">Daily Flash Report — 8:00 AM Owner View</div>
+<div class="flash-section">
+  <div class="flash-hdr">
+    <h3>📋 Today's Flash Report <span style="font-size:10px;font-weight:400;color:#8A909A;margin-left:8px">Tuesday, June 17, 2025 · 8:00 AM</span></h3>
+    <span style="font-size:10px;color:#555B65">Auto-generated · Delivered to owner inbox</span>
+  </div>
+  <div class="flash-body">
+    <div class="flash-row">
+      <span class="flash-item-label">Deficiency Conversion Rate</span>
+      <span class="flash-item-val" style="color:var(--red)">41%</span>
+      <span class="flash-item-status status-breach">ACTION REQUIRED — Call top 3 open quotes today</span>
+    </div>
+    <div class="flash-row">
+      <span class="flash-item-label">Wrench Time Utilization</span>
+      <span class="flash-item-val" style="color:var(--green)">72%</span>
+      <span class="flash-item-status status-ok">On Track</span>
+    </div>
+    <div class="flash-row">
+      <span class="flash-item-label">Report Delivery Latency</span>
+      <span class="flash-item-val" style="color:var(--yellow)">4.8 hrs</span>
+      <span class="flash-item-status status-warn">WATCH — Review Tech B, D, F queues</span>
+    </div>
+    <div class="flash-row">
+      <span class="flash-item-label">Cross-Service Penetration</span>
+      <span class="flash-item-val" style="color:var(--red)">2.1 / client</span>
+      <span class="flash-item-status status-breach">ACTION REQUIRED — 6 single-service accounts need review</span>
+    </div>
+    <div class="flash-row">
+      <span class="flash-item-label">Active Tickets (Overdue &gt;48hrs)</span>
+      <span class="flash-item-val" style="color:var(--orange)">18</span>
+      <span class="flash-item-status status-warn">WATCH — Dispatch follow-up needed</span>
+    </div>
+    <div class="flash-row" style="border-bottom:none">
+      <span class="flash-item-label">Revenue MTD vs Target</span>
+      <span class="flash-item-val" style="color:var(--green)">$1.24M / $1.10M</span>
+      <span class="flash-item-status status-ok">+12.7% Ahead of Target</span>
+    </div>
+  </div>
+</div>
+
+<!-- GAP REVIEW -->
+<div class="section-hdr">Weekly Gap Review — Owner Action Items</div>
+<div class="gap-review-grid">
+  <div class="gap-card action">
+    <div class="gap-card-icon">📞</div>
+    <h4>Call Top 3 Open Quotes</h4>
+    <p>Fairless Hills Retirement ($18.4K), Shore Memorial ($22.8K), and Bucks County Schools ($14.2K) have not accepted deficiency repair quotes past 5 days.</p>
+  </div>
+  <div class="gap-card action">
+    <div class="gap-card-icon">🔁</div>
+    <h4>Cross-Sell Account Review</h4>
+    <p>6 GTO-only clients have no Chemical supply agreement. Termac attachment rate target is 60%. Each conversion = ~$220/mo RMR.</p>
+  </div>
+  <div class="gap-card watch">
+    <div class="gap-card-icon">⏱️</div>
+    <h4>Report Delivery Audit</h4>
+    <p>Techs B, D, and F averaging 6.2hr report delivery. Review if reports are being generated manually. Automation should bring this to &lt;1hr.</p>
+  </div>
+  <div class="gap-card watch">
+    <div class="gap-card-icon">🗺️</div>
+    <h4>Driver D Route Review</h4>
+    <p>Driver D trending at 61% wrench time this week vs 72% fleet average. Pull route log to identify excessive transit between stops.</p>
+  </div>
+  <div class="gap-card clear">
+    <div class="gap-card-icon">✅</div>
+    <h4>GTO Compliance — On Track</h4>
+    <p>94% compliance cert delivery rate. 6 missed intervals flagged and assigned. No NFPA liability exposure this week.</p>
+  </div>
+  <div class="gap-card clear">
+    <div class="gap-card-icon">💰</div>
+    <h4>Revenue Ahead of Target</h4>
+    <p>$1.24M MTD vs $1.10M target (+12.7%). UniPro and GTO leading. Filter Man slightly behind — 4 route completions pending.</p>
+  </div>
+</div>
+
+</div><!-- /wrap -->
+
+<!-- PROFITABILITY LEAK DETECTOR -->
+<div class="section-hdr">Profitability Leak Detector — Operational Vital Signs</div>
+
+<div class="leak-grid">
+
+  <!-- UNIPRO / Q3 PANEL -->
+  <div class="leak-panel">
+    <div class="leak-panel-hdr">
+      <h3>🔥 UniPro / Quality III — Fire Protection</h3>
+      <span style="font-size:10px;color:var(--soft)">Target vs Danger threshold</span>
+    </div>
+
+    <div class="leak-metric">
+      <div class="leak-metric-info">
+        <div class="leak-metric-name">First-Time Fix Rate</div>
+        <div class="leak-metric-desc">Repairs completed in one trip · Every return trip = double transit + lost trust</div>
+        <div style="font-size:10px;color:var(--soft);margin-top:3px">🟡 Yellow: &lt;83% &nbsp;|&nbsp; 🔴 Red: &lt;80%</div>
+      </div>
+      <div class="leak-metric-right">
+        <div>
+          <div class="leak-val tier-green" id="lv-ftfr">84%</div>
+          <div class="leak-progress"><div class="leak-progress-bar tier-bar-green" style="width:84%"></div></div>
+        </div>
+        <button class="leak-alert-btn" onclick="fireAI('ftfr','84% FTFR — above threshold but 3 return trips logged this week on sprinkler repairs','First-Time Fix Rate Watch')">⚡ AI</button>
+      </div>
+    </div>
+
+    <div class="leak-metric">
+      <div class="leak-metric-info">
+        <div class="leak-metric-name">Deficiency-to-Quote Time</div>
+        <div class="leak-metric-desc">Hours from deficiency identified to quote issued · Fire hazards = liability exposure every hour</div>
+        <div style="font-size:10px;color:var(--soft);margin-top:3px">🟡 Yellow: 36–48hrs &nbsp;|&nbsp; 🔴 Red: &gt;48hrs</div>
+      </div>
+      <div class="leak-metric-right">
+        <div>
+          <div class="leak-val tier-yellow" id="lv-quote-time">42 hrs</div>
+          <div class="leak-progress"><div class="leak-progress-bar tier-bar-yellow" style="width:70%"></div></div>
+        </div>
+        <button class="leak-alert-btn" onclick="fireAI('quote_time','42hr avg quote issuance — 6 deficiencies identified 2+ days ago have no quote sent yet','Deficiency-to-Quote Time Warning')">⚡ AI</button>
+      </div>
+    </div>
+
+    <div class="leak-metric">
+      <div class="leak-metric-info">
+        <div class="leak-metric-name">Deficiency Conversion Rate</div>
+        <div class="leak-metric-desc">Identified deficiencies → paid repair invoices</div>
+        <div style="font-size:10px;color:var(--soft);margin-top:3px">🟡 Yellow: 45–48% &nbsp;|&nbsp; 🔴 Red: &lt;45%</div>
+      </div>
+      <div class="leak-metric-right">
+        <div>
+          <div class="leak-val tier-red" id="lv-def-conv">41%</div>
+          <div class="leak-progress"><div class="leak-progress-bar tier-bar-red" style="width:41%"></div></div>
+        </div>
+        <button class="leak-alert-btn" onclick="fireAI('deficiency_conversion','41% — 34 approved deficiencies not invoiced, 19 quotes unaccepted past 5 days','Deficiency Conversion BREACH')">⚡ AI</button>
+      </div>
+    </div>
+
+    <div class="leak-metric">
+      <div class="leak-metric-info">
+        <div class="leak-metric-name">ITM Renewal Rate</div>
+        <div class="leak-metric-desc">Recurring contracts renewed at term · Floor of the business</div>
+        <div style="font-size:10px;color:var(--soft);margin-top:3px">🟡 Yellow: 85–88% &nbsp;|&nbsp; 🔴 Red: &lt;85%</div>
+      </div>
+      <div class="leak-metric-right">
+        <div>
+          <div class="leak-val tier-yellow" id="lv-renewal">87%</div>
+          <div class="leak-progress"><div class="leak-progress-bar tier-bar-yellow" style="width:87%"></div></div>
+        </div>
+        <button class="leak-alert-btn" onclick="fireAI('renewal_rate','87% renewal rate — 4 contracts expiring this month with no renewal conversation started','ITM Renewal Rate Warning')">⚡ AI</button>
+      </div>
+    </div>
+
+    <div class="leak-metric">
+      <div class="leak-metric-info">
+        <div class="leak-metric-name">Wrench Time Utilization</div>
+        <div class="leak-metric-desc">Billable on-site hours vs total hours worked</div>
+        <div style="font-size:10px;color:var(--soft);margin-top:3px">🟡 Yellow: 65–67% &nbsp;|&nbsp; 🔴 Red: &lt;65%</div>
+      </div>
+      <div class="leak-metric-right">
+        <div>
+          <div class="leak-val tier-green" id="lv-wrench">72%</div>
+          <div class="leak-progress"><div class="leak-progress-bar tier-bar-green" style="width:72%"></div></div>
+        </div>
+        <button class="leak-alert-btn" onclick="fireAI('wrench_time_ok','72% fleet avg — Driver D at 61% this week','Wrench Time Watch')">⚡ AI</button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ALLPRO PANEL -->
+  <div class="leak-panel">
+    <div class="leak-panel-hdr">
+      <h3>🔩 AllPro Stainless — Fabrication</h3>
+      <span style="font-size:10px;color:var(--soft)">Shop floor vitals</span>
+    </div>
+
+    <div class="leak-metric">
+      <div class="leak-metric-info">
+        <div class="leak-metric-name">Material Usage Variance</div>
+        <div class="leak-metric-desc">Actual vs estimated stainless steel usage · Every % over = margin gone</div>
+        <div style="font-size:10px;color:var(--soft);margin-top:3px">🟡 Yellow: 3–5% &nbsp;|&nbsp; 🔴 Red: &gt;5%</div>
+      </div>
+      <div class="leak-metric-right">
+        <div>
+          <div class="leak-val tier-yellow" id="lv-material">3.1%</div>
+          <div class="leak-progress"><div class="leak-progress-bar tier-bar-yellow" style="width:62%"></div></div>
+        </div>
+        <button class="leak-alert-btn" onclick="fireAI('material_variance','3.1% material variance — Hood Build #402 at 12.5% overage driving the avg up. 2 other jobs trending over.','Material Variance Warning')">⚡ AI</button>
+      </div>
+    </div>
+
+    <div class="leak-metric">
+      <div class="leak-metric-info">
+        <div class="leak-metric-name">Rework Rate</div>
+        <div class="leak-metric-desc">Jobs requiring correction due to fabrication errors · Most expensive cost in the shop</div>
+        <div style="font-size:10px;color:var(--soft);margin-top:3px">🟡 Yellow: 1.5–2% &nbsp;|&nbsp; 🔴 Red: &gt;2%</div>
+      </div>
+      <div class="leak-metric-right">
+        <div>
+          <div class="leak-val tier-red" id="lv-rework">2.4%</div>
+          <div class="leak-progress"><div class="leak-progress-bar tier-bar-red" style="width:80%"></div></div>
+        </div>
+        <button class="leak-alert-btn" onclick="fireAI('rework_rate','2.4% rework rate — 3 hood jobs required correction this month. Pattern: measurement errors on custom radius bends.','Rework Rate BREACH')">⚡ AI</button>
+      </div>
+    </div>
+
+    <div class="leak-metric">
+      <div class="leak-metric-info">
+        <div class="leak-metric-name">Job Margin Variance (Est vs Actual)</div>
+        <div class="leak-metric-desc">Budget overrun across active fabrication jobs</div>
+        <div style="font-size:10px;color:var(--soft);margin-top:3px">🟡 Yellow: 3–5% over &nbsp;|&nbsp; 🔴 Red: &gt;5% over</div>
+      </div>
+      <div class="leak-metric-right">
+        <div>
+          <div class="leak-val tier-red" id="lv-margin-var">-8.4%</div>
+          <div class="leak-progress"><div class="leak-progress-bar tier-bar-red" style="width:85%"></div></div>
+        </div>
+        <button class="leak-alert-btn" onclick="fireAI('allpro_margin','Avg -8.4% job margin variance — 3 of 5 active jobs over budget. Grease containment #427 worst at -20%.','Job Margin Variance BREACH')">⚡ AI</button>
+      </div>
+    </div>
+
+    <div class="leak-metric">
+      <div class="leak-metric-info">
+        <div class="leak-metric-name">Throughput Rate</div>
+        <div class="leak-metric-desc">Production vs 3-month rolling average · Drop signals shop bottleneck</div>
+        <div style="font-size:10px;color:var(--soft);margin-top:3px">🟡 Yellow: -7 to -10% vs avg &nbsp;|&nbsp; 🔴 Red: &gt;-10%</div>
+      </div>
+      <div class="leak-metric-right">
+        <div>
+          <div class="leak-val tier-green" id="lv-throughput">-3%</div>
+          <div class="leak-progress"><div class="leak-progress-bar tier-bar-green" style="width:70%"></div></div>
+        </div>
+        <button class="leak-alert-btn" onclick="fireAI('throughput','Throughput -3% vs 3-month avg — within range but trending down 3 consecutive weeks','Throughput Watch')">⚡ AI</button>
+      </div>
+    </div>
+
+    <div class="leak-metric">
+      <div class="leak-metric-info">
+        <div class="leak-metric-name">On-Time Delivery Rate</div>
+        <div class="leak-metric-desc">Projects completed by committed date</div>
+        <div style="font-size:10px;color:var(--soft);margin-top:3px">🟡 Yellow: 80–85% &nbsp;|&nbsp; 🔴 Red: &lt;80%</div>
+      </div>
+      <div class="leak-metric-right">
+        <div>
+          <div class="leak-val tier-yellow" id="lv-otd-allpro">82%</div>
+          <div class="leak-progress"><div class="leak-progress-bar tier-bar-yellow" style="width:82%"></div></div>
+        </div>
+        <button class="leak-alert-btn" onclick="fireAI('otd_allpro','82% OTD — 2 of 12 active jobs behind schedule. Both involve custom radius work (same pattern as rework issue).','OTD Warning — AllPro')">⚡ AI</button>
+      </div>
+    </div>
+
+  </div>
+
+</div>
+
+<!-- CROSS-DIVISIONAL PANEL -->
+<div class="leak-panel" style="margin-bottom:24px">
+  <div class="leak-panel-hdr">
+    <h3>🏢 Cross-Divisional — All Entities</h3>
+    <span style="font-size:10px;color:var(--soft)">Owner-level financial vitals</span>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))">
+
+    <div class="leak-metric">
+      <div class="leak-metric-info">
+        <div class="leak-metric-name">Cash-to-Cash Cycle</div>
+        <div class="leak-metric-desc">Days between paying labor/materials and receiving client payment · Kills working capital</div>
+        <div style="font-size:10px;color:var(--soft);margin-top:3px">🟡 Yellow: 37–45 days &nbsp;|&nbsp; 🔴 Red: &gt;45 days</div>
+      </div>
+      <div class="leak-metric-right">
+        <div>
+          <div class="leak-val tier-yellow" id="lv-cash-cycle">38 days</div>
+          <div class="leak-progress"><div class="leak-progress-bar tier-bar-yellow" style="width:65%"></div></div>
+        </div>
+        <button class="leak-alert-btn" onclick="fireAI('cash_cycle','38-day cash cycle — 3 large accounts (Shore Medical, Bucks Schools, Fairless Hills) averaging 52 days to pay. Creating $84K working capital gap.','Cash-to-Cash Cycle Warning')">⚡ AI</button>
+      </div>
+    </div>
+
+    <div class="leak-metric">
+      <div class="leak-metric-info">
+        <div class="leak-metric-name">Days Sales Outstanding (DSO)</div>
+        <div class="leak-metric-desc">Average days to collect on invoices</div>
+        <div style="font-size:10px;color:var(--soft);margin-top:3px">🟡 Yellow: 28–35 days &nbsp;|&nbsp; 🔴 Red: &gt;35 days</div>
+      </div>
+      <div class="leak-metric-right">
+        <div>
+          <div class="leak-val tier-yellow" id="lv-dso">32 days</div>
+          <div class="leak-progress"><div class="leak-progress-bar tier-bar-yellow" style="width:68%"></div></div>
+        </div>
+        <button class="leak-alert-btn" onclick="fireAI('dso','32-day DSO — target is 25 days. 6 invoices &gt;45 days outstanding totaling $38,400.','DSO Warning')">⚡ AI</button>
+      </div>
+    </div>
+
+    <div class="leak-metric">
+      <div class="leak-metric-info">
+        <div class="leak-metric-name">Cross-Service Penetration</div>
+        <div class="leak-metric-desc">Average services per client across the family</div>
+        <div style="font-size:10px;color:var(--soft);margin-top:3px">🟡 Yellow: 2.3–2.5 &nbsp;|&nbsp; 🔴 Red: &lt;2.3</div>
+      </div>
+      <div class="leak-metric-right">
+        <div>
+          <div class="leak-val tier-red" id="lv-cross-svc">2.1</div>
+          <div class="leak-progress"><div class="leak-progress-bar tier-bar-red" style="width:42%"></div></div>
+        </div>
+        <button class="leak-alert-btn" onclick="fireAI('cross_service','2.1 avg — 6 accounts have only 1 service active. 0 cross-sell from Filter Man to Fire Protection.','Cross-Service Penetration BREACH')">⚡ AI</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<footer>&copy; Termac Family of Companies &nbsp;·&nbsp; Command Center · Restricted Access &nbsp;·&nbsp; Designed by George E. Scholl (Ted)</footer>
+
+<script>
+const red='#C8102E',blue='#1B5FA8',green='#1E7B3C',orange='#D8690B',yellow='#F2B705',purple='#6B21A8';
+const font=()=>({family:'Barlow Condensed',size:11,weight:'700'});
+const gridLine='rgba(0,0,0,.07)';
+
+// QUAD A — WRENCH TIME STACKED BAR
+new Chart(document.getElementById('wrenchChart'),{
+  type:'bar',
+  data:{
+    labels:['Tech A','Tech B','Tech C','Tech D','Tech E','Tech F','Tech G'],
+    datasets:[
+      {label:'Wrench Time %',data:[78,72,75,61,80,69,74],backgroundColor:green,borderRadius:[4,4,0,0],stack:'s'},
+      {label:'Transit Time %',data:[22,28,25,39,20,31,26],backgroundColor:'rgba(200,16,46,.5)',borderRadius:[0,0,4,4],stack:'s'}
+    ]
+  },
+  options:{
+    responsive:true,maintainAspectRatio:false,
+    plugins:{
+      legend:{position:'bottom',labels:{font:font(),boxWidth:12,padding:10}},
+      annotation:{}
+    },
+    scales:{
+      x:{stacked:true,grid:{display:false},ticks:{font:font()}},
+      y:{stacked:true,min:0,max:100,
+        ticks:{callback:v=>v+'%',font:{size:10}},
+        grid:{color:gridLine},
+      }
+    }
+  }
+});
+
+// QUAD C — LATENCY LINE
+new Chart(document.getElementById('latencyChart'),{
+  type:'line',
+  data:{
+    labels:['Mon','Tue','Wed','Thu','Fri','Mon','Tue'],
+    datasets:[
+      {label:'Tech A',data:[2.1,1.9,2.4,1.8,2.2,2.0,1.7],borderColor:green,borderWidth:2,tension:.4,pointRadius:3,fill:false},
+      {label:'Tech B',data:[4.2,5.1,4.8,6.0,5.4,5.9,6.2],borderColor:red,borderWidth:2,tension:.4,pointRadius:3,fill:false},
+      {label:'Tech C',data:[3.1,2.8,3.4,3.0,2.7,3.2,2.9],borderColor:blue,borderWidth:2,tension:.4,pointRadius:3,fill:false},
+      {label:'Tech D',data:[3.8,4.4,5.0,5.8,6.1,6.0,6.3],borderColor:orange,borderWidth:2,tension:.4,pointRadius:3,fill:false},
+      {label:'4hr Limit',data:[4,4,4,4,4,4,4],borderColor:'rgba(200,16,46,.4)',borderDash:[6,4],borderWidth:1.5,pointRadius:0,fill:false}
+    ]
+  },
+  options:{
+    responsive:true,maintainAspectRatio:false,
+    plugins:{legend:{position:'bottom',labels:{font:font(),boxWidth:12,padding:8}}},
+    scales:{
+      x:{grid:{display:false},ticks:{font:font()}},
+      y:{title:{display:true,text:'Hours',font:{size:10}},ticks:{callback:v=>v+'h',font:{size:10}},grid:{color:gridLine}}
+    }
+  }
+});
+
+// QUAD D — HEAT MAP DATA
+const heatAccounts = [
+  {name:'Fairless Hills Ret.',fire:1,grease:1,chem:1,filter:0,fab:0},
+  {name:'Shore Memorial',fire:1,grease:0,chem:0,filter:1,fab:0},
+  {name:'Edison Commons',fire:0,grease:1,chem:1,filter:0,fab:0},
+  {name:'Woodbridge Diner',fire:1,grease:1,chem:0,filter:0,fab:0},
+  {name:'Bucks Co Schools',fire:1,grease:0,chem:0,filter:0,fab:0},
+  {name:'Red Bank Seafood',fire:0,grease:1,chem:1,filter:1,fab:0},
+  {name:'Trenton Food Ct.',fire:1,grease:1,chem:1,filter:1,fab:1},
+  {name:'Falls Twp Cafe',fire:1,grease:1,chem:0,filter:0,fab:0},
+];
+const hmBody = document.getElementById('heatmapBody');
+heatAccounts.forEach(a => {
+  const score = [a.fire,a.grease,a.chem,a.filter,a.fab].reduce((s,v)=>s+v,0);
+  const cell = v => {
+    if(v===1) return `<span class="hm-cell hm-dark">✓</span>`;
+    if(v===2) return `<span class="hm-cell hm-light">○</span>`;
+    return `<span class="hm-cell hm-empty">—</span>`;
+  };
+  const scoreColor = score>=4?green:score>=3?blue:score>=2?orange:red;
+  hmBody.innerHTML += `<tr>
+    <td class="hm-row-label">${a.name}</td>
+    <td>${cell(a.fire)}</td>
+    <td>${cell(a.grease)}</td>
+    <td>${cell(a.chem)}</td>
+    <td>${cell(a.filter)}</td>
+    <td>${cell(a.fab)}</td>
+    <td style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:15px;color:${scoreColor}">${score}/5</td>
+  </tr>`;
+});
+
+// AI PANEL
+let currentScenario = null;
+let currentContext = null;
+
+const AI_PROMPTS = {
+  deficiency_conversion: (ctx) => `You are an operations advisor for Termac Family of Companies, a multi-division commercial service business covering fire protection (UniPro/Quality III), grease trap services (GTO), chemical/dishwasher leasing (Termac), filter exchange (Filter Man), and stainless steel fabrication (AllPro).
+
+TRIGGERED ALERT: Deficiency Conversion Rate has dropped BELOW the 45% redline.
+CURRENT DATA: ${ctx}
+
+The business model depends on inspectors identifying deficiencies during routine ITM inspections and converting those into paid repair invoices. A low conversion rate means the company is finding problems for clients but not capturing the revenue from fixing them — a direct profit leak.
+
+Provide exactly 4 specific, immediately actionable steps the owner or VP of Sales should take within the next 24–48 hours. Format each step as a numbered action with a clear "who does what by when" structure. Be direct, specific, and assume a small-to-mid size field service company context. No fluff.`,
+
+  report_latency: (ctx) => `You are an operations advisor for Termac Family of Companies, a field service business.
+
+TRIGGERED ALERT: Report Delivery Latency has exceeded the 4-hour threshold.
+CURRENT DATA: ${ctx}
+
+The company standard is that compliance documentation reaches the client within 4 hours of service completion. Late reports create a communication gap, reduce client confidence, and expose the company to compliance liability — especially in regulated environments like NFPA inspections and grease trap compliance certs.
+
+Provide exactly 4 specific, immediately actionable steps to close this communication gap. Focus on process and technology fixes (not just "tell techs to be faster"). Include one structural fix, one technology fix, one accountability fix, and one client communication fix. Be direct and specific.`,
+
+  cross_service: (ctx) => `You are a growth strategy advisor for Termac Family of Companies, which operates six service divisions: fire protection, grease trap pumping, chemical/dishwasher leasing, filter exchange, and stainless steel fabrication.
+
+TRIGGERED ALERT: Cross-Service Penetration has dropped BELOW 2.5 services per client average.
+CURRENT DATA: ${ctx}
+
+The company's strongest competitive advantage is offering multiple services to the same commercial kitchen or facility. Clients using 3+ services have statistically lower churn. A penetration score below 2.5 means the company is leaving significant recurring revenue on the table from existing accounts who trust them.
+
+Provide exactly 4 specific, immediately actionable steps to accelerate cross-selling into existing accounts. Include the specific service pairings with the highest attachment opportunity based on the Termac model (e.g., GTO grease clients → Chemical supply). Be direct and assume the owner will act on this personally this week.`,
+
+  wrench_time_ok: (ctx) => `You are an operations advisor for Termac Family of Companies.
+
+PROACTIVE WATCH: Overall wrench time is above threshold at 72%, but one technician is trending toward a redline breach.
+CURRENT DATA: ${ctx}
+
+Wrench time utilization below 65% signals route inefficiency — too much time in transit vs. on the job. The goal is 70%+ billable time through effective trip stacking (grouping nearby accounts on the same route day).
+
+Provide exactly 4 specific steps to diagnose and correct this individual technician's route efficiency before it becomes a fleet-wide problem. Include a route audit step, a trip stacking recommendation, a coaching approach, and a scheduling system fix.`
+};
+
+async function fireAI(scenario, context, triggerLabel) {
+  currentScenario = scenario;
+  currentContext = context;
+  document.getElementById('aiTriggerText').textContent = triggerLabel + ' — ' + context;
+  document.getElementById('aiContent').innerHTML = '<div class="loading"><span class="ai-spinner"></span> Analyzing scenario and generating recommended actions…</div>';
+  document.getElementById('aiPanel').classList.add('open');
+  await callAI(scenario, context);
+}
+
+async function callAI(scenario, context) {
+  const promptFn = AI_PROMPTS[scenario];
+  if (!promptFn) return;
+  const prompt = promptFn(context);
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        model:'claude-sonnet-4-6',
+        max_tokens:1000,
+        messages:[{role:'user',content:prompt}]
+      })
+    });
+    const data = await res.json();
+    const text = data.content?.find(b=>b.type==='text')?.text || 'No response received.';
+    renderAIResponse(text);
+  } catch(e) {
+    document.getElementById('aiContent').innerHTML = '<div style="color:#8A909A;font-size:12px">Error connecting to AI. Check network or API access.</div>';
+  }
+}
+
+function renderAIResponse(text) {
+  // Parse numbered list items from AI response
+  const lines = text.split('\n').filter(l=>l.trim());
+  let html = '';
+  let inList = false;
+
+  lines.forEach(line => {
+    const stepMatch = line.match(/^(\d+)[\.\)\:]/);
+    if(stepMatch) {
+      if(!inList) { html += '<ul class="ai-action-list">'; inList = true; }
+      const content = line.replace(/^\d+[\.\)\:]\s*/, '');
+      const boldMatch = content.match(/^\*\*([^\*]+)\*\*:?(.*)/) || content.match(/^([^:]+):(.+)/);
+      if(boldMatch) {
+        html += `<li><span class="step">Step ${stepMatch[1]}</span><span><strong>${boldMatch[1].replace(/\*\*/g,'')}</strong>${boldMatch[2]}</span></li>`;
+      } else {
+        html += `<li><span class="step">Step ${stepMatch[1]}</span><span>${content}</span></li>`;
+      }
+    } else if(line.trim() && !stepMatch) {
+      if(inList) { html += '</ul>'; inList = false; }
+      if(line.startsWith('#')) {
+        html += `<div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px;color:#E5E7EB;margin:10px 0 6px">${line.replace(/#+\s*/,'')}</div>`;
+      } else {
+        html += `<p style="margin-bottom:8px;color:#BFC4CA;font-size:12px">${line}</p>`;
+      }
+    }
+  });
+  if(inList) html += '</ul>';
+  document.getElementById('aiContent').innerHTML = html || `<p style="color:#BFC4CA;font-size:13px">${text}</p>`;
+}
+
+function regenAI() {
+  if(currentScenario && currentContext) {
+    document.getElementById('aiContent').innerHTML = '<div class="loading"><span class="ai-spinner"></span> Regenerating recommendations…</div>';
+    callAI(currentScenario, currentContext);
+  }
+}
+
+function closeAI() {
+  document.getElementById('aiPanel').classList.remove('open');
+}
+
+document.getElementById('aiPanel').addEventListener('click', function(e) {
+  if(e.target === this) closeAI();
+});
+
+
+// ══════════════════════════════════════════
+// THREE-TIER ALERT SYSTEM
+// ══════════════════════════════════════════
+
+var METRIC_CONFIG = {
+  deficiency_conversion: {
+    label:'Deficiency Conversion Rate', unit:'%', better:'higher',
+    green:48, yellow:45, red:0,
+    yellowMsg:'Conversion approaching redline — 48hr follow-up window to prevent breach.',
+    redMsg:'Conversion BELOW redline — revenue leaking from uninvoiced repairs.',
+    yellowAction:'Review all open quotes older than 3 days. Assign a follow-up call to each.',
+    redAction:'Owner calls top 3 open quotes today. Mandate 24hr quote follow-up for all techs.'
+  },
+  ftfr: {
+    label:'First-Time Fix Rate', unit:'%', better:'higher',
+    green:83, yellow:80, red:0,
+    yellowMsg:'FTFR approaching threshold — van stock or dispatch prep may be slipping.',
+    redMsg:'FTFR BELOW 80% — double transit costs and client trust at risk.',
+    yellowAction:'Audit last 5 return trips. Identify missing parts pattern. Restock vans this week.',
+    redAction:'Pull route logs for all return trips this month. Conduct van stock audit immediately. Review dispatch checklist process.'
+  },
+  quote_time: {
+    label:'Deficiency-to-Quote Time', unit:' hrs', better:'lower',
+    green:36, yellow:48, red:999,
+    yellowMsg:'Quote issuance time in warning zone — fire hazards left without quotes create liability.',
+    redMsg:'Quote issuance OVER 48hrs — client exposed to fire safety risk, liability window open.',
+    yellowAction:'Identify all deficiencies logged 24+ hours ago without a quote. Issue quotes today.',
+    redAction:'Pull all open deficiencies. Call each client within 4 hours. Issue quotes same day. Report to owner by EOD.'
+  },
+  renewal_rate: {
+    label:'ITM Renewal Rate', unit:'%', better:'higher',
+    green:88, yellow:85, red:0,
+    yellowMsg:'Renewal rate dipping — 2-3 contracts at risk of non-renewal this quarter.',
+    redMsg:'Renewal rate BELOW floor — recurring revenue base is destabilizing.',
+    yellowAction:'List all contracts expiring in next 90 days. Start renewal conversations immediately. Offer multi-year discount.',
+    redAction:'Owner personally calls top 5 accounts by revenue for retention conversation. Offer loyalty pricing. Escalate any dissatisfied accounts to management review.'
+  },
+  material_variance: {
+    label:'Material Usage Variance', unit:'%', better:'lower',
+    green:3, yellow:5, red:999,
+    yellowMsg:'Material overage trending toward 5% threshold — margin erosion starting.',
+    redMsg:'Material variance OVER 5% — fabrication margins likely negative on affected jobs.',
+    yellowAction:'Identify jobs with >3% material overage. Review cut sheets and waste logs. Adjust cutting sequences.',
+    redAction:'Stop and audit all jobs currently over budget. Pull material logs. Review estimating process for custom radius and complex geometry jobs. Adjust bid templates.'
+  },
+  rework_rate: {
+    label:'AllPro Rework Rate', unit:'%', better:'lower',
+    green:1.5, yellow:2, red:999,
+    yellowMsg:'Rework approaching 2% — labor hours being consumed by error correction.',
+    redMsg:'Rework ABOVE 2% — shop is losing billable hours to corrections. Bottleneck likely.',
+    yellowAction:'Review last 3 rework jobs for common error pattern. Hold brief team standup on measurement verification process.',
+    redAction:'Halt non-critical production for half-day process review. Identify measurement error root cause. Implement double-check verification step before any cut on custom radius work.'
+  },
+  cash_cycle: {
+    label:'Cash-to-Cash Cycle', unit:' days', better:'lower',
+    green:37, yellow:45, red:999,
+    yellowMsg:'Cash cycle stretching — working capital gap widening toward danger zone.',
+    redMsg:'Cash cycle OVER 45 days — company is bankrolling client operations at its own expense.',
+    yellowAction:'Identify top 3 slowest-paying accounts. Send AR reminder with clear due date. Consider requiring deposit on next job.',
+    redAction:'Issue formal collection notices on all invoices >45 days. Require pre-payment or deposit for next service from chronic slow payers. Owner reviews AR aging report today.'
+  },
+  dso: {
+    label:'Days Sales Outstanding', unit:' days', better:'lower',
+    green:28, yellow:35, red:999,
+    yellowMsg:'DSO creeping up — collections process needs reinforcement.',
+    redMsg:'DSO OVER 35 days — invoice aging is accelerating working capital drain.',
+    yellowAction:'Run AR aging report. Call all accounts 30+ days outstanding. Set up auto-reminder for invoices at 15 and 25 days.',
+    redAction:'Suspend new work for accounts 60+ days overdue. Owner reviews all invoices >$5K personally. Implement mandatory net-30 terms going forward.'
+  },
+  allpro_margin: {
+    label:'AllPro Job Margin Variance', unit:'%', better:'higher',
+    green:-3, yellow:-5, red:-999,
+    yellowMsg:'Job margins running below estimates — scope creep or underbidding pattern emerging.',
+    redMsg:'Margin variance SEVERE — multiple jobs significantly over budget.',
+    yellowAction:'Review bid templates for complex jobs. Add 8% material buffer to all custom radius quotes going forward.',
+    redAction:'Conduct emergency job costing review on all active jobs. Freeze new bids until estimating process is corrected. Present findings to owner within 48 hours.'
+  },
+  cross_service: {
+    label:'Cross-Service Penetration', unit:' svc/client', better:'higher',
+    green:2.3, yellow:2.5, red:0,
+    yellowMsg:'Cross-service penetration softening — single-service accounts accumulating.',
+    redMsg:'Penetration BELOW floor — revenue opportunity leaving through existing relationships.',
+    yellowAction:'Pull list of single-service accounts. Assign each to a rep for cross-sell conversation this week.',
+    redAction:'Owner reviews top 10 single-service accounts personally. Trigger Client Account Review process. Set cross-sell target for each rep for next 30 days.'
+  },
+  throughput: {
+    label:'AllPro Throughput Rate', unit:'', better:'higher',
+    green:-7, yellow:-10, red:-999,
+    yellowMsg:'Shop throughput declining vs rolling average — potential bottleneck forming.',
+    redMsg:'Throughput DOWN 10%+ — production bottleneck confirmed.',
+    yellowAction:'Walk the shop floor. Identify slowest workstation. Check setup times vs last month.',
+    redAction:'Conduct time-motion study on bottleneck station. Consider layout change or equipment adjustment. Report to owner by end of week.'
+  },
+  otd_allpro: {
+    label:'AllPro On-Time Delivery', unit:'%', better:'higher',
+    green:85, yellow:80, red:0,
+    yellowMsg:'OTD slipping — delivery commitments at risk of being missed.',
+    redMsg:'OTD BELOW 80% — client commitments being broken. Project sequencing broken.',
+    yellowAction:'Review all jobs due within 14 days. Identify any at risk. Contact clients proactively if delay likely.',
+    redAction:'Hold emergency production meeting. Reprioritize job queue by client deadline. Call all affected clients today with revised timelines.'
+  },
+  report_latency: {
+    label:'Report Delivery Latency', unit:' hrs', better:'lower',
+    green:3.5, yellow:4, red:999,
+    yellowMsg:'Report delivery slowing — client compliance documentation gap opening.',
+    redMsg:'Report latency OVER 4hrs — compliance exposure and client confidence at risk.',
+    yellowAction:'Identify techs above 3.5hr avg. Review report submission workflow. Check if any are writing manually vs using the tool.',
+    redAction:'Manual review of all pending reports in queue. Contact techs B, D, F directly. Implement same-day submission requirement.'
+  },
+  wrench_time_ok: {
+    label:'Wrench Time Utilization', unit:'%', better:'higher',
+    green:67, yellow:65, red:0,
+    yellowMsg:'Wrench time softening for specific technician — route stacking may be failing.',
+    redMsg:'Wrench time BELOW 65% — non-billable time consuming margin.',
+    yellowAction:'Pull route log for flagged tech. Identify transit gaps. Reassign nearby accounts to optimize.',
+    redAction:'Full route audit for all techs below 65%. Restructure daily routes. Retrain on trip stacking process.'
+  }
+};
+
+// ALERT STATE
+var activeAlerts = {};
+
+function getTier(metricKey, value) {
+  var cfg = METRIC_CONFIG[metricKey];
+  if (!cfg) return 'green';
+  if (cfg.better === 'higher') {
+    if (value >= cfg.green) return 'green';
+    if (value >= cfg.yellow) return 'yellow';
+    return 'red';
+  } else {
+    if (value <= cfg.green) return 'green';
+    if (value <= cfg.yellow) return 'yellow';
+    return 'red';
+  }
+}
+
+function checkAllMetrics() {
+  // Sample current values — in Phase B these come from ServiceTrade/Cosmos DB
+  var metrics = [
+    { key:'deficiency_conversion', value:41, display:'41%', context:'41% — 34 approved deficiencies not invoiced' },
+    { key:'ftfr', value:84, display:'84%', context:'84% — 3 return trips logged this week' },
+    { key:'quote_time', value:42, display:'42 hrs', context:'42hr avg — 6 deficiencies without quotes >48hrs' },
+    { key:'renewal_rate', value:87, display:'87%', context:'87% — 4 contracts expiring with no renewal started' },
+    { key:'material_variance', value:3.1, display:'3.1%', context:'3.1% — Hood Build #402 driving avg up at 12.5%' },
+    { key:'rework_rate', value:2.4, display:'2.4%', context:'2.4% — 3 hood jobs with measurement errors this month' },
+    { key:'cash_cycle', value:38, display:'38 days', context:'38 days — 3 large accounts averaging 52 days to pay' },
+    { key:'dso', value:32, display:'32 days', context:'32 days — 6 invoices >45 days totaling $38,400' },
+    { key:'allpro_margin', value:-8.4, display:'-8.4%', context:'-8.4% avg variance — Grease containment #427 worst at -20%' },
+    { key:'cross_service', value:2.1, display:'2.1', context:'2.1 avg — 6 single-service accounts, 0 Filter Man/Fire cross-sell' },
+    { key:'throughput', value:-3, display:'-3%', context:'-3% vs avg — trending down 3 consecutive weeks' },
+    { key:'otd_allpro', value:82, display:'82%', context:'82% — 2 jobs behind on custom radius work' },
+    { key:'report_latency', value:4.8, display:'4.8 hrs', context:'4.8hr avg — Techs B, D, F above threshold' },
+    { key:'wrench_time_ok', value:72, display:'72%', context:'72% fleet avg — Driver D at 61% this week' },
+  ];
+
+  var yellows = 0, reds = 0;
+  metrics.forEach(function(m) {
+    var tier = getTier(m.key, m.value);
+    if (tier === 'yellow') yellows++;
+    if (tier === 'red') reds++;
+    if ((tier === 'yellow' || tier === 'red') && !activeAlerts[m.key]) {
+      activeAlerts[m.key] = tier;
+      showAlertBanner(m.key, tier, m.display, m.context);
+    }
+  });
+
+  var total = yellows + reds;
+  var badge = document.getElementById('alertCountBadge');
+  var count = document.getElementById('alertCount');
+  if (badge && count) {
+    badge.style.display = total > 0 ? 'inline' : 'none';
+    count.textContent = total;
+  }
+}
+
+function showAlertBanner(metricKey, tier, display, context) {
+  var cfg = METRIC_CONFIG[metricKey];
+  if (!cfg) return;
+  var stack = document.getElementById('alertBannerStack');
+  if (!stack) return;
+
+  // Don't show more than 4 banners at once
+  if (stack.children.length >= 4) return;
+
+  var banner = document.createElement('div');
+  banner.className = 'alert-banner ' + tier;
+  banner.id = 'banner-' + metricKey;
+
+  var icon = tier === 'red' ? '🔴' : '🟡';
+  var tierLabel = tier === 'red' ? '⚠ BREACH — IMMEDIATE ACTION' : '⚡ WARNING — ACTION RECOMMENDED';
+  var msg = tier === 'red' ? cfg.redMsg : cfg.yellowMsg;
+  var actionText = tier === 'red' ? cfg.redAction : cfg.yellowAction;
+  var subject = encodeURIComponent('[Termac One Alert] ' + cfg.label + ' — ' + tierLabel);
+  var body = encodeURIComponent('TERMAC ONE ALERT | ' + cfg.label + ' | ' + tierLabel + ' | Value: ' + display + ' | ' + context + ' | Recommended Action: ' + actionText + ' | Generated: ' + new Date().toLocaleString())
+
+  banner.innerHTML =
+    '<div class="alert-banner-icon">' + icon + '</div>' +
+    '<div class="alert-banner-body">' +
+      '<div class="alert-banner-title">' + tierLabel + '</div>' +
+      '<div class="alert-banner-metric">' + cfg.label + ': ' + display + '</div>' +
+      '<div class="alert-banner-val">' + msg + '</div>' +
+      '<div class="alert-banner-actions">' +
+        '<button class="alert-btn alert-btn-ai" data-metric="' + metricKey + '" data-ctx="' + context.replace(/"/g,'&quot;') + '" data-label="' + cfg.label.replace(/"/g,'&quot;') + '">⚡ Get AI Plan</button>' +
+        '<a href="mailto:?subject=' + subject + '&body=' + body + '" class="alert-btn alert-btn-email" style="text-decoration:none;display:inline-flex;align-items:center">📧 Email Alert</a>' +
+      '</div>' +
+    '</div>' +
+    '<button class="alert-btn alert-btn-dismiss" data-dismiss="' + metricKey + '">✕</button>';
+
+  banner.addEventListener('click', function(e) {
+    var aiBtn = e.target.closest('[data-metric]');
+    var dismissBtn = e.target.closest('[data-dismiss]');
+    if (aiBtn) fireAI(aiBtn.dataset.metric, aiBtn.dataset.ctx, aiBtn.dataset.label);
+    if (dismissBtn) dismissAlert(dismissBtn.dataset.dismiss);
+  });
+
+  stack.appendChild(banner);
+
+  // Auto-dismiss yellow alerts after 30s, keep red indefinitely
+  if (tier === 'yellow') {
+    setTimeout(function() { dismissAlert(metricKey); }, 30000);
+  }
+}
+
+function dismissAlert(metricKey) {
+  var banner = document.getElementById('banner-' + metricKey);
+  if (banner) {
+    banner.style.animation = 'slideIn .2s ease reverse';
+    setTimeout(function() { if(banner.parentNode) banner.parentNode.removeChild(banner); }, 200);
+  }
+}
+
+// ADD NEW AI PROMPTS for new metrics
+var EXTRA_PROMPTS = {
+  ftfr: function(ctx) {
+    return 'You are an operations advisor for Termac Family of Companies (fire protection — UniPro/Quality III).\n\nTRIGGERED ALERT: First-Time Fix Rate (FTFR) issue detected.\nCURRENT DATA: ' + ctx + '\n\nFirst-Time Fix Rate measures the % of repair visits completed without needing a return trip for parts or additional diagnosis. Every return trip doubles transit + labor cost and damages client confidence. The target is >85%, yellow zone is 80-83%.\n\nProvide exactly 4 specific, immediately actionable steps to diagnose and improve FTFR. Focus on: van stock management, dispatch preparation checklists, parts ordering process, and technician communication. Be direct and specific to a small commercial fire protection company.';
+  },
+  quote_time: function(ctx) {
+    return 'You are an operations advisor for Termac Family of Companies (fire protection).\n\nTRIGGERED ALERT: Deficiency-to-Quote issuance time is too slow.\nCURRENT DATA: ' + ctx + '\n\nWhen a fire inspection identifies a deficiency (failed valve, damaged sprinkler head, non-compliant extinguisher), a quote for repair must be issued within 48 hours. Every hour of delay leaves the client exposed to a live fire safety hazard and keeps money off the books. This also creates liability exposure if an incident occurs during the gap.\n\nProvide exactly 4 steps to accelerate quote issuance. Include a process fix, a technology fix, an accountability fix, and a client communication script for notifying them of the deficiency urgency.';
+  },
+  renewal_rate: function(ctx) {
+    return 'You are a client retention advisor for Termac Family of Companies.\n\nTRIGGERED ALERT: ITM Agreement Renewal Rate is in the warning zone.\nCURRENT DATA: ' + ctx + '\n\nITM (Inspection, Testing, and Maintenance) agreements are the recurring revenue floor of UniPro and Quality III. A renewal rate below 90% means the base is eroding. Non-renewed contracts typically become one-time emergency calls — expensive to service, unpredictable, and competitively vulnerable.\n\nProvide exactly 4 steps to stop the renewal rate decline and recover lapsing contracts. Include a renewal conversation script, a multi-year incentive structure, a proactive outreach timeline (when to call relative to contract expiry), and a competitive positioning response for when a client says a competitor is cheaper.';
+  },
+  material_variance: function(ctx) {
+    return 'You are a fabrication operations advisor for AllPro Stainless Steel, a custom commercial kitchen fabrication division.\n\nTRIGGERED ALERT: Material Usage Variance is above threshold.\nCURRENT DATA: ' + ctx + '\n\nStainless steel is expensive. When actual material consumption exceeds the estimate by more than 3-5%, the job margin is effectively destroyed. Common causes: inaccurate estimating on complex geometry, excessive cutting waste, material damage on site, or scope creep not captured in change orders.\n\nProvide exactly 4 steps to reduce material variance. Include a cutting process improvement, an estimating template fix specifically for custom radius and complex geometry work, a waste tracking log implementation, and a change order protocol for scope additions.';
+  },
+  rework_rate: function(ctx) {
+    return 'You are a quality control advisor for AllPro Stainless Steel, a custom commercial kitchen fabrication shop.\n\nTRIGGERED ALERT: Rework Rate has exceeded the 2% redline.\nCURRENT DATA: ' + ctx + '\n\nRework is the most expensive activity in a fabrication shop — it consumes labor hours that could be generating new revenue, uses additional materials, and delays job completion. A pattern of measurement errors on custom radius bends suggests either a skills gap or a process gap in verification before cutting.\n\nProvide exactly 4 steps to reduce rework below 1.5%. Include a pre-cut measurement verification step, a skills assessment approach, a shop layout or tooling recommendation, and a quality sign-off protocol before a completed piece leaves the shop.';
+  },
+  cash_cycle: function(ctx) {
+    return 'You are a financial operations advisor for Termac Family of Companies.\n\nTRIGGERED ALERT: Cash-to-Cash Cycle is in the warning zone.\nCURRENT DATA: ' + ctx + '\n\nCash-to-Cash Cycle measures the days between paying for labor and materials and receiving payment from clients. When this exceeds 37-45 days, the company is effectively lending money to its clients interest-free while paying its own employees weekly. This kills working capital and can force the company into short-term borrowing.\n\nProvide exactly 4 steps to compress the cash cycle. Include a collections process improvement, a client payment terms tightening strategy (without losing the client), a deposit or progress billing structure for large jobs, and a specific approach for the chronic slow-pay institutional accounts.';
+  },
+  dso: function(ctx) {
+    return 'You are an accounts receivable advisor for Termac Family of Companies.\n\nTRIGGERED ALERT: Days Sales Outstanding (DSO) is above target.\nCURRENT DATA: ' + ctx + '\n\nDSO measures how many days on average it takes to collect payment after invoicing. The target is 25 days. Anything above 35 days signals a collections process breakdown and accelerates working capital drain.\n\nProvide exactly 4 steps to bring DSO back below 30 days. Include an automated invoice follow-up sequence (day 15, 25, 35 touchpoints), a collections call script for accounts over 30 days, a late fee policy implementation, and a credit hold process for chronic non-payers.';
+  },
+  allpro_margin: function(ctx) {
+    return 'You are a job costing advisor for AllPro Stainless Steel, a custom fabrication division.\n\nTRIGGERED ALERT: Job Margin Variance is severely negative.\nCURRENT DATA: ' + ctx + '\n\nWhen actual job costs significantly exceed estimates, the fabrication division is destroying margin on every complex job. This is often caused by underestimating labor on custom work, not capturing scope changes in change orders, or systematic underbidding on certain job types.\n\nProvide exactly 4 steps to correct negative margin variance. Include an immediate audit of all over-budget active jobs, a bid template revision for complex geometry work, a change order trigger process (any scope addition requires a signed change order before work continues), and a post-job review process to capture lessons learned for future estimating.';
+  },
+  throughput: function(ctx) {
+    return 'You are a production efficiency advisor for AllPro Stainless Steel fabrication shop.\n\nPROACTIVE WATCH: Throughput trending down but not yet at redline.\nCURRENT DATA: ' + ctx + '\n\nThroughput rate measures production output vs the 3-month rolling average. A sustained decline signals a bottleneck forming in the shop — either equipment, layout, setup time, or skills. Catching it early allows process correction before it becomes a delivery and revenue problem.\n\nProvide exactly 4 steps to diagnose and reverse the throughput decline before it reaches -10%. Include a shop floor observation checklist, a setup time analysis, a workstation sequencing review, and a team conversation approach to surface hidden process problems.';
+  },
+  otd_allpro: function(ctx) {
+    return 'You are a production scheduling advisor for AllPro Stainless Steel.\n\nTRIGGERED ALERT: On-Time Delivery rate is in the warning zone.\nCURRENT DATA: ' + ctx + '\n\nOn-time delivery in custom fabrication is directly tied to client trust and repeat business. When delivery rates fall below 85%, it signals a scheduling or capacity problem — jobs are being accepted faster than they can be completed, or complexity is being underestimated at the quoting stage.\n\nProvide exactly 4 steps to restore OTD above 85%. Include a current job queue reprioritization process, a client proactive communication approach for at-risk jobs, a quoting process fix to better estimate timeline for complex work, and a capacity check before accepting new work.';
+  }
+};
+
+// Extend the existing AI_PROMPTS with new ones
+if (typeof AI_PROMPTS !== 'undefined') {
+  Object.assign(AI_PROMPTS, EXTRA_PROMPTS);
+}
+
+// Run alert check when Command Center tab loads
+setTimeout(function() {
+  if (document.getElementById('alertBannerStack')) {
+    checkAllMetrics();
+  }
+}, 800);
+
+// Also update flash report to flag owner items
+function updateFlashReportAlerts() {
+  var rows = document.querySelectorAll('.flash-row');
+  rows.forEach(function(row) {
+    var statusEl = row.querySelector('.flash-item-status');
+    if (statusEl && statusEl.classList.contains('status-breach')) {
+      var lbl = row.querySelector('.flash-item-label');
+      if (lbl && !lbl.querySelector('.flash-owner-flag')) {
+        var flag = document.createElement('span');
+        flag.className = 'flash-owner-flag';
+        flag.textContent = 'Owner Action';
+        lbl.appendChild(flag);
+      }
+    }
+  });
+}
+setTimeout(updateFlashReportAlerts, 500);
+
+</script>
+</body>
+</html>

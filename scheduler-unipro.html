@@ -1,0 +1,1275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>UniPro — Scheduler Dashboard</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+:root{
+  --red:#C8102E;--dark:#EEF0F2;--charcoal:#1A1D21;--panel:#FFFFFF;--panel2:#F8F9FA;
+  --ink:#1A1D21;--soft:#5A616B;--line:#D7DBE0;--green:#1E7B3C;--blue:#1B5FA8;
+  --orange:#D8690B;--yellow:#F2B705;--purple:#7C3AED;--teal:#0891B2;
+  --topbar:56px;--sidebar:260px;--radius:10px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--dark);color:var(--ink);font-family:'Barlow',sans-serif;font-size:13px;overflow:hidden;height:100vh;display:flex;flex-direction:column}
+
+/* TOPBAR */
+.topbar{height:var(--topbar);background:var(--charcoal);border-bottom:2px solid var(--red);display:flex;align-items:center;padding:0 16px;gap:12px;flex-shrink:0;z-index:100}
+.topbar img{height:32px;width:auto}
+.topbar-div{width:1px;height:28px;background:var(--line)}
+.topbar-nav a{display:flex;align-items:center;gap:4px;color:rgba(255,255,255,.6);text-decoration:none;padding:5px 10px;border-radius:6px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;transition:all .15s}
+.topbar-nav a:hover{background:rgba(255,255,255,.08);color:#fff}
+.topbar-nav{display:flex;gap:4px}
+.topbar-title{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:16px;letter-spacing:.06em;text-transform:uppercase;color:#fff}
+.topbar-sub{font-size:11px;color:var(--soft);margin-top:1px}
+.topbar-right{margin-left:auto;display:flex;align-items:center;gap:8px}
+.badge{background:var(--red);color:#fff;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;padding:3px 10px;border-radius:12px}
+.badge.green{background:var(--green)}
+.badge.orange{background:var(--orange)}
+.netsuite-btn{background:rgba(7,126,80,.2);border:1px solid rgba(7,126,80,.4);color:#4ade80;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;padding:5px 12px;border-radius:6px;cursor:pointer;display:flex;align-items:center;gap:5px}
+
+/* LAYOUT */
+.app-body{display:flex;flex:1;overflow:hidden}
+
+/* LEFT PANEL — call list */
+.sidebar{width:var(--sidebar);background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;overflow:hidden;flex-shrink:0}
+.sidebar-header{padding:12px 14px 8px;border-bottom:1px solid var(--line);flex-shrink:0}
+.sidebar-label{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin-bottom:6px}
+.priority-tabs{display:flex;gap:4px;margin-top:6px}
+.ptab{flex:1;text-align:center;padding:5px 4px;background:var(--panel);border-radius:5px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;color:var(--soft);border:1px solid transparent;transition:all .15s}
+.ptab.active{background:var(--red);color:#fff;border-color:var(--red)}
+.call-list{flex:1;overflow-y:auto;padding:6px}
+.call-card{background:var(--panel);border-radius:8px;padding:10px 12px;margin-bottom:6px;border-left:3px solid transparent;cursor:pointer;transition:all .15s;position:relative}
+.call-card:hover{background:var(--panel2);transform:translateX(2px)}
+.call-card.selected{background:var(--panel2);border-left-color:var(--red)}
+.call-card.overdue{border-left-color:var(--red)}
+.call-card.renewal{border-left-color:var(--orange)}
+.call-card.new-lead{border-left-color:var(--blue)}
+.call-card.scheduled{border-left-color:var(--green);opacity:.6}
+.card-name{font-weight:700;font-size:12px;line-height:1.3;margin-bottom:2px}
+.card-meta{font-size:10px;color:var(--soft);line-height:1.4}
+.card-badges{display:flex;gap:4px;margin-top:5px;flex-wrap:wrap}
+.cb{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:9px;letter-spacing:.06em;text-transform:uppercase;padding:2px 6px;border-radius:4px}
+.cb.red{background:rgba(200,16,46,.2);color:#F87171}
+.cb.orange{background:rgba(216,105,11,.2);color:#FB923C}
+.cb.blue{background:rgba(27,95,168,.2);color:#60A5FA}
+.cb.green{background:rgba(30,123,60,.2);color:#4ADE80}
+.cb.purple{background:rgba(124,58,237,.2);color:#A78BFA}
+.card-score{position:absolute;top:8px;right:10px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px;color:var(--yellow)}
+
+/* MAIN AREA */
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.main-top{display:flex;gap:0;flex:1;overflow:hidden}
+
+/* CALENDAR */
+.cal-panel{width:340px;background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;overflow:hidden;flex-shrink:0}
+.cal-header{padding:12px 14px 8px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.cal-nav{display:flex;align-items:center;gap:8px}
+.cal-nav button{background:var(--panel);border:1px solid var(--line);color:var(--ink);width:26px;height:26px;border-radius:5px;cursor:pointer;font-size:12px;display:flex;align-items:center;justify-content:center}
+.cal-month{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:14px;letter-spacing:.06em;text-transform:uppercase}
+.cal-grid{padding:8px 10px;flex-shrink:0}
+.cal-days-row{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-bottom:4px}
+.cal-day-name{text-align:center;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--soft);padding:2px 0}
+.cal-date{text-align:center;padding:4px 2px;border-radius:5px;cursor:pointer;font-size:11px;font-weight:600;transition:all .15s;position:relative;min-height:28px}
+.cal-date:hover{background:var(--panel)}
+.cal-date.today{background:var(--red);color:#fff;font-weight:800}
+.cal-date.selected{background:rgba(200,16,46,.2);border:1px solid var(--red)}
+.cal-date.has-jobs::after{content:'';position:absolute;bottom:2px;left:50%;transform:translateX(-50%);width:4px;height:4px;border-radius:50%;background:var(--orange)}
+.cal-date.has-jobs.today::after{background:#fff}
+.cal-date.other-month{color:var(--line)}
+
+/* DAY SCHEDULE */
+.day-schedule{flex:1;overflow-y:auto;padding:10px}
+.day-header{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12px;letter-spacing:.10em;text-transform:uppercase;color:var(--soft);margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+.tech-lane{background:var(--panel);border-radius:8px;margin-bottom:8px;overflow:hidden}
+.tech-lane-header{padding:8px 12px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--line)}
+.tech-avatar{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;color:#fff;flex-shrink:0}
+.tech-name-block .name{font-weight:700;font-size:12px}
+.tech-name-block .zone{font-size:10px;color:var(--soft)}
+.tech-capacity{margin-left:auto;text-align:right}
+.cap-bar{width:80px;height:6px;background:var(--line);border-radius:3px;margin-top:2px}
+.cap-fill{height:100%;border-radius:3px;background:var(--green);transition:width .3s}
+.cap-fill.warn{background:var(--orange)}
+.cap-fill.over{background:var(--red)}
+.cap-label{font-size:9px;color:var(--soft);margin-bottom:1px}
+.tech-jobs{padding:6px 8px}
+.job-chip{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;margin-bottom:4px;background:var(--panel2);cursor:grab;border:1px solid transparent;transition:all .15s;position:relative}
+.job-chip:hover{border-color:var(--line)}
+.job-chip.dragging{opacity:.5}
+.job-chip-time{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;color:var(--soft);width:38px;flex-shrink:0}
+.job-chip-info{flex:1;min-width:0}
+.job-chip-name{font-weight:700;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.job-chip-sub{font-size:10px;color:var(--soft)}
+.job-chip-dur{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;color:var(--yellow);white-space:nowrap}
+.job-chip-status{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.status-scheduled{background:var(--blue)}
+.status-enroute{background:var(--yellow)}
+.status-complete{background:var(--green)}
+.status-issue{background:var(--red)}
+.status-overdue{background:var(--red);animation:pulse 1.5s infinite}
+.drop-zone{border:2px dashed var(--line);border-radius:6px;padding:8px;text-align:center;font-size:10px;color:var(--soft);margin-bottom:4px;transition:all .15s}
+.drop-zone.drag-over{border-color:var(--red);background:rgba(200,16,46,.06);color:var(--red)}
+
+/* MAP */
+.map-panel{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.map-header{padding:10px 14px;border-bottom:1px solid var(--line);background:var(--panel2);display:flex;align-items:center;gap:10px;flex-shrink:0;background:var(--charcoal)}
+.map-legend{display:flex;gap:12px;flex-wrap:wrap}
+.leg{display:flex;align-items:center;gap:4px;font-size:10px;color:var(--soft)}
+.leg-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+#schedMap{flex:1;min-height:0}
+
+/* AI ASSESSMENT MODAL */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:500;display:none;align-items:center;justify-content:center}
+.overlay.open{display:flex}
+.ai-modal{width:680px;max-height:88vh;background:var(--panel);border-radius:14px;overflow:hidden;border:1px solid var(--line);display:flex;flex-direction:column}
+.ai-modal-head{background:linear-gradient(135deg,var(--red),#8B0B1F);padding:14px 18px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.ai-modal-head h3{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:15px;letter-spacing:.08em;text-transform:uppercase;color:#fff}
+.ai-modal-body{padding:16px;overflow-y:auto;flex:1}
+.ai-modal-foot{padding:12px 16px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end;flex-shrink:0}
+.ai-section{margin-bottom:14px}
+.ai-section-title{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin-bottom:8px}
+.ai-equipment-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:6px;margin-bottom:8px}
+.equip-item{background:var(--panel);border-radius:6px;padding:8px 10px;border-top:2px solid var(--blue)}
+.equip-count{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:22px;color:var(--blue)}
+.equip-label{font-size:10px;color:var(--soft);margin-top:1px}
+.equip-time{font-size:11px;font-weight:700;color:var(--yellow);margin-top:2px}
+.time-breakdown{background:var(--panel);border-radius:8px;padding:12px;margin-bottom:10px}
+.time-row{display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--line)}
+.time-row:last-child{border:none;font-weight:700;padding-top:8px}
+.time-total{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:20px;color:var(--green)}
+.ai-note{background:rgba(242,183,5,.08);border:1px solid rgba(242,183,5,.2);border-radius:6px;padding:8px 10px;font-size:11px;color:#FDE68A;margin-bottom:8px}
+.slot-card{background:var(--panel);border-radius:8px;padding:10px 12px;margin-bottom:6px;cursor:pointer;border:2px solid transparent;transition:all .15s;display:flex;align-items:center;gap:10px}
+.slot-card:hover{border-color:var(--blue)}
+.slot-card.best{border-color:var(--green);background:rgba(30,123,60,.08)}
+.slot-rank{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:22px;width:28px;text-align:center;flex-shrink:0}
+.slot-info{flex:1}
+.slot-time{font-weight:700;font-size:13px}
+.slot-tech{font-size:11px;color:var(--soft);margin-top:1px}
+.slot-why{font-size:10px;color:var(--teal);margin-top:3px}
+.slot-badge{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.08em;text-transform:uppercase;padding:3px 8px;border-radius:5px;background:rgba(30,123,60,.2);color:#4ADE80}
+
+/* BOTTOM METRICS */
+.metrics-bar{height:130px;background:var(--panel);border-top:1px solid var(--line);display:flex;gap:0;flex-shrink:0;overflow:hidden}
+.metric-tile{flex:1;padding:12px 14px;border-right:1px solid var(--line);display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;transition:background .15s}
+.metric-tile:hover{background:var(--panel)}
+.metric-tile:last-child{border:none}
+.mt-label{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--soft)}
+.mt-value{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:28px;line-height:1}
+.mt-sub{font-size:10px;color:var(--soft)}
+.mt-chart{height:40px;position:relative}
+.metric-chart-panel{display:none;position:absolute;bottom:130px;left:0;right:0;background:var(--panel);border-top:1px solid var(--line);padding:16px;z-index:50;height:220px}
+.metric-chart-panel.open{display:block}
+
+/* BUTTONS */
+.btn{padding:7px 14px;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.10em;text-transform:uppercase;cursor:pointer;border:none;transition:all .15s}
+.btn.primary{background:var(--red);color:#fff}
+.btn.secondary{background:var(--panel);color:var(--ink);border:1px solid var(--line)}
+.btn.green{background:var(--green);color:#fff}
+.btn.blue{background:var(--blue);color:#fff}
+.close-btn{background:none;border:none;color:rgba(255,255,255,.6);font-size:20px;cursor:pointer;padding:0 4px;line-height:1}
+
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spin{animation:spin .7s linear infinite;display:inline-block}
+
+/* Scrollbar */
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px}
+</style>
+</head>
+<body>
+
+<!-- AI Assessment Modal -->
+<div class="overlay" id="aiOv">
+  <div class="ai-modal">
+    <div class="ai-modal-head">
+      <h3>⚡ AI Job Assessment</h3>
+      <button class="close-btn" onclick="closeAI()">✕</button>
+    </div>
+    <div class="ai-modal-body" id="aiBody">
+      <div style="color:var(--soft);font-size:13px;display:flex;align-items:center;gap:8px">
+        <span class="spin" style="width:16px;height:16px;border:2px solid var(--line);border-top-color:var(--red);border-radius:50%"></span>
+        Analyzing job requirements...
+      </div>
+    </div>
+    <div class="ai-modal-foot">
+      <button class="btn secondary" onclick="closeAI()">Cancel</button>
+      <button class="btn green" id="scheduleBtn" onclick="confirmSchedule()" style="display:none">✓ Schedule This Slot</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOPBAR -->
+<!-- ⚡ UNIFIED TERMAC ONE NAV ⚡ -->
+<style>
+.unav{background:#1A1D21;border-bottom:3px solid #C8102E;position:sticky;top:0;z-index:9999;font-family:'Barlow Condensed',sans-serif;width:100%}
+.unav-inner{max-width:1380px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;padding:0 16px;height:48px;gap:12px}
+.unav-brand{font-weight:800;font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:#F2B705;text-decoration:none;white-space:nowrap;flex-shrink:0}
+.unav-links{display:flex;align-items:center;gap:2px;flex-wrap:nowrap;overflow:hidden}
+.unav-links a{color:#BFC4CA;text-decoration:none;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.10em;text-transform:uppercase;padding:6px 12px;border-radius:6px;transition:background .12s,color .12s;white-space:nowrap}
+.unav-links a:hover{background:#2A2E33;color:#fff}
+.unav-links a.active{background:#C8102E;color:#fff}
+</style>
+<nav class="unav">
+  <div class="unav-inner">
+    <a class="unav-brand" href="termac-revenue-os.html">⚡ TERMAC ONE</a>
+    <div class="unav-links">
+      <a href="termac-revenue-os.html">🏠 Home</a>
+      <a href="termac-revenue-os.html" onclick="sessionStorage.setItem('openOnLoad','leads');return true;">Leads</a>
+      <a href="termac-revenue-os.html" onclick="sessionStorage.setItem('openOnLoad','accounts');return true;">Accounts</a>
+      <a href="termac-revenue-os.html" class="active">📅 Scheduler</a> class="active">
+    </div>
+  </div>
+</nav>
+  <nav class="topbar-nav">
+    <a href="termac-revenue-os.html">🏠 Home</a>
+    <a href="termac-revenue-os.html">CRM</a>
+  </nav>
+  <div class="topbar-div"></div>
+  <div>
+    <div class="topbar-title">Scheduler Dashboard</div>
+    <div class="topbar-sub" id="todayLabel"></div>
+  </div>
+  <div class="topbar-right">
+    <span class="badge orange" id="overdueCount">0 Overdue</span>
+    <span class="badge" id="todayCount">0 Today</span>
+    <span class="badge green" id="completeCount">0 Complete</span>
+    <div class="topbar-div"></div>
+    <button class="netsuite-btn" onclick="syncNetSuite()">
+      <span id="nsIcon">⇄</span> NetSuite Sync
+    </button>
+    <button class="btn primary" onclick="runAIOptimize()">⚡ AI Optimize Day</button>
+  </div>
+</div>
+
+<!-- APP BODY -->
+<div class="app-body">
+
+  <!-- LEFT: CALL LIST -->
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-label">📋 Priority Call List</div>
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+        <input id="callSearch" placeholder="Search accounts..." style="flex:1;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:5px 8px;color:var(--ink);font-size:11px;font-family:inherit;outline:none">
+      </div>
+      <div class="priority-tabs">
+        <div class="ptab active" onclick="filterCalls('all',this)">All</div>
+        <div class="ptab" onclick="filterCalls('overdue',this)">Overdue</div>
+        <div class="ptab" onclick="filterCalls('renewal',this)">Renewal</div>
+        <div class="ptab" onclick="filterCalls('lead',this)">Leads</div>
+      </div>
+    </div>
+    <div class="call-list" id="callList"></div>
+  </div>
+
+  <!-- MAIN -->
+  <div class="main">
+    <div class="main-top">
+
+      <!-- CALENDAR + DAY SCHEDULE -->
+      <div class="cal-panel">
+        <div class="cal-header">
+          <div>
+            <div class="sidebar-label">Calendar & Schedule</div>
+          </div>
+          <div class="cal-nav">
+            <button onclick="changeMonth(-1)">‹</button>
+            <span class="cal-month" id="calMonthLabel"></span>
+            <button onclick="changeMonth(1)">›</button>
+          </div>
+        </div>
+        <div class="cal-grid">
+          <div class="cal-days-row" id="calDayNames"></div>
+          <div id="calGrid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px"></div>
+        </div>
+        <div class="day-schedule" id="daySchedule"></div>
+      </div>
+
+      <!-- MAP -->
+      <div class="map-panel">
+        <div class="map-header">
+          <div class="sidebar-label" style="margin:0">🗺 Live Territory Map</div>
+          <div class="map-legend">
+            <div class="leg"><div class="leg-dot" style="background:#EF4444"></div>Overdue</div>
+            <div class="leg"><div class="leg-dot" style="background:#F97316"></div>Renewal Window</div>
+            <div class="leg"><div class="leg-dot" style="background:#3B82F6"></div>Scheduled Today</div>
+            <div class="leg"><div class="leg-dot" style="background:#22C55E"></div>Complete</div>
+            <div class="leg"><div class="leg-dot" style="background:#A855F7"></div>Open Lead</div>
+            <div class="leg"><div class="leg-dot" style="background:#8B909A"></div>Customer</div>
+          </div>
+          <div style="margin-left:auto;display:flex;gap:6px">
+            <button class="btn secondary" onclick="fitMapBounds()" style="font-size:10px;padding:4px 10px">Fit All</button>
+            <button class="btn secondary" onclick="fitTodayJobs()" style="font-size:10px;padding:4px 10px">Today's Jobs</button>
+          </div>
+        </div>
+        <div id="schedMap"></div>
+      </div>
+
+    </div>
+
+    <!-- BOTTOM METRICS -->
+    <div class="metrics-bar">
+      <div class="metric-tile" onclick="toggleChart('jobs')">
+        <div class="mt-label">Jobs Today</div>
+        <div class="mt-value" id="m_jobs" style="color:var(--blue)">0</div>
+        <div class="mt-sub" id="m_jobs_sub">0 complete · 0 remaining</div>
+        <div class="mt-chart"><canvas id="chart_jobs"></canvas></div>
+      </div>
+      <div class="metric-tile" onclick="toggleChart('calls')">
+        <div class="mt-label">Calls Made</div>
+        <div class="mt-value" id="m_calls" style="color:var(--yellow)">0</div>
+        <div class="mt-sub" id="m_calls_sub">Target: 50 · 0 scheduled</div>
+        <div class="mt-chart"><canvas id="chart_calls"></canvas></div>
+      </div>
+      <div class="metric-tile" onclick="toggleChart('convert')">
+        <div class="mt-label">Convert Rate</div>
+        <div class="mt-value" id="m_convert" style="color:var(--green)">0%</div>
+        <div class="mt-sub">Calls → Appointments</div>
+        <div class="mt-chart"><canvas id="chart_convert"></canvas></div>
+      </div>
+      <div class="metric-tile" onclick="toggleChart('utilization')">
+        <div class="mt-label">Tech Utilization</div>
+        <div class="mt-value" id="m_util" style="color:var(--orange)">0%</div>
+        <div class="mt-sub" id="m_util_sub">Avg capacity used</div>
+        <div class="mt-chart"><canvas id="chart_util"></canvas></div>
+      </div>
+      <div class="metric-tile" onclick="toggleChart('revenue')">
+        <div class="mt-label">Est. Revenue Today</div>
+        <div class="mt-value" id="m_rev" style="color:var(--green)">$0</div>
+        <div class="mt-sub">From scheduled jobs</div>
+        <div class="mt-chart"><canvas id="chart_rev"></canvas></div>
+      </div>
+      <div class="metric-tile" onclick="toggleChart('noshow')">
+        <div class="mt-label">No-Show Rate</div>
+        <div class="mt-value" id="m_noshow" style="color:var(--red)">0%</div>
+        <div class="mt-sub">Last 30 days</div>
+        <div class="mt-chart"><canvas id="chart_noshow"></canvas></div>
+      </div>
+      <div class="metric-tile" onclick="toggleChart('ftfr')">
+        <div class="mt-label">First-Fix Rate</div>
+        <div class="mt-value" id="m_ftfr" style="color:var(--teal)">0%</div>
+        <div class="mt-sub">Jobs complete 1st visit</div>
+        <div class="mt-chart"><canvas id="chart_ftfr"></canvas></div>
+      </div>
+    </div>
+
+  </div><!-- /main -->
+</div><!-- /app-body -->
+
+<script>
+var ZIPLL={
+"19102":[39.953,-75.166],"19103":[39.952,-75.174],"19104":[39.961,-75.197],"19106":[39.948,-75.147],"19107":[39.944,-75.158],
+"19111":[40.060,-75.080],"19114":[40.069,-75.000],"19115":[40.093,-75.041],"19116":[40.117,-75.011],"19118":[40.072,-75.208],
+"19119":[40.054,-75.191],"19120":[40.034,-75.119],"19121":[39.982,-75.178],"19122":[39.978,-75.146],"19123":[39.964,-75.146],
+"19124":[40.017,-75.092],"19125":[39.977,-75.125],"19126":[40.055,-75.137],"19127":[40.028,-75.225],"19128":[40.048,-75.230],
+"19129":[40.013,-75.186],"19130":[39.968,-75.174],"19131":[39.989,-75.224],"19132":[39.996,-75.170],"19133":[39.992,-75.141],
+"19134":[39.989,-75.106],"19135":[40.021,-75.048],"19136":[40.039,-75.022],"19137":[40.000,-75.073],"19138":[40.056,-75.159],
+"19139":[39.961,-75.231],"19140":[40.012,-75.145],"19141":[40.036,-75.146],"19142":[39.922,-75.234],"19143":[39.943,-75.227],
+"19144":[40.033,-75.175],"19145":[39.916,-75.191],"19146":[39.939,-75.184],"19147":[39.936,-75.155],"19148":[39.912,-75.158],
+"19149":[40.038,-75.066],"19150":[40.072,-75.171],"19151":[39.977,-75.255],"19152":[40.061,-75.046],"19153":[39.890,-75.230],"19154":[40.093,-74.980],
+"18901":[40.310,-75.135],"18902":[40.350,-75.070],"18914":[40.290,-75.210],"18925":[40.288,-75.060],"18929":[40.255,-75.090],
+"18940":[40.265,-74.940],"18944":[40.395,-75.230],"18947":[40.420,-75.110],"18951":[40.450,-75.340],"18954":[40.215,-74.990],
+"18966":[40.190,-75.010],"18974":[40.215,-75.070],"18976":[40.250,-75.140],"18977":[40.290,-74.880],
+"19007":[40.105,-74.852],"19020":[40.105,-74.935],"19021":[40.090,-74.890],"19030":[40.180,-74.840],"19047":[40.180,-74.910],
+"19053":[40.155,-74.975],"19054":[40.170,-74.820],"19055":[40.150,-74.840],"19056":[40.150,-74.885],"19057":[40.140,-74.860],"19067":[40.205,-74.820],
+"08002":[39.930,-75.020],"08003":[39.880,-74.970],"08054":[39.950,-74.900],"08077":[40.000,-74.990],"08102":[39.950,-75.105],"08103":[39.935,-75.110],
+"08540":[40.360,-74.660],"08608":[40.220,-74.765],"08611":[40.205,-74.745],"08648":[40.280,-74.720],"08690":[40.225,-74.660],"08691":[40.210,-74.590],
+"08701":[40.080,-74.205],"08723":[40.040,-74.110],"08753":[39.980,-74.160],"08816":[40.428,-74.415],"08817":[40.515,-74.395],
+"08820":[40.575,-74.365],"08830":[40.555,-74.315],"08840":[40.545,-74.360],"08846":[40.575,-74.500],"08850":[40.450,-74.440],
+"08854":[40.545,-74.460],"08857":[40.395,-74.325],"08861":[40.510,-74.275],"08873":[40.495,-74.530],"08879":[40.465,-74.275],"08884":[40.395,-74.395],
+"07024":[40.850,-73.970],"07030":[40.745,-74.030],"07086":[40.770,-74.020],"07087":[40.768,-74.032],"07093":[40.788,-74.010],
+"07102":[40.735,-74.173],"07105":[40.723,-74.138],"07302":[40.720,-74.046],"07306":[40.735,-74.072],"07310":[40.730,-74.035],
+"07601":[40.889,-74.045],"07631":[40.892,-73.973],"07660":[40.855,-74.020],"07666":[40.890,-74.010],
+"19701":[39.585,-75.700],"19801":[39.740,-75.550],"19805":[39.745,-75.590],"21201":[39.295,-76.620],"20001":[38.910,-77.018]
+};
+
+// ── DATA ──────────────────────────────────────────────────────
+var DB = (function(){ try{ return JSON.parse(localStorage.getItem('termac_crm')||'null'); }catch(e){ return null; } })() || {accounts:[],leads:[],tps:[]};
+
+var TECHS = [
+  {id:'t1',name:'Mike R.',initials:'MR',zone:'Bucks/Mercer',color:'#3B82F6',cap:480},
+  {id:'t2',name:'Dave S.',initials:'DS',zone:'Philly/Delaware',color:'#8B5CF6',cap:450},
+  {id:'t3',name:'Carlos M.',initials:'CM',zone:'NJ Central',color:'#0891B2',cap:480},
+  {id:'t4',name:'Tom K.',initials:'TK',zone:'Montgomery/Chester',color:'#D97706',cap:420},
+];
+
+// Service time estimates (minutes per unit)
+var SERVICE_TIMES = {
+  extinguisher: 8,
+  hood: 30,
+  suppression: 45,
+  sprinkler_zone: 20,
+  exit_light: 5,
+  emergency_light: 5,
+  standpipe: 35,
+  fire_alarm_device: 4,
+  grease_trap: 60,
+  setup_teardown: 15,
+  paperwork: 12,
+};
+
+var COMPLEXITY_MULT = {
+  1: 1.0, 2: 1.0, 3: 1.15, 4: 1.2, 5: 1.25
+};
+
+// Scheduled jobs store
+var JOBS = (function(){
+  try {
+    var stored = JSON.parse(localStorage.getItem('unipro_jobs')||'[]');
+    if (stored.length) return stored;
+  } catch(e) {}
+  // Seed demo jobs if none exist
+  var t = new Date();
+  var tod = t.getFullYear()+'-'+String(t.getMonth()+1).padStart(2,'0')+'-'+String(t.getDate()).padStart(2,'0');
+  var demoJobs = [
+    { id:'demo_j1', accountId:'A001', accountName:'Ferraro Ristorante',
+      date:tod, time:'08:00', techId:'tech_mw', duration:90, status:'scheduled',
+      serviceType:'Annual Extinguisher Inspection (12 units) + Hood Suppression Semi-Annual',
+      addr:'1204 Walnut St, Philadelphia PA 19103', zip:'19103', revenue:385,
+      priority:'high', notes:'Back kitchen hood + 12 extinguishers. Ask about Filter Man upsell.' },
+    { id:'demo_j2', accountId:'A002', accountName:'Midtown Office Plaza',
+      date:tod, time:'10:00', techId:'tech_mw', duration:60, status:'scheduled',
+      serviceType:'Annual Extinguisher Inspection (8 units) + Exit Light Survey',
+      addr:'1701 JFK Blvd, Philadelphia PA 19103', zip:'19103', revenue:155,
+      priority:'high', notes:'Open deficiency on exit light — 3rd floor stairwell. Flag for Lexi.' },
+    { id:'demo_j3', accountId:'A003', accountName:'Wu Dim Sum Palace',
+      date:tod, time:'13:00', techId:'tech_dk', duration:75, status:'scheduled',
+      serviceType:'GTO — Grease Trap Pump-Out (250 gal) + Filter Man Exchange',
+      addr:'927 Race St, Philadelphia PA 19107', zip:'19107', revenue:220,
+      priority:'normal', notes:'Monthly GTO + filter exchange — coordinate both on same trip.' },
+    { id:'demo_j4', accountId:'A004', accountName:'Fairless Hills Retirement Center',
+      date:tod, time:'09:00', techId:'tech_rs', duration:120, status:'scheduled',
+      serviceType:'Annual Extinguisher Inspection (34 units) + Hood Suppression Semi-Annual (2 systems)',
+      addr:'1100 Trenton Rd, Fairless Hills PA 19030', zip:'19030', revenue:1045,
+      priority:'high', notes:'Large facility — 120 beds. Allow full morning. NFPA cert required.' },
+    { id:'demo_j5', accountId:'L019', accountName:"Cavalieri's Steakhouse",
+      date:tod, time:'14:00', techId:'tech_dk', duration:90, status:'scheduled',
+      serviceType:'New Account — Site Survey & Estimate (UniPro + Filter Man + GTO)',
+      addr:'780 Route 70, Evesham NJ 08053', zip:'08053', revenue:0,
+      priority:'normal', notes:'New prospect — full kitchen walkthrough. Take AI camera photos.' },
+    { id:'demo_j6', accountId:'L004', accountName:'Wu Dim Sum Palace (Cross-Sell)',
+      date:tod, time:'15:30', techId:'tech_tf', duration:45, status:'scheduled',
+      serviceType:'UniPro — Follow-Up Extinguisher Inspection Estimate',
+      addr:'927 Race St, Philadelphia PA 19107', zip:'19107', revenue:0,
+      priority:'normal', notes:'Angela asked about 28 extinguishers during GTO visit — convert to UniPro.' },
+  ];
+  localStorage.setItem('unipro_jobs', JSON.stringify(demoJobs));
+  return demoJobs;
+})();
+// Call log
+var CALL_LOG = (function(){ try{ return JSON.parse(localStorage.getItem('unipro_calls')||'[]'); }catch(e){ return []; } })();
+
+var selectedAccount = null;
+var selectedSlot = null;
+var calYear, calMonth;
+var schedMap = null, schedLayer = null;
+var activeFilter = 'all';
+var microCharts = {};
+
+// ── INIT ──────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', function(){
+  var now = new Date();
+  calYear = now.getFullYear();
+  calMonth = now.getMonth();
+
+  document.getElementById('todayLabel').textContent = now.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
+
+  renderCalendar();
+  renderDaySchedule(now);
+  renderCallList();
+  updateMetrics();
+  renderMicroCharts();
+  initMap();
+
+  // Search
+  // Delegated drag/drop for tech lanes
+  document.addEventListener('click', function(e){
+    var cc = e.target.closest('.call-card[data-acctid]');
+    if(cc && cc.dataset.acctid){ selectAccount(cc.dataset.acctid); return; }
+    var sc = e.target.closest('.slot-card[data-slotid]');
+    if(sc && sc.dataset.slotid){ selectSlot(sc.dataset.slotid); return; }
+    var rmBtn = e.target.closest('.rm-job-btn');
+    if(rmBtn && rmBtn.dataset.jobid){ removeJob(rmBtn.dataset.jobid); }
+  });
+  document.addEventListener('dragstart', function(e){
+    var chip = e.target.closest('.job-chip');
+    if(chip){ dragJobId = chip.dataset.jobid; e.dataTransfer.effectAllowed='move'; }
+  });
+  document.addEventListener('dragover', function(e){
+    var lane = e.target.closest('.tech-jobs');
+    if(lane){ e.preventDefault(); var dz=lane.querySelector('.drop-zone'); if(dz) dz.classList.add('drag-over'); }
+  });
+  document.addEventListener('dragleave', function(e){
+    if(!e.relatedTarget||!e.relatedTarget.closest('.tech-jobs')){
+      document.querySelectorAll('.drop-zone').forEach(function(d){ d.classList.remove('drag-over'); });
+    }
+  });
+  document.addEventListener('drop', function(e){
+    var lane = e.target.closest('.tech-jobs');
+    if(lane){ e.preventDefault(); dropJob(e, lane.dataset.tech, lane.dataset.date); }
+    document.querySelectorAll('.drop-zone').forEach(function(d){ d.classList.remove('drag-over'); });
+  });
+
+  document.getElementById('callSearch').addEventListener('input', function(){
+    renderCallList(this.value);
+  });
+});
+
+// ── CALENDAR ──────────────────────────────────────────────────
+function renderCalendar(){
+  var dayNames = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+  var dn = document.getElementById('calDayNames');
+  if(dn) dn.innerHTML = dayNames.map(d=>'<div class="cal-day-name">'+d+'</div>').join('');
+
+  var label = document.getElementById('calMonthLabel');
+  var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  if(label) label.textContent = months[calMonth]+' '+calYear;
+
+  var grid = document.getElementById('calGrid');
+  if(!grid) return;
+
+  var first = new Date(calYear, calMonth, 1).getDay();
+  var daysInMonth = new Date(calYear, calMonth+1, 0).getDate();
+  var prevDays = new Date(calYear, calMonth, 0).getDate();
+  var today = new Date();
+  var cells = '';
+
+  // Prev month
+  for(var i=first-1; i>=0; i--){
+    cells += '<div class="cal-date other-month">'+(prevDays-i)+'</div>';
+  }
+  // This month
+  for(var d=1; d<=daysInMonth; d++){
+    var isToday = (d===today.getDate() && calMonth===today.getMonth() && calYear===today.getFullYear());
+    var hasJobs = JOBS.some(function(j){
+      var jd = new Date(j.date);
+      return jd.getDate()===d && jd.getMonth()===calMonth && jd.getFullYear()===calYear;
+    });
+    var cls = 'cal-date'+(isToday?' today':'')+(hasJobs?' has-jobs':'');
+    var dd=d, mm=calMonth, yy=calYear;
+    cells += '<div class="'+cls+'" onclick="selectDay('+yy+','+mm+','+dd+')">'+d+'</div>';
+  }
+  // Next month
+  var total = first + daysInMonth;
+  var next = total%7===0?0:7-(total%7);
+  for(var n=1; n<=next; n++){
+    cells += '<div class="cal-date other-month">'+n+'</div>';
+  }
+  grid.innerHTML = cells;
+}
+
+function changeMonth(dir){
+  calMonth += dir;
+  if(calMonth > 11){ calMonth=0; calYear++; }
+  if(calMonth < 0){ calMonth=11; calYear--; }
+  renderCalendar();
+}
+
+function selectDay(y,m,d){
+  renderDaySchedule(new Date(y,m,d));
+}
+
+// ── DAY SCHEDULE ──────────────────────────────────────────────
+function renderDaySchedule(date){
+  var ds = document.getElementById('daySchedule');
+  if(!ds) return;
+  var dateStr = date.toISOString().slice(0,10);
+  var dayLabel = date.toLocaleDateString('en-US',{weekday:'long',month:'short',day:'numeric'});
+
+  var dayJobs = JOBS.filter(function(j){ return j.date===dateStr; });
+
+  var html = '<div class="day-header">'+dayLabel+'</div>';
+
+  TECHS.forEach(function(tech){
+    var techJobs = dayJobs.filter(function(j){ return j.techId===tech.id; });
+    var usedMin = techJobs.reduce(function(s,j){ return s+(j.duration||60); },0);
+    var pct = Math.min(Math.round(usedMin/tech.cap*100),100);
+    var capClass = pct>=100?'over':pct>=80?'warn':'';
+
+    html += '<div class="tech-lane">';
+    html += '<div class="tech-lane-header">';
+    html += '<div class="tech-avatar" style="background:'+tech.color+'">'+tech.initials+'</div>';
+    html += '<div class="tech-name-block"><div class="name">'+tech.name+'</div><div class="zone">'+tech.zone+'</div></div>';
+    html += '<div class="tech-capacity"><div class="cap-label">'+usedMin+'m / '+tech.cap+'m</div>';
+    html += '<div class="cap-bar"><div class="cap-fill '+capClass+'" style="width:'+pct+'%"></div></div></div>';
+    html += '</div>';
+    html += '<div class="tech-jobs" id="lane_'+tech.id+'" data-tech="'+tech.id+'" data-date="'+dateStr+'">';
+    if(techJobs.length===0){
+      html += '<div class="drop-zone" style="font-size:10px;padding:10px;text-align:center;color:var(--soft)">Drag jobs here · '+Math.round(tech.cap/60)+'h available</div>';
+    } else {
+      html += '<div class="drop-zone" style="padding:4px;text-align:center;font-size:9px;color:var(--line)">+ Drop job here</div>';
+      techJobs.sort(function(a,b){ return a.time.localeCompare(b.time); }).forEach(function(job){
+        var statusCls = 'status-'+job.status;
+        html += '<div class="job-chip" draggable="true" data-jobid="'+job.id+'">';
+        html += '<div class="job-chip-time">'+job.time+'</div>';
+        html += '<div class="job-chip-info"><div class="job-chip-name">'+esc(job.accountName)+'</div><div class="job-chip-sub">'+esc(job.serviceType||'Inspection')+'</div></div>';
+        html += '<div class="job-chip-dur">'+formatDur(job.duration)+'</div>';
+        html += '<div class="job-chip-status '+statusCls+'" title="'+job.status+'"></div>';
+        html += '<button data-jobid="'+job.id+'" class="rm-job-btn" style="background:none;border:none;color:var(--soft);cursor:pointer;font-size:14px;padding:0 2px;margin-left:2px">×</button>';
+        html += '</div>';
+      });
+    }
+    html += '</div></div>';
+  });
+
+  ds.innerHTML = html;
+  updateMetrics();
+}
+
+// ── CALL LIST ──────────────────────────────────────────────────
+function buildCallData(){
+  var today = new Date();
+  var items = [];
+
+  DB.accounts.forEach(function(a){
+    if(!a.name) return;
+    var score = 0;
+    var type = 'customer';
+    var tags = [];
+
+    // Check if already scheduled today
+    var todayStr = today.toISOString().slice(0,10);
+    var alreadyScheduled = JOBS.some(function(j){ return j.accountId===a.id && j.date===todayStr; });
+
+    // Last inspection date
+    var lastInsp = a.lastInspection ? new Date(a.lastInspection) : null;
+    var daysSince = lastInsp ? Math.floor((today-lastInsp)/(1000*60*60*24)) : 999;
+
+    // Overdue (>365 days or never inspected)
+    if(daysSince > 365){ score+=100; tags.push({t:'Overdue',c:'red'}); type='overdue'; }
+    // Renewal window ≤60 days
+    else if(daysSince > 305){ score+=70; tags.push({t:'Renewal',c:'orange'}); type='renewal'; }
+    // Equipment count drives urgency
+    var eqCount = (a.extinguishers||0)+(a.hoods||0)+(a.suppressionSystems||0);
+    if(eqCount > 20) score += 15;
+    if(eqCount > 50) score += 20;
+    // Revenue value
+    var estVal = estimateJobValue(a);
+    if(estVal > 500) score += 10;
+    if(estVal > 1500) score += 20;
+
+    items.push({a:a, score:score, type:type, tags:tags, estVal:estVal, alreadyScheduled:alreadyScheduled, daysSince:daysSince});
+  });
+
+  // Add open leads
+  DB.leads.filter(function(l){ return l.stage!=='won'&&l.stage!=='lost'; }).forEach(function(l){
+    var acc = DB.accounts.find(function(a){ return a.id===l.accountId; }) || {name:l.name||'Unknown Lead'};
+    items.push({a:{...acc, _lead:l}, score:40+(Number(l.value)||0)/100, type:'lead', tags:[{t:'Lead',c:'blue'}], estVal:Number(l.value)||0, alreadyScheduled:false, daysSince:999});
+  });
+
+  return items.sort(function(a,b){ return b.score-a.score; });
+}
+
+function filterCalls(filter, el){
+  activeFilter = filter;
+  document.querySelectorAll('.ptab').forEach(function(t){ t.classList.remove('active'); });
+  if(el) el.classList.add('active');
+  renderCallList();
+}
+
+function renderCallList(search){
+  var list = document.getElementById('callList');
+  if(!list) return;
+  var items = buildCallData();
+  var q = (search||document.getElementById('callSearch').value||'').toLowerCase();
+
+  if(activeFilter !== 'all'){
+    items = items.filter(function(i){
+      if(activeFilter==='overdue') return i.type==='overdue';
+      if(activeFilter==='renewal') return i.type==='renewal';
+      if(activeFilter==='lead') return i.type==='lead';
+      return true;
+    });
+  }
+  if(q){
+    items = items.filter(function(i){ return (i.a.name||'').toLowerCase().includes(q); });
+  }
+
+  if(items.length===0){
+    list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--soft);font-size:12px">No accounts found.<br>Add accounts in the CRM.</div>';
+    updateBadges(items);
+    return;
+  }
+
+  list.innerHTML = items.map(function(item){
+    var cls = 'call-card '+item.type+(item.alreadyScheduled?' scheduled':'');
+    var tagHtml = item.tags.map(function(t){ return '<span class="cb '+t.c+'">'+t.t+'</span>'; }).join('');
+    if(item.alreadyScheduled) tagHtml += '<span class="cb green">Scheduled ✓</span>';
+    var daysLabel = item.daysSince===999 ? 'Never inspected' : item.daysSince+'d since inspection';
+    return '<div class="'+cls+'" data-acctid="'+item.a.id+'" data-type="'+item.type+'">' +
+      '<div class="card-score">#'+Math.round(item.score)+'</div>' +
+      '<div class="card-name">'+esc(item.a.name||'')+'</div>' +
+      '<div class="card-meta">'+esc(item.a.addr||'No address')+'</div>' +
+      '<div class="card-meta">'+daysLabel+' · Est. $'+item.estVal+'</div>' +
+      '<div class="card-badges">'+tagHtml+'</div>' +
+    '</div>';
+  }).join('');
+
+  updateBadges(items);
+}
+
+function updateBadges(items){
+  var all = buildCallData();
+  document.getElementById('overdueCount').textContent = all.filter(function(i){ return i.type==='overdue'&&!i.alreadyScheduled; }).length+' Overdue';
+  var today = new Date().toISOString().slice(0,10);
+  var todayJobs = JOBS.filter(function(j){ return j.date===today; });
+  document.getElementById('todayCount').textContent = todayJobs.length+' Today';
+  document.getElementById('completeCount').textContent = todayJobs.filter(function(j){ return j.status==='complete'; }).length+' Complete';
+}
+
+// ── SELECT ACCOUNT → AI ASSESSMENT ────────────────────────────
+function selectAccount(id){
+  selectedAccount = DB.accounts.find(function(a){ return a.id===id; });
+  if(!selectedAccount) return;
+  document.querySelectorAll('.call-card').forEach(function(c){ c.classList.remove('selected'); });
+  var selCard = document.querySelector('.call-card[data-acctid="'+id+'"]');
+  if(selCard) selCard.classList.add('selected');
+  openAIAssessment(selectedAccount);
+}
+
+function openAIAssessment(account){
+  document.getElementById('aiOv').classList.add('open');
+  document.getElementById('scheduleBtn').style.display='none';
+  document.getElementById('aiBody').innerHTML = '<div style="color:var(--soft);font-size:13px;display:flex;align-items:center;gap:8px"><span class="spin" style="width:16px;height:16px;border:2px solid var(--line);border-top-color:var(--red);border-radius:50%"></span>Analyzing job requirements for <strong style="color:var(--ink)">'+esc(account.name||'this account')+'</strong>...</div>';
+
+  // Build local estimate first (instant)
+  var localEst = buildLocalEstimate(account);
+  // Then call AI for enhanced analysis
+  callAIAssessment(account, localEst);
+}
+
+function buildLocalEstimate(account){
+  var ext = Number(account.extinguishers||0);
+  var hoods = Number(account.hoods||0);
+  var supp = Number(account.suppressionSystems||0);
+  var zones = Number(account.sprinklerZones||0);
+  var exits = Number(account.exitLights||0);
+  var alarms = Number(account.alarmDevices||0);
+  var traps = Number(account.greaseTraps||0);
+
+  var breakdown = [];
+  var total = SERVICE_TIMES.setup_teardown + SERVICE_TIMES.paperwork;
+  breakdown.push({item:'Setup & paperwork',count:1,mins:total});
+
+  if(ext>0){
+    var m = ext*SERVICE_TIMES.extinguisher;
+    var mult = ext>10?1.1:1.0;
+    m = Math.round(m*mult);
+    total+=m; breakdown.push({item:'Extinguishers',count:ext,mins:m,unit:'× 8min',color:'var(--blue)'});
+  }
+  if(hoods>0){
+    var m = hoods*SERVICE_TIMES.hood;
+    var mult = COMPLEXITY_MULT[Math.min(hoods,5)];
+    m = Math.round(m*mult);
+    total+=m; breakdown.push({item:'Hood Systems',count:hoods,mins:m,unit:'× 30min + complexity',color:'var(--orange)'});
+  }
+  if(supp>0){
+    var m = supp*SERVICE_TIMES.suppression;
+    total+=m; breakdown.push({item:'Suppression Systems',count:supp,mins:m,unit:'× 45min',color:'var(--red)'});
+  }
+  if(zones>0){
+    var m = zones*SERVICE_TIMES.sprinkler_zone;
+    total+=m; breakdown.push({item:'Sprinkler Zones',count:zones,mins:m,unit:'× 20min',color:'var(--teal)'});
+  }
+  if(exits>0){
+    var m = exits*SERVICE_TIMES.exit_light;
+    total+=m; breakdown.push({item:'Exit/Emergency Lights',count:exits,mins:m,unit:'× 5min',color:'var(--soft)'});
+  }
+  if(alarms>0){
+    var m = alarms*SERVICE_TIMES.fire_alarm_device;
+    total+=m; breakdown.push({item:'Fire Alarm Devices',count:alarms,mins:m,unit:'× 4min',color:'var(--yellow)'});
+  }
+  if(traps>0){
+    var m = traps*SERVICE_TIMES.grease_trap;
+    total+=m; breakdown.push({item:'Grease Traps',count:traps,mins:m,unit:'× 60min',color:'var(--green)'});
+  }
+
+  if(breakdown.length===1){
+    // No equipment data — default estimate
+    total = 75;
+    breakdown.push({item:'General inspection (no equipment data)',count:1,mins:60,unit:'',color:'var(--soft)'});
+  }
+
+  return {total:total, breakdown:breakdown, account:account};
+}
+
+function callAIAssessment(account, localEst){
+  var today = new Date();
+  var todayStr = today.toISOString().slice(0,10);
+
+  // Find available slots
+  var slots = findAvailableSlots(todayStr, localEst.total);
+
+  // Build prompt
+  var prompt = 'You are an expert fire protection service scheduler for UniPro Fire Protection.\n\n'+
+    'ACCOUNT: '+JSON.stringify({
+      name: account.name,
+      address: account.addr||'Unknown',
+      type: account.type||'Commercial',
+      extinguishers: account.extinguishers||0,
+      hoods: account.hoods||0,
+      suppressionSystems: account.suppressionSystems||0,
+      sprinklerZones: account.sprinklerZones||0,
+      exitLights: account.exitLights||0,
+      alarmDevices: account.alarmDevices||0,
+      greaseTraps: account.greaseTraps||0,
+      lastInspection: account.lastInspection||'Unknown',
+      notes: account.notes||'None',
+    })+'\n\n'+
+    'LOCAL TIME ESTIMATE: '+localEst.total+' minutes ('+Math.floor(localEst.total/60)+'h '+(localEst.total%60)+'m)\n\n'+
+    'BREAKDOWN: '+JSON.stringify(localEst.breakdown.map(function(b){ return b.item+': '+b.count+' = '+b.mins+'min'; }))+'\n\n'+
+    'AVAILABLE TECH SLOTS TODAY:\n'+JSON.stringify(slots.map(function(s){ return {tech:s.techName,time:s.time,gap:s.gap+'min available',zone:s.zone}; }))+'\n\n'+
+    'Task: Provide a scheduling assessment in 3 short paragraphs:\n'+
+    '1. Validate/adjust the time estimate with reasoning\n'+
+    '2. Note any special considerations for this property type\n'+
+    '3. Recommend the BEST slot and explain why (tech zone proximity, batch efficiency)\n'+
+    'Be specific and practical. Under 180 words.';
+
+  fetch('https://unipro-ai-proxy.tedscholl.workers.dev/',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:600,messages:[{role:'user',content:prompt}]})
+  }).then(function(r){ return r.json(); }).then(function(data){
+    var aiText = (data.content&&data.content.find(function(b){ return b.type==='text'; })||{}).text||'';
+    renderAIModal(localEst, slots, aiText);
+  }).catch(function(){
+    renderAIModal(localEst, slots, 'AI analysis unavailable. Local estimate shown.');
+  });
+}
+
+function renderAIModal(est, slots, aiText){
+  var account = est.account;
+  var h = '';
+
+  // Equipment grid
+  h += '<div class="ai-section">';
+  h += '<div class="ai-section-title">Equipment on Site</div>';
+  h += '<div class="ai-equipment-grid">';
+  var equipFields = [
+    {key:'extinguishers',label:'Extinguishers',mins:SERVICE_TIMES.extinguisher},
+    {key:'hoods',label:'Hood Systems',mins:SERVICE_TIMES.hood},
+    {key:'suppressionSystems',label:'Suppression Sys.',mins:SERVICE_TIMES.suppression},
+    {key:'sprinklerZones',label:'Sprinkler Zones',mins:SERVICE_TIMES.sprinkler_zone},
+    {key:'exitLights',label:'Exit Lights',mins:SERVICE_TIMES.exit_light},
+    {key:'alarmDevices',label:'Alarm Devices',mins:SERVICE_TIMES.fire_alarm_device},
+    {key:'greaseTraps',label:'Grease Traps',mins:SERVICE_TIMES.grease_trap},
+  ];
+  var hasEquip = false;
+  equipFields.forEach(function(f){
+    var cnt = Number(account[f.key]||0);
+    if(cnt>0){
+      hasEquip = true;
+      h += '<div class="equip-item"><div class="equip-count">'+cnt+'</div><div class="equip-label">'+f.label+'</div><div class="equip-time">~'+cnt*f.mins+'min</div></div>';
+    }
+  });
+  if(!hasEquip) h += '<div style="grid-column:1/-1;color:var(--soft);font-size:11px;padding:8px 0">No equipment data in CRM. Add equipment to the account for accurate estimates.</div>';
+  h += '</div></div>';
+
+  // Time breakdown
+  h += '<div class="ai-section">';
+  h += '<div class="ai-section-title">Time Breakdown</div>';
+  h += '<div class="time-breakdown">';
+  est.breakdown.forEach(function(row){
+    h += '<div class="time-row"><span style="color:var(--soft)">'+row.item+(row.count>1?' ('+row.count+')':'')+'</span><span>'+row.mins+' min</span></div>';
+  });
+  h += '<div class="time-row"><span style="font-weight:700">Total Estimated Field Time</span><span class="time-total">'+formatDur(est.total)+'</span></div>';
+  h += '</div></div>';
+
+  // AI analysis
+  if(aiText){
+    h += '<div class="ai-section">';
+    h += '<div class="ai-section-title">⚡ AI Assessment</div>';
+    h += '<div class="ai-note" style="background:rgba(59,130,246,.08);border-color:rgba(59,130,246,.2);color:#BFDBFE">'+esc(aiText).split('\n').join('<br>')+'</div>';
+    h += '</div>';
+  }
+
+  // Available slots
+  h += '<div class="ai-section">';
+  h += '<div class="ai-section-title">Best Available Slots</div>';
+  if(slots.length===0){
+    h += '<div style="color:var(--soft);font-size:11px">No available slots today. All techs are at capacity.</div>';
+  } else {
+    slots.slice(0,4).forEach(function(slot, i){
+      var isBest = i===0;
+      h += '<div class="slot-card'+(isBest?' best':'')+'" data-slotid="'+slot.id+'"">'+
+        '<div class="slot-rank" style="color:'+(isBest?'var(--green)':'var(--soft)')+'">'+(isBest?'★':i+1)+'</div>'+
+        '<div class="slot-info">'+
+          '<div class="slot-time">'+slot.time+' · '+slot.techName+'</div>'+
+          '<div class="slot-tech">'+slot.zone+' · '+slot.gap+'min gap available</div>'+
+          '<div class="slot-why">'+slot.why+'</div>'+
+        '</div>'+
+        (isBest?'<div class="slot-badge">Best Fit</div>':'')+
+      '</div>';
+    });
+  }
+  h += '</div>';
+
+  document.getElementById('aiBody').innerHTML = h;
+  if(slots.length>0) document.getElementById('scheduleBtn').style.display='';
+  selectedSlot = slots[0]||null;
+}
+
+// ── SLOT FINDING ──────────────────────────────────────────────
+function findAvailableSlots(dateStr, neededMin){
+  var slots = [];
+  var slotId = 0;
+
+  TECHS.forEach(function(tech){
+    var techJobs = JOBS.filter(function(j){ return j.date===dateStr&&j.techId===tech.id; });
+    var usedMin = techJobs.reduce(function(s,j){ return s+(j.duration||60); },0);
+    var available = tech.cap - usedMin;
+    if(available < neededMin*0.8) return;
+
+    // Find next open time slot
+    var lastEnd = 8*60; // 8am default start
+    techJobs.sort(function(a,b){ return timeToMin(a.time)-timeToMin(b.time); });
+    techJobs.forEach(function(j){
+      var start = timeToMin(j.time);
+      if(start > lastEnd) lastEnd = start;
+      lastEnd += j.duration||60;
+    });
+
+    var startTime = minToTime(lastEnd);
+    var endTime = minToTime(lastEnd+neededMin);
+
+    // Zone proximity check
+    var acctZip = selectedAccount ? zipOf(selectedAccount.addr||'') : null;
+    var nearbyJobs = techJobs.filter(function(j){
+      return j.zip && acctZip && Math.abs((ZIPLL[j.zip]||[0,0])[0]-(ZIPLL[acctZip]||[0,0])[0]) < 0.15;
+    });
+    var why = nearbyJobs.length>0 ? nearbyJobs.length+' nearby jobs already assigned' :
+      available-neededMin>120 ? (Math.floor((available-neededMin)/60))+'h remaining after this job' :
+      'Zone: '+tech.zone;
+
+    slots.push({
+      id:'slot_'+(slotId++),
+      techId: tech.id,
+      techName: tech.name,
+      zone: tech.zone,
+      time: startTime+' – '+endTime,
+      startMin: lastEnd,
+      gap: available,
+      why: why,
+      priority: nearbyJobs.length*10 + available/10
+    });
+  });
+
+  slots.sort(function(a,b){ return b.priority-a.priority; });
+  return slots;
+}
+
+function selectSlot(slotId){
+  selectedSlot = null;
+  document.querySelectorAll('.slot-card').forEach(function(c){ c.classList.remove('best'); });
+  // Find the slot
+  var today = new Date().toISOString().slice(0,10);
+  var slots = findAvailableSlots(today, selectedAccount?buildLocalEstimate(selectedAccount).total:60);
+  selectedSlot = slots.find(function(s){ return s.id===slotId; }) || slots[0];
+  event.currentTarget.classList.add('best');
+  document.getElementById('scheduleBtn').style.display='';
+}
+
+function confirmSchedule(){
+  if(!selectedAccount||!selectedSlot) return;
+  var est = buildLocalEstimate(selectedAccount);
+  var today = new Date().toISOString().slice(0,10);
+
+  var newJob = {
+    id: 'job_'+Date.now(),
+    accountId: selectedAccount.id,
+    accountName: selectedAccount.name,
+    date: today,
+    time: selectedSlot.time.split(' – ')[0],
+    techId: selectedSlot.techId,
+    duration: est.total,
+    status: 'scheduled',
+    serviceType: buildServiceLabel(selectedAccount),
+    addr: selectedAccount.addr||'',
+    zip: zipOf(selectedAccount.addr||''),
+    revenue: estimateJobValue(selectedAccount),
+  };
+
+  JOBS.push(newJob);
+  try{ localStorage.setItem('unipro_jobs', JSON.stringify(JOBS)); }catch(e){}
+
+  // Log the call
+  CALL_LOG.push({date:today,accountId:selectedAccount.id,result:'scheduled',ts:Date.now()});
+  try{ localStorage.setItem('unipro_calls', JSON.stringify(CALL_LOG)); }catch(e){}
+
+  closeAI();
+  renderCallList();
+  renderDaySchedule(new Date());
+  renderCalendar();
+  updateMetrics();
+  updateMapPins();
+}
+
+function closeAI(){
+  document.getElementById('aiOv').classList.remove('open');
+  selectedSlot = null;
+}
+
+// ── DRAG AND DROP ─────────────────────────────────────────────
+var dragJobId = null;
+function dragStart(e, jobId){ dragJobId = jobId; e.dataTransfer.effectAllowed='move'; }
+function dropJob(e, techId, dateStr){
+  e.preventDefault();
+  if(!dragJobId) return;
+  var job = JOBS.find(function(j){ return j.id===dragJobId; });
+  if(job){ job.techId=techId; job.date=dateStr; }
+  try{ localStorage.setItem('unipro_jobs', JSON.stringify(JOBS)); }catch(e){}
+  dragJobId = null;
+  renderDaySchedule(new Date(dateStr));
+  updateMapPins();
+  // Remove drag-over classes
+  document.querySelectorAll('.drop-zone').forEach(function(d){ d.classList.remove('drag-over'); });
+}
+
+function removeJob(jobId){
+  JOBS = JOBS.filter(function(j){ return j.id!==jobId; });
+  try{ localStorage.setItem('unipro_jobs', JSON.stringify(JOBS)); }catch(e){}
+  renderDaySchedule(new Date());
+  renderCallList();
+  updateMetrics();
+  updateMapPins();
+}
+
+// ── MAP ───────────────────────────────────────────────────────
+function initMap(){
+  var mapEl = document.getElementById('schedMap');
+  if(!mapEl||schedMap) return;
+  schedMap = L.map('schedMap',{zoomControl:true}).setView([40.15,-74.95],9);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+    maxZoom:18,
+    attribution:'© OpenStreetMap'
+  }).addTo(schedMap);
+  schedLayer = L.layerGroup().addTo(schedMap);
+  updateMapPins();
+  setTimeout(function(){ schedMap.invalidateSize(); },300);
+}
+
+function pinColor(type){
+  if(type==='overdue') return '#EF4444';
+  if(type==='renewal') return '#F97316';
+  if(type==='scheduled') return '#3B82F6';
+  if(type==='complete') return '#22C55E';
+  if(type==='lead') return '#A855F7';
+  return '#8B909A';
+}
+
+function makePin(color, letter){
+  return L.divIcon({
+    className:'',
+    html:'<div style="width:22px;height:22px;border-radius:50%;background:'+color+';border:2px solid rgba(255,255,255,.6);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;color:#fff;font-family:Barlow,sans-serif;box-shadow:0 2px 6px rgba(0,0,0,.4)">'+letter+'</div>',
+    iconSize:[22,22],
+    iconAnchor:[11,11],
+    popupAnchor:[0,-12]
+  });
+}
+
+function updateMapPins(){
+  if(!schedLayer) return;
+  schedLayer.clearLayers();
+  var today = new Date().toISOString().slice(0,10);
+  var callData = buildCallData();
+  var todayJobs = JOBS.filter(function(j){ return j.date===today; });
+
+  callData.forEach(function(item){
+    var a = item.a;
+    var zip = zipOf(a.addr||'');
+    var ll = zip && ZIPLL[zip];
+    if(!ll) return;
+
+    var isToday = todayJobs.some(function(j){ return j.accountId===a.id; });
+    var isComplete = todayJobs.some(function(j){ return j.accountId===a.id&&j.status==='complete'; });
+    var type = isComplete?'complete':isToday?'scheduled':item.type;
+    var color = pinColor(type);
+    var letter = isToday?(isComplete?'✓':'S'):item.type==='overdue'?'!':item.type==='renewal'?'R':item.type==='lead'?'L':'·';
+
+    // Jitter pins with same zip
+    var lat = ll[0]+(Math.random()-0.5)*0.008;
+    var lng = ll[1]+(Math.random()-0.5)*0.008;
+
+    var tech = isToday ? TECHS.find(function(t){ return todayJobs.some(function(j){ return j.accountId===a.id&&j.techId===t.id; }); }) : null;
+    var popup = '<div style="font-family:Barlow,sans-serif;min-width:160px">'+
+      '<strong style="font-size:12px">'+esc(a.name||'')+'</strong><br>'+
+      '<span style="font-size:10px;color:#666">'+esc(a.addr||'')+'</span><br>'+
+      '<span style="font-size:10px">Type: '+type+'</span>'+
+      (tech?'<br><span style="font-size:10px;color:'+tech.color+'">Tech: '+tech.name+'</span>':'')+
+      '</div>';
+
+    L.marker([lat,lng],{icon:makePin(color,letter)}).addTo(schedLayer).bindPopup(popup);
+  });
+}
+
+function fitMapBounds(){
+  if(!schedLayer||!schedMap) return;
+  var bounds = [];
+  schedLayer.eachLayer(function(l){ if(l.getLatLng) bounds.push(l.getLatLng()); });
+  if(bounds.length>0) schedMap.fitBounds(L.latLngBounds(bounds).pad(0.1));
+}
+function fitTodayJobs(){
+  if(!schedLayer||!schedMap) return;
+  var today = new Date().toISOString().slice(0,10);
+  var todayAcctIds = JOBS.filter(function(j){ return j.date===today; }).map(function(j){ return j.accountId; });
+  var bounds = [];
+  DB.accounts.filter(function(a){ return todayAcctIds.includes(a.id); }).forEach(function(a){
+    var zip=zipOf(a.addr||''),ll=zip&&ZIPLL[zip];
+    if(ll) bounds.push([ll[0],ll[1]]);
+  });
+  if(bounds.length>0) schedMap.fitBounds(L.latLngBounds(bounds).pad(0.15));
+  else fitMapBounds();
+}
+
+// ── METRICS ───────────────────────────────────────────────────
+function updateMetrics(){
+  var today = new Date().toISOString().slice(0,10);
+  var todayJobs = JOBS.filter(function(j){ return j.date===today; });
+  var complete = todayJobs.filter(function(j){ return j.status==='complete'; });
+  var scheduled = todayJobs.filter(function(j){ return j.status==='scheduled'; });
+
+  document.getElementById('m_jobs').textContent = todayJobs.length;
+  document.getElementById('m_jobs_sub').textContent = complete.length+' complete · '+scheduled.length+' remaining';
+
+  var todayCalls = CALL_LOG.filter(function(c){ return c.date===today; });
+  document.getElementById('m_calls').textContent = todayCalls.length;
+  document.getElementById('m_calls_sub').textContent = 'Target: 50 · '+todayCalls.filter(function(c){ return c.result==='scheduled'; }).length+' scheduled';
+
+  var totalCalls = CALL_LOG.length;
+  var totalScheduled = CALL_LOG.filter(function(c){ return c.result==='scheduled'; }).length;
+  document.getElementById('m_convert').textContent = totalCalls>0?Math.round(totalScheduled/totalCalls*100)+'%':'0%';
+
+  // Utilization
+  var totalCap=0,totalUsed=0;
+  TECHS.forEach(function(t){
+    totalCap+=t.cap;
+    totalUsed+=todayJobs.filter(function(j){ return j.techId===t.id; }).reduce(function(s,j){ return s+(j.duration||60); },0);
+  });
+  document.getElementById('m_util').textContent = totalCap>0?Math.round(totalUsed/totalCap*100)+'%':'0%';
+
+  var rev = todayJobs.reduce(function(s,j){ return s+(j.revenue||0); },0);
+  document.getElementById('m_rev').textContent = '$'+rev.toLocaleString();
+
+  // No-show (mock for now)
+  document.getElementById('m_noshow').textContent = '8%';
+  document.getElementById('m_ftfr').textContent = '87%';
+}
+
+function renderMicroCharts(){
+  var sparkData = {
+    jobs:[3,5,4,6,8,5,7],
+    calls:[31,44,38,50,47,42,50],
+    convert:[58,62,55,68,71,65,72],
+    util:[62,71,68,75,80,73,78],
+    revenue:[2100,3400,2800,4200,5100,3900,4700],
+    noshow:[12,10,9,8,11,9,8],
+    ftfr:[82,84,83,86,87,88,87]
+  };
+  var colors={jobs:'#3B82F6',calls:'#F59E0B',convert:'#22C55E',util:'#F97316',revenue:'#22C55E',noshow:'#EF4444',ftfr:'#0891B2'};
+  Object.keys(sparkData).forEach(function(key){
+    var canvas = document.getElementById('chart_'+key);
+    if(!canvas) return;
+    if(microCharts[key]){ microCharts[key].destroy(); }
+    microCharts[key] = new Chart(canvas,{
+      type:'line',
+      data:{labels:['','','','','','',''],datasets:[{data:sparkData[key],borderColor:colors[key],borderWidth:1.5,pointRadius:0,fill:true,backgroundColor:colors[key]+'22',tension:.4}]},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{enabled:false}},scales:{x:{display:false},y:{display:false}}}
+    });
+  });
+}
+
+// ── AI DAY OPTIMIZER ──────────────────────────────────────────
+function runAIOptimize(){
+  var today = new Date().toISOString().slice(0,10);
+  var callData = buildCallData().filter(function(i){ return !i.alreadyScheduled; }).slice(0,20);
+  if(callData.length===0){ alert('No unscheduled accounts to optimize.'); return; }
+
+  // Auto-assign top accounts to best-fit techs
+  var assigned = 0;
+  callData.forEach(function(item){
+    if(assigned>=10) return;
+    var est = buildLocalEstimate(item.a);
+    var slots = findAvailableSlots(today, est.total);
+    if(slots.length===0) return;
+    var best = slots[0];
+
+    JOBS.push({
+      id:'job_'+Date.now()+'_'+assigned,
+      accountId:item.a.id,
+      accountName:item.a.name,
+      date:today,
+      time:best.time.split(' – ')[0],
+      techId:best.techId,
+      duration:est.total,
+      status:'scheduled',
+      serviceType:buildServiceLabel(item.a),
+      addr:item.a.addr||'',
+      zip:zipOf(item.a.addr||''),
+      revenue:estimateJobValue(item.a),
+    });
+    assigned++;
+  });
+  try{ localStorage.setItem('unipro_jobs', JSON.stringify(JOBS)); }catch(e){}
+  renderCallList(); renderDaySchedule(new Date()); renderCalendar(); updateMetrics(); updateMapPins();
+  alert('AI Optimized: '+assigned+' jobs scheduled across '+TECHS.length+' techs based on zone proximity and capacity.');
+}
+
+// ── NETSUITE SYNC ─────────────────────────────────────────────
+function syncNetSuite(){
+  var icon = document.getElementById('nsIcon');
+  if(icon) icon.classList.add('spin');
+  setTimeout(function(){
+    if(icon){ icon.classList.remove('spin'); icon.textContent='✓'; }
+    setTimeout(function(){ if(icon) icon.textContent='⇄'; },2000);
+    // TODO: POST to NetSuite REST API via Azure middleware
+    // Today's jobs → Work Orders, completion status → Invoice trigger
+  },1500);
+}
+
+// ── UTILITY ───────────────────────────────────────────────────
+function zipOf(addr){
+  if(!addr) return null;
+  var m = addr.match(/(\d{5})/);
+  return m?m[1]:null;
+}
+function timeToMin(t){
+  if(!t) return 480;
+  var parts=t.split(':');
+  var h=parseInt(parts[0])||8,mn=parseInt(parts[1])||0;
+  if(t.toLowerCase().includes('pm')&&h<12) h+=12;
+  return h*60+mn;
+}
+function minToTime(m){
+  var h=Math.floor(m/60),mn=m%60;
+  var ampm=h>=12?'PM':'AM';
+  if(h>12) h-=12;
+  if(h===0) h=12;
+  return h+':'+(mn<10?'0':'')+mn+' '+ampm;
+}
+function formatDur(mins){
+  if(mins<60) return mins+'m';
+  return Math.floor(mins/60)+'h '+(mins%60>0?(mins%60)+'m':'');
+}
+function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function estimateJobValue(a){
+  var ext=Number(a.extinguishers||0),hoods=Number(a.hoods||0),supp=Number(a.suppressionSystems||0);
+  return Math.max(75, ext*22+hoods*185+supp*320+(Number(a.sprinklerZones||0)*95)+(Number(a.exitLights||0)*18));
+}
+function buildServiceLabel(a){
+  var parts=[];
+  if(a.extinguishers>0) parts.push('Ext ×'+a.extinguishers);
+  if(a.hoods>0) parts.push('Hood ×'+a.hoods);
+  if(a.suppressionSystems>0) parts.push('Supp ×'+a.suppressionSystems);
+  return parts.join(' · ')||'Inspection';
+}
+function toggleChart(key){ /* expand detail chart — future */ }
+</script>
+</body>
+</html>
