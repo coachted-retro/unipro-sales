@@ -1254,7 +1254,10 @@ function crmLoad(key){ try{ return JSON.parse(localStorage.getItem('termac_crm_'
     try { localStorage.setItem('termac_crm_'+key, JSON.stringify(val)); } catch(e) {}
   }
 
-  if (!crmHas('accounts')) {
+  // Always reseed if data is in old format (missing healthScore)
+  const existingAccts = crmHas('accounts') ? JSON.parse(localStorage.getItem('termac_crm_accounts')||'[]') : [];
+  const needsReseed = existingAccts.length === 0 || existingAccts[0].healthScore === undefined;
+  if (needsReseed) {
     crmSet('accounts', [
       { id:'acc001', name:'Ferraro Ristorante', business:'Ferraro Ristorante', status:'active', services:['UniPro'], annualValue:4800, nextDue:'2026-09-15', lastService:'2026-03-15', healthScore:4, assignedRep:'Ted Scholl', openDeficiencies:0, city:'Bristol', zip:'19007', lastCheckin:Date.now()-15*86400000, createdAt:Date.now()-180*86400000 },
       { id:'acc002', name:'Wu Dim Sum Palace', business:'Wu Dim Sum Palace', status:'active', services:['GTO','Filter Man'], annualValue:3600, nextDue:'2026-06-01', lastService:'2025-12-01', healthScore:3, assignedRep:'Ted Scholl', openDeficiencies:1, city:'Feasterville', zip:'19053', lastCheckin:Date.now()-45*86400000, createdAt:Date.now()-220*86400000 },
@@ -6224,13 +6227,39 @@ function rptPopulateRepFilter() {
 }
 
 function rptGetAccounts(filters) {
-  let data = crmLoad('accounts') || [];
+  let data = (crmLoad('accounts') || []).map(function(r) {
+    // Normalize old format to new format
+    return {
+      name: r.name || r.business || '—',
+      business: r.business || r.name,
+      status: r.status || 'active',
+      services: (r.services||[]).map(function(s) {
+        // Normalize lowercase service names to display names
+        const map = {unipro:'UniPro',filterman:'Filter Man','filter man':'Filter Man',
+          gto:'GTO',quality3:'Quality III','quality iii':'Quality III',
+          allpro:'ALLPro',termac:'Termac'};
+        return map[s.toLowerCase()] || s;
+      }),
+      annualValue: parseFloat(r.annualValue || r.contractValue || 0),
+      nextDue: r.nextDue || null,
+      lastService: r.lastService || null,
+      healthScore: r.healthScore || (r.status==='active' ? 3 : 1),
+      assignedRep: r.assignedRep || r.rep || r.contact || 'Unassigned',
+      openDeficiencies: typeof r.openDeficiencies === 'number' ? r.openDeficiencies : (r.openDeficiencies ? 1 : 0),
+      lastCheckin: r.lastCheckin || r.lastViewed || null,
+      createdAt: r.createdAt || r.created || 0,
+      city: r.city || (r.address ? r.address.split(',')[1] : ''),
+      zip: r.zip || '',
+    };
+  });
   if (filters.company !== 'all') {
-    data = data.filter(r => (r.services||[]).includes(filters.company) ||
-      (r.company||'') === filters.company || (r.division||'') === filters.company);
+    data = data.filter(function(r) {
+      return r.services.some(function(s) { return s === filters.company; }) ||
+        (r.company||'') === filters.company;
+    });
   }
   if (filters.rep !== 'all') {
-    data = data.filter(r => r.assignedRep === filters.rep || r.rep === filters.rep);
+    data = data.filter(function(r) { return r.assignedRep === filters.rep; });
   }
   return data;
 }
