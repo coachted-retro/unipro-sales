@@ -3705,7 +3705,7 @@ setTimeout(updateFlashReportAlerts, 500);
   </div>
   <div class="ov-body">
     <div class="ov-grid-2">
-      <a class="ov-tile" href="#" onclick="openLearningCenter();return false;"><div class="ov-tile-icon">📚</div><div class="ov-tile-text"><strong>Training &amp; Resources</strong><span>UFP University — 21 modules</span></div></a>
+      <a class="ov-tile" href="#" onclick="openLearningCenter();return false;"><div class="ov-tile-icon">📚</div><div class="ov-tile-text"><strong>Training &amp; Resources</strong><span>Termac University — 21 modules</span></div></a>
       <a class="ov-tile" href="#" onclick="openOverlay('hr');return false;"><div class="ov-tile-icon">👥</div><div class="ov-tile-text"><strong>HR &amp; Benefits</strong><span>Time off, payroll, policies</span></div></a>
       <a class="ov-tile" href="#" onclick="companyComingSoon('Announcements');return false;"><div class="ov-tile-icon">🔔</div><div class="ov-tile-text"><strong>Announcements</strong><span>Company news &amp; updates</span></div></a>
       <a class="ov-tile" href="https://teams.microsoft.com" target="_blank"><div class="ov-tile-icon">💬</div><div class="ov-tile-text"><strong>Microsoft Teams</strong><span>Inter-company communications</span></div></a>
@@ -3735,7 +3735,7 @@ setTimeout(updateFlashReportAlerts, 500);
       <a class="ov-tile" href="hr-portal.html#certs"><div class="ov-tile-icon">📜</div><div class="ov-tile-text"><strong>Certifications</strong><span>NICET, DOT, NFPA tracking</span></div></a>
       <a class="ov-tile" href="hr-portal.html#paystubs"><div class="ov-tile-icon">💰</div><div class="ov-tile-text"><strong>Pay Stubs &amp; W-2s</strong><span>View payroll documents</span></div></a>
       <a class="ov-tile" href="hr-portal.html#onboarding"><div class="ov-tile-icon">📋</div><div class="ov-tile-text"><strong>Onboarding Center</strong><span>26-item new hire checklist</span></div></a>
-      <a class="ov-tile" href="#" onclick="openLearningCenter();return false;"><div class="ov-tile-icon">📚</div><div class="ov-tile-text"><strong>Training &amp; Learning</strong><span>UFP University — 21 modules</span></div></a>
+      <a class="ov-tile" href="#" onclick="openLearningCenter();return false;"><div class="ov-tile-icon">📚</div><div class="ov-tile-text"><strong>Training &amp; Learning</strong><span>Termac University — 21 modules</span></div></a>
       <a class="ov-tile" href="hr-portal.html#policies"><div class="ov-tile-icon">📄</div><div class="ov-tile-text"><strong>Company Policies</strong><span>Employee handbook &amp; SOPs</span></div></a>
     </div>
   </div>
@@ -6720,19 +6720,24 @@ const TERMAC_USERS = {
 
 // Role access rules
 const ROLE_ACCESS = {
-  manager:      ['leads','contacts','accounts','survey','estimate','manager','command','employee','hr','scheduling'],
-  rep:          ['leads','contacts','accounts','survey','estimate','employee'],
-  dms:          ['leads','employee'],
-  scheduler:    ['scheduling','employee'],
-  dispatcher:   ['scheduling','command','employee'],
-  tech:         ['tech','employee'],
-  office:       ['accounts','scheduling','employee'],
-  // ── NEW ROLES ───────────────────────────────────────────────
-  reception:    ['leads','accounts','employee','hr'],     // All leads (assign), account lookup, HR hub
-  div_unipro:   ['leads','accounts','employee'],          // UniPro division: own leads + accounts only
-  div_gto:      ['leads','accounts','employee'],          // GTO division: own leads + accounts only
-  div_filterman:['leads','accounts','employee'],          // Filter Man: own leads + accounts only
-  div_allpro:   ['leads','accounts','employee'],          // ALLPro: own leads + accounts only
+  // hr_self = personal HR access (own profile, pay stubs, certs, benefits, time off — NOT other employees' data)
+  // learning = Termac University access (all training modules, quizzes, certificates)
+  // Every role gets hr_self + learning + employee hub as a baseline right
+  manager:      ['leads','contacts','accounts','survey','estimate','manager','command','employee','hr','scheduling','hr_self','learning'],
+  rep:          ['leads','contacts','accounts','survey','estimate','employee','hr_self','learning'],
+  dms:          ['leads','employee','hr_self','learning'],
+  scheduler:    ['scheduling','employee','hr_self','learning'],
+  dispatcher:   ['scheduling','command','employee','hr_self','learning'],
+  tech:         ['tech','employee','hr_self','learning'],
+  office:       ['accounts','scheduling','employee','hr_self','learning'],
+  // ── ADDITIONAL ROLES ─────────────────────────────────────────
+  // reception = hub-level lead pool + assign + account lookup + full HR hub (managers review talent/directory)
+  reception:    ['leads','accounts','employee','hr','hr_self','learning'],
+  // division offices = scoped to their division, plus personal HR + learning
+  div_unipro:   ['leads','accounts','employee','hr_self','learning'],
+  div_gto:      ['leads','accounts','employee','hr_self','learning'],
+  div_filterman:['leads','accounts','employee','hr_self','learning'],
+  div_allpro:   ['leads','accounts','employee','hr_self','learning'],
 };
 
 let _currentUser = null;
@@ -6840,6 +6845,24 @@ function applyRoleAccess(user) {
   if (user.role === 'tech') {
     // handled in doRoleLogin
   }
+
+  // ── UNIVERSAL: Every authenticated user gets Employee Hub, HR Self-Service, Termac University ──
+  // Wire HR self-service button to pass correct user tier
+  const hrTiles = document.querySelectorAll('[onclick*="openHRPortal"], [href*="hr-portal"]');
+  hrTiles.forEach(el => {
+    el.onclick = (e) => { e.preventDefault(); openHRPortal(); };
+    el.href = '#';
+  });
+
+  // Wire Learning Center button to pass user context
+  const lcTiles = document.querySelectorAll('[onclick*="openLearningCenter"], [href*="learning-center"]');
+  lcTiles.forEach(el => {
+    el.onclick = (e) => { e.preventDefault(); openLearningCenterForUser(); };
+    el.href = '#';
+  });
+
+  // Show employee hub access indicator in nav if not already visible
+  // (Employee portal button is always visible — already in the topnav)
 }
 
 function renderWelcomeBadge(user) {
@@ -8931,18 +8954,42 @@ function openLearningCenter() {
 }
 
 function openHRPortal() {
-  // Pre-set HR portal session
+  // Pass current user's identity and tier to HR portal
+  // Managers/admin get full access; everyone else gets employee self-service only
+  const user = _currentUser;
+  const isFullHR = user && (user.role === 'manager' || user.role === 'reception');
+  const hrRole = isFullHR ? 'manager' : 'employee';
+  // Derive a username from email (before @)
+  const hrUsername = user ? user.email.split('@')[0].replace(/[^a-z0-9.]/g,'') : 'ted.scholl';
+  const hrName = user ? user.name : 'Ted Scholl';
+
   localStorage.setItem('hr_session', JSON.stringify({
-    username: 'ted.scholl',
-    name: 'Ted Scholl',
-    role: 'admin',
+    username: hrUsername,
+    name: hrName,
+    role: hrRole,
+    selfOnly: !isFullHR,   // employee tier: can only see own data
     loggedIn: true,
     ts: Date.now()
   }));
   localStorage.setItem('hr_logged_in', 'true');
-  localStorage.setItem('hr_current_user', 'ted.scholl');
-  localStorage.setItem('hr_user_role', 'admin');
+  localStorage.setItem('hr_current_user', hrUsername);
+  localStorage.setItem('hr_user_role', hrRole);
+  localStorage.setItem('hr_self_only', isFullHR ? 'false' : 'true');
   window.open('hr-portal.html', '_blank');
+}
+
+function openLearningCenterForUser() {
+  // Pass current user context to learning center
+  const user = _currentUser;
+  if (user) {
+    localStorage.setItem('lc_current_user', JSON.stringify({
+      name: user.name,
+      email: user.email,
+      division: user.division,
+      ts: Date.now()
+    }));
+  }
+  window.open('learning-center.html', '_blank');
 }
 </script>
 
@@ -11243,6 +11290,63 @@ function openTripStack(accountId) {
   modal.classList.add('open');
 }
 
+// ════════════════════════════════════════════════════════════
+// TECH ROUTE OPTIMIZER (separate from Rep Trip Stack)
+// Purpose: Cluster jobs by geography to maximize wrench time
+// Shows: today's jobs ranked, nearby unscheduled accounts,
+//        estimated drive gaps, efficiency score impact
+// ════════════════════════════════════════════════════════════
+function openTechRouteOptimizer(techName) {
+  const modal = document.getElementById('techRouteModal');
+  if (!modal) return;
+
+  const accounts = crmLoad('accounts');
+  const tech = typeof TECHS !== 'undefined' ? TECHS.find(t => t.name === techName) : null;
+
+  // Simulate today's scheduled jobs for this tech
+  const jobs = (JSON.parse(localStorage.getItem('termac_scheduler_events') || '[]'))
+    .filter(e => e.techName === techName && e.date === new Date().toISOString().split('T')[0]);
+
+  // Score nearby unscheduled accounts — for dispatcher to add to day
+  const scheduledZips = jobs.map(j => extractZip(j.address || '')).filter(Boolean);
+  const pivotZip = scheduledZips[0] || '';
+  const nearbyUnscheduled = accounts
+    .filter(a => a.status === 'active' && extractZip(a.address))
+    .map(a => ({
+      ...a,
+      dist: pivotZip ? zipDistance(pivotZip, extractZip(a.address)) : 20,
+      daysOverdue: a.nextDue ? Math.max(0, Math.round((Date.now() - new Date(a.nextDue).getTime()) / 86400000)) : 0
+    }))
+    .filter(a => a.dist <= 5) // tight cluster only — within 5 miles
+    .sort((a, b) => (b.daysOverdue - a.daysOverdue) || (a.dist - b.dist))
+    .slice(0, 6);
+
+  const wrench = tech?.wrenchTime || tech?.wrench || 70;
+  const efficiency = wrench >= 75 ? { label:'Optimal', color:'#1E7B3C' } : wrench >= 65 ? { label:'Acceptable', color:'#D8690B' } : { label:'Needs Work', color:'#C8102E' };
+
+  document.getElementById('techRouteTechName').textContent = techName;
+  document.getElementById('techRouteEfficiency').innerHTML =
+    `<span style="color:${efficiency.color};font-weight:700">${wrench}% wrench time — ${efficiency.label}</span>`;
+
+  const scheduledEl = document.getElementById('techRouteScheduled');
+  scheduledEl.innerHTML = jobs.length
+    ? jobs.map((j, i) => `<div style="display:flex;gap:10px;padding:8px 10px;border-radius:7px;background:var(--bg);margin-bottom:5px;align-items:center">
+        <div style="width:24px;height:24px;background:var(--red);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;flex-shrink:0">${i+1}</div>
+        <div style="flex:1"><div style="font-weight:700;font-size:12px">${j.accountName||'Account'}</div><div style="font-size:10px;color:var(--soft)">${j.time||'—'} · ${j.serviceType||j.division||'Service'} · ${j.address||'—'}</div></div>
+      </div>`).join('')
+    : '<div style="color:var(--soft);font-size:11px;padding:8px">No jobs scheduled for today yet.</div>';
+
+  const nearbyEl = document.getElementById('techRouteNearby');
+  nearbyEl.innerHTML = nearbyUnscheduled.length
+    ? nearbyUnscheduled.map(a => `<div style="display:flex;gap:10px;padding:8px 10px;border-radius:7px;background:var(--bg);margin-bottom:5px;border-left:3px solid ${a.daysOverdue > 0 ? 'var(--red)' : 'var(--line)'}">
+        <div style="flex:1"><div style="font-weight:700;font-size:12px">${a.name}</div><div style="font-size:10px;color:var(--soft)">~${a.dist} mi · ${a.daysOverdue > 0 ? '<span style="color:var(--red);font-weight:700">'+a.daysOverdue+'d overdue</span>' : 'Next due '+a.nextDue}</div></div>
+        <span style="background:#F3F4F6;color:var(--slate,#64748B);border-radius:4px;padding:1px 6px;font-size:9px;font-weight:700;align-self:center">${(a.services||[])[0]?.toUpperCase()||'—'}</span>
+      </div>`).join('')
+    : '<div style="color:var(--soft);font-size:11px;padding:8px">No nearby overdue or pending accounts within 5 miles of today's route.</div>';
+
+  modal.classList.add('open');
+}
+
 function closeModal(id) { document.getElementById(id)?.classList.remove('open'); }
 
 // ════════════════════════════════════════════════════════════
@@ -11714,10 +11818,31 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ── Trip Stack Modal ──
   document.body.insertAdjacentHTML('beforeend', `
+  <!-- ── TECH ROUTE OPTIMIZER MODAL ── -->
+  <div class="is-modal-bg" id="techRouteModal">
+    <div class="is-modal" style="width:min(560px,96vw)">
+      <div class="is-modal-hdr">
+        <h3>🗺️ Route Optimizer — <span id="techRouteTechName"></span></h3>
+        <button onclick="closeModal('techRouteModal')" style="background:none;border:none;color:#BFC4CA;font-size:20px;cursor:pointer">✕</button>
+      </div>
+      <div class="is-modal-body">
+        <div id="techRouteEfficiency" style="font-size:12px;margin-bottom:14px;padding:8px 12px;background:var(--bg);border-radius:7px"></div>
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:8px">📅 Today's Scheduled Route</div>
+        <div id="techRouteScheduled" style="margin-bottom:16px"></div>
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:8px">📍 Nearby — Add to Day (within 5 miles)</div>
+        <div style="font-size:11px;color:var(--soft);margin-bottom:8px">Overdue or pending accounts near today's stops. Dispatcher can add these to fill gaps.</div>
+        <div id="techRouteNearby"></div>
+      </div>
+      <div class="is-modal-foot">
+        <button class="is-btn is-btn-ghost" onclick="closeModal('techRouteModal')">Close</button>
+      </div>
+    </div>
+  </div>
+
   <div class="is-modal-bg" id="tripStackModal">
     <div class="is-modal" style="width:min(580px,96vw)">
       <div class="is-modal-hdr">
-        <h3>📍 Nearby Opportunities</h3>
+        <h3>📍 Nearby Opportunities — Sales</h3>
         <button onclick="closeModal('tripStackModal')" style="background:none;border:none;color:#BFC4CA;font-size:20px;cursor:pointer">✕</button>
       </div>
       <div class="is-modal-body">
