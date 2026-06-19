@@ -3553,7 +3553,6 @@ const ch_font=()=>({family:'Barlow Condensed',size:11,weight:'700'});
 const gridLine='rgba(0,0,0,.07)';
 
 // QUAD A — WRENCH TIME STACKED BAR
-(()=>{const ex=Chart.getChart('wrenchChart');if(ex)ex.destroy();})();
 new Chart(document.getElementById('wrenchChart'),{
   type:'bar',
   data:{
@@ -5361,6 +5360,7 @@ const fsState = {
   obChecked: {},
   miscCount: 0
 };
+const fsSvc = { hood: false, ext: false, light: false };
 const fsRes = { hood: {}, ext: {}, light: {} };
 
 const fsCheckDefs = {
@@ -5462,9 +5462,14 @@ function fsGo(from, to) {
 }
 
 // Service toggles
-const fsSvcState = { hood: false, ext: false, light: false };
-
 function fsSvc(k) {
+  fsSvc[k] = !fsSvc[k]; // wait — use fsState object
+  // Fix: use fsSvcState
+}
+
+// Fix: state object for service toggles
+const fsSvcState = { hood: false, ext: false, light: false };
+function fsSvcToggle(k) {
   fsSvcState[k] = !fsSvcState[k];
   const toggle = document.getElementById('fst-'+k);
   if (toggle) toggle.classList.toggle('on', fsSvcState[k]);
@@ -5474,33 +5479,35 @@ function fsSvc(k) {
   if (k === 'ext'  && fsSvcState[k]) fsBuildExtChecklist();
   if (k === 'light' && fsSvcState[k]) fsBuildLightChecklist();
 }
+// Override the onclick="fsSvc('hood')" calls with fsSvcToggle
+// (The HTML uses onclick="fsSvc('hood')" which will now call the right name via alias)
+window.fsSvc = fsSvcToggle;
 
 // Build NFPA checklist rows
 function fsBuildChecklist(containerId, key, colorClass) {
   const container = document.getElementById(containerId);
   if (!container) return;
   const defs = fsCheckDefs[key] || [];
-  container.innerHTML = defs.map((d, i) => {
-    const [label, hint, code, section, sev] = d;
+  let html = '';
+  defs.forEach((d, i) => {
+    const label = d[0], hint = d[1], code = d[2], section = d[3];
     const badgeClass = key === 'hood' ? 'red-bg' : key === 'ext' ? 'steel-bg' : 'amber-bg';
-    return `<div class="fs-check-row" id="fs_cr_${key}_${i}">
-      <div class="fs-check-label">
-        ${label}
-        <small>${hint}</small>
-        <div class="fs-nfpa-tag">
-          <span class="fs-nfpa-badge ${badgeClass}" onclick="fsShowNfpa(event,'${code}',this.dataset.s)" data-s="${section.replace(/'/g,'&apos;')}">
-            ${code}
-          </span>
-        </div>
-      </div>
-      <div class="fs-cbtn-group">
-        <button class="fs-cbtn" id="fs_cb_${key}_${i}_pass" onclick="fsSetCheck('${key}',${i},'pass')">Pass</button>
-        <button class="fs-cbtn" id="fs_cb_${key}_${i}_fail" onclick="fsSetCheck('${key}',${i},'fail')">Fail</button>
-        <button class="fs-cbtn" id="fs_cb_${key}_${i}_na"   onclick="fsSetCheck('${key}',${i},'na')">N/A</button>
-      </div>
-      <div class="fs-check-notes"><input type="text" id="fs_cn_${key}_${i}" placeholder="Notes..."></div>
-    </div>`;
-  }).join('');
+    const safeSection = section.replace(/'/g, '&apos;');
+    html += '<div class="fs-check-row" id="fs_cr_' + key + '_' + i + '">'
+      + '<div class="fs-check-label">' + label
+      + '<small>' + hint + '</small>'
+      + '<div class="fs-nfpa-tag">'
+      + '<span class="fs-nfpa-badge ' + badgeClass + '" onclick="fsShowNfpa(event,'' + code + '',this.dataset.s)" data-s="' + safeSection + '">'
+      + code + '</span></div></div>'
+      + '<div class="fs-cbtn-group">'
+      + '<button class="fs-cbtn" id="fs_cb_' + key + '_' + i + '_pass" onclick="fsSetCheck('' + key + '',' + i + ','pass')">Pass</button>'
+      + '<button class="fs-cbtn" id="fs_cb_' + key + '_' + i + '_fail" onclick="fsSetCheck('' + key + '',' + i + ','fail')">Fail</button>'
+      + '<button class="fs-cbtn" id="fs_cb_' + key + '_' + i + '_na"   onclick="fsSetCheck('' + key + '',' + i + ','na')">N/A</button>'
+      + '</div>'
+      + '<div class="fs-check-notes"><input type="text" id="fs_cn_' + key + '_' + i + '" placeholder="Notes..."></div>'
+      + '</div>';
+  });
+  container.innerHTML = html;
 }
 function fsBuildHoodChecklist() { fsBuildChecklist('fs_hoodList','hood','red'); }
 function fsBuildExtChecklist()  { fsBuildChecklist('fs_extList','ext','steel'); }
@@ -13792,9 +13799,9 @@ window.openAcctDetail = function(id, tab) {
 };
 
 // Patch refreshManagerDashboard to include new panels
-const _origRefreshMgr2 = window.refreshManagerDashboard;
+const _origRefreshMgr = window.refreshManagerDashboard;
 window.refreshManagerDashboard = function() {
-  if (_origRefreshMgr2) _origRefreshMgr2();
+  if (_origRefreshMgr) _origRefreshMgr();
   setTimeout(() => {
     // Churn risk summary
     const accounts = crmLoad('accounts');
