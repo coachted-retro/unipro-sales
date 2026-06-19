@@ -47,8 +47,9 @@ body{font-family:'Barlow',-apple-system,sans-serif;background:var(--bg);color:va
 /* ─── HERO ─── */
 .hero{
   max-width:1180px;margin:0 auto;padding:32px 16px 0;
-  display:flex;align-items:center;justify-content:space-between;gap:24px;flex-wrap:wrap;
+  display:flex;align-items:flex-start;justify-content:space-between;gap:24px;flex-wrap:wrap;
 }
+.hero-text{padding-left:0}
 .hero-text h1{
   font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:28px;
   line-height:1.1;color:var(--ink);
@@ -1246,7 +1247,7 @@ function crmLoad(key){ try{ return JSON.parse(localStorage.getItem('termac_crm_'
 
 // ── DEMO DATA SEED ─────────────────────────────────────────────────────────
 // Pre-populates CRM with realistic demo data if no data exists yet
-function seedDemoData() {
+(function seedDemoData() {
   function crmHas(key) {
     try { const d = JSON.parse(localStorage.getItem('termac_crm_'+key)||'[]'); return d.length > 0; } catch(e) { return false; }
   }
@@ -1290,8 +1291,7 @@ function seedDemoData() {
     ]);
     console.log('Demo contacts seeded');
   }
-}
-seedDemoData();
+})();
 
 function crmSave(key,data){ localStorage.setItem('termac_crm_'+key, JSON.stringify(data)); }
 
@@ -5614,12 +5614,64 @@ const fsPhases = [
 ];
 
 // Navigation between fire survey sub-screens
+
+// ── FIRE SURVEY CLIENT INFO PRE-FILL ─────────────────────────────────────────
+function fsPrefillClientInfo() {
+  const r = fsState._prefillData;
+  if (!r) return;
+  // Only pre-fill if fields are currently empty (don't overwrite user edits)
+  const setIfEmpty = (id, val) => {
+    const el = document.getElementById(id);
+    if (el && !el.value && val) el.value = val;
+  };
+  const setSelectIfEmpty = (id, val) => {
+    const el = document.getElementById(id);
+    if (el && !el.value && val) el.value = val;
+  };
+
+  // Parse address
+  let city = r.city || '', state = r.state || '', zip = r.zip || '', address = r.address || '';
+  if (!city && address) {
+    const parts = address.split(',');
+    if (parts.length >= 2) {
+      const stateZipMatch = parts[parts.length-1].trim().match(/([A-Z]{2})\s+(\d{5})/);
+      if (stateZipMatch) { state = stateZipMatch[1]; zip = stateZipMatch[2]; }
+      if (parts.length >= 3) city = parts[parts.length-2].trim().split(/\s+[A-Z]{2}\s/)[0];
+      address = parts[0].trim();
+    }
+  }
+
+  setIfEmpty('fs_bizName',    r.name || r.business || '');
+  setIfEmpty('fs_bizAddress', address);
+  setIfEmpty('fs_bizCity',    city);
+  setIfEmpty('fs_bizZip',     zip);
+  setSelectIfEmpty('fs_bizState', state);
+  setIfEmpty('fs_visitDate',  new Date().toISOString().slice(0,10));
+
+  // Contact — check contacts CRM first
+  const contacts = crmLoad('contacts') || [];
+  const linked = contacts.find(c => c.company === (r.name||r.business) || c.accountId === r.id);
+  const contactName  = linked ? linked.name  : (r.contact || r.contactName || '');
+  const contactPhone = linked ? linked.phone : (r.phone || r.contactPhone || '');
+  const contactEmail = linked ? linked.email : (r.email || r.contactEmail || '');
+  const contactTitle = linked ? (linked.title || '') : (r.title || r.contactTitle || '');
+
+  setIfEmpty('fs_contactName',  contactName);
+  setIfEmpty('fs_contactTitle', contactTitle);
+  setIfEmpty('fs_contactPhone', contactPhone);
+  setIfEmpty('fs_contactEmail', contactEmail);
+  if (r.vendor || r.currentVendor) setIfEmpty('fs_currentVendor', r.vendor || r.currentVendor);
+  if (r.source || r.leadSource)    setIfEmpty('fs_referredBy', r.source || r.leadSource);
+  if (r.notes)                     setIfEmpty('fs_generalObs', r.notes);
+}
+
 function fsGo(from, to) {
   const fromEl = document.getElementById('fs-screen'+from);
   const toEl   = document.getElementById('fs-screen'+to);
   if (!toEl) return;
 
   // Pre-populate certain screens when navigating to them
+  if (to === 0) fsPrefillClientInfo();
   if (to === 2) fsBuildFindingsAuto();
   if (to === 3) fsPrefillProposal();
   if (to === 4) fsBuildSigSummary(); fsInitSigCanvas();
@@ -6798,37 +6850,16 @@ function rptRender() {
   out.innerHTML = '<div style="text-align:center;padding:40px;color:var(--soft)">Building report...</div>';
   setTimeout(() => {
     try {
-      // Ensure demo data is seeded before rendering
-      const accts = crmLoad('accounts') || [];
-      if (accts.length === 0 || accts[0].healthScore === undefined) {
-        // Force reseed
-        if (typeof seedDemoData === 'function') seedDemoData();
-      }
-
       let html = '';
-      if (_rptCurrentCat === 'revenue')         html = rptBuildRevenue(filters);
+      if (_rptCurrentCat === 'revenue')    html = rptBuildRevenue(filters);
       else if (_rptCurrentCat === 'operations') html = rptBuildOperations(filters);
       else if (_rptCurrentCat === 'sales')      html = rptBuildSales(filters);
       else if (_rptCurrentCat === 'health')     html = rptBuildHealth(filters);
       else if (_rptCurrentCat === 'custom')     html = rptBuildCustom(filters);
-
-      if (!html) {
-        const acctCount = (crmLoad('accounts')||[]).length;
-        const leadCount = (crmLoad('leads')||[]).length;
-        html = '<div style="text-align:center;padding:60px;color:var(--soft)">'
-          + '<div style="font-size:48px;margin-bottom:16px">📋</div>'
-          + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:18px;margin-bottom:8px;color:var(--ink)">No Data to Report</div>'
-          + '<div style="font-size:13px;max-width:360px;margin:0 auto;line-height:1.7">'
-          + 'Found ' + acctCount + ' account(s) and ' + leadCount + ' lead(s) in CRM.<br>'
-          + 'Check date range filter or add accounts to the CRM to generate reports.</div>'
-          + '<button onclick="rptRender()" style="margin-top:20px;background:var(--red);color:#fff;border:none;border-radius:8px;padding:10px 24px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;cursor:pointer">↻ Retry</button>'
-          + '</div>';
-      }
       out.innerHTML = html;
       if (_rptCurrentCat === 'custom') { rptBuildCustomColumns(); }
     } catch(e) {
-      console.error('Report render error:', e);
-      out.innerHTML = '<div style="color:var(--red);padding:20px;font-family:Barlow,sans-serif"><strong>Report Error:</strong> ' + e.message + '<br><br><button onclick="rptRender()" style="background:var(--red);color:#fff;border:none;border-radius:6px;padding:8px 16px;cursor:pointer">Retry</button></div>';
+      out.innerHTML = '<div style="color:var(--red);padding:20px">Error building report: ' + e.message + '</div>';
     }
   }, 50);
 }
