@@ -2013,8 +2013,8 @@ document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ closeModal(); clo
 
   <!-- TAB NAV -->
   <div style="background:#1A1D21;border-bottom:1px solid rgba(255,255,255,.08);display:flex;gap:0;padding:0 20px;flex-shrink:0">
-    <button class="mgr-tab-btn active" id="mgrTab-dashboard" onclick="if(typeof mgrSwitchTab==='function')mgrSwitchTab('dashboard');else{document.getElementById('mgrPanel-dashboard').style.display='block';document.getElementById('mgrPanel-reports').style.display='none';}"" style="background:none;border:none;color:#BFC4CA;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;letter-spacing:.10em;text-transform:uppercase;padding:12px 18px;cursor:pointer;border-bottom:2px solid var(--red);color:#fff">📊 Dashboard</button>
-    <button class="mgr-tab-btn" id="mgrTab-reports" onclick="if(typeof mgrSwitchTab==='function')mgrSwitchTab('reports');else{document.getElementById('mgrPanel-reports').style.display='block';document.getElementById('mgrPanel-dashboard').style.display='none';if(typeof rptRender==='function')rptRender();}" style="background:none;border:none;color:#BFC4CA;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;letter-spacing:.10em;text-transform:uppercase;padding:12px 18px;cursor:pointer;border-bottom:2px solid transparent">📋 Reports</button>
+    <button class="mgr-tab-btn active" id="mgrTab-dashboard" onclick="mgrSwitchTab('dashboard')" style="background:none;border:none;color:#BFC4CA;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;letter-spacing:.10em;text-transform:uppercase;padding:12px 18px;cursor:pointer;border-bottom:2px solid var(--red);color:#fff">📊 Dashboard</button>
+    <button class="mgr-tab-btn" id="mgrTab-reports" onclick="mgrSwitchTab('reports')" style="background:none;border:none;color:#BFC4CA;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;letter-spacing:.10em;text-transform:uppercase;padding:12px 18px;cursor:pointer;border-bottom:2px solid transparent">📋 Reports</button>
   </div>
 
   <!-- DASHBOARD PANEL -->
@@ -5488,27 +5488,43 @@ function fsBuildChecklist(containerId, key, colorClass) {
   const container = document.getElementById(containerId);
   if (!container) return;
   const defs = fsCheckDefs[key] || [];
-  let html = '';
+  container.innerHTML = '';
   defs.forEach(function(d, i) {
-    const label = d[0], hint = d[1], code = d[2], section = d[3];
+    const label = d[0] || '', hint = d[1] || '', code = d[2] || '', section = d[3] || '';
     const badgeClass = key === 'hood' ? 'red-bg' : key === 'ext' ? 'steel-bg' : 'amber-bg';
-    const safeSection = (section||'').replace(/'/g, '&apos;');
-    const safeCode = (code||'').replace(/'/g, '&apos;');
-    html += '<div class="fs-check-row" id="fs_cr_' + key + '_' + i + '">'
-      + '<div class="fs-check-label">' + label
-      + '<small>' + hint + '</small>'
-      + '<div class="fs-nfpa-tag">'
-      + '<span class="fs-nfpa-badge ' + badgeClass + '" onclick="fsShowNfpa(event,this.dataset.c,this.dataset.s)" data-c="' + safeCode + '" data-s="' + safeSection + '">'
-      + code + '</span></div></div>'
-      + '<div class="fs-cbtn-group">'
-      + '<button class="fs-cbtn" id="fs_cb_' + key + '_' + i + '_pass" onclick="fsSetCheck(this.dataset.k,+this.dataset.i,'pass')" data-k="' + key + '" data-i="' + i + '">Pass</button>'
-      + '<button class="fs-cbtn" id="fs_cb_' + key + '_' + i + '_fail" onclick="fsSetCheck(this.dataset.k,+this.dataset.i,'fail')" data-k="' + key + '" data-i="' + i + '">Fail</button>'
-      + '<button class="fs-cbtn" id="fs_cb_' + key + '_' + i + '_na"   onclick="fsSetCheck(this.dataset.k,+this.dataset.i,'na')"  data-k="' + key + '" data-i="' + i + '">N/A</button>'
-      + '</div>'
-      + '<div class="fs-check-notes"><input type="text" id="fs_cn_' + key + '_' + i + '" placeholder="Notes..."></div>'
-      + '</div>';
+    const row = document.createElement('div');
+    row.className = 'fs-check-row';
+    row.id = 'fs_cr_' + key + '_' + i;
+    row.innerHTML = [
+      '<div class="fs-check-label">',
+        label,
+        '<small>' + hint + '</small>',
+        '<div class="fs-nfpa-tag">',
+          '<span class="fs-nfpa-badge ' + badgeClass + '">',
+            code,
+          '</span>',
+        '</div>',
+      '</div>',
+      '<div class="fs-cbtn-group">',
+        '<button class="fs-cbtn" id="fs_cb_' + key + '_' + i + '_pass">Pass</button>',
+        '<button class="fs-cbtn" id="fs_cb_' + key + '_' + i + '_fail">Fail</button>',
+        '<button class="fs-cbtn" id="fs_cb_' + key + '_' + i + '_na">N/A</button>',
+      '</div>',
+      '<div class="fs-check-notes"><input type="text" id="fs_cn_' + key + '_' + i + '" placeholder="Notes..."></div>'
+    ].join('');
+    // Wire up badge click
+    const badge = row.querySelector('.fs-nfpa-badge');
+    if (badge) {
+      badge.title = code + ' — ' + section;
+      badge.addEventListener('click', function(e) { fsShowNfpa(e, code, section); });
+    }
+    // Wire up check buttons
+    ['pass','fail','na'].forEach(function(val) {
+      const btn = row.querySelector('#fs_cb_' + key + '_' + i + '_' + val);
+      if (btn) btn.addEventListener('click', function() { fsSetCheck(key, i, val); });
+    });
+    container.appendChild(row);
   });
-  container.innerHTML = html;
 }
 function fsBuildHoodChecklist() { fsBuildChecklist('fs_hoodList','hood','red'); }
 function fsBuildExtChecklist()  { fsBuildChecklist('fs_extList','ext','steel'); }
@@ -5563,9 +5579,9 @@ function fsBuildLightUnits() {
 function fsShowNfpa(e, code, section) {
   const tip = document.getElementById('fsNfpaTooltip');
   if (!tip) return;
-  const c = code || e.target?.dataset?.c || '';
+  // section may come from data-s attribute if passed as element
   const sec = section || e.target?.dataset?.s || '';
-  document.getElementById('fsTooltipCode').textContent = c;
+  document.getElementById('fsTooltipCode').textContent = code;
   document.getElementById('fsTooltipSection').textContent = sec;
   tip.classList.add('visible');
   tip.style.top = (e.clientY + 12) + 'px';
@@ -13800,9 +13816,9 @@ window.openAcctDetail = function(id, tab) {
 };
 
 // Patch refreshManagerDashboard to include new panels
-const _origRefreshMgr_b = window.refreshManagerDashboard;
+const _origRefreshMgr = window.refreshManagerDashboard;
 window.refreshManagerDashboard = function() {
-  if (_origRefreshMgr_b) _origRefreshMgr_b()
+  if (_origRefreshMgr) _origRefreshMgr();
   setTimeout(() => {
     // Churn risk summary
     const accounts = crmLoad('accounts');
