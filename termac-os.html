@@ -3461,7 +3461,6 @@ const ch_font=()=>({family:'Barlow Condensed',size:11,weight:'700'});
 const gridLine='rgba(0,0,0,.07)';
 
 // QUAD A — WRENCH TIME STACKED BAR
-(()=>{const ex=Chart.getChart('wrenchChart');if(ex)ex.destroy();})();
 new Chart(document.getElementById('wrenchChart'),{
   type:'bar',
   data:{
@@ -3488,6 +3487,7 @@ new Chart(document.getElementById('wrenchChart'),{
 });
 
 // QUAD C — LATENCY LINE
+(()=>{const ex=Chart.getChart('latencyChart');if(ex)ex.destroy();})();
 new Chart(document.getElementById('latencyChart'),{
   type:'line',
   data:{
@@ -5270,6 +5270,7 @@ const fsState = {
   obChecked: {},
   miscCount: 0
 };
+const fsSvc = { hood: false, ext: false, light: false };
 const fsRes = { hood: {}, ext: {}, light: {} };
 
 const fsCheckDefs = {
@@ -5354,24 +5355,31 @@ function fsGo(from, to) {
   const toEl   = document.getElementById('fs-screen'+to);
   if (!toEl) return;
 
+  // Pre-populate certain screens when navigating to them
   if (to === 2) fsBuildFindingsAuto();
   if (to === 3) fsPrefillProposal();
-  if (to === 4) { fsBuildSigSummary(); fsInitSigCanvas(); }
-  if (to === 5) fsAutoFillAcctFromClientInfo();
+  if (to === 4) fsBuildSigSummary(); fsInitSigCanvas();
+  if (to === 5) { fsAutoFillAcctFromClientInfo(); }
   if (to === 6) { fsBuildPipeline(); fsBuildOnboarding(); }
 
   if (fromEl) fromEl.classList.remove('active');
   toEl.classList.add('active');
   fsState.screen = to;
 
+  // Scroll the sv-body back to top
   const body = document.querySelector('.sv-body');
   if (body) body.scrollTop = 0;
 }
 
-// Service toggles - single clean implementation
-const fsSvcState = { hood: false, ext: false, light: false };
-
+// Service toggles
 function fsSvc(k) {
+  fsSvc[k] = !fsSvc[k]; // wait — use fsState object
+  // Fix: use fsSvcState
+}
+
+// Fix: state object for service toggles
+const fsSvcState = { hood: false, ext: false, light: false };
+function fsSvcToggle(k) {
   fsSvcState[k] = !fsSvcState[k];
   const toggle = document.getElementById('fst-'+k);
   if (toggle) toggle.classList.toggle('on', fsSvcState[k]);
@@ -5381,6 +5389,9 @@ function fsSvc(k) {
   if (k === 'ext'  && fsSvcState[k]) fsBuildExtChecklist();
   if (k === 'light' && fsSvcState[k]) fsBuildLightChecklist();
 }
+// Override the onclick="fsSvc('hood')" calls with fsSvcToggle
+// (The HTML uses onclick="fsSvc('hood')" which will now call the right name via alias)
+window.fsSvc = fsSvcToggle;
 
 // Build NFPA checklist rows
 function fsBuildChecklist(containerId, key, colorClass) {
@@ -5506,13 +5517,15 @@ function fsBuildFindingsAuto() {
       }
     });
   });
-  const html = `<div class="fs-findings-grid">
-    <div class="fs-finding-stat pass"><div class="fs-finding-num g">${totalPass}</div><div class="fs-finding-lbl">Items Passed</div></div>
-    <div class="fs-finding-stat fail"><div class="fs-finding-num r">${totalFail}</div><div class="fs-finding-lbl">Deficiencies Found</div></div>
-    <div class="fs-finding-stat"><div class="fs-finding-num">${totalNA}</div><div class="fs-finding-lbl">Not Applicable</div></div>
-  </div>
-  ${rows ? `<div class="fs-card" style="margin-bottom:16px"><div class="fs-card-hdr charcoal"><div class="fs-card-icon">⚠️</div><div class="fs-card-hdr-title">Deficiencies Identified</div></div><div class="fs-card-body no-pad"><table class="fs-vtable"><thead><tr><th>Item</th><th>System</th><th>Severity</th><th>NFPA Reference</th><th>Notes</th></tr></thead><tbody>${rows}</tbody></table></div></div>` : '<div class="fs-callout green" style="margin-bottom:16px"><strong>No deficiencies found.</strong> All inspected items passed. Outstanding items are noted as N/A.</div>'}`;
-  container.innerHTML = html;
+  const statsHtml = '<div class="fs-findings-grid">'
+    + '<div class="fs-finding-stat pass"><div class="fs-finding-num g">'+totalPass+'</div><div class="fs-finding-lbl">Items Passed</div></div>'
+    + '<div class="fs-finding-stat fail"><div class="fs-finding-num r">'+totalFail+'</div><div class="fs-finding-lbl">Deficiencies Found</div></div>'
+    + '<div class="fs-finding-stat"><div class="fs-finding-num">'+totalNA+'</div><div class="fs-finding-lbl">Not Applicable</div></div>'
+    + '</div>';
+  const tableHtml = rows
+    ? '<div class="fs-card" style="margin-bottom:16px"><div class="fs-card-hdr charcoal"><div class="fs-card-icon">⚠️</div><div class="fs-card-hdr-title">Deficiencies Identified</div></div><div class="fs-card-body no-pad"><table class="fs-vtable"><thead><tr><th>Item</th><th>System</th><th>Severity</th><th>NFPA Reference</th><th>Notes</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>'
+    : '<div class="fs-callout green" style="margin-bottom:16px"><strong>No deficiencies found.</strong> All inspected items passed. Outstanding items are noted as N/A.</div>';
+  container.innerHTML = statsHtml + tableHtml;
 }
 
 // AI findings generator
