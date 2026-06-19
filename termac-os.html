@@ -5413,22 +5413,91 @@ function svGetSteps(){
 }
 
 /* ── OPEN / CLOSE ── */
+
+// ── UNIVERSAL ACCOUNT CONTEXT BUILDER ────────────────────────────────────────
+// Call getAccountContext(id) to get a complete merged record from account + contact
+// Use this for pre-filling any form — survey, estimate, invoice, proposal, etc.
+function getAccountContext(accountId) {
+  const accounts = crmLoad('accounts') || [];
+  const contacts = crmLoad('contacts') || [];
+  const leads    = crmLoad('leads')    || [];
+
+  const account = accounts.find(a => a.id === accountId);
+  if (!account) return null;
+
+  // Find linked contact (by company name or accountId)
+  const contact = contacts.find(c =>
+    c.accountId === accountId ||
+    c.company === (account.name || account.business)
+  );
+
+  // Find original lead (by business name)
+  const lead = leads.find(l =>
+    l.business === (account.name || account.business) ||
+    l.convertedFrom === accountId
+  );
+
+  // Merge: account wins, contact fills gaps, lead fills remaining gaps
+  return {
+    // Identity
+    id:            account.id,
+    name:          account.name || account.business || '',
+    business:      account.business || account.name || '',
+    dba:           account.dba || '',
+
+    // Location
+    address:       account.address || lead?.address || '',
+    city:          account.city || lead?.city || '',
+    state:         account.state || lead?.state || '',
+    zip:           account.zip || lead?.zip || '',
+
+    // Contact
+    contactName:   contact?.name  || account.contact || account.contactName || lead?.contactName || '',
+    contactTitle:  contact?.title || account.title   || lead?.title || '',
+    contactPhone:  contact?.phone || account.phone   || lead?.phone || '',
+    contactMobile: contact?.mobile || account.mobile || '',
+    contactEmail:  contact?.email || account.email   || lead?.email || '',
+    decisionMaker: account.decisionMaker || contact?.decisionMaker || '',
+
+    // Business info
+    services:      account.services || lead?.services || [],
+    status:        account.status || 'active',
+    annualValue:   account.annualValue || account.contractValue || 0,
+    healthScore:   account.healthScore || 0,
+    assignedRep:   account.assignedRep || contact?.assignedRep || lead?.assignedRep || '',
+
+    // Service history
+    lastService:   account.lastService || '',
+    nextDue:       account.nextDue || '',
+    currentVendor: account.vendor || account.currentVendor || '',
+    source:        account.source || lead?.source || lead?.leadSource || '',
+    notes:         account.notes || lead?.notes || '',
+
+    // Raw records for anything else
+    _account: account,
+    _contact: contact || null,
+    _lead:    lead    || null,
+  };
+}
+
 function openSiteSurvey(id){
   const data = crmLoad('accounts');
   const r = data.find(x=>x.id===id);
   if(!r){ alert('Account not found.'); return; }
 
   // Reset state
+  // Use universal context builder for complete pre-fill data
+  const ctx = getAccountContext(id) || r;
   svState = {
     accountId: id,
-    bizName: r.name||r.business||'Account',
+    bizName: ctx.name || ctx.business || 'Account',
     visitType: null,
-    selectedServices: (r.services||[]).map(s=>s.toLowerCase().replace(/[^a-z0-9]/g,'')).filter(s=>SVC_PANEL[s]),
+    selectedServices: (ctx.services||[]).map(s=>s.toLowerCase().replace(/[^a-z0-9]/g,'')).filter(s=>SVC_PANEL[s]),
     surveyOrder: [],
     currentStep: 0,
     surveyData: {},
     _objContext: '',
-    _prefillData: r
+    _prefillData: ctx
   };
 
   // Pre-check services from account record
@@ -5649,27 +5718,19 @@ function fsPrefillClientInfo() {
   }
 
   setIfEmpty('fs_bizName',    r.name || r.business || '');
-  setIfEmpty('fs_bizAddress', address);
-  setIfEmpty('fs_bizCity',    city);
-  setIfEmpty('fs_bizZip',     zip);
-  setSelectIfEmpty('fs_bizState', state);
+  setIfEmpty('fs_bizAddress', r.address || address);
+  setIfEmpty('fs_bizCity',    r.city || city);
+  setIfEmpty('fs_bizZip',     r.zip || zip);
+  setSelectIfEmpty('fs_bizState', r.state || state);
   setIfEmpty('fs_visitDate',  new Date().toISOString().slice(0,10));
 
-  // Contact — check contacts CRM first
-  const contacts = crmLoad('contacts') || [];
-  const linked = contacts.find(c => c.company === (r.name||r.business) || c.accountId === r.id);
-  const contactName  = linked ? linked.name  : (r.contact || r.contactName || '');
-  const contactPhone = linked ? linked.phone : (r.phone || r.contactPhone || '');
-  const contactEmail = linked ? linked.email : (r.email || r.contactEmail || '');
-  const contactTitle = linked ? (linked.title || '') : (r.title || r.contactTitle || '');
-
-  setIfEmpty('fs_contactName',  contactName);
-  setIfEmpty('fs_contactTitle', contactTitle);
-  setIfEmpty('fs_contactPhone', contactPhone);
-  setIfEmpty('fs_contactEmail', contactEmail);
-  if (r.vendor || r.currentVendor) setIfEmpty('fs_currentVendor', r.vendor || r.currentVendor);
-  if (r.source || r.leadSource)    setIfEmpty('fs_referredBy', r.source || r.leadSource);
-  if (r.notes)                     setIfEmpty('fs_generalObs', r.notes);
+  setIfEmpty('fs_contactName',  r.contactName || '');
+  setIfEmpty('fs_contactTitle', r.contactTitle || '');
+  setIfEmpty('fs_contactPhone', r.contactPhone || '');
+  setIfEmpty('fs_contactEmail', r.contactEmail || '');
+  setIfEmpty('fs_currentVendor', r.currentVendor || '');
+  setIfEmpty('fs_referredBy',    r.source || '');
+  setIfEmpty('fs_generalObs',    r.notes || '');
 }
 
 function fsGo(from, to) {
