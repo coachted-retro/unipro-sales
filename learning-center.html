@@ -810,17 +810,60 @@ function populateLoginDropdown(){
   emps.forEach(function(e){ sel.innerHTML += '<option value="'+e.id+'">'+e.name+' ('+e.division+')</option>'; });
 }
 
-// Auto-admin if coming from Termac One platform
-(function checkAutoAdmin(){
-  var stored = localStorage.getItem('lc_admin_unlocked');
-  if (stored === '1') {
-    document.addEventListener('DOMContentLoaded', function(){
-      setTimeout(function(){
-        // Bypass login screen — go straight to admin panel
+// Auto-login if coming from Termac One platform
+(function checkAutoLogin(){
+  var adminUnlocked = localStorage.getItem('lc_admin_unlocked');
+  var loggedIn = localStorage.getItem('lc_logged_in');
+  var bypassUser = null;
+  try { bypassUser = JSON.parse(localStorage.getItem('lc_bypass_user') || 'null'); } catch(e){}
+  var currentUserRaw = localStorage.getItem('lc_current_user');
+
+  document.addEventListener('DOMContentLoaded', function(){
+    setTimeout(function(){
+      if (adminUnlocked === '1') {
+        // Manager/admin — go straight to admin panel
         if (typeof showAdmin === 'function') showAdmin();
-      }, 150);
-    });
-  }
+        return;
+      }
+      if (loggedIn === 'true') {
+        // Regular staff member — auto-login and bypass PIN screen
+        var name = 'Staff Member';
+        var division = 'All';
+        if (bypassUser && bypassUser.name) {
+          name = bypassUser.name;
+          division = bypassUser.division || 'All';
+        } else if (currentUserRaw) {
+          try {
+            var u = JSON.parse(currentUserRaw);
+            if (u && u.name) { name = u.name; division = u.division || 'All'; }
+          } catch(e) { if (typeof currentUserRaw === 'string') name = currentUserRaw; }
+        }
+        // Find matching employee or create a guest session
+        var emps = (typeof getEmployees === 'function') ? getEmployees() : [];
+        var matchEmp = emps.find(function(e){ return e.name === name; });
+        if (matchEmp) {
+          currentUser = matchEmp;
+        } else {
+          // Create guest session with the passed name
+          currentUser = { id:'guest', name: name, role:'Staff', division: division, pin:'', progress:{} };
+        }
+        // Hide login, show app
+        var loginScreen = document.getElementById('loginScreen');
+        var mainApp = document.getElementById('mainApp');
+        var heroName = document.getElementById('heroName');
+        var heroRole = document.getElementById('heroRole');
+        if (loginScreen) loginScreen.style.display = 'none';
+        if (mainApp) mainApp.classList.add('active');
+        if (heroName) heroName.textContent = name;
+        if (heroRole) heroRole.textContent = (matchEmp ? matchEmp.role : 'Staff') + ' · ' + division;
+        if (typeof renderModuleStates === 'function') renderModuleStates();
+        if (typeof updateProgress === 'function') updateProgress();
+        // Clear bypass flag to avoid stale sessions
+        localStorage.removeItem('lc_logged_in');
+        localStorage.removeItem('lc_bypass_user');
+      }
+    }, 150);
+  });
 })();
 
 function doLogin(){
