@@ -4444,14 +4444,7 @@ document.addEventListener('keydown', e=>{
   <!-- Left Sidebar -->
   <div class="sv-sidebar" id="svSidebar">
     <div class="sv-sidebar-label">Survey Steps</div>
-    <div class="sv-sidebar-item" id="svNav0" onclick="svGoStep(0)"><div class="sv-sidebar-num">1</div>Visit Type</div>
-    <div class="sv-sidebar-item" id="svNav1" onclick="svGoStep(1)"><div class="sv-sidebar-num">2</div>Pitch</div>
-    <div class="sv-sidebar-item" id="svNav2" onclick="svGoStep(2)"><div class="sv-sidebar-num">3</div>Services</div>
-    <div class="sv-sidebar-item" id="svNav3" onclick="svGoStep(3)"><div class="sv-sidebar-num">4</div>UniPro Survey</div>
-    <div class="sv-sidebar-item" id="svNav4" onclick="svGoStep(4)"><div class="sv-sidebar-num">5</div>Filter Man</div>
-    <div class="sv-sidebar-item" id="svNav5" onclick="svGoStep(5)"><div class="sv-sidebar-num">6</div>G.T.O.</div>
-    <div class="sv-sidebar-item" id="svNav6" onclick="svGoStep(6)"><div class="sv-sidebar-num">7</div>Scope</div>
-    <div class="sv-sidebar-item" id="svNav7" onclick="svGoStep(7)"><div class="sv-sidebar-num">8</div>Done</div>
+    <div id="svSidebarItems"><!-- populated dynamically by svRenderSidebarItems() --></div>
     <div class="sv-sidebar-divider"></div>
     <div class="sv-sidebar-bottom">
       <div class="sv-nfpa-ref">
@@ -5404,7 +5397,11 @@ const SVC_LABEL = { unipro:'UniPro', filterman:'Filter Man', gto:'G.T.O.', allpr
 let _svSteps = [];  // computed steps array for current visit
 
 function svGetSteps(){
-  const surveySteps = svState.selectedServices.map(svc=>({
+  // Canonical service order — always the same regardless of how services
+  // happen to be listed on the account record
+  const SVC_ORDER = ['unipro','filterman','gto','allpro','quality3','termac'];
+  const orderedServices = SVC_ORDER.filter(svc => svState.selectedServices.includes(svc));
+  const surveySteps = orderedServices.map(svc=>({
     id: svc,
     label: SVC_LABEL[svc]||svc,
     panel: SVC_PANEL[svc]
@@ -5585,17 +5582,30 @@ function svGoStep(panelIdx){
   else svGotoStep(panelIdx); // fallback
 }
 
+// Build sidebar HTML fresh from the real step list (only services actually
+// selected for this visit appear — no more hardcoded "UniPro/Filter Man/GTO"
+// items showing up regardless of what was picked on the Services screen).
+function svRenderSidebarItems(){
+  const el = document.getElementById('svSidebarItems');
+  if (!el || !_svSteps.length) return;
+  el.innerHTML = _svSteps.map((step, i) => {
+    const num = i + 1;
+    return `<div class="sv-sidebar-item" id="svNavStep${i}" onclick="svGotoStep(${i})"><div class="sv-sidebar-num">${num}</div>${step.label}</div>`;
+  }).join('');
+}
+
 function svUpdateSidebar(){
-  const step = _svSteps[svState.currentStep];
-  if (!step) return;
-  const currentPanel = step.panel;
-  for (let i = 0; i <= 8; i++) {
-    const el = document.getElementById('svNav'+i);
-    if (!el) continue;
+  // Rebuild sidebar items in case the step list changed (services were
+  // added/removed) since the last render.
+  svRenderSidebarItems();
+  const currentIdx = svState.currentStep;
+  _svSteps.forEach((step, i) => {
+    const el = document.getElementById('svNavStep'+i);
+    if (!el) return;
     el.classList.remove('active','done');
-    if (i === currentPanel) el.classList.add('active');
-    else if (i < currentPanel) el.classList.add('done');
-  }
+    if (i === currentIdx) el.classList.add('active');
+    else if (i < currentIdx) el.classList.add('done');
+  });
 }
 
 // ══════════════════════════════════════════════════════
