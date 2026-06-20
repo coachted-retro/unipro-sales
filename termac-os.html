@@ -1673,19 +1673,22 @@ function addRecent(tab,record){
    OPEN / CLOSE
 ══════════════════════════════════════ */
 let crmCurrentTab='leads';
-function openCRM(tab){
+function openCRM(tab, viaDmsDashboard){
   crmCurrentTab=tab||'leads';
   document.getElementById('crmOverlay').classList.add('open');
   const role = _currentUser?.role;
   const isReception = role === 'reception';
 
-  // Call List (cold-call pool) is DMS-only -- Ted's explicit call: it's
-  // specifically a DMS tool, it doesn't belong on the Sales Dashboard
-  // even for managers. Everyone else (rep, manager, division, reception)
-  // gets the tab button hidden entirely, not just access-restricted,
-  // since the goal is zero clutter for sales.
+  // Call List (cold-call pool) belongs to the DMS tool, not to a role tier --
+  // Ted's call: it must never appear on the Sales Dashboard, but it DOES
+  // belong on the nav whenever someone is actually inside the DMS Dashboard.
+  // DMS always sees it (regardless of entry point). Manager only sees it
+  // when they arrived via the DMS Dashboard button (viaDmsDashboard=true) --
+  // not when they're on the Sales Dashboard (openCRM('leads') direct call).
+  // Everyone else gets the tab button hidden entirely, not just
+  // access-restricted, since the goal is zero clutter for sales.
   const dmsTabBtn = document.getElementById('crmTabDmsCalls');
-  if (dmsTabBtn) dmsTabBtn.style.display = (role === 'dms') ? '' : 'none';
+  if (dmsTabBtn) dmsTabBtn.style.display = (role === 'dms' || (role === 'manager' && viaDmsDashboard)) ? '' : 'none';
 
   // Reception gets her own simplified "Reception" tab — same underlying
   // lead pool as Leads, just relabeled and grouped with the DMS dashboard
@@ -1722,7 +1725,7 @@ function openCRM(tab){
 // team per Ted) lands on her Reception tab instead since she can't see
 // the cold-call pool.
 function openDmsDashboard(){
-  openCRM(_currentUser?.role === 'reception' ? 'leads' : 'dms_coldcall');
+  openCRM(_currentUser?.role === 'reception' ? 'leads' : 'dms_coldcall', true);
 }
 // Keeps the "📋 Call List" nav badge in sync with the actual pool size --
 // called on every CRM open, plus right after a CSV import adds new records,
@@ -12793,9 +12796,10 @@ function applyRoleAccess(user) {
     bidsNav.style.display = isTed ? '' : 'none';
   }
 
-  // Home-page Sales/DMS Dashboard buttons — same access rule as the CRM
-  // tabs they deep-link into. DMS dashboard stays hidden from everyone
-  // except dms/manager, matching the dms_coldcall tab's existing gating.
+  // Home-page Sales/DMS Dashboard buttons — visible to dms/manager/reception.
+  // Manager gets the button, but the Call List tab inside only shows for
+  // manager when they actually arrive via this button (see openCRM's
+  // viaDmsDashboard param) — never on the Sales Dashboard.
   const salesDashBtn = document.getElementById('salesDashBtn');
   const salesRoles = ['rep','manager','div_unipro','div_gto','div_filterman','div_allpro'];
   if (salesDashBtn) salesDashBtn.style.display = salesRoles.includes(user.role) ? '' : 'none';
