@@ -1238,6 +1238,7 @@ setTimeout(function(){ if(typeof TECHS!=='undefined') renderLB('score'); }, 200)
       <button class="crm-btn" id="crmHarvestBtn" onclick="harvestRunLive()" style="background:#F2B705;color:#1A1D21;display:none">🌾 Harvest PA Leads</button>
       <button class="crm-btn" id="crmHarvestDEBtn" onclick="harvestRunLiveDE()" style="background:#F2B705;color:#1A1D21;display:none">🌾 Harvest DE Leads</button>
       <button class="crm-btn" id="crmHarvestDCBtn" onclick="harvestRunLiveDC()" style="background:#F2B705;color:#1A1D21;display:none">🌾 Harvest DC Leads</button>
+      <button class="crm-btn" id="crmHarvestNJBtn" onclick="harvestRunLiveNJ()" style="background:#F2B705;color:#1A1D21;display:none">🌾 Harvest NJ Leads</button>
       <button class="crm-btn" id="crmHarvestCMSBtn" onclick="harvestRunLiveCMSFireSafety()" style="background:#DC2626;color:#fff;display:none">🚨 Harvest Fire Safety Citations</button>
       <button class="crm-btn" id="crmSourcesBtn" onclick="openLeadSources()" style="background:#fff;color:#1A1D21;border:1.5px solid var(--line);display:none">📡 Lead Sources</button>
       <button class="crm-btn" id="crmOrphanedBtn" onclick="openOrphanedReport()" style="background:#FEE2E2;color:#991B1B;border:1.5px solid #99181B40;display:none">🔍 Orphaned Customers</button>
@@ -1703,6 +1704,8 @@ function switchCRMTab(tab){
   if (harvestDEBtn) harvestDEBtn.style.display = (tab === 'leads') ? '' : 'none';
   const harvestDCBtn = document.getElementById('crmHarvestDCBtn');
   if (harvestDCBtn) harvestDCBtn.style.display = (tab === 'leads') ? '' : 'none';
+  const harvestNJBtn = document.getElementById('crmHarvestNJBtn');
+  if (harvestNJBtn) harvestNJBtn.style.display = (tab === 'leads') ? '' : 'none';
   const harvestCMSBtn = document.getElementById('crmHarvestCMSBtn');
   if (harvestCMSBtn) harvestCMSBtn.style.display = (tab === 'leads') ? '' : 'none';
   const sourcesBtn = document.getElementById('crmSourcesBtn');
@@ -8334,6 +8337,165 @@ async function harvestRunLiveDC(){
   setTimeout(() => { if(banner) banner.style.display = 'none'; }, 15000);
 }
 
+// ── New Jersey: NJ Construction Permit Data, data.nj.gov (statewide).
+// Unlike PA/DE/DC, NJ has no centralized business-license open-data feed —
+// licensing there is administered locally, county by county, and the
+// 3 county health-inspection portals found earlier in this project
+// (Burlington/Camden/Mercer) turned out to be per-record PDF report
+// systems, not bulk-queryable APIs (confirmed directly: fetching one
+// Burlington report returned a rendered PDF by record ID, no list/search
+// endpoint). This dataset is the best statewide alternative found: every
+// construction permit and certificate issued under the NJ Uniform
+// Construction Code across all 566 municipalities. The UCC's four basic
+// subcodes are building, electrical, FIRE PROTECTION, and plumbing
+// (confirmed via NJ DCA's own UCC documentation) — so a new restaurant
+// buildout or kitchen renovation shows up here the same way it shows up
+// in Philadelphia's L&I Building & Zoning Permits feed, just statewide
+// instead of one city.
+//
+// CONFIRMED REAL: dataset page at data.nj.gov/Reference-Data/NJ-
+// Construction-Permit-Data/w9se-dmra exists and is live; "Developers"
+// link on the page points to dev.socrata.com, confirming this runs on
+// Socrata (same platform as PA/DE/DC, which explicitly documents CORS
+// support for direct browser access — see dev.socrata.com/docs/cors-and-
+// jsonp). Pulled one real sample row via the live rows.xml export:
+//   ABSECON, ATLANTIC, 00000006, 17-90264, Certificate,
+//   2017-10-02T00:00:00, 2021-09-22T00:00:00, Alteration,
+//   Certificate of Approval, 12000
+// confirming the dataset is real and giving the rough column order
+// (Municipality, County, an ID, Permit Number, Record Type, two dates,
+// Permit Type, sub-status, a numeric value — likely cost). The full
+// export is 20MB+ (couldn't fetch it whole to read the header row), and
+// the Socrata API Foundry schema page for this exact dataset
+// (dev.socrata.com/foundry/data.nj.gov/w9se-dmra) is JavaScript-rendered,
+// so the EXACT API field names (Socrata's lowercase_with_underscores
+// normalization of the display names above) are NOT independently
+// confirmed the way DE/DC's were.
+//
+// HANDLING THAT HONESTLY: rather than hardcode guessed field names and
+// risk a third silent failure (after the CMS POST→GET→CORS saga), this
+// harvester queries with NO field-specific filter at all (just $limit —
+// nothing to get wrong) and extracts values with fuzzy key-matching
+// against whatever the live response actually contains (findField()
+// below) instead of exact guessed names. This is more robust than a
+// literal guess, but it's still a best-effort extraction, not a
+// confirmed schema — if a field comes back empty across the board, that's
+// the signal something needs a second look, same self-diagnosing
+// principle as every other harvester here.
+//
+// NO ZIP CODE in this dataset (Municipality + County only, per the
+// sample row) — unlike the other harvesters, these leads can't be
+// auto-routed to a rep via getRepForZip(). They land in the pool
+// unassigned with Municipality/County visible, for manual territory
+// assignment rather than a guessed/wrong ZIP.
+const HARVEST_NJ_PERMITS_URL = 'https://data.nj.gov/resource/w9se-dmra.json';
+
+function findField(obj, candidates) {
+  for (const c of candidates) {
+    if (obj[c] !== undefined && obj[c] !== null && obj[c] !== '') return obj[c];
+  }
+  const keys = Object.keys(obj);
+  for (const c of candidates) {
+    const match = keys.find(k => k.toLowerCase().replace(/[^a-z]/g, '').includes(c.toLowerCase().replace(/[^a-z]/g, '')));
+    if (match && obj[match] !== '' && obj[match] != null) return obj[match];
+  }
+  return '';
+}
+
+async function harvestRunLiveNJ(){
+  const banner = document.getElementById('harvestStatusBanner');
+  const btn = document.getElementById('crmHarvestNJBtn');
+  if (!banner) return;
+
+  banner.style.display = 'block';
+  banner.innerHTML = '🌾 Pulling recent construction permits from NJ open data…';
+  if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; }
+
+  // No $where filter -- field names aren't confirmed, so nothing here to
+  // get wrong syntactically. $limit only; all matching/extraction happens
+  // client-side via findField() against whatever keys actually come back.
+  const params = new URLSearchParams({ '$limit': '50' });
+
+  try {
+    const res = await fetch(HARVEST_NJ_PERMITS_URL + '?' + params.toString());
+    let records;
+    try { records = await res.json(); } catch(parseErr) { records = null; }
+    if (!res.ok) {
+      const detail = records && (records.message || records.description) ? (records.message || records.description) : null;
+      throw new Error(detail ? `HTTP ${res.status} — ${detail}` : `HTTP ${res.status}`);
+    }
+    if (!Array.isArray(records)) throw new Error('Unexpected response shape from NJ open data — expected an array of records.');
+
+    if (!records.length) {
+      banner.innerHTML = '✅ Connected successfully — 0 records returned. The endpoint is live; the dataset may just be empty for this query.';
+      if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
+      logHarvestRun(0, 0, 'success-empty');
+      return;
+    }
+
+    const existing = crmLoad('leads');
+    const existingKeys = new Set(existing.map(l => (l.business||'').toLowerCase() + '|' + (l.zip||'')));
+
+    let added = 0;
+    let blankSkipped = 0;
+    const newLeads = [];
+    const now = Date.now();
+
+    records.forEach((r, i) => {
+      const municipality = findField(r, ['municipality', 'town', 'city']);
+      const county = findField(r, ['county']);
+      const permitNum = findField(r, ['permitnumber', 'permitno', 'recordnumber']);
+      const recordType = findField(r, ['recordtype', 'type']);
+      const permitType = findField(r, ['permittype', 'worktype', 'category']);
+      const dateRaw = findField(r, ['issuedate', 'date', 'permitdate']);
+
+      if (!municipality && !permitNum) { blankSkipped++; return; } // skip rows we genuinely can't read rather than guess
+
+      const business = permitType ? `${permitType} Permit — ${municipality||'NJ'}` : `Construction Permit — ${municipality||'NJ'}`;
+      const key = business.toLowerCase() + '|';
+      if (existingKeys.has(key)) return; // dedupe against current pool
+
+      const dateStr = dateRaw ? (new Date(dateRaw).toString() !== 'Invalid Date' ? new Date(dateRaw).toISOString().slice(0,10) : String(dateRaw)) : 'unknown date';
+      const addr = [municipality, county ? county + ' County' : '', 'NJ'].filter(Boolean).join(', ');
+
+      newLeads.push({
+        id: 'harvest_nj_' + now + '_' + i,
+        name: 'Owner — TBD',
+        business: business,
+        phone: '', email: '',
+        address: addr, zip: '', company: 'UniPro', status: 'new',
+        services: ['unipro'], score: 5,
+        source: 'Live Harvester — NJ Construction Permits',
+        created: now,
+        notes: `${recordType||'Permit'} #${permitNum||'—'} issued ${dateStr} in ${municipality||'NJ'}${county?', '+county+' County':''}. NJ Uniform Construction Code includes the fire protection subcode -- worth a call to check on suppression/extinguisher needs for the buildout. No ZIP in source data -- needs manual territory assignment.`,
+        activityLog: [{
+          ts: now, type:'system', icon:'🌾',
+          title:'Harvested — NJ Open Data (live)',
+          note:`Permit #${permitNum||'—'} issued ${dateStr}`,
+          who:'System'
+        }]
+      });
+      existingKeys.add(key);
+      added++;
+    });
+
+    const allLeads = [...newLeads, ...existing];
+    crmSave('leads', allLeads);
+
+    banner.innerHTML = `✅ Harvest complete — checked ${records.length} recent NJ construction permits, added <b>${added} new lead${added===1?'':'s'}</b> to the pool (${records.length - added - blankSkipped} already on file, ${blankSkipped} unreadable, skipped). These have no ZIP — find them under "New" status and assign territory manually.`;
+    logHarvestRun(records.length, added, 'success');
+
+    if (typeof renderCRMView === 'function') renderCRMView();
+
+  } catch (e) {
+    banner.innerHTML = `⚠️ Harvest failed: ${e.message}. This is a real error from the live NJ open data API, not a placeholder — the dataset and platform are confirmed real (Socrata, same as PA/DE/DC), but the exact field names weren't independently confirmed against a live schema call. Check <a href="https://data.nj.gov/Reference-Data/NJ-Construction-Permit-Data/w9se-dmra" target="_blank" style="color:#5A4A00;text-decoration:underline">the live dataset page</a> and its "Access API" / "API Docs" button for the current column list.`;
+    logHarvestRun(0, 0, 'error: ' + e.message);
+  }
+
+  if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
+  setTimeout(() => { if(banner) banner.style.display = 'none'; }, 15000);
+}
+
 // ── CMS Fire Safety Deficiencies — national dataset, filtered to PA/NJ/DE/
 // MD/DC. UniPro + Quality III's single best lead source: every nursing
 // home cited for a fire-safety deficiency in the last 3 inspection cycles,
@@ -8913,6 +9075,9 @@ const LEAD_SOURCE_GROUPS = [
     { name:'Bucks County Dept. of Health — Inspections', status:'connected', note:'Live searchable restaurant/food facility violations.', url:'https://bucks-pa.healthinspections.us/' },
     { name:'Montgomery County Office of Public Health — Inspections', status:'connected', note:'County-run inspection search, 3 regional offices.', url:'https://webapp.montcopa.org/health/Inspections/' },
     { name:'Chester County (via PA Food Safety Database)', status:'connected', note:'Select "Chester County Health Department" under Jurisdiction when searching — it does NOT show up in a plain statewide search.', url:'https://www.pafoodsafety.pa.gov/web/inspection/publicinspectionsearch.aspx' },
+  ]},
+  { region:'New Jersey — Statewide', items:[
+    { name:'NJ Construction Permit Data (data.nj.gov)', status:'connected', note:'Statewide, all 566 municipalities, confirmed Socrata platform. Powers the Harvest NJ Leads button above. Best statewide alternative found -- NJ has no centralized business-license open-data feed the way PA/DE/DC do. NJ UCC includes a fire protection subcode, so new construction/renovation permits are a direct fire-protection lead signal. No ZIP in source data -- leads need manual territory assignment. Field names extracted via fuzzy matching, not an independently confirmed schema -- worth a look if results seem thin.', url:'https://data.nj.gov/Reference-Data/NJ-Construction-Permit-Data/w9se-dmra' },
   ]},
   { region:'Burlington / Camden / Mercer (NJ)', items:[
     { name:'Burlington County Health Dept. — Inspections', status:'connected', note:'Live, covers all municipalities.', url:'https://bcnj.co.burlington.nj.us/Views/HealthInspections/' },
