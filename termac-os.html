@@ -1223,6 +1223,7 @@ setTimeout(function(){ if(typeof TECHS!=='undefined') renderLB('score'); }, 200)
         <option value="winback">Win-Back</option>
       </select>
       <button class="crm-btn" id="crmHarvestBtn" onclick="harvestRunLive()" style="background:#F2B705;color:#1A1D21;display:none">🌾 Harvest Live Leads</button>
+      <button class="crm-btn" id="crmSourcesBtn" onclick="openLeadSources()" style="background:#fff;color:#1A1D21;border:1.5px solid var(--line);display:none">📡 Lead Sources</button>
       <button class="crm-btn primary" id="crmAddBtn" onclick="openAddModal()">+ Add New</button>
     </div>
     <!-- harvest status banner -->
@@ -1645,6 +1646,8 @@ function switchCRMTab(tab){
   }
   const harvestBtn = document.getElementById('crmHarvestBtn');
   if (harvestBtn) harvestBtn.style.display = (tab === 'leads') ? '' : 'none';
+  const sourcesBtn = document.getElementById('crmSourcesBtn');
+  if (sourcesBtn) sourcesBtn.style.display = (tab === 'leads') ? '' : 'none';
   renderCRMView();
 }
 
@@ -7756,6 +7759,103 @@ function bidsRenderSources(){
   }).join('');
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+//  LEAD SOURCES REFERENCE PANEL — visible to every rep/DMS staffer with
+//  Leads access (same toggle as the Harvest button). Pure reference links,
+//  no automation behind these except the Philadelphia Business Licenses
+//  source, which already powers the Harvest Live Leads button above it.
+//  Compiled from a 3-phase research pass (Philadelphia/PA statewide, PA/NJ
+//  home counties, DE/MD/DC) — every "Verified Live" entry was fetched
+//  directly with real rows confirmed, not assumed.
+// ══════════════════════════════════════════════════════════════════════════
+
+const LEAD_SOURCE_GROUPS = [
+  { region:'Philadelphia', items:[
+    { name:'Business Licenses (food/restaurant)', status:'connected', note:'Powers the Harvest Live Leads button above — new licenses daily, no login.', url:'https://opendataphilly.org/datasets/licenses-and-inspections-business-licenses/' },
+    { name:'L&I Building & Zoning Permits', status:'known', note:'New construction, kitchen buildouts, renovations.', url:'https://opendataphilly.org/datasets/licenses-and-inspections-building-and-zoning-permits/' },
+    { name:'L&I Code Violations', status:'known', note:'Fire/safety code violations — pain-point prospects.', url:'https://opendataphilly.org/datasets/licenses-and-inspections-code-violations/' },
+    { name:'eCLIPSE Public Search', status:'known', note:'Manual case-by-case permit/violation lookup, not a bulk feed.', url:'https://eclipse.phila.gov' },
+  ]},
+  { region:'Pennsylvania — Statewide', items:[
+    { name:'PA Liquor Control Board — License Search', status:'connected', note:'New liquor license = new restaurant or bar opening. Also check the Restaurant License Auction for licenses changing hands.', url:'https://www.pa.gov/agencies/lcb/licensing/search-licenses.html' },
+    { name:'PASDA (PA Spatial Data Access)', status:'known', note:'Statewide GIS clearinghouse — may include county-level permit layers.', url:'https://www.pasda.psu.edu' },
+  ]},
+  { region:"Bucks / Montgomery / Chester (PA)", items:[
+    { name:'Bucks County Dept. of Health — Inspections', status:'connected', note:'Live searchable restaurant/food facility violations.', url:'https://bucks-pa.healthinspections.us/' },
+    { name:'Montgomery County Office of Public Health — Inspections', status:'connected', note:'County-run inspection search, 3 regional offices.', url:'https://webapp.montcopa.org/health/Inspections/' },
+    { name:'Chester County (via PA Food Safety Database)', status:'connected', note:'Select "Chester County Health Department" under Jurisdiction when searching — it does NOT show up in a plain statewide search.', url:'https://www.pafoodsafety.pa.gov/web/inspection/publicinspectionsearch.aspx' },
+  ]},
+  { region:'Burlington / Camden / Mercer (NJ)', items:[
+    { name:'Burlington County Health Dept. — Inspections', status:'connected', note:'Live, covers all municipalities.', url:'https://bcnj.co.burlington.nj.us/Views/HealthInspections/' },
+    { name:'Camden County Health & Human Services — Inspections', status:'connected', note:'Searchable, plus free email alerts for watched facilities.', url:'https://www.camdencounty.com/service/health-human-services/restaurant-inspections/' },
+    { name:'Mercer County Health Dept. — Inspections', status:'connected', note:'Itemized violation codes, routine + follow-up visits.', url:'https://mercercountyhealthdepartment.com/inspection/' },
+    { name:'NJ ABC Online (POSSE) — Liquor Licenses', status:'needs_registration', note:'Statewide search covers all NJ counties — no town-by-town chasing.', url:'https://abc.lps.nj.gov/ABCPublic/' },
+  ]},
+  { region:'Delaware (statewide — all 3 counties)', items:[
+    { name:'DE Business Licenses (open data)', status:'connected', note:'56,000+ active records, statewide. Best harvester candidate found in this project — same pattern as the Philly button, but covers the whole state.', url:'https://data.delaware.gov/Licenses-and-Certifications/Delaware-Business-Licenses/5zy2-grhr' },
+    { name:'DE Food Establishment Inspection Violations', status:'connected', note:'Statewide, all 3 counties in one feed, geocoded lat/long included.', url:'https://data.delaware.gov/Health/Food-Establishment-Inspection-Violations/384s-wygj' },
+    { name:'DE Bid Notifications', status:'needs_registration', note:'Free registration for bid alerts by industry — single statewide portal.', url:'https://bids.delaware.gov' },
+  ]},
+  { region:"Maryland — Montgomery & Prince George's County", items:[
+    { name:'Montgomery County MD — Food Inspection (open data)', status:'connected', note:'Most detailed feed found anywhere in the territory — itemized pass/fail per check (hot holding temp, pest control, etc.), not just an overall result.', url:'https://data.montgomerycountymd.gov/Health-and-Human-Services/Food-Inspection/5pue-gfbe' },
+    { name:"Prince George's County MD — Food Inspection (open data)", status:'known', note:'Same open-data platform family as Montgomery County.', url:'https://data.princegeorgescountymd.gov/Health/Food-Inspection/umjn-t2iz' },
+    { name:'eMaryland Marketplace Advantage (eMMA)', status:'known', note:'Statewide bid board — covers both counties, no county-by-county version needed.', url:'https://procurement.maryland.gov' },
+  ]},
+  { region:'Washington, DC', items:[
+    { name:'DC Basic Business License — Last 30 Days', status:'connected', note:'Pre-filtered to NEW licenses only. Best single lead feed found in this entire project.', url:'https://opendata.dc.gov/datasets/a9ac9f8d9d1546e8bd6610b48cb29810_1' },
+    { name:'DC Basic Business Licenses (full)', status:'connected', note:'All active + historical DC business licenses.', url:'https://opendata.dc.gov/datasets/DCGIS::basic-business-licenses/about' },
+    { name:'DC Liquor Licenses (open data)', status:'known', note:'Citywide liquor license dataset.', url:'https://opendata.dc.gov/datasets/cabe9dcef0b344518c7fae1a3def7de1/about' },
+    { name:'DC Health — Food Establishment Inspections', status:'connected', note:'~7,500 establishments, single citywide jurisdiction — no fragmentation like PA/NJ counties.', url:'https://dc.healthinspections.us/' },
+  ]},
+  { region:'Institutional Bid Boards (territory-wide reference — not the Bids pipeline tool)', items:[
+    { name:'PA eMarketplace', status:'connected', note:'Browsable; full detail needs free Supplier Portal registration.', url:'https://www.emarketplace.state.pa.us/' },
+    { name:'NJSTART', status:'connected', note:'Browsable; full detail needs free vendor registration.', url:'https://www.njstart.gov/' },
+    { name:'Philadelphia PHLContracts', status:'needs_registration', note:'Free registration for full bid detail.', url:'https://www.phlcontracts.phila.gov/bso/' },
+    { name:'BidNet Direct (PA/NJ)', status:'needs_registration', note:'Aggregates 950+ PA/NJ public entities.', url:'https://www.bidnetdirect.com/pennsylvania' },
+    { name:'ConstructConnect', status:'paid', note:'1.4M+ active commercial construction projects, tracks Fire Suppression as a trade category.', url:'https://www.constructconnect.com' },
+  ]},
+  { region:'Not Yet Verified — Phase 4 Research Candidates', items:[
+    { name:'Municipal FOG / Grease Trap Compliance Permits', status:'known', note:'GTO-specific — every legal grease trap must hold one of these, issued by the local water/sewer authority. Confirmed real (Philadelphia PWD, WSSC Water covers Montgomery/Prince George\'s MD), but a public permit-holder list is not yet confirmed.', url:'#' },
+    { name:'Local Fire Marshal Commercial Occupancy Records', status:'known', note:'UniPro-specific equivalent of the FOG idea above — not yet researched.', url:'#' },
+    { name:'PA Restaurant & Lodging Association', status:'known', note:'Member directory — pre-qualified prospects, not yet verified.', url:'#' },
+    { name:'NJ Restaurant & Hospitality Association', status:'known', note:'Same idea, NJ — not yet verified.', url:'#' },
+    { name:'LoopNet — Former Restaurant Spaces', status:'known', note:'Re-leased restaurant space = guaranteed new kitchen build.', url:'https://www.loopnet.com' },
+  ]},
+];
+
+function renderLeadSources(){
+  const wrap = document.getElementById('leadSourcesList');
+  if (!wrap) return;
+  const statusLabel = {connected:'🟢 Verified Live', known:'🟡 Known / Untested', needs_registration:'🔒 Free Registration', paid:'🔴 Paid'};
+  const statusColor = {connected:['#E8F5E9','#3FA34D'], known:['#F3F4F6','#6B7280'], needs_registration:['#FFF3E0','#D8690B'], paid:['#FCE4EC','#C2185B']};
+  wrap.innerHTML = LEAD_SOURCE_GROUPS.map(group => `
+    <div style="margin-bottom:22px">
+      <div style="font-size:13px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--soft);margin-bottom:10px;padding-bottom:6px;border-bottom:1.5px solid var(--line)">${group.region}</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        ${group.items.map(s => {
+          const [bg, fg] = statusColor[s.status];
+          const clickable = s.url && s.url !== '#';
+          return `
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px;background:var(--bg);border-radius:8px">
+            <div style="min-width:0">
+              <div style="font-size:13px;font-weight:700;color:var(--ink)">${clickable ? `<a href="${s.url}" target="_blank" rel="noopener" style="color:var(--ink);text-decoration:none;border-bottom:1px dotted var(--soft)">${s.name} ↗</a>` : s.name}</div>
+              <div style="font-size:11px;color:var(--soft);margin-top:2px">${s.note}</div>
+            </div>
+            <span style="flex-shrink:0;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;padding:4px 10px;border-radius:20px;background:${bg};color:${fg};white-space:nowrap">${statusLabel[s.status]}</span>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`).join('');
+}
+
+function openLeadSources(){
+  document.getElementById('ovLeadSources').classList.add('open');
+  renderLeadSources();
+}
+function closeLeadSources(){
+  document.getElementById('ovLeadSources').classList.remove('open');
+}
+
 function bidsRenderWinLoss(){
   const bids = bidsLoad().filter(b => ['won','lost'].includes(b.status));
   const won = bids.filter(b=>b.status==='won');
@@ -13775,6 +13875,23 @@ window.uvCollectData = uvCollectData;
         </div>
         <button class="act-save-btn" style="margin-top:14px" onclick="bidsOpenManualEntry()">+ Paste In a Bid Manually</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<div class="full-overlay" id="ovLeadSources" style="z-index:380">
+  <div class="ov-header">
+    <h2>📡 Lead Sources — Full Territory</h2>
+    <div class="ov-header-btns">
+      <button class="ov-btn close" onclick="closeLeadSources()">✕</button>
+    </div>
+  </div>
+  <div class="ov-body" style="padding:22px;overflow-y:auto">
+    <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:20px;max-width:780px;margin:0 auto">
+      <div style="font-size:12px;color:var(--soft);line-height:1.6;margin-bottom:18px;padding:12px;background:var(--bg);border-radius:8px">
+        Every verified-live source was fetched directly with real data confirmed — not assumed. 🟡 sources are confirmed-live official platforms, not yet row-tested. Some require free registration or a paid subscription before you can pull data — see the badge on each.
+      </div>
+      <div id="leadSourcesList"></div>
     </div>
   </div>
 </div>
