@@ -8359,6 +8359,20 @@ async function harvestRunLiveDC(){
 // If the response shape differs from what's coded below, the catch
 // block surfaces the real error text, same self-diagnosing pattern that
 // found and fixed the DE business_activity/category mismatch.
+//
+// UPDATE (post-deploy): confirmed broken in production with a "Failed to
+// fetch" network error -- not an HTTP error response, a network-level
+// block before any response arrived. That signature is the classic CORS
+// preflight failure: a POST with Content-Type: application/json is not a
+// CORS "simple request," so the browser sends an OPTIONS preflight first,
+// and CMS's API evidently doesn't answer it. Rewritten below as plain GET
+// requests (one per state, simple "=" condition) to match every other
+// working harvester in this file (PA/DE/DC are all GET) and sidestep
+// preflight entirely. Bracket-notation query params (conditions[0]
+// [property]=...) follow DKAN's own documented JSON-to-querystring
+// conversion convention. If this still doesn't match the live schema,
+// each state's request now fails independently with a real HTTP/JSON
+// error surfaced in the banner, instead of one opaque blocked request.
 const HARVEST_CMS_FIRE_SAFETY_URL = 'https://data.cms.gov/provider-data/api/1/datastore/query/ifjz-ge4w/0';
 const HARVEST_CMS_TERRITORY_STATES = ['PA','NJ','DE','MD','DC'];
 
@@ -8371,36 +8385,39 @@ async function harvestRunLiveCMSFireSafety(){
   banner.innerHTML = '🌾 Pulling recent nursing home fire safety citations from CMS open data…';
   if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; }
 
-  const queryBody = {
-    conditions: [
-      { property: 'State', value: HARVEST_CMS_TERRITORY_STATES, operator: 'in' }
-    ],
-    limit: 40
-  };
-
   try {
-    const res = await fetch(HARVEST_CMS_FIRE_SAFETY_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(queryBody)
-    });
+    let allRecords = [];
+    let lastError = null;
+    let anySucceeded = false;
 
-    let payload;
-    try { payload = await res.json(); } catch(parseErr) { payload = null; }
-    if (!res.ok) {
-      const detail = payload && (payload.message || payload.error || payload.detail) ? (payload.message || payload.error || payload.detail) : null;
-      throw new Error(detail ? `HTTP ${res.status} — ${JSON.stringify(detail)}` : `HTTP ${res.status}`);
+    for (const state of HARVEST_CMS_TERRITORY_STATES) {
+      const params = new URLSearchParams({
+        'conditions[0][property]': 'State',
+        'conditions[0][value]': state,
+        'conditions[0][operator]': '=',
+        'limit': '10'
+      });
+      try {
+        const res = await fetch(HARVEST_CMS_FIRE_SAFETY_URL + '?' + params.toString());
+        let payload;
+        try { payload = await res.json(); } catch(parseErr) { payload = null; }
+        if (!res.ok) {
+          const detail = payload && (payload.message || payload.error || payload.detail) ? (payload.message || payload.error || payload.detail) : null;
+          throw new Error(detail ? `HTTP ${res.status} — ${JSON.stringify(detail)}` : `HTTP ${res.status}`);
+        }
+        const records = Array.isArray(payload) ? payload
+          : Array.isArray(payload && payload.results) ? payload.results
+          : Array.isArray(payload && payload.data) ? payload.data
+          : null;
+        if (records) { allRecords = allRecords.concat(records); anySucceeded = true; }
+      } catch (stateErr) {
+        lastError = stateErr; // one state failing shouldn't kill the whole harvest
+      }
     }
 
-    // Defensive unwrap -- DKAN query responses are typically a bare array
-    // of row objects, but some CMS endpoints wrap results in .results or
-    // .data. Check all three rather than assume.
-    const records = Array.isArray(payload) ? payload
-      : Array.isArray(payload && payload.results) ? payload.results
-      : Array.isArray(payload && payload.data) ? payload.data
-      : null;
+    if (!anySucceeded) throw (lastError || new Error('All state queries failed with no detail.'));
 
-    if (!records) throw new Error('Unexpected response shape from CMS open data — expected an array of citation records, got: ' + JSON.stringify(payload).slice(0,200));
+    const records = allRecords;
 
     if (!records.length) {
       banner.innerHTML = '✅ Connected successfully — 0 matching fire safety citations returned for this query. The endpoint is live; check the State filter values against the live response.';
