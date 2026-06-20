@@ -1226,6 +1226,7 @@ setTimeout(function(){ if(typeof TECHS!=='undefined') renderLB('score'); }, 200)
       <button class="crm-btn" id="crmHarvestDEBtn" onclick="harvestRunLiveDE()" style="background:#F2B705;color:#1A1D21;display:none">🌾 Harvest DE Leads</button>
       <button class="crm-btn" id="crmHarvestDCBtn" onclick="harvestRunLiveDC()" style="background:#F2B705;color:#1A1D21;display:none">🌾 Harvest DC Leads</button>
       <button class="crm-btn" id="crmSourcesBtn" onclick="openLeadSources()" style="background:#fff;color:#1A1D21;border:1.5px solid var(--line);display:none">📡 Lead Sources</button>
+      <button class="crm-btn" id="crmOrphanedBtn" onclick="openOrphanedReport()" style="background:#FEE2E2;color:#991B1B;border:1.5px solid #99181B40;display:none">🔍 Orphaned Customers</button>
       <button class="crm-btn primary" id="crmAddBtn" onclick="openAddModal()">+ Add New</button>
     </div>
     <!-- harvest status banner -->
@@ -1273,6 +1274,7 @@ function crmLoad(key){ try{ return JSON.parse(localStorage.getItem('termac_crm_'
       { id:'acc003', name:'Midtown Office Plaza', business:'Midtown Office Plaza', status:'active', services:['UniPro'], annualValue:5800, nextDue:'2026-04-01', lastService:'2025-10-01', healthScore:2, assignedRep:'Ted Scholl', openDeficiencies:0, city:'Langhorne', zip:'19047', lastCheckin:Date.now()-95*86400000, createdAt:Date.now()-300*86400000 },
       { id:'acc004', name:'Fairless Hills Retirement Center', business:'Fairless Hills Retirement Center', status:'active', services:['UniPro','Filter Man','GTO','Termac'], annualValue:12400, nextDue:'2026-10-20', lastService:'2026-04-20', healthScore:5, assignedRep:'Ted Scholl', openDeficiencies:0, city:'Fairless Hills', zip:'19030', lastCheckin:Date.now()-10*86400000, createdAt:Date.now()-400*86400000 },
       { id:'acc005', name:'Eastside Grille & Bar', business:'Eastside Grille & Bar', status:'inactive', services:['Quality III','Filter Man'], annualValue:900, nextDue:'2026-02-20', lastService:'2025-08-20', healthScore:1, assignedRep:'Ted Scholl', openDeficiencies:2, city:'Levittown', zip:'19054', lastCheckin:Date.now()-120*86400000, createdAt:Date.now()-500*86400000 },
+      { id:'acc006', name:'Harbor View Diner', business:'Harbor View Diner', status:'active', services:['UniPro','GTO'], annualValue:2200, nextDue:'2026-07-10', lastService:'2026-01-10', healthScore:3, assignedRep:'Unassigned', openDeficiencies:0, city:'Trenton', zip:'08611', lastCheckin:Date.now()-60*86400000, createdAt:Date.now()-90*86400000 },
     ]);
     console.log('Demo accounts seeded');
   }
@@ -1654,6 +1656,8 @@ function switchCRMTab(tab){
   if (harvestDCBtn) harvestDCBtn.style.display = (tab === 'leads') ? '' : 'none';
   const sourcesBtn = document.getElementById('crmSourcesBtn');
   if (sourcesBtn) sourcesBtn.style.display = (tab === 'leads') ? '' : 'none';
+  const orphanedBtn = document.getElementById('crmOrphanedBtn');
+  if (orphanedBtn) orphanedBtn.style.display = (tab === 'accounts') ? '' : 'none';
   renderCRMView();
 }
 
@@ -1778,7 +1782,10 @@ function renderCard(tab,r){
   }).join('');
   let extraInfo='';
   if(tab==='accounts'){
-    extraInfo=`<div class="crm-card-tag">Next: ${r.nextDue||'—'}</div><div class="crm-card-tag">$${(r.annualValue||0).toLocaleString()}/yr</div>`;
+    const repTag = isOrphanedAccount(r)
+      ? `<div class="crm-card-tag" style="background:#FEE2E2;color:#991B1B">⚠ No Rep</div>`
+      : `<div class="crm-card-tag">${r.repAssignmentType==='temporary'?'⏳ ':''}${escH(r.assignedRep)}</div>`;
+    extraInfo=`<div class="crm-card-tag">Next: ${r.nextDue||'—'}</div><div class="crm-card-tag">$${(r.annualValue||0).toLocaleString()}/yr</div>${repTag}`;
   } else if(tab==='leads'){
     extraInfo=`<div class="crm-card-tag">Score: ${r.score||'—'}/10</div><div class="crm-card-tag">Source: ${escH(r.source||'—')}</div>`;
   }
@@ -1979,6 +1986,19 @@ function buildModalForm(tab,r){
   }).join('');
   const statusOpts=tab==='accounts'?['active','inactive','winback']:tab==='leads'?['new','hot','warm','cold']:['new'];
   const stOpts=statusOpts.map(s=>`<option ${v('status')===s?'selected':''}>${s}</option>`).join('');
+  let repFields = '';
+  if (tab === 'accounts') {
+    const reps = collectKnownReps();
+    const currentRep = (r && r.assignedRep && r.assignedRep !== 'Unassigned') ? r.assignedRep : '';
+    const repOpts = '<option value="">— Unassigned —</option>' + reps.map(rp=>`<option ${currentRep===rp?'selected':''}>${escH(rp)}</option>`).join('');
+    const currentType = (r && r.repAssignmentType) || 'permanent';
+    repFields = `
+    <label>Assigned Rep</label><select id="mf_assignedRep">${repOpts}</select>
+    <label>Assignment Type</label><select id="mf_repType">
+      <option value="permanent" ${currentType==='permanent'?'selected':''}>Permanent</option>
+      <option value="temporary" ${currentType==='temporary'?'selected':''}>Temporary (until rep hired)</option>
+    </select>`;
+  }
   return `
     <label>Name</label><input id="mf_name" value="${v('name')}">
     <label>Business Name</label><input id="mf_business" value="${v('business')||v('contact')||''}">
@@ -1988,6 +2008,7 @@ function buildModalForm(tab,r){
     <label>Company (Division)</label><select id="mf_company">${coOpts}</select>
     <label>Status</label><select id="mf_status">${stOpts}</select>
     <label>Services Interested In</label><div class="svc-grid">${svcBoxes}</div>
+    ${repFields}
     <label>Notes</label><textarea id="mf_notes" rows="3">${v('notes')}</textarea>
   `;
 }
@@ -1995,6 +2016,7 @@ function buildModalForm(tab,r){
 function saveModalRecord(){
   const data=crmLoad(_modalTab);
   const svcs=Array.from(document.querySelectorAll('#crmModalBody input[name="services"]:checked')).map(c=>c.value);
+  const existing = _modalId ? (data.find(x=>x.id===_modalId)||{}) : {};
   const rec={
     id: _modalId||(_modalTab.charAt(0).toUpperCase()+String(Date.now()).slice(-5)),
     name: document.getElementById('mf_name').value.trim(),
@@ -2007,9 +2029,33 @@ function saveModalRecord(){
     status: document.getElementById('mf_status').value,
     services: svcs,
     notes: document.getElementById('mf_notes').value.trim(),
-    created: _modalId?(data.find(x=>x.id===_modalId)||{}).created||Date.now():Date.now(),
+    created: _modalId?existing.created||Date.now():Date.now(),
     updated: Date.now()
   };
+  if (_modalTab === 'accounts') {
+    const repEl = document.getElementById('mf_assignedRep');
+    const typeEl = document.getElementById('mf_repType');
+    if (repEl) {
+      const newRep = repEl.value || 'Unassigned';
+      const newType = typeEl?.value || 'permanent';
+      const repChanged = (existing.assignedRep||'Unassigned') !== newRep;
+      rec.assignedRep = newRep;
+      rec.repAssignmentType = newType;
+      if (repChanged) {
+        rec.repAssignedAt = Date.now();
+        rec.activityLog = existing.activityLog || [];
+        rec.activityLog.push({
+          ts: Date.now(),
+          type:'office',
+          icon: newRep==='Unassigned' ? '⚠️' : (newType==='temporary' ? '⏳' : '📋'),
+          title: newRep==='Unassigned' ? 'Rep Unassigned' : `${newType==='temporary'?'Temporarily a':'A'}ssigned to ${newRep}`,
+          note: newRep==='Unassigned' ? 'No rep currently assigned to this account.' :
+                (newType==='temporary' ? `Temporary coverage by ${newRep} until a rep is hired for this area.` : `Permanently assigned to ${newRep}.`),
+          who: _currentUser?.name || 'Manager'
+        });
+      }
+    }
+  }
   if(!rec.name){ alert('Name is required.'); return; }
   if(_modalId){
     const idx=data.findIndex(x=>x.id===_modalId);
@@ -8494,6 +8540,118 @@ function openLeadSources(){
 }
 function closeLeadSources(){
   document.getElementById('ovLeadSources').classList.remove('open');
+}
+
+// ── ORPHANED CUSTOMERS REPORT ──────────────────────────────────────────────
+// An account counts as orphaned if it has no rep on file at all, or the
+// rep field is literally the 'Unassigned' sentinel already used elsewhere
+// in this codebase (see rptGetAccounts's normalization, which falls back
+// to 'Unassigned' the same way).
+function isOrphanedAccount(r){
+  return !r.assignedRep || r.assignedRep === 'Unassigned';
+}
+function getOrphanedAccounts(){
+  return (crmLoad('accounts')||[]).filter(isOrphanedAccount);
+}
+
+// Collects every rep name seen across accounts/leads/contacts, same
+// pattern rptPopulateRepFilter already uses for the Reports rep filter --
+// kept consistent rather than building a second, possibly-divergent list.
+function collectKnownReps(){
+  const reps = new Set();
+  ['accounts','leads','contacts'].forEach(tab=>{
+    (crmLoad(tab)||[]).forEach(r=>{
+      if (r.assignedRep && r.assignedRep !== 'Unassigned') reps.add(r.assignedRep);
+      if (r.rep) reps.add(r.rep);
+    });
+  });
+  // Also include anyone set up as a field rep in the user roster, even if
+  // they don't have any accounts yet (e.g. a brand-new hire).
+  Object.values(TERMAC_USERS||{}).forEach(u=>{ if (u.role==='rep') reps.add(u.name); });
+  return Array.from(reps).sort();
+}
+
+function openOrphanedReport(){
+  document.getElementById('ovOrphaned').classList.add('open');
+  renderOrphanedReport();
+}
+function closeOrphanedReport(){
+  document.getElementById('ovOrphaned').classList.remove('open');
+}
+
+function renderOrphanedReport(){
+  const wrap = document.getElementById('orphanedList');
+  if (!wrap) return;
+  const orphaned = getOrphanedAccounts();
+  const reps = collectKnownReps();
+  const repOptions = '<option value="">— Select Rep —</option>' + reps.map(r=>`<option value="${escH(r)}">${escH(r)}</option>`).join('');
+
+  if (!orphaned.length){
+    wrap.innerHTML = `<div style="text-align:center;padding:32px;color:var(--soft)">
+      <div style="font-size:32px;margin-bottom:10px">✅</div>
+      <div style="font-size:14px;font-weight:700;color:var(--ink)">No orphaned accounts</div>
+      <div style="font-size:12px;margin-top:4px">Every account has a rep on file.</div>
+    </div>`;
+    return;
+  }
+
+  wrap.innerHTML = `<div style="font-size:12px;color:var(--soft);margin-bottom:14px">${orphaned.length} account${orphaned.length===1?'':'s'} with no rep assigned</div>` +
+    orphaned.map(a => `
+    <div class="crm-card" style="margin-bottom:10px" id="orphanCard_${a.id}">
+      <div class="crm-card-header">
+        <div>
+          <div class="crm-card-name">${escH(a.name||a.business)}</div>
+          <div class="crm-card-sub">${escH(a.city||'')}${a.zip?', '+escH(a.zip):''}</div>
+        </div>
+        <span class="crm-badge" style="background:#FEE2E2;color:#991B1B">No Rep</span>
+      </div>
+      <div class="crm-card-meta">
+        <div class="crm-card-tag" style="background:#EBF2FD;color:var(--blue)">${escH(a.company||'')}</div>
+        ${a.zip?`<div class="crm-card-tag">${escH(a.zip)}</div>`:''}
+        <div class="crm-card-tag">$${(a.annualValue||0).toLocaleString()}/yr</div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;padding-top:10px;border-top:1px solid var(--line)">
+        <select id="orphanRep_${a.id}" style="flex:1;min-width:160px;padding:7px 10px;border:1.5px solid var(--line);border-radius:6px;font-size:12px">${repOptions}</select>
+        <select id="orphanType_${a.id}" style="padding:7px 10px;border:1.5px solid var(--line);border-radius:6px;font-size:12px">
+          <option value="permanent">Permanent</option>
+          <option value="temporary">Temporary (until rep hired)</option>
+        </select>
+        <button class="crm-action-btn convert" onclick="orphanReassignRep('${a.id}')">✓ Assign</button>
+      </div>
+    </div>`).join('');
+}
+
+// Assigns a rep (permanently or temporarily) to a previously-orphaned
+// account, logs it to the account's activity history, and re-renders the
+// report so the account drops off the orphaned list immediately.
+function orphanReassignRep(accountId){
+  const repSel = document.getElementById('orphanRep_'+accountId);
+  const typeSel = document.getElementById('orphanType_'+accountId);
+  const repName = repSel?.value;
+  const assignType = typeSel?.value || 'permanent';
+  if (!repName){ alert('Select a rep before assigning.'); return; }
+
+  const data = crmLoad('accounts');
+  const idx = data.findIndex(a=>a.id===accountId);
+  if (idx === -1) return;
+  const acct = data[idx];
+  acct.assignedRep = repName;
+  acct.repAssignmentType = assignType;
+  acct.repAssignedAt = Date.now();
+  acct.activityLog = acct.activityLog || [];
+  acct.activityLog.push({
+    ts: Date.now(), type:'office', icon: assignType==='temporary' ? '⏳' : '📋',
+    title: `${assignType==='temporary'?'Temporarily a':'A'}ssigned to ${repName}`,
+    note: assignType==='temporary'
+      ? `Temporary coverage by ${repName} until a rep is hired for this area.`
+      : `Permanently assigned to ${repName}.`,
+    who: _currentUser?.name || 'Manager'
+  });
+  data[idx] = acct;
+  crmSave('accounts', data);
+
+  renderOrphanedReport();
+  if (crmCurrentTab === 'accounts') renderCRMView();
 }
 
 function bidsRenderWinLoss(){
@@ -15184,6 +15342,23 @@ window.uvCollectData = uvCollectData;
         Every verified-live source was fetched directly with real data confirmed — not assumed. 🟡 sources are confirmed-live official platforms, not yet row-tested. Some require free registration or a paid subscription before you can pull data — see the badge on each.
       </div>
       <div id="leadSourcesList"></div>
+    </div>
+  </div>
+</div>
+
+<div class="full-overlay" id="ovOrphaned" style="z-index:380">
+  <div class="ov-header">
+    <h2>🔍 Orphaned Customers — No Rep Assigned</h2>
+    <div class="ov-header-btns">
+      <button class="ov-btn close" onclick="closeOrphanedReport()">✕</button>
+    </div>
+  </div>
+  <div class="ov-body" style="padding:22px;overflow-y:auto">
+    <div style="max-width:780px;margin:0 auto">
+      <div style="font-size:12px;color:var(--soft);line-height:1.6;margin-bottom:18px;padding:12px;background:var(--bg);border-radius:8px">
+        Accounts with no rep on file — usually a vacated territory or a customer that came in before a rep was assigned. Assign <strong>Permanently</strong> if this is the account's real long-term rep, or <strong>Temporarily</strong> if someone's just covering until a rep is hired for that area — temporary assignments stay flagged on the account so they're easy to revisit later.
+      </div>
+      <div id="orphanedList"></div>
     </div>
   </div>
 </div>
