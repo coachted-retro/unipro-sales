@@ -1222,7 +1222,9 @@ setTimeout(function(){ if(typeof TECHS!=='undefined') renderLB('score'); }, 200)
         <option value="inactive">Inactive</option>
         <option value="winback">Win-Back</option>
       </select>
-      <button class="crm-btn" id="crmHarvestBtn" onclick="harvestRunLive()" style="background:#F2B705;color:#1A1D21;display:none">🌾 Harvest Live Leads</button>
+      <button class="crm-btn" id="crmHarvestBtn" onclick="harvestRunLive()" style="background:#F2B705;color:#1A1D21;display:none">🌾 Harvest PA Leads</button>
+      <button class="crm-btn" id="crmHarvestDEBtn" onclick="harvestRunLiveDE()" style="background:#F2B705;color:#1A1D21;display:none">🌾 Harvest DE Leads</button>
+      <button class="crm-btn" id="crmHarvestDCBtn" onclick="harvestRunLiveDC()" style="background:#F2B705;color:#1A1D21;display:none">🌾 Harvest DC Leads</button>
       <button class="crm-btn" id="crmSourcesBtn" onclick="openLeadSources()" style="background:#fff;color:#1A1D21;border:1.5px solid var(--line);display:none">📡 Lead Sources</button>
       <button class="crm-btn primary" id="crmAddBtn" onclick="openAddModal()">+ Add New</button>
     </div>
@@ -1646,6 +1648,10 @@ function switchCRMTab(tab){
   }
   const harvestBtn = document.getElementById('crmHarvestBtn');
   if (harvestBtn) harvestBtn.style.display = (tab === 'leads') ? '' : 'none';
+  const harvestDEBtn = document.getElementById('crmHarvestDEBtn');
+  if (harvestDEBtn) harvestDEBtn.style.display = (tab === 'leads') ? '' : 'none';
+  const harvestDCBtn = document.getElementById('crmHarvestDCBtn');
+  if (harvestDCBtn) harvestDCBtn.style.display = (tab === 'leads') ? '' : 'none';
   const sourcesBtn = document.getElementById('crmSourcesBtn');
   if (sourcesBtn) sourcesBtn.style.display = (tab === 'leads') ? '' : 'none';
   renderCRMView();
@@ -7780,6 +7786,32 @@ function badgesRender() {
 
 const HARVEST_BUSINESS_LICENSES_URL = 'https://services.arcgis.com/fLeGjb7u4uXqeF9q/arcgis/rest/services/BUSINESS_LICENSES/FeatureServer/0/query';
 
+// Delaware statewide business license registry (Socrata SODA API). Verified
+// live via the dataset's CSV export and Socrata API Foundry docs (dataset
+// 5zy2-grhr, source domain data.delaware.gov, last updated 6/4/2026, owned
+// by Dept of Finance / Division of Revenue, public domain). Real column
+// headers confirmed from a live CSV sample: "Business name, Trade name,
+// Business Activity, Current license valid from, Current license valid to,
+// Address 1, Address 2, City, State, Zip, Country, License number,
+// Geocoded Location" -- Socrata's standard API normalizes these to
+// lowercase/underscore field names (business_name, trade_name,
+// business_activity, etc.), confirmed for business_name specifically via
+// a documented SoQL example query. This is the standard public SODA
+// /resource/{id}.json endpoint -- no auth required for this volume of
+// querying. Field names below are this session's best-informed read of
+// Socrata's normalization convention; if the live response uses slightly
+// different casing, the dedupe/parsing below checks multiple casings the
+// same way the Philadelphia harvester does, and the error path says so.
+const HARVEST_DE_LICENSES_URL = 'https://data.delaware.gov/resource/5zy2-grhr.json';
+
+// DC Basic Business License live feed (ArcGIS FeatureServer, Dept of
+// Licensing & Consumer Protection). Verified live by fetching the layer's
+// own metadata directly -- full field schema confirmed real, not guessed:
+// ENTITYNAME, ENTITYTRADENAME, BUSINESSACTIVITY, PRIMARYACTIVITY,
+// PREMISEADDRESS, LICENSESTARTDATE, LICENSESTATUS, WARD, etc. Table type
+// (no geometry), MaxRecordCount 2000, standard ArcGIS query params.
+const HARVEST_DC_LICENSES_URL = 'https://maps2.dcgis.dc.gov/dcgis/rest/services/FEEDS/DCRA/FeatureServer/0/query';
+
 // License types on this dataset that signal a commercial kitchen / food
 // service operation — the core market for hood suppression, extinguishers,
 // grease trap, and dishwasher service. Adjust as we learn the real category
@@ -7889,6 +7921,222 @@ function logHarvestRun(checked, added, result){
   const log = harvestLoadLog();
   log.unshift({ ts: Date.now(), checked, added, result });
   harvestSaveLog(log.slice(0, 50)); // keep last 50 runs
+}
+
+// ── Delaware: Quality III's territory, since Quality III is the DE-specific
+// division. Statewide business license registry via Socrata SODA API. ──
+async function harvestRunLiveDE(){
+  const banner = document.getElementById('harvestStatusBanner');
+  const btn = document.getElementById('crmHarvestDEBtn');
+  if (!banner) return;
+
+  banner.style.display = 'block';
+  banner.innerHTML = '🌾 Pulling recent business license filings from Delaware open data…';
+  if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; }
+
+  // SoQL: filter business_activity for food/restaurant-type keywords,
+  // order by most recently valid-from, cap at 40 -- same shape as the
+  // Philadelphia query.
+  const activityFilter = HARVEST_FOOD_LICENSE_KEYWORDS
+    .map(k => `upper(business_activity) like '%25${k.toUpperCase()}%25'`)
+    .join(' OR ');
+  const params = new URLSearchParams({
+    '$where': activityFilter,
+    '$order': 'current_license_valid_from DESC',
+    '$limit': '40'
+  });
+
+  try {
+    const res = await fetch(HARVEST_DE_LICENSES_URL + '?' + params.toString());
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const records = await res.json();
+
+    if (records.error || (records.errorCode)) {
+      throw new Error(records.message || 'API returned an error — the $where clause or field names may need adjusting against the live schema.');
+    }
+    if (!Array.isArray(records)) throw new Error('Unexpected response shape from Delaware open data — expected an array of records.');
+
+    if (!records.length) {
+      banner.innerHTML = '✅ Connected successfully — 0 matching food/restaurant-activity records returned for this query. The endpoint is live; try widening the filter or check business_activity values against the live response.';
+      if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
+      logHarvestRun(0, 0, 'success-empty');
+      return;
+    }
+
+    const existing = crmLoad('leads');
+    const existingKeys = new Set(existing.map(l => (l.business||'').toLowerCase() + '|' + (l.zip||'')));
+
+    let added = 0;
+    const newLeads = [];
+    const now = Date.now();
+
+    records.forEach((r, i) => {
+      // Defensive field lookup -- Socrata normalizes column names to
+      // lowercase/underscore, confirmed for business_name specifically;
+      // checking a couple of casings the same way the Philly harvester
+      // does in case the live schema differs slightly from what's documented.
+      const business = r.business_name || r.trade_name || r.Business_name || '';
+      const tradeName = r.trade_name || r.Trade_name || '';
+      const addr1 = r.address_1 || r.Address_1 || '';
+      const city = r.city || r.City || '';
+      const zip = r.zip || r.Zip || '';
+      const activity = r.business_activity || r.Business_Activity || '';
+      const validFrom = r.current_license_valid_from || r.Current_license_valid_from;
+      const licNum = r.license_number || r.License_number || '';
+
+      if (!business) return; // skip blank records rather than guess
+
+      const key = business.toLowerCase() + '|' + zip;
+      if (existingKeys.has(key)) return; // dedupe against current pool
+
+      const validFromStr = validFrom ? new Date(validFrom).toISOString().slice(0,10) : 'unknown date';
+      const addr = [addr1, city, 'DE', zip].filter(Boolean).join(', ');
+
+      newLeads.push({
+        id: 'harvest_de_' + now + '_' + i,
+        name: 'Owner — TBD',
+        business: tradeName && tradeName !== business ? `${business} (${tradeName})` : business,
+        phone: '', email: '',
+        address: addr, zip: zip, company: 'Quality III', status: 'new',
+        services: ['quality3'], score: 6,
+        source: 'Live Harvester — Delaware Business Licenses',
+        created: now,
+        notes: `${activity || 'Business'} license #${licNum||'—'} valid from ${validFromStr}. Verify current fire suppression / extinguisher coverage — likely new or relocating kitchen.`,
+        activityLog: [{
+          ts: now, type:'system', icon:'🌾',
+          title:'Harvested — Delaware Open Data (live)',
+          note:`Business license #${licNum||'—'} valid from ${validFromStr}`,
+          who:'System'
+        }]
+      });
+      existingKeys.add(key);
+      added++;
+    });
+
+    const allLeads = [...newLeads, ...existing];
+    crmSave('leads', allLeads);
+
+    banner.innerHTML = `✅ Harvest complete — checked ${records.length} recent DE business license filings, added <b>${added} new lead${added===1?'':'s'}</b> to the pool (${records.length - added} already on file, skipped).`;
+    logHarvestRun(records.length, added, 'success');
+
+    if (typeof renderCRMView === 'function') renderCRMView();
+
+  } catch (e) {
+    banner.innerHTML = `⚠️ Harvest failed: ${e.message}. This is a real error from the live Delaware open data API, not a placeholder — if this persists, the endpoint or field names may need re-checking against the current schema at <a href="https://data.delaware.gov/Licenses-and-Certifications/Delaware-Business-Licenses/5zy2-grhr" target="_blank" style="color:#5A4A00;text-decoration:underline">the live dataset page</a>.`;
+    logHarvestRun(0, 0, 'error: ' + e.message);
+  }
+
+  if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
+  setTimeout(() => { if(banner) banner.style.display = 'none'; }, 15000);
+}
+
+// ── DC: UniPro's territory. DLCP's Basic Business License feed via ArcGIS
+// FeatureServer (same query shape as the Philadelphia harvester). ──
+async function harvestRunLiveDC(){
+  const banner = document.getElementById('harvestStatusBanner');
+  const btn = document.getElementById('crmHarvestDCBtn');
+  if (!banner) return;
+
+  banner.style.display = 'block';
+  banner.innerHTML = '🌾 Pulling recent business license filings from DC open data…';
+  if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; }
+
+  const activityFilter = HARVEST_FOOD_LICENSE_KEYWORDS
+    .map(k => `UPPER(BUSINESSACTIVITY) LIKE '%${k.toUpperCase()}%' OR UPPER(PRIMARYACTIVITY) LIKE '%${k.toUpperCase()}%'`)
+    .join(' OR ');
+  const params = new URLSearchParams({
+    where: activityFilter,
+    outFields: 'ENTITYNAME,ENTITYTRADENAME,BUSINESSACTIVITY,PRIMARYACTIVITY,PREMISEADDRESS,LICENSESTARTDATE,LICENSESTATUS,WARD,CUSTOMERNUMBER',
+    orderByFields: 'LICENSESTARTDATE DESC',
+    resultRecordCount: '40',
+    f: 'json'
+  });
+
+  try {
+    const res = await fetch(HARVEST_DC_LICENSES_URL + '?' + params.toString());
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+
+    if (data.error) {
+      throw new Error(data.error.message || 'API returned an error — the where clause or field names may need adjusting against the live schema.');
+    }
+
+    const features = data.features || [];
+    if (!features.length) {
+      banner.innerHTML = '✅ Connected successfully — 0 matching food-license records returned for this query. The endpoint is live; try widening the filter or check field names against the live response.';
+      if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
+      logHarvestRun(0, 0, 'success-empty');
+      return;
+    }
+
+    const existing = crmLoad('leads');
+    const existingKeys = new Set(existing.map(l => (l.business||'').toLowerCase() + '|' + (l.zip||'')));
+
+    let added = 0;
+    const newLeads = [];
+    const now = Date.now();
+
+    features.forEach((f, i) => {
+      const attrs = f.attributes || f;
+      const business = attrs.ENTITYNAME || '';
+      const tradeName = attrs.ENTITYTRADENAME || '';
+      const addr = attrs.PREMISEADDRESS || '';
+      const activity = attrs.BUSINESSACTIVITY || attrs.PRIMARYACTIVITY || '';
+      const startDate = attrs.LICENSESTARTDATE;
+      const status = attrs.LICENSESTATUS || '';
+      const ward = attrs.WARD || '';
+      const custNum = attrs.CUSTOMERNUMBER || '';
+
+      if (!business) return; // skip blank records rather than guess
+
+      // DC's DLCP dataset doesn't carry a separate zip field on this layer
+      // -- PREMISEADDRESS is the full mailing address (typically ending
+      // "...Washington, DC 20009"). Extract a 5-digit zip from it so
+      // dedup uses the same business|zip key convention as the
+      // Philadelphia and Delaware harvesters.
+      const zipMatch = addr.match(/\b(\d{5})(?:-\d{4})?\b/);
+      const zip = zipMatch ? zipMatch[1] : '';
+      const key = business.toLowerCase() + '|' + zip;
+      if (existingKeys.has(key)) return; // dedupe against current pool
+
+      const startDateStr = startDate ? new Date(startDate).toISOString().slice(0,10) : 'unknown date';
+
+      newLeads.push({
+        id: 'harvest_dc_' + now + '_' + i,
+        name: 'Owner — TBD',
+        business: tradeName && tradeName !== business ? `${business} (${tradeName})` : business,
+        phone: '', email: '',
+        address: addr, zip: zip, company: 'UniPro', status: 'new',
+        services: ['unipro'], score: 6,
+        source: 'Live Harvester — DC Business Licenses',
+        created: now,
+        notes: `${activity || 'Business'} license started ${startDateStr}${ward ? ', Ward '+ward : ''}${status ? ' — status: '+status : ''}. Verify current fire suppression / extinguisher coverage — likely new or relocating kitchen.`,
+        activityLog: [{
+          ts: now, type:'system', icon:'🌾',
+          title:'Harvested — DC Open Data (live)',
+          note:`Customer #${custNum||'—'}, license started ${startDateStr}`,
+          who:'System'
+        }]
+      });
+      existingKeys.add(key);
+      added++;
+    });
+
+    const allLeads = [...newLeads, ...existing];
+    crmSave('leads', allLeads);
+
+    banner.innerHTML = `✅ Harvest complete — checked ${features.length} recent DC business license filings, added <b>${added} new lead${added===1?'':'s'}</b> to the pool (${features.length - added} already on file, skipped).`;
+    logHarvestRun(features.length, added, 'success');
+
+    if (typeof renderCRMView === 'function') renderCRMView();
+
+  } catch (e) {
+    banner.innerHTML = `⚠️ Harvest failed: ${e.message}. This is a real error from the live DC DLCP API, not a placeholder — if this persists, the endpoint or field names may need re-checking against the current schema at <a href="https://maps2.dcgis.dc.gov/dcgis/rest/services/FEEDS/DCRA/FeatureServer/0" target="_blank" style="color:#5A4A00;text-decoration:underline">the live service definition</a>.`;
+    logHarvestRun(0, 0, 'error: ' + e.message);
+  }
+
+  if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
+  setTimeout(() => { if(banner) banner.style.display = 'none'; }, 15000);
 }
 
 // ══════════════════════════════════════════════════════════════════════════
