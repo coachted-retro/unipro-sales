@@ -1268,14 +1268,16 @@ setTimeout(function(){ if(typeof TECHS!=='undefined') renderLB('score'); }, 200)
   <div class="crm-modal" id="callListImportModal">
     <h3>⬇ Import Call List (CSV)</h3>
     <div style="font-size:12px;color:var(--soft);margin-bottom:10px;line-height:1.5">
-      DMS-only pool — these contacts never appear in the sales Leads tab. Paste CSV data below (header row required).
-      Recognized columns: business/name, address, city, state, zip, phone, website, chamber/source.
-      Only a business name column is required — everything else is optional.
+      DMS-only pool — these contacts never appear in the sales Leads tab. Upload a .csv file, or paste data below.
+      Full CSV with a header row works (recognized columns: business/name, address, city, state, zip, phone, website, chamber/source) —
+      or just a plain list of business names, one per line, no header needed.
     </div>
     <label>Chamber/Source label (used for rows with no "chamber" column)</label>
     <input id="callListImportSource" placeholder="e.g. North New Jersey Chamber of Commerce">
-    <label style="margin-top:10px;display:block">Paste CSV</label>
-    <textarea id="callListImportCSV" rows="10" style="width:100%;font-family:monospace;font-size:12px;box-sizing:border-box" placeholder="business,address,city,state,zip,phone,website&#10;Tony's Pizza,123 Main St,Edison,NJ,08817,732-555-0100,tonyspizza.com"></textarea>
+    <label style="margin-top:10px;display:block">Upload .csv file</label>
+    <input type="file" id="callListImportFile" accept=".csv,.txt" onchange="loadCallListFile(this)" style="width:100%;font-size:12px;margin-bottom:4px">
+    <label style="margin-top:10px;display:block">Or paste CSV / plain list</label>
+    <textarea id="callListImportCSV" rows="10" style="width:100%;font-family:monospace;font-size:12px;box-sizing:border-box" placeholder="Either a full CSV:&#10;business,address,city,state,zip,phone,website&#10;Tony's Pizza,123 Main St,Edison,NJ,08817,732-555-0100,tonyspizza.com&#10;&#10;Or just a plain list, one business per line:&#10;Tony's Pizza&#10;Mario's Kitchen & Bar"></textarea>
     <div id="callListImportStatus" style="margin-top:8px;font-size:13px;font-weight:600"></div>
     <div class="crm-modal-actions">
       <button class="crm-btn secondary" onclick="closeCallListImport()">Cancel</button>
@@ -8704,11 +8706,32 @@ async function harvestRunLiveCMSFireSafety(){
 function openCallListImport(){
   document.getElementById('callListImportSource').value = '';
   document.getElementById('callListImportCSV').value = '';
+  document.getElementById('callListImportFile').value = '';
   document.getElementById('callListImportStatus').textContent = '';
   document.getElementById('callListImportModalBg').classList.add('open');
 }
 function closeCallListImport(){
   document.getElementById('callListImportModalBg').classList.remove('open');
+}
+
+// Reads a chosen .csv/.txt file client-side (FileReader -- no upload, stays
+// local) and drops its contents into the paste textarea so the existing
+// processCallListImport() parsing logic handles both paths identically.
+function loadCallListFile(input){
+  const file = input.files && input.files[0];
+  if(!file) return;
+  const statusEl = document.getElementById('callListImportStatus');
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    document.getElementById('callListImportCSV').value = e.target.result;
+    statusEl.style.color = '#1E7B3C';
+    statusEl.textContent = `📄 Loaded ${file.name} (${e.target.result.split(/\r?\n/).filter(l=>l.trim()).length} lines) — review below, then hit Import.`;
+  };
+  reader.onerror = () => {
+    statusEl.style.color = '#991B1B';
+    statusEl.textContent = `⚠️ Could not read ${file.name}. Try pasting the contents directly instead.`;
+  };
+  reader.readAsText(file);
 }
 
 // Minimal CSV line parser handling quoted fields with embedded commas
@@ -8734,22 +8757,53 @@ function processCallListImport(){
   const defaultSource = document.getElementById('callListImportSource').value.trim() || 'Unknown chamber source';
   const raw = document.getElementById('callListImportCSV').value;
   const statusEl = document.getElementById('callListImportStatus');
-  if(!raw.trim()){ statusEl.style.color='#991B1B'; statusEl.textContent='⚠️ Paste some CSV data first.'; return; }
+  if(!raw.trim()){ statusEl.style.color='#991B1B'; statusEl.textContent='⚠️ Upload a file or paste some data first.'; return; }
 
   const lines = raw.split(/\r?\n/).filter(l=>l.trim().length);
-  if(lines.length < 2){ statusEl.style.color='#991B1B'; statusEl.textContent='⚠️ Need a header row plus at least one data row.'; return; }
+  if(lines.length < 1){ statusEl.style.color='#991B1B'; statusEl.textContent='⚠️ No data rows found.'; return; }
 
-  const headers = parseCSVLine(lines[0]).map(h=>h.toLowerCase());
+  // Auto-detect whether line 1 is a real header row (e.g. "business,zip,phone")
+  // or already a data row (e.g. a plain business name with no recognized
+  // header keyword). This is what lets a no-formatting list of 800+ business
+  // names, one per line, import directly with zero header row required.
+  // Exact-match (not substring) against known header labels -- substring
+  // matching would misfire on real business names that happen to contain a
+  // keyword as a fragment (e.g. "City Wok" contains "city", "Main Street
+  // Pizza, Anytown" contains "street" after comma-splitting). Requiring an
+  // exact match on at least one full column is what lets "Tony's Pizza, LLC"
+  // import correctly as one business name instead of being misread as a
+  // 2-column header with no data rows under it.
+  const HEADER_LABELS = new Set(['business','business name','name','company','company name',
+    'address','street','street address','city','state','zip','zip code','postal','postal code',
+    'phone','tel','telephone','phone number','website','url','web',
+    'chamber','source','chamber/source','category','notes','contact','attn']);
+  const firstLineCols = parseCSVLine(lines[0]).map(h=>h.toLowerCase().trim());
+  const looksLikeHeader = firstLineCols.some(c => HEADER_LABELS.has(c));
+
+  let headers, dataLines, plainListMode;
+  if (looksLikeHeader) {
+    headers = firstLineCols;
+    dataLines = lines.slice(1);
+    plainListMode = false;
+    if(dataLines.length < 1){ statusEl.style.color='#991B1B'; statusEl.textContent='⚠️ Header row found but no data rows under it.'; return; }
+  } else {
+    // No header detected -- treat every line as a plain business name,
+    // taken whole (not comma-split) so names containing commas don't break.
+    headers = ['business'];
+    dataLines = lines;
+    plainListMode = true;
+  }
+
   const findCol = (...names) => headers.findIndex(h => names.some(n => h.includes(n)));
-  const idxBusiness = findCol('business','name','company');
-  const idxAddress  = findCol('address','street');
-  const idxCity     = findCol('city');
-  const idxState    = findCol('state');
-  const idxZip      = findCol('zip','postal');
-  const idxPhone    = findCol('phone','tel');
-  const idxWebsite  = findCol('website','url');
-  const idxChamber  = findCol('chamber','source','category');
-  const idxNotes    = findCol('notes','contact','attn');
+  const idxBusiness = plainListMode ? 0 : findCol('business','name','company');
+  const idxAddress  = plainListMode ? -1 : findCol('address','street');
+  const idxCity     = plainListMode ? -1 : findCol('city');
+  const idxState    = plainListMode ? -1 : findCol('state');
+  const idxZip      = plainListMode ? -1 : findCol('zip','postal');
+  const idxPhone    = plainListMode ? -1 : findCol('phone','tel');
+  const idxWebsite  = plainListMode ? -1 : findCol('website','url');
+  const idxChamber  = plainListMode ? -1 : findCol('chamber','source','category');
+  const idxNotes    = plainListMode ? -1 : findCol('notes','contact','attn');
 
   if(idxBusiness === -1){
     statusEl.style.color='#991B1B';
@@ -8763,17 +8817,17 @@ function processCallListImport(){
   let added = 0, skipped = 0;
   const newRecs = [];
 
-  for(let i=1;i<lines.length;i++){
-    const cols = parseCSVLine(lines[i]);
-    const business = idxBusiness>-1 ? cols[idxBusiness] : '';
+  for(let i=0;i<dataLines.length;i++){
+    const business = plainListMode ? dataLines[i].trim() : (() => { const cols = parseCSVLine(dataLines[i]); return idxBusiness>-1 ? cols[idxBusiness] : ''; })();
     if(!business) continue;
-    const addrParts = [
+    const cols = plainListMode ? [] : parseCSVLine(dataLines[i]);
+    const addrParts = plainListMode ? [] : [
       idxAddress>-1 ? cols[idxAddress] : '',
       idxCity>-1 ? cols[idxCity] : '',
       idxState>-1 ? cols[idxState] : '',
       idxZip>-1 ? cols[idxZip] : ''
     ].filter(Boolean);
-    const zip = idxZip>-1 ? ((cols[idxZip]||'').match(/\d{5}/)?.[0] || '') : '';
+    const zip = (!plainListMode && idxZip>-1) ? ((cols[idxZip]||'').match(/\d{5}/)?.[0] || '') : '';
     const key = business.toLowerCase() + '|' + zip;
     if(existingKeys.has(key)){ skipped++; continue; }
 
@@ -8783,12 +8837,12 @@ function processCallListImport(){
       business: business,
       address: addrParts.join(', '),
       zip: zip,
-      phone: idxPhone>-1 ? cols[idxPhone] : '',
-      website: idxWebsite>-1 ? cols[idxWebsite] : '',
-      chamberSource: (idxChamber>-1 && cols[idxChamber]) ? cols[idxChamber] : defaultSource,
+      phone: (!plainListMode && idxPhone>-1) ? cols[idxPhone] : '',
+      website: (!plainListMode && idxWebsite>-1) ? cols[idxWebsite] : '',
+      chamberSource: (!plainListMode && idxChamber>-1 && cols[idxChamber]) ? cols[idxChamber] : defaultSource,
       company: 'UniPro',
       status: 'new',
-      notes: idxNotes>-1 ? (cols[idxNotes]||'') : '',
+      notes: (!plainListMode && idxNotes>-1) ? (cols[idxNotes]||'') : '',
       activityLog: [],
       created: now,
       source: 'DMS Cold Call — Chamber Directory'
