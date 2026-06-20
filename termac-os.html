@@ -5720,6 +5720,8 @@ function openSiteSurvey(id){
   document.getElementById('svBizName').textContent = svState.bizName;
   document.getElementById('svDoneBizName').textContent = svState.bizName;
   document.getElementById('svOverlay').classList.add('open');
+  fsState.activeService = 'unipro';
+  if (typeof fsResetWalkthroughState === 'function') fsResetWalkthroughState();
   svGotoStep(0);
 }
 
@@ -5741,9 +5743,17 @@ function svGotoStep(idx){
   // Pre-fill client info when the shared fire-survey pricing wizard activates
   // (panel 3 -- serves both UniPro and Quality III, see SVC_PANEL above)
   if(step.panel === 3 && typeof fsPrefillClientInfo === 'function') {
+    const switchingDivision = fsState.activeService !== step.id;
     fsState.activeService = step.id;  // 'unipro' or 'quality3' -- tells the
                                        // shared wizard which division's data
                                        // it's collecting into this time
+    // Inspection findings (fs-screen1/2) and pricing quantities (fs-screen3)
+    // are entered into shared DOM fields/containers -- without this, a
+    // division switch mid-visit would leave the OTHER division's hood/ext/
+    // light findings and pricing sitting in the form for the new division.
+    if (switchingDivision && typeof fsResetWalkthroughState === 'function') {
+      fsResetWalkthroughState();
+    }
     // Quality III is DE-specific (no state sales tax) -- force the tax
     // dropdown to DE every time, since this is invariant for the division
     // and the field is shared with UniPro's turn in the same visit (a
@@ -5930,6 +5940,54 @@ const fsPhases = [
 
 // Navigation between fire survey sub-screens
 
+// ── RESET INSPECTION FINDINGS + PRICING (fs-screen1/2/3) ─────────────────────
+// Nothing in this wizard was ever clearing fsRes / fs_hoodCount / the pricing
+// q-* quantity fields between visits, so stale findings from a previous
+// account -- or from the OTHER division in a same-visit UniPro+Quality III
+// walkthrough -- could silently carry forward into a new survey. This clears
+// everything specific to "what was found/priced on THIS walkthrough."
+//
+// Deliberately does NOT touch fs-screen0 (Client Info -- fs_bizName,
+// fs_currentVendor, fs_generalObs, etc.) since those are meant to persist
+// and prefill from the account record via fsPrefillClientInfo(), or
+// fs-screen4+ (onboarding/signature/pipeline tracking), which are tied to
+// closing the deal rather than the walkthrough itself.
+function fsResetWalkthroughState() {
+  const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+  const setChk = (id, val) => { const el = document.getElementById(id); if (el) el.checked = val; };
+  const setHTML = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
+  const setDisplay = (id, val) => { const el = document.getElementById(id); if (el) el.style.display = val; };
+
+  // ── fs-screen1: Inspection ──
+  fsSvcState.hood = false; fsSvcState.ext = false; fsSvcState.light = false;
+  ['hood','ext','light'].forEach(k => {
+    document.getElementById('fst-'+k)?.classList.remove('on');
+    setDisplay('fs_'+k+'Section', 'none');
+  });
+  fsRes.hood = {}; fsRes.ext = {}; fsRes.light = {};
+  setVal('fs_hoodCount',''); setVal('fs_hoodBrand',''); setVal('fs_hoodLastInsp','');
+  setVal('fs_hoodCartExp',''); setVal('fs_hoodHydroTest',''); setVal('fs_hoodHydroDue','');
+  setVal('fs_hoodNotes','');
+  setVal('fs_extCount',''); setVal('fs_extLastInsp',''); setVal('fs_extSixYear','');
+  setVal('fs_extHydro',''); setVal('fs_extNotes','');
+  setVal('fs_lightSigns',''); setVal('fs_lightUnits',''); setVal('fs_lightLastTest','');
+  setVal('fs_lightBattTest',''); setVal('fs_lightNotes','');
+  setHTML('fs_hoodSystemItems',''); setHTML('fs_extSystemItems',''); setHTML('fs_lightUnitCards','');
+  setHTML('fs_hoodList',''); setHTML('fs_extList',''); setHTML('fs_lightList','');
+
+  // ── fs-screen2: Findings Summary ──
+  setHTML('fs_findAuto','');
+  setVal('fs_findImmediate',''); setVal('fs_findRecommended',''); setVal('fs_findAdvisory','');
+
+  // ── fs-screen3: Pricing quantities ──
+  ['q-hood-tanks','q-hood-extra','q-ext-units','q-fusible','q-cartridge','q-seal',
+   'q-metal-cap','q-rubber-cap','q-kclass','q-kclass-new','q-abc5-swap','q-abc5-new',
+   'q-abc10-swap','q-abc10-new','q-sign-sm','q-sign-lg','q-light-units',
+   'q-dispatch','q-compliance'].forEach(id => setVal(id, ''));
+  setVal('fs_taxState',''); setVal('fs_propNotes','');
+  if (typeof fsCalcProposal === 'function') fsCalcProposal();
+}
+
 // ── FIRE SURVEY CLIENT INFO PRE-FILL ─────────────────────────────────────────
 function fsPrefillClientInfo() {
   const r = svState._prefillData || fsState._prefillData;
@@ -6054,7 +6112,7 @@ function fsBuildChecklist(containerId, key, colorClass) {
 }
 // ── PER-UNIT PHOTO CAPTURE (Hood / Extinguisher / Exit Light) ────────────────
 // Lightweight camera capture reusing the platform's AI proxy. Photos + AI
-// findings are stored on svState.surveyData.unipro.photos / *_ai so they
+// findings are stored on svState.surveyData[fsState.activeService].photos / *_ai so they
 // flow into the combined estimate and findings summary automatically.
 const FS_PROXY = 'https://unipro-ai-proxy.tedscholl.workers.dev/';
 const FS_CAMERA_PROMPTS = {
@@ -6089,9 +6147,9 @@ async function fsAnalyzePhoto(key, idx, input) {
     if (thumbEl) thumbEl.innerHTML = `<img src="${e.target.result}" style="max-width:160px;max-height:110px;border-radius:7px;border:2px solid var(--line)">`;
 
     // Store photo on svState so it carries into the estimate/findings
-    if (!svState.surveyData.unipro) svState.surveyData.unipro = {};
-    if (!svState.surveyData.unipro.photos) svState.surveyData.unipro.photos = {};
-    svState.surveyData.unipro.photos[key + '_' + idx] = e.target.result;
+    if (!svState.surveyData[fsState.activeService]) svState.surveyData[fsState.activeService] = {};
+    if (!svState.surveyData[fsState.activeService].photos) svState.surveyData[fsState.activeService].photos = {};
+    svState.surveyData[fsState.activeService].photos[key + '_' + idx] = e.target.result;
 
     try {
       if (aiEl) { aiEl.style.display = 'block'; aiEl.textContent = '🤖 Analyzing...'; }
@@ -6113,7 +6171,7 @@ async function fsAnalyzePhoto(key, idx, input) {
       const json = await res.json();
       const text = (json.content && json.content[0] && json.content[0].text) || 'Unable to analyze photo.';
       if (aiEl) aiEl.textContent = '🤖 ' + text;
-      svState.surveyData.unipro[key + '_' + idx + '_ai'] = text;
+      svState.surveyData[fsState.activeService][key + '_' + idx + '_ai'] = text;
       if (statusEl) { statusEl.textContent = '✅ Photo analyzed'; statusEl.style.color = '#1E7B3C'; }
     } catch (err) {
       if (aiEl) { aiEl.style.display = 'block'; aiEl.textContent = '⚠️ AI analysis unavailable — photo saved.'; }
@@ -13030,7 +13088,7 @@ function openLearningCenterForUser() {
    UNIPRO SITE SURVEY ENGINE
    Per-unit logging for hoods, extinguishers, and e-lights
    AI camera analysis via Cloudflare Worker
-   All photos stored in svState.surveyData.unipro.photos{}
+   All photos stored in svState.surveyData[fsState.activeService].photos{}
 ══════════════════════════════════════════════════════════════ */
 
 const UV_PROXY = 'https://unipro-ai-proxy.tedscholl.workers.dev/';
