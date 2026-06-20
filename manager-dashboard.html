@@ -182,9 +182,9 @@ footer{text-align:center;margin-top:40px;color:#9AA0A8;font-size:11px;letter-spa
     <div class="topnav-links">
       <a href="termac-os.html" >Home</a>
       <a href="manager-dashboard.html" class="active">Manager Dashboard</a>
-      <a href="command-center.html" >Command Center</a>
-      <a href="termac-os.html#employee-portal" >Employee Portal</a>
-      <a href="termac-os.html#hr" >HR</a>
+      <a href="termac-os.html" onclick="sessionStorage.setItem('openOnLoad','cmd');return true;">Command Center</a>
+      <a href="termac-os.html" onclick="sessionStorage.setItem('openOnLoad','emp');return true;">Employee Portal</a>
+      <a href="termac-os.html" onclick="sessionStorage.setItem('openOnLoad','hr');return true;">HR</a>
     </div>
   </div>
 </nav>
@@ -647,6 +647,30 @@ footer{text-align:center;margin-top:40px;color:#9AA0A8;font-size:11px;letter-spa
   </div>
 </div>
 
+<div class="section-hdr">DMS Scorecard — Cold Call &amp; Harvested Lead Performance</div>
+
+<div class="sc-summary-tiles">
+  <div class="sc-sum-tile"><div class="sc-sum-val" id="dms_avg">—</div><div class="sc-sum-lbl">Team Avg Score</div></div>
+  <div class="sc-sum-tile" style="border-color:#7C3AED"><div class="sc-sum-val" style="color:#7C3AED" id="dms_platinum">—</div><div class="sc-sum-lbl">Platinum Tier</div></div>
+  <div class="sc-sum-tile" style="border-color:#B45309"><div class="sc-sum-val" style="color:#B45309" id="dms_gold">—</div><div class="sc-sum-lbl">Gold Tier</div></div>
+  <div class="sc-sum-tile" style="border-color:var(--red)"><div class="sc-sum-val" style="color:var(--red)" id="dms_atrisk">—</div><div class="sc-sum-lbl">Watch / At Risk</div></div>
+  <div class="sc-sum-tile" style="border-color:var(--green)"><div class="sc-sum-val" style="color:var(--green)" id="dms_bonuses">—</div><div class="sc-sum-lbl">Bonuses Earned</div></div>
+  <div class="sc-sum-tile" style="border-color:#F2B705"><div class="sc-sum-val" id="dms_conversion">—</div><div class="sc-sum-lbl">Team Conversion Rate Avg</div></div>
+</div>
+
+<div class="sc-grid" id="dmsScorecardGrid"></div>
+
+<div class="charts-grid charts-2" style="margin-bottom:20px">
+  <div class="chart-card">
+    <div class="chart-lbl">Today's Pace — Cold Calls &amp; Harvested Leads <span class="vs">% of daily quota</span></div>
+    <div class="chart-wrap h200"><canvas id="dmsPaceChart"></canvas></div>
+  </div>
+  <div class="chart-card">
+    <div class="chart-lbl">Conversion Rate by Rep <span class="vs">cold call → promoted lead, QTR</span></div>
+    <div class="chart-wrap h200"><canvas id="dmsConversionChart"></canvas></div>
+  </div>
+</div>
+
 <footer>&copy; Termac Family of Companies &nbsp;·&nbsp; Designed &amp; developed by George E. Scholl (Ted) &nbsp;·&nbsp; Manager Access Only</footer>
 
 <script>
@@ -966,7 +990,164 @@ function renderManagerScorecard() {
   }
 }
 
+var DMS_REPS = [
+  { id:'amcgowan', name:'Amanda McGowan', role:'DMS Telemarketing', avatar:'AM',
+    ccToday:25, hlToday:5, coldCallsQtr:1820, leadsPromotedQtr:52, connectRate:34,
+    weeklyConsistency:100, streak:12, score:93.5,
+    badges:['🥇 Top Closer','🎯 Quota Crusher','🔥 12-Day Streak'],
+    trend:[88,90,91,92,93.5], quarterBonus:true },
+  { id:'donna', name:'Donna Meyer', role:'DMS Telemarketing', avatar:'DM',
+    ccToday:20, hlToday:5, coldCallsQtr:1640, leadsPromotedQtr:47, connectRate:31,
+    weeklyConsistency:80, streak:9, score:88.7,
+    badges:['📈 Conversion Leader','🔥 Hot Streak'],
+    trend:[81,83,85,86,88.7], quarterBonus:true },
+  { id:'cbush', name:'Chrystal Bush', role:'DMS Telemarketing', avatar:'CB',
+    ccToday:18, hlToday:4, coldCallsQtr:1450, leadsPromotedQtr:38, connectRate:27,
+    weeklyConsistency:60, streak:4, score:81.2,
+    badges:['🎯 Quota Crusher'],
+    trend:[76,78,79,80,81.2], quarterBonus:true },
+  { id:'gkluge', name:'Gina Kluge', role:'DMS Telemarketing', avatar:'GK',
+    ccToday:14, hlToday:3, coldCallsQtr:1190, leadsPromotedQtr:29, connectRate:24,
+    weeklyConsistency:40, streak:2, score:74.6,
+    badges:['📞 Steady Volume'],
+    trend:[70,71,73,73,74.6], quarterBonus:false },
+  { id:'tcolona', name:'Tara Colona', role:'DMS Telemarketing', avatar:'TC',
+    ccToday:9, hlToday:1, coldCallsQtr:810, leadsPromotedQtr:14, connectRate:19,
+    weeklyConsistency:20, streak:0, score:64.3,
+    badges:[],
+    trend:[68,67,65,64,64.3], quarterBonus:false },
+  { id:'kreinhart', name:'Kim Reinhart', role:'DMS Telemarketing', avatar:'KR',
+    ccToday:6, hlToday:0, coldCallsQtr:520, leadsPromotedQtr:9, connectRate:16,
+    weeklyConsistency:0, streak:0, score:58.9,
+    badges:[],
+    trend:[62,60,59,58,58.9], quarterBonus:false },
+];
+DMS_REPS.forEach(function(r){
+  r.ccPacePct = Math.round((r.ccToday/25)*100);
+  r.hlPacePct = Math.round((r.hlToday/5)*100);
+  r.conversionRate = +((r.leadsPromotedQtr/r.coldCallsQtr)*100).toFixed(1);
+  r.tier = getTechTier(r.score);
+});
+
+// ── MANAGER DMS SCORECARD ──
+function renderDmsScorecard() {
+  if(!document.getElementById('dmsScorecardGrid')) return;
+  var avatarColors = ['#7C3AED','#1B5FA8','#C8102E','#0D7490','#D8690B','#1E7B3C'];
+  var sorted = DMS_REPS.slice().sort(function(a,b){return b.score-a.score;});
+
+  var avg = (DMS_REPS.reduce(function(s,r){return s+r.score;},0)/DMS_REPS.length).toFixed(1);
+  var platinum = DMS_REPS.filter(function(r){return r.tier==='platinum';}).length;
+  var gold = DMS_REPS.filter(function(r){return r.tier==='gold';}).length;
+  var atRisk = DMS_REPS.filter(function(r){return r.score<70;}).length;
+  var bonuses = DMS_REPS.filter(function(r){return r.quarterBonus;}).length;
+  var convAvg = (DMS_REPS.reduce(function(s,r){return s+r.conversionRate;},0)/DMS_REPS.length).toFixed(1);
+
+  var el = function(id,v){ var e=document.getElementById(id); if(e) e.textContent=v; };
+  el('dms_avg', avg); el('dms_platinum', platinum); el('dms_gold', gold);
+  el('dms_atrisk', atRisk); el('dms_bonuses', bonuses+' of '+DMS_REPS.length); el('dms_conversion', convAvg+'%');
+
+  var barDefs = [
+    {key:'ccPacePct', label:'Call Pace', target:100},
+    {key:'hlPacePct', label:'Lead Pace', target:100},
+    {key:'weeklyConsistency', label:'Consistency', target:80},
+    {key:'connectRate', label:'Connect Rate', target:25},
+  ];
+
+  var html = '';
+  sorted.forEach(function(r, i) {
+    var tc = TIER_CONFIG[r.tier];
+    var scoreColor = r.tier==='platinum'?'#7C3AED':r.tier==='gold'?'#B45309':r.tier==='silver'?'#4B5563':'#DC2626';
+    var sparkMax = Math.max.apply(null,r.trend);
+    var sparkBars = r.trend.map(function(v,vi){
+      var h = Math.round((v/sparkMax)*20)+2;
+      return '<div class="sc-spark" style="height:'+h+'px;width:8px;background:'+scoreColor+';opacity:'+(0.4+vi*0.15).toFixed(1)+'"></div>';
+    }).join('');
+    var bars = barDefs.map(function(b){
+      var v = r[b.key]||0;
+      var barColor = v>=b.target?'var(--green)':v>=(b.target-15)?'var(--yellow)':'var(--red)';
+      return '<div class="sc-bar-row">'+
+        '<div class="sc-bar-lbl">'+b.label+'</div>'+
+        '<div class="sc-bar-track"><div class="sc-bar-fill" style="width:'+Math.min(v,100)+'%;background:'+barColor+'"></div></div>'+
+        '<div class="sc-bar-val" style="color:'+barColor+'">'+v+'%</div>'+
+      '</div>';
+    }).join('');
+
+    html += '<div class="sc-card '+r.tier+'">' +
+      '<div class="sc-card-top">' +
+        '<div style="display:flex;align-items:center;gap:10px">' +
+          '<div class="sc-avatar-lg" style="background:'+avatarColors[i%avatarColors.length]+'">'+r.avatar+'</div>' +
+          '<div>' +
+            '<div class="sc-name">'+(i===0?'🥇 ':i===1?'🥈 ':i===2?'🥉 ':'')+'#'+(i+1)+' '+r.name+'</div>' +
+            '<div class="sc-role">'+r.role+'</div>' +
+            '<div style="font-size:11px;color:var(--soft);margin-top:2px">Today: '+r.ccToday+'/25 calls · '+r.hlToday+'/5 leads</div>' +
+          '</div>' +
+        '</div>' +
+        '<div style="text-align:right">' +
+          '<div class="sc-score-lg" style="color:'+scoreColor+'">'+r.score.toFixed(1)+'</div>' +
+          '<div class="sc-tier-badge" style="background:'+tc.bg+';color:'+tc.color+'">'+tc.label+'</div>' +
+          '<div class="sc-trend-sparkline" style="justify-content:flex-end;margin-top:6px">'+sparkBars+'</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="sc-metrics">' +
+        '<div class="sc-metric"><div class="sc-metric-val" style="color:var(--green)">'+r.conversionRate+'%</div><div class="sc-metric-lbl">Conversion Rate</div></div>' +
+        '<div class="sc-metric"><div class="sc-metric-val" style="color:var(--blue)">'+r.connectRate+'%</div><div class="sc-metric-lbl">Connect Rate</div></div>' +
+        '<div class="sc-metric"><div class="sc-metric-val">'+r.coldCallsQtr+'</div><div class="sc-metric-lbl">Cold Calls QTR</div></div>' +
+        '<div class="sc-metric"><div class="sc-metric-val" style="color:var(--orange)">'+r.leadsPromotedQtr+'</div><div class="sc-metric-lbl">Leads Promoted QTR</div></div>' +
+      '</div>' +
+      '<div class="sc-progress-wrap">'+bars+'</div>' +
+      '<div class="sc-footer">' +
+        '<div class="sc-badges">'+(r.badges.join(' ')||'<span style="color:#9AA0A8;font-size:11px">No badges yet</span>')+'</div>' +
+        '<span class="sc-bonus-pill '+(r.quarterBonus?'sc-bonus-yes':'sc-bonus-no')+'">'+(r.quarterBonus?'✓ Bonus Earned':'No Bonus')+'</span>' +
+      '</div>' +
+    '</div>';
+  });
+  document.getElementById('dmsScorecardGrid').innerHTML = html;
+
+  var names = sorted.map(function(r){return r.name.split(' ')[0];});
+
+  // Today's pace chart (cold calls vs harvested leads, grouped bars)
+  var paceCanvas = document.getElementById('dmsPaceChart');
+  if(paceCanvas) {
+    new Chart(paceCanvas, {
+      type:'bar',
+      data:{ labels:names, datasets:[
+        { label:'Cold Call Pace', data:sorted.map(function(r){return r.ccPacePct;}), backgroundColor:'rgba(200,16,46,.75)', borderRadius:4 },
+        { label:'Harvested Lead Pace', data:sorted.map(function(r){return r.hlPacePct;}), backgroundColor:'rgba(27,95,168,.75)', borderRadius:4 }
+      ]},
+      options:{ responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{position:'bottom', labels:{font:{family:'Barlow Condensed',size:11,weight:'700'},boxWidth:12,padding:10}} },
+        scales:{ x:{ grid:{display:false}, ticks:{font:{size:10}} },
+          y:{ min:0, max:100, ticks:{ callback:function(v){return v+'%';}, font:{size:10} }, grid:{color:'rgba(0,0,0,.07)'} }
+        }
+      }
+    });
+  }
+
+  // Conversion rate chart
+  var convCanvas = document.getElementById('dmsConversionChart');
+  if(convCanvas) {
+    new Chart(convCanvas, {
+      type:'bar',
+      data:{ labels:names, datasets:[{
+        label:'Conversion Rate', data:sorted.map(function(r){return r.conversionRate;}),
+        backgroundColor:sorted.map(function(r){
+          return r.conversionRate>=2.5?'rgba(30,123,60,.8)':r.conversionRate>=1.8?'rgba(242,183,5,.8)':'rgba(200,16,46,.7)';
+        }), borderRadius:5
+      }]},
+      options:{ responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{display:false},
+          tooltip:{ callbacks:{ label:function(c){return ' '+c.raw+'% ('+sorted[c.dataIndex].leadsPromotedQtr+' of '+sorted[c.dataIndex].coldCallsQtr+' calls)'; }}}
+        },
+        scales:{ x:{ grid:{display:false}, ticks:{font:{size:10}} },
+          y:{ min:0, max:4, ticks:{ callback:function(v){return v+'%';}, font:{size:10} }, grid:{color:'rgba(0,0,0,.07)'} }
+        }
+      }
+    });
+  }
+}
+
 renderManagerScorecard();
+renderDmsScorecard();
 </script>
 </body>
 </html>
