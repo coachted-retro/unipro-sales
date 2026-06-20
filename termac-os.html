@@ -4086,6 +4086,95 @@ setTimeout(function() {
 // Also update flash report to flag owner items
 // updateFlashReportAlerts already called above
 
+// ── checkAllMetrics was missing from this block (only existed in the old,
+//    now-unused first copy of this IIFE) -- copied here so the setTimeout
+//    call above and the external call on Command Center tab-open actually
+//    have something to run. Uses METRIC_CONFIG/activeAlerts/getTier/
+//    showAlertBanner already defined earlier in this same scope. ──
+function checkAllMetrics() {
+  // Pull live values from CRM where available, supplement with demo data
+  var accounts = (typeof crmLoad === 'function') ? crmLoad('accounts') : [];
+  var leads    = (typeof crmLoad === 'function') ? crmLoad('leads')    : [];
+  var now      = Date.now(), day = 86400000;
+
+  // Live: deficiency conversion from account records
+  var totalDef = 0, quotedDef = 0;
+  accounts.forEach(function(a) {
+    totalDef  += (a.openDeficiencies || 0);
+    if (a.defQuoteSent) quotedDef++;
+  });
+  var defConvValue = totalDef > 0 ? Math.round((quotedDef/totalDef)*100) : 41;
+  if (totalDef === 0) defConvValue = 41;
+
+  // Live: renewal rate from accounts
+  var renewalDue   = accounts.filter(function(a){ return a.nextDue && (new Date(a.nextDue).getTime()-now) < 90*day && (new Date(a.nextDue).getTime()-now) > 0; }).length;
+  var renewalStarted = accounts.filter(function(a){ return a.renewalStarted; }).length;
+  var renewalRate  = renewalDue > 0 ? Math.round((renewalStarted/renewalDue)*100) : 87;
+  if (renewalDue === 0) renewalRate = 87;
+
+  // Live: cross-service penetration
+  var totalAccts = accounts.filter(function(a){ return a.status==='active'; }).length;
+  var totalSvcs  = accounts.reduce(function(sum,a){ return sum + ((a.services||[]).length); }, 0);
+  var crossSvc   = totalAccts > 0 ? (totalSvcs/totalAccts).toFixed(1) : 2.1;
+
+  // Live: open deficiencies awaiting quote
+  var openDefNoQuote = accounts.reduce(function(sum,a){ return sum + (a.openDeficiencies&&!a.defQuoteSent?1:0); }, 0);
+  var quoteTime = openDefNoQuote > 2 ? 52 : 42;
+
+  var metrics = [
+    { key:'deficiency_conversion', value:defConvValue, display:defConvValue+'%',
+      context:defConvValue+'% — '+(totalDef||34)+' deficiencies identified, '+(totalDef-quotedDef||14)+' not yet quoted' },
+    { key:'ftfr', value:84, display:'84%', context:'84% — 3 return trips logged this week (Marcus W., Ray S.)' },
+    { key:'quote_time', value:quoteTime, display:quoteTime+' hrs',
+      context:quoteTime+'hr avg — '+(openDefNoQuote||6)+' deficiencies without quotes >48hrs' },
+    { key:'renewal_rate', value:renewalRate, display:renewalRate+'%',
+      context:renewalRate+'% — '+renewalDue+' contracts expiring within 90 days' },
+    { key:'material_variance', value:3.1, display:'3.1%', context:'3.1% — ALLPro hood job #402 driving avg up at 12.5%' },
+    { key:'rework_rate', value:2.4, display:'2.4%', context:'2.4% — 3 hood jobs with measurement errors this month' },
+    { key:'cash_cycle', value:38, display:'38 days', context:'38 days — 3 large accounts averaging 52 days to pay' },
+    { key:'dso', value:32, display:'32 days', context:'32 days — 6 invoices >45 days totaling $38,400' },
+    { key:'allpro_margin', value:-8.4, display:'-8.4%', context:'-8.4% avg variance — Grease containment #427 at -20%' },
+    { key:'cross_service', value:parseFloat(crossSvc), display:crossSvc+' svcs/client',
+      context:crossSvc+' avg services per active account — '+
+      accounts.filter(function(a){return a.status==='active'&&(a.services||[]).length<2;}).length+
+      ' single-service accounts identified' },
+    { key:'throughput', value:-3, display:'-3%', context:'-3% vs avg — trending down 3 consecutive weeks (ALLPro fab)' },
+    { key:'otd_allpro', value:82, display:'82%', context:'82% — 2 custom radius jobs behind schedule' },
+    { key:'report_latency', value:4.8, display:'4.8 hrs', context:'4.8hr avg — Ray Santos, Dana K. above threshold this week' },
+    { key:'wrench_time_ok', value:72, display:'72%', context:'72% fleet avg — Tom K. at 61%, route clustering review needed' },
+  ];
+
+  var yellows = 0, reds = 0;
+  metrics.forEach(function(m) {
+    var tier = getTier(m.key, m.value);
+    if (tier === 'yellow') yellows++;
+    if (tier === 'red') reds++;
+    if ((tier === 'yellow' || tier === 'red') && !activeAlerts[m.key]) {
+      activeAlerts[m.key] = tier;
+      showAlertBanner(m.key, tier, m.display, m.context);
+    }
+  });
+
+  var total = yellows + reds;
+  var badge = document.getElementById('alertCountBadge');
+  var count = document.getElementById('alertCount');
+  if (badge && count) {
+    badge.style.display = total > 0 ? 'inline' : 'none';
+    count.textContent = total;
+  }
+}
+
+// ── Expose to global scope. This whole block is wrapped in an IIFE for
+//    local variable isolation (ch_red, gridLine, etc.), which is correct —
+//    but it also silently trapped these functions, which are called from
+//    onclick="" attributes in the HTML and from outside this IIFE. Inline
+//    event handlers resolve identifiers against the global object, so
+//    without this they throw "fireAI is not defined" / etc. on click and
+//    do nothing -- no error shown to the user, just a dead button. ──
+window.fireAI = fireAI;
+window.closeAI = closeAI;
+window.regenAI = regenAI;
+window.checkAllMetrics = checkAllMetrics;
 
 })();
 </script>
