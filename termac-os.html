@@ -5568,7 +5568,12 @@ const SV_STEP_SCOPE  = { id: 'scope', label: 'Scope', panel: 9 };
 const SV_STEP_DONE   = { id: 'done',  label: 'Done',  panel: 10 };
 
 // Survey panel map
-const SVC_PANEL = { unipro: 3, filterman: 4, gto: 5, allpro: 6, quality3: 7, termac: 8 };
+// quality3 -> 3 (same panel as unipro): Quality III is Termac's DE-specific
+// fire protection entity using the identical NFPA 96/10/101 pricing model,
+// so it reuses the same fs-screen wizard rather than its own separate copy.
+// fsState.activeService (set in svGotoStep) tells the shared wizard which
+// division's data it's currently collecting into.
+const SVC_PANEL = { unipro: 3, filterman: 4, gto: 5, allpro: 6, quality3: 3, termac: 8 };
 const SVC_LABEL = { unipro:'UniPro', filterman:'Filter Man', gto:'G.T.O.', allpro:'ALLPro', quality3:'Quality III', termac:'Termac' };
 
 let _svSteps = [];  // computed steps array for current visit
@@ -5717,8 +5722,20 @@ function svGotoStep(idx){
   const panel = document.getElementById('svPanel'+step.panel);
   if(panel) panel.classList.add('active');
 
-  // Pre-fill client info when UniPro fire survey activates (panel 3)
+  // Pre-fill client info when the shared fire-survey pricing wizard activates
+  // (panel 3 -- serves both UniPro and Quality III, see SVC_PANEL above)
   if(step.panel === 3 && typeof fsPrefillClientInfo === 'function') {
+    fsState.activeService = step.id;  // 'unipro' or 'quality3' -- tells the
+                                       // shared wizard which division's data
+                                       // it's collecting into this time
+    // Quality III is DE-specific (no state sales tax) -- force the tax
+    // dropdown to DE every time, since this is invariant for the division
+    // and the field is shared with UniPro's turn in the same visit (a
+    // leftover PA/NJ/etc. selection from UniPro must not carry over).
+    if (step.id === 'quality3') {
+      const taxEl = document.getElementById('fs_taxState');
+      if (taxEl && taxEl.value !== 'DE') { taxEl.value = 'DE'; if (typeof fsCalcProposal === 'function') fsCalcProposal(); }
+    }
     fsPrefillClientInfo();
     setTimeout(fsPrefillClientInfo, 300);
   }
@@ -5810,7 +5827,11 @@ const fsState = {
   sigCtx: null,
   pipelineStage: 'setup',
   obChecked: {},
-  miscCount: 0
+  miscCount: 0,
+  activeService: 'unipro'  // 'unipro' or 'quality3' -- same NFPA 96/10/101 pricing wizard
+                           // serves both (Quality III = the DE-specific entity, identical
+                           // pricing model per Ted); set in svGotoStep based on which step
+                           // the rep is actually on when panel 3 is shown.
 };
 // fsSvc managed by fsSvcState below
 const fsRes = { hood: {}, ext: {}, light: {} };
@@ -6472,23 +6493,29 @@ function fsGenerateAutoSig() {
 }
 
 // Called when the rep finishes UniPro's pricing screen (fs-screen3).
-// Collects camera/sign/inspection data into svState.surveyData.unipro,
+// Collects camera/sign/inspection data into svState.surveyData[fsState.activeService],
 // then hands control back to the outer multi-service queue (svGoNext)
 // so any remaining selected services (Filter Man, GTO, etc.) get surveyed
 // before the client ever reaches a single combined signature/payment step.
+// NOTE: this same screen now serves both UniPro and Quality III -- they
+// use the identical NFPA 96/10/101 pricing model (Quality III is just the
+// DE-specific entity, per Ted), so rather than duplicate this entire
+// wizard a second time, fsState.activeService (set in svGotoStep when
+// entering panel 3) determines which division's data this writes to.
 function fsFinishUniProSurvey() {
   if (typeof uvCollectData === 'function') uvCollectData();
+  const svc = fsState.activeService || 'unipro';
   // Also persist scope notes for the combined estimate
-  if (!svState.surveyData.unipro) svState.surveyData.unipro = {};
-  svState.surveyData.unipro.scopeNotes = document.getElementById('fs_propNotes')?.value || '';
+  if (!svState.surveyData[svc]) svState.surveyData[svc] = {};
+  svState.surveyData[svc].scopeNotes = document.getElementById('fs_propNotes')?.value || '';
 
-  // ── Bridge fs-screen3's computed pricing into svState.surveyData.unipro ──
+  // ── Bridge fs-screen3's computed pricing into svState.surveyData[svc] ──
   // fs-screen3 (the itemized NFPA 96/10/101 pricing wizard) and svState
   // (which feeds the combined multi-division Estimate screen via
   // estBuildLines) were never connected -- fsCalcProposal() computes a
   // real total in fs_propTotal, but nothing ever copied it anywhere
   // svState could see, so the combined estimate always fell through to
-  // its "TBD" placeholder for UniPro regardless of what was priced here.
+  // its "TBD" placeholder regardless of what was priced here.
   const $n = id => parseFloat(document.getElementById(id)?.value || 0) || 0;
   const fsHoodTanks = $n('q-hood-tanks');
   const fsExtUnits  = $n('q-ext-units');
@@ -6496,7 +6523,7 @@ function fsFinishUniProSurvey() {
   const fsTotalText = document.getElementById('fs_propTotal')?.textContent || '';
   const fsTotal = parseFloat(fsTotalText.replace(/[^0-9.]/g, '')) || 0;
 
-  const d = svState.surveyData.unipro;
+  const d = svState.surveyData[svc];
   d.ext_qty  = fsExtUnits;   // also fixes the Scope Summary screen, which reads these same fields
   d.hood_qty = fsHoodTanks;
   d.fs_total = fsTotal;
@@ -8505,7 +8532,7 @@ function svBuildScope(){
   el.innerHTML = svState.selectedServices.map(svc=>{
     const d = svState.surveyData[svc]||{};
     let details = '';
-    if(svc==='unipro'){
+    if(svc==='unipro' || svc==='quality3'){
       details = `Extinguishers: ${d.ext_qty||'—'} · Hood systems: ${d.hood_qty||'—'} · Monitoring: ${d.monitoring_status||'—'}`;
     } else if(svc==='filterman'){
       details = `Filters: ${d.fm_count||'—'} × ${d.fm_size||'—'} · Frequency: ${d.fm_frequency||'—'} · Term: ${d.fm_term||'—'}`;
@@ -8513,8 +8540,6 @@ function svBuildScope(){
       details = `Trap: ${d.gto_gallons||'—'} ${d.gto_type||''} · Frequency: ${d.gto_frequency||'—'} · Term: ${d.gto_term||'—'}`;
     } else if(svc==='allpro'){
       details = d.ap_description ? `"${d.ap_description.slice(0,120)}…"` : 'No description entered.';
-    } else if(svc==='quality3'){
-      details = `Extinguishers: ${d.q3_ext_qty||'—'} · Condition: ${d.q3_condition||'—'}`;
     } else if(svc==='termac'){
       const items = ['sanitizer','detergent','degreaser','cleaner','paper_towels','toilet_paper','trash_liners','hand_soap']
         .filter(k=>d['tm_'+k]).map(k=>k.replace(/_/g,' '));
@@ -8535,12 +8560,14 @@ function svSaveSurveyData(svc){
   const getNum = id => { const el=document.getElementById(id); return el?el.value:''; };
   const getChk = id => { const el=document.getElementById(id); return el?el.checked:false; };
 
-  if(svc==='unipro'){
-    // UniPro's data is collected by uvCollectData() (camera/sign/hood/ext/light
-    // system) which already writes directly into svState.surveyData.unipro.
-    // Do NOT overwrite it here — these field IDs (sv_ext_qty, sv_hood_qty, etc.)
-    // belong to a retired UI and no longer exist in the DOM. Calling
-    // uvCollectData() again is safe/idempotent and keeps photos + AI results.
+  if(svc==='unipro' || svc==='quality3'){
+    // Both UniPro and Quality III are collected by uvCollectData()
+    // (camera/sign/hood/ext/light system, panel 3) which writes directly
+    // into svState.surveyData[fsState.activeService] -- see fsFinishUniProSurvey.
+    // Do NOT overwrite it here — these field IDs (sv_ext_qty, sv_hood_qty,
+    // sv_q3_ext_qty, etc.) belong to retired UI and no longer exist in the
+    // DOM. Calling uvCollectData() again is safe/idempotent and keeps
+    // photos + AI results.
     if (typeof uvCollectData === 'function') uvCollectData();
     return;
   } else if(svc==='filterman'){
@@ -8553,9 +8580,6 @@ function svSaveSurveyData(svc){
     d.gto_term=get('sv_gto_term'); d.gto_rate=getNum('sv_gto_rate');
   } else if(svc==='allpro'){
     d.ap_description=get('sv_ap_description');
-  } else if(svc==='quality3'){
-    d.q3_ext_qty=getNum('sv_q3_ext_qty'); d.q3_lastinsp=get('sv_q3_lastinsp');
-    d.q3_condition=get('sv_q3_condition'); d.q3_notes=get('sv_q3_notes');
   } else if(svc==='termac'){
     d.tm_machine_type=get('sv_tm_machine_type'); d.tm_machine_qty=getNum('sv_tm_machine_qty');
     d.tm_machine_contract=get('sv_tm_machine_contract'); d.tm_machine_provider=get('sv_tm_machine_provider');
@@ -9116,7 +9140,7 @@ function estBuildLines(svc, d){
   if(svc === 'unipro' || svc === 'quality3'){
     const label = svc === 'unipro' ? 'UniPro' : 'Quality III';
     const extQty = parseInt(d.ext_qty) || 0;
-    if (svc === 'unipro' && d.fs_total > 0) {
+    if (d.fs_total > 0) {
       // Real pricing from the fs-screen3 itemized estimate (suppression,
       // extinguishers, exit lights, fees, tax all rolled in) -- this is
       // what "Continue Survey" on the pricing screen actually captured.
@@ -13108,9 +13132,9 @@ async function uvPhotoHood(idx, input) {
     thumbEl.innerHTML = `<img src="${e.target.result}" style="max-width:180px;max-height:120px;border-radius:8px;border:2px solid var(--line);margin-top:4px">`;
 
     // Store photo
-    if (!svState.surveyData.unipro) svState.surveyData.unipro = {};
-    if (!svState.surveyData.unipro.photos) svState.surveyData.unipro.photos = {};
-    svState.surveyData.unipro.photos['hood_' + idx] = e.target.result;
+    if (!svState.surveyData[fsState.activeService]) svState.surveyData[fsState.activeService] = {};
+    if (!svState.surveyData[fsState.activeService].photos) svState.surveyData[fsState.activeService].photos = {};
+    svState.surveyData[fsState.activeService].photos['hood_' + idx] = e.target.result;
 
     // AI analysis
     try {
@@ -13137,7 +13161,7 @@ async function uvPhotoHood(idx, input) {
       aiEl.style.color = '#1E40AF';
 
       // Store AI result
-      svState.surveyData.unipro['hood_' + idx + '_ai'] = text;
+      svState.surveyData[fsState.activeService]['hood_' + idx + '_ai'] = text;
     } catch(err) {
       aiEl.textContent = '⚠️ AI analysis unavailable — photo saved';
       aiEl.style.display = 'block';
@@ -13255,9 +13279,9 @@ async function uvPhotoExt(idx, input) {
     const b64 = e.target.result.split(',')[1];
     thumbEl.innerHTML = `<img src="${e.target.result}" style="max-width:180px;max-height:120px;border-radius:8px;border:2px solid var(--line);margin-top:4px">`;
 
-    if (!svState.surveyData.unipro) svState.surveyData.unipro = {};
-    if (!svState.surveyData.unipro.photos) svState.surveyData.unipro.photos = {};
-    svState.surveyData.unipro.photos['ext_' + idx] = e.target.result;
+    if (!svState.surveyData[fsState.activeService]) svState.surveyData[fsState.activeService] = {};
+    if (!svState.surveyData[fsState.activeService].photos) svState.surveyData[fsState.activeService].photos = {};
+    svState.surveyData[fsState.activeService].photos['ext_' + idx] = e.target.result;
 
     try {
       aiEl.style.display = 'block';
@@ -13287,7 +13311,7 @@ async function uvPhotoExt(idx, input) {
         document.getElementById('uv_ext_action_' + idx).value = 'inspect';
       }
 
-      svState.surveyData.unipro['ext_' + idx + '_ai'] = text;
+      svState.surveyData[fsState.activeService]['ext_' + idx + '_ai'] = text;
     } catch(err) {
       aiEl.textContent = '⚠️ AI unavailable — photo saved';
       aiEl.style.display = 'block';
@@ -13369,9 +13393,9 @@ async function uvPhotoLight(idx, input) {
     const b64 = e.target.result.split(',')[1];
     thumbEl.innerHTML = `<img src="${e.target.result}" style="max-width:180px;max-height:120px;border-radius:8px;border:2px solid var(--line);margin-top:4px">`;
 
-    if (!svState.surveyData.unipro) svState.surveyData.unipro = {};
-    if (!svState.surveyData.unipro.photos) svState.surveyData.unipro.photos = {};
-    svState.surveyData.unipro.photos['light_' + idx] = e.target.result;
+    if (!svState.surveyData[fsState.activeService]) svState.surveyData[fsState.activeService] = {};
+    if (!svState.surveyData[fsState.activeService].photos) svState.surveyData[fsState.activeService].photos = {};
+    svState.surveyData[fsState.activeService].photos['light_' + idx] = e.target.result;
 
     try {
       aiEl.style.display = 'block';
@@ -13407,7 +13431,7 @@ async function uvPhotoLight(idx, input) {
         document.getElementById('uv_light_cond_' + idx).value = 'Pass — Functional';
       }
 
-      svState.surveyData.unipro['light_' + idx + '_ai'] = text;
+      svState.surveyData[fsState.activeService]['light_' + idx + '_ai'] = text;
     } catch(err) {
       aiEl.textContent = '⚠️ AI unavailable — photo saved';
       aiEl.style.display = 'block';
@@ -13441,8 +13465,8 @@ function uvUpdateSignTotal() {
    SAVE UniPro SURVEY DATA → svState
 ───────────────────────────────────────────── */
 function uvCollectData() {
-  if (!svState.surveyData.unipro) svState.surveyData.unipro = {};
-  const d = svState.surveyData.unipro;
+  if (!svState.surveyData[fsState.activeService]) svState.surveyData[fsState.activeService] = {};
+  const d = svState.surveyData[fsState.activeService];
 
   // Competitor
   d.competitor       = document.getElementById('sv_competitor')?.value || '';
@@ -13605,7 +13629,7 @@ window.buildEstimateLines = function(svc, d) {
   if (svc === 'unipro' || svc === 'quality3') {
     // Collect latest data from form
     if (svc === 'unipro') uvCollectData();
-    const uvd = svState.surveyData.unipro || d;
+    const uvd = svState.surveyData[fsState.activeService] || d;
     return uvBuildEstimateLines(uvd);
   }
   return _origBuildEstLine ? _origBuildEstLine(svc, d) : [];
@@ -13616,9 +13640,9 @@ window.buildEstimateLines = function(svc, d) {
 ───────────────────────────────────────────── */
 var _origSvGoNext2 = window.svGoNext;
 window.svGoNext = function() {
-  // If leaving UniPro panel, collect data
+  // If leaving the shared fire-survey panel (UniPro or Quality III), collect data
   const step = (_svSteps || [])[svState?.currentStep || 0];
-  if (step && step.id === 'unipro') {
+  if (step && (step.id === 'unipro' || step.id === 'quality3')) {
     uvCollectData();
   }
   if (_origSvGoNext2) _origSvGoNext2();
@@ -13655,7 +13679,7 @@ function uvGetPhotoAttachmentHTML() {
     html += '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px">';
     sectionPhotos.forEach(k => {
       const num = k.split('_').pop();
-      const ai  = svState.surveyData.unipro[k + '_ai'] || '';
+      const ai  = svState.surveyData[fsState.activeService][k + '_ai'] || '';
       html += `<div style="display:inline-block;text-align:center">
         <img src="${photos[k]}" style="width:140px;height:100px;object-fit:cover;border-radius:6px;border:1.5px solid #E5E7EB">
         <div style="font-size:10px;color:#6B7280;margin-top:3px">#${num}${ai ? '<br><em>' + ai.substring(0,60) + '…</em>' : ''}</div>
