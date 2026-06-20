@@ -8366,27 +8366,32 @@ async function harvestRunLiveDC(){
 // ingestion behavior — column headers become the queryable property
 // names as-is, spaces and all.
 //
-// HONEST STATUS: dataset, schema, and endpoint pattern are all confirmed
-// real from CMS's own documentation and a real data sample — but the
-// live POST query itself has not been executed end-to-end in this
-// session (no way to issue a POST and inspect the response from here).
-// If the response shape differs from what's coded below, the catch
-// block surfaces the real error text, same self-diagnosing pattern that
-// found and fixed the DE business_activity/category mismatch.
+// HONEST STATUS (full history): dataset, schema, and endpoint pattern
+// are confirmed real from CMS's own documentation and a real data
+// sample. First attempt was a POST with a JSON body, which triggers a
+// CORS preflight (OPTIONS) -- rewritten to a plain GET. That STILL
+// failed with the same generic "Failed to fetch" in production, which
+// ruled out the preflight theory as the whole story: a plain GET is a
+// CORS "simple request" with no preflight, yet it still failed at the
+// network level before any response was read. Cross-checked against
+// CMS's own published API FAQ: their *Provider Data Catalog*
+// (data.cms.gov/provider-data/) is a client-side JavaScript single-page
+// app (confirmed -- the dataset page literally returns "You need to
+// enable JavaScript to run this app" to a server-side fetch) built for
+// its own frontend, not third-party cross-origin consumption -- unlike
+// Socrata (which powers the PA/DE/DC sources and explicitly supports
+// direct browser CORS access by design). No client-side request shape
+// fixes a server that never sends Access-Control-Allow-Origin at all.
 //
-// UPDATE (post-deploy): confirmed broken in production with a "Failed to
-// fetch" network error -- not an HTTP error response, a network-level
-// block before any response arrived. That signature is the classic CORS
-// preflight failure: a POST with Content-Type: application/json is not a
-// CORS "simple request," so the browser sends an OPTIONS preflight first,
-// and CMS's API evidently doesn't answer it. Rewritten below as plain GET
-// requests (one per state, simple "=" condition) to match every other
-// working harvester in this file (PA/DE/DC are all GET) and sidestep
-// preflight entirely. Bracket-notation query params (conditions[0]
-// [property]=...) follow DKAN's own documented JSON-to-querystring
-// conversion convention. If this still doesn't match the live schema,
-// each state's request now fails independently with a real HTTP/JSON
-// error surfaced in the banner, instead of one opaque blocked request.
+// REAL FIX: route through a small Cloudflare Worker (cms-cors-proxy-
+// worker.js, delivered alongside this file) that fetches data.cms.gov
+// SERVER-SIDE -- no CORS restriction applies server-to-server -- and
+// returns the response to the browser with permissive CORS headers
+// added. Same pattern already proven by FS_PROXY for the AI calls.
+// Paste your deployed Worker URL into HARVEST_CMS_PROXY_URL below; until
+// that's set, the banner says so explicitly instead of failing with
+// another opaque "Failed to fetch".
+const HARVEST_CMS_PROXY_URL = ''; // <-- paste your deployed cms-cors-proxy-worker.js URL here, e.g. 'https://unipro-cms-proxy.tedscholl.workers.dev'
 const HARVEST_CMS_FIRE_SAFETY_URL = 'https://data.cms.gov/provider-data/api/1/datastore/query/ifjz-ge4w/0';
 const HARVEST_CMS_TERRITORY_STATES = ['PA','NJ','DE','MD','DC'];
 
@@ -8394,6 +8399,12 @@ async function harvestRunLiveCMSFireSafety(){
   const banner = document.getElementById('harvestStatusBanner');
   const btn = document.getElementById('crmHarvestCMSBtn');
   if (!banner) return;
+
+  if (!HARVEST_CMS_PROXY_URL) {
+    banner.style.display = 'block';
+    banner.innerHTML = '⚠️ This harvester needs a small CORS-proxy Worker deployed first (data.cms.gov doesn\'t support direct browser access). See cms-cors-proxy-worker.js for the 2-minute setup, then paste the Worker URL into HARVEST_CMS_PROXY_URL in this file.';
+    return;
+  }
 
   banner.style.display = 'block';
   banner.innerHTML = '🌾 Pulling recent nursing home fire safety citations from CMS open data…';
@@ -8411,8 +8422,10 @@ async function harvestRunLiveCMSFireSafety(){
         'conditions[0][operator]': '=',
         'limit': '10'
       });
+      const targetUrl = HARVEST_CMS_FIRE_SAFETY_URL + '?' + params.toString();
+      const proxiedUrl = HARVEST_CMS_PROXY_URL + '?url=' + encodeURIComponent(targetUrl);
       try {
-        const res = await fetch(HARVEST_CMS_FIRE_SAFETY_URL + '?' + params.toString());
+        const res = await fetch(proxiedUrl);
         let payload;
         try { payload = await res.json(); } catch(parseErr) { payload = null; }
         if (!res.ok) {
