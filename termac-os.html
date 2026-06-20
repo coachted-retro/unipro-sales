@@ -6481,6 +6481,31 @@ function fsFinishUniProSurvey() {
   // Also persist scope notes for the combined estimate
   if (!svState.surveyData.unipro) svState.surveyData.unipro = {};
   svState.surveyData.unipro.scopeNotes = document.getElementById('fs_propNotes')?.value || '';
+
+  // ── Bridge fs-screen3's computed pricing into svState.surveyData.unipro ──
+  // fs-screen3 (the itemized NFPA 96/10/101 pricing wizard) and svState
+  // (which feeds the combined multi-division Estimate screen via
+  // estBuildLines) were never connected -- fsCalcProposal() computes a
+  // real total in fs_propTotal, but nothing ever copied it anywhere
+  // svState could see, so the combined estimate always fell through to
+  // its "TBD" placeholder for UniPro regardless of what was priced here.
+  const $n = id => parseFloat(document.getElementById(id)?.value || 0) || 0;
+  const fsHoodTanks = $n('q-hood-tanks');
+  const fsExtUnits  = $n('q-ext-units');
+  const fsLightUnits= $n('q-light-units');
+  const fsTotalText = document.getElementById('fs_propTotal')?.textContent || '';
+  const fsTotal = parseFloat(fsTotalText.replace(/[^0-9.]/g, '')) || 0;
+
+  const d = svState.surveyData.unipro;
+  d.ext_qty  = fsExtUnits;   // also fixes the Scope Summary screen, which reads these same fields
+  d.hood_qty = fsHoodTanks;
+  d.fs_total = fsTotal;
+  const summaryParts = [];
+  if (fsHoodTanks > 0) summaryParts.push(`${fsHoodTanks} suppression system${fsHoodTanks>1?'s':''}`);
+  if (fsExtUnits  > 0) summaryParts.push(`${fsExtUnits} extinguisher${fsExtUnits>1?'s':''}`);
+  if (fsLightUnits> 0) summaryParts.push(`${fsLightUnits} exit light${fsLightUnits>1?'s':''}`);
+  d.fs_summary = summaryParts.length ? summaryParts.join(' · ') + ' — full itemized pricing in site survey' : 'Full itemized pricing in site survey';
+
   // Save to account record
   const data = crmLoad('accounts');
   const r = data.find(x => x.id === svState.accountId);
@@ -9091,14 +9116,21 @@ function estBuildLines(svc, d){
   if(svc === 'unipro' || svc === 'quality3'){
     const label = svc === 'unipro' ? 'UniPro' : 'Quality III';
     const extQty = parseInt(d.ext_qty) || 0;
-    if(extQty > 0){
-      lines.push({ desc:`${label} — Fire Extinguisher Annual Inspection`, detail:`${extQty} units · per unit rate`, qty:extQty, unitPrice:25, editable:true });
+    if (svc === 'unipro' && d.fs_total > 0) {
+      // Real pricing from the fs-screen3 itemized estimate (suppression,
+      // extinguishers, exit lights, fees, tax all rolled in) -- this is
+      // what "Continue Survey" on the pricing screen actually captured.
+      lines.push({ desc:`${label} — Site Survey Estimate`, detail: d.fs_summary || 'Full itemized pricing in site survey', qty:1, unitPrice: d.fs_total, editable:true });
     } else {
-      lines.push({ desc:`${label} — Fire Extinguisher Inspection`, detail:'Qty TBD on-site', qty:1, unitPrice:0, editable:true });
-    }
-    const hoodQty = parseInt(d.hood_qty) || 0;
-    if(hoodQty > 0){
-      lines.push({ desc:`${label} — Kitchen Suppression Semi-Annual Service`, detail:`${hoodQty} system${hoodQty>1?'s':''} · per service`, qty:hoodQty, unitPrice:175, editable:true });
+      if(extQty > 0){
+        lines.push({ desc:`${label} — Fire Extinguisher Annual Inspection`, detail:`${extQty} units · per unit rate`, qty:extQty, unitPrice:25, editable:true });
+      } else {
+        lines.push({ desc:`${label} — Fire Extinguisher Inspection`, detail:'Qty TBD on-site', qty:1, unitPrice:0, editable:true });
+      }
+      const hoodQty = parseInt(d.hood_qty) || 0;
+      if(hoodQty > 0){
+        lines.push({ desc:`${label} — Kitchen Suppression Semi-Annual Service`, detail:`${hoodQty} system${hoodQty>1?'s':''} · per service`, qty:hoodQty, unitPrice:175, editable:true });
+      }
     }
     if(d.monitoring_status && d.monitoring_status.includes('Opportunity')){
       lines.push({ desc:`${label} — Fire Alarm Monitoring (Monthly)`, detail:'Central station monitoring — quote pending panel assessment', qty:1, unitPrice:45, editable:true });
