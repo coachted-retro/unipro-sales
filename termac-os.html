@@ -1191,6 +1191,7 @@ setTimeout(function(){ if(typeof TECHS!=='undefined') renderLB('score'); }, 200)
           <button class="crm-tab active" onclick="switchCRMTab('leads')">Leads</button>
           <button class="crm-tab" onclick="switchCRMTab('contacts')">Contacts</button>
           <button class="crm-tab" onclick="switchCRMTab('accounts')">Accounts</button>
+          <button class="crm-tab" id="crmTabDmsCalls" onclick="switchCRMTab('dms_coldcall')" style="display:none">📋 Call List</button>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:8px">
@@ -1226,6 +1227,7 @@ setTimeout(function(){ if(typeof TECHS!=='undefined') renderLB('score'); }, 200)
       <button class="crm-btn" id="crmHarvestCMSBtn" onclick="harvestRunLiveCMSFireSafety()" style="background:#DC2626;color:#fff;display:none">🚨 Harvest Fire Safety Citations</button>
       <button class="crm-btn" id="crmSourcesBtn" onclick="openLeadSources()" style="background:#fff;color:#1A1D21;border:1.5px solid var(--line);display:none">📡 Lead Sources</button>
       <button class="crm-btn" id="crmOrphanedBtn" onclick="openOrphanedReport()" style="background:#FEE2E2;color:#991B1B;border:1.5px solid #99181B40;display:none">🔍 Orphaned Customers</button>
+      <button class="crm-btn" id="crmImportCallListBtn" onclick="openCallListImport()" style="background:#1E3A8A;color:#fff;display:none">⬇ Import Call List (CSV)</button>
       <button class="crm-btn primary" id="crmAddBtn" onclick="openAddModal()">+ Add New</button>
     </div>
     <!-- harvest status banner -->
@@ -1243,6 +1245,26 @@ setTimeout(function(){ if(typeof TECHS!=='undefined') renderLB('score'); }, 200)
     <div class="crm-modal-actions">
       <button class="crm-btn secondary" onclick="closeModal()">Cancel</button>
       <button class="crm-btn primary" onclick="saveModalRecord()">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="crm-modal-bg" id="callListImportModalBg">
+  <div class="crm-modal" id="callListImportModal">
+    <h3>⬇ Import Call List (CSV)</h3>
+    <div style="font-size:12px;color:var(--soft);margin-bottom:10px;line-height:1.5">
+      DMS-only pool — these contacts never appear in the sales Leads tab. Paste CSV data below (header row required).
+      Recognized columns: business/name, address, city, state, zip, phone, website, chamber/source.
+      Only a business name column is required — everything else is optional.
+    </div>
+    <label>Chamber/Source label (used for rows with no "chamber" column)</label>
+    <input id="callListImportSource" placeholder="e.g. North New Jersey Chamber of Commerce">
+    <label style="margin-top:10px;display:block">Paste CSV</label>
+    <textarea id="callListImportCSV" rows="10" style="width:100%;font-family:monospace;font-size:12px;box-sizing:border-box" placeholder="business,address,city,state,zip,phone,website&#10;Tony's Pizza,123 Main St,Edison,NJ,08817,732-555-0100,tonyspizza.com"></textarea>
+    <div id="callListImportStatus" style="margin-top:8px;font-size:13px;font-weight:600"></div>
+    <div class="crm-modal-actions">
+      <button class="crm-btn secondary" onclick="closeCallListImport()">Cancel</button>
+      <button class="crm-btn primary" onclick="processCallListImport()">Import</button>
     </div>
   </div>
 </div>
@@ -1626,6 +1648,15 @@ let crmCurrentTab='leads';
 function openCRM(tab){
   crmCurrentTab=tab||'leads';
   document.getElementById('crmOverlay').classList.add('open');
+  // Call List (cold-call pool) is DMS/manager only — Ted's explicit call:
+  // sales reps should never see this tab or know it exists. Everyone else
+  // (rep, division, reception) gets the tab button hidden entirely, not
+  // just access-restricted, since the goal is zero clutter for sales.
+  const dmsTabBtn = document.getElementById('crmTabDmsCalls');
+  if (dmsTabBtn) {
+    const role = _currentUser?.role;
+    dmsTabBtn.style.display = (role === 'dms' || role === 'manager') ? '' : 'none';
+  }
   switchCRMTab(crmCurrentTab);
 }
 function closeCRM(){
@@ -1635,13 +1666,18 @@ function switchCRMTab(tab){
   crmCurrentTab=tab;
   document.querySelectorAll('.crm-tab').forEach(b=>b.classList.remove('active'));
   document.querySelectorAll('.crm-tab').forEach(b=>{if(b.textContent.trim().toLowerCase()===tab) b.classList.add('active');});
-  document.getElementById('crmTitle').textContent=tab.charAt(0).toUpperCase()+tab.slice(1);
+  if (tab === 'dms_coldcall') {
+    document.getElementById('crmTabDmsCalls')?.classList.add('active');
+    document.getElementById('crmTitle').textContent = 'DMS Call List';
+  } else {
+    document.getElementById('crmTitle').textContent=tab.charAt(0).toUpperCase()+tab.slice(1);
+  }
   document.getElementById('crmSearch').value='';
   document.getElementById('crmStatusFilter').value='';
   // Update status filter options per tab
   const sf=document.getElementById('crmStatusFilter');
-  if(tab==='leads'){
-    sf.innerHTML='<option value="">All Statuses</option><option value="hot">🔥 Hot</option><option value="warm">☀️ Warm</option><option value="cold">❄️ Cold</option><option value="new">New</option>';
+  if(tab==='leads' || tab==='dms_coldcall'){
+    sf.innerHTML='<option value="">All Statuses</option><option value="hot">🔥 Hot — Promote me</option><option value="warm">☀️ Warm — Interested/Callback</option><option value="cold">❄️ Cold — No answer/Not interested</option><option value="new">New — Not yet called</option>';
   } else if(tab==='accounts'){
     sf.innerHTML='<option value="">All Statuses</option><option value="active">Active</option><option value="inactive">Inactive</option><option value="winback">Win-Back</option>';
   } else {
@@ -1659,8 +1695,12 @@ function switchCRMTab(tab){
   if (sourcesBtn) sourcesBtn.style.display = (tab === 'leads') ? '' : 'none';
   const orphanedBtn = document.getElementById('crmOrphanedBtn');
   if (orphanedBtn) orphanedBtn.style.display = (tab === 'accounts') ? '' : 'none';
+  const importCallListBtn = document.getElementById('crmImportCallListBtn');
+  if (importCallListBtn) importCallListBtn.style.display = (tab === 'dms_coldcall') ? '' : 'none';
   renderCRMView();
 }
+
+
 
 /* ═══════════════════════════════════
    RENDER
@@ -1779,6 +1819,15 @@ function renderCard(tab,r){
              <button class="crm-action-btn" onclick="openApptModal('${r.id}','accounts')">📅 Appt</button>
              <button class="crm-action-btn" onclick="openFollowupModal('${r.id}','accounts')">🔔 Follow-Up</button>
              <button class="crm-action-btn" onclick="editRecord('${r.id}','accounts')">✏️ Edit</button>`;
+  } else if(tab==='dms_coldcall'){
+    if (r.promotedToLeadId) {
+      actions=`<button class="crm-action-btn" onclick="openLogModal('${r.id}','dms_coldcall')">📞 Log</button>
+               <span class="crm-action-btn" style="background:#E8F5E9;color:#1E7B3C;cursor:default">✅ Promoted to Leads</span>`;
+    } else {
+      actions=`<button class="crm-action-btn" onclick="openLogModal('${r.id}','dms_coldcall')">📞 Log Call</button>
+               <button class="crm-action-btn" onclick="editRecord('${r.id}','dms_coldcall')">✏️ Edit</button>
+               <button class="crm-action-btn convert" onclick="promoteToLeadsPool('${r.id}')">🚀 Promote to Leads</button>`;
+    }
   }
   const svcs=(r.services||[]).map(sv=>{
     const c=serviceColor(sv);
@@ -1792,6 +1841,8 @@ function renderCard(tab,r){
     extraInfo=`<div class="crm-card-tag">Next: ${r.nextDue||'—'}</div><div class="crm-card-tag">$${(r.annualValue||0).toLocaleString()}/yr</div>${repTag}`;
   } else if(tab==='leads'){
     extraInfo=`<div class="crm-card-tag">Score: ${r.score||'—'}/10</div><div class="crm-card-tag">Source: ${escH(r.source||'—')}</div>`;
+  } else if(tab==='dms_coldcall'){
+    extraInfo=`<div class="crm-card-tag">📡 ${escH(r.chamberSource||'Unknown source')}</div>${r.assignedDmsRep?`<div class="crm-card-tag">${escH(r.assignedDmsRep)}</div>`:''}${r.phone?`<div class="crm-card-tag">${escH(r.phone)}</div>`:''}`;
   }
   const repTerritory = tab === 'leads' ? currentRepTerritory() : null;
   const inTerritory = repTerritory && zipMatchesTerritory(r.zip, repTerritory);
@@ -2273,6 +2324,30 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
         <div style="text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:24px;color:var(--blue)" id="mgrWhiteSpace">—</div><div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.06em">White Space Accts</div></div>
       </div>
       <div style="border-top:1px solid var(--line);padding-top:10px;font-size:11px;color:var(--soft)">Target: 45%+ def. conversion · &gt;2.5 svcs/client</div>
+    </div>
+  </div>
+
+  <!-- DMS COLD-CALL POOL — separate from DMS Performance above, which
+       tracks already-qualified leads. This tracks the raw cold-call
+       volume pool (e.g. chamber directories) DMS works through before
+       anything is good enough to promote. -->
+  <div style="margin-bottom:16px">
+    <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px">
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft);margin-bottom:12px">📋 DMS Cold-Call Pool</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:10px;margin-bottom:12px">
+        <div style="text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:22px;color:var(--ink)" id="mgrCcTotal">—</div><div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.06em">Total in Pool</div></div>
+        <div style="text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:22px;color:var(--blue)" id="mgrCcCalled">—</div><div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.06em">Called At Least Once</div></div>
+        <div style="text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:22px;color:var(--soft)" id="mgrCcUncalled">—</div><div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.06em">Not Yet Called</div></div>
+        <div style="text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:22px;color:var(--amber)" id="mgrCcInterested">—</div><div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.06em">Interested/Warm+</div></div>
+        <div style="text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:22px;color:var(--green)" id="mgrCcPromoted">—</div><div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.06em">Promoted to Leads</div></div>
+      </div>
+      <div id="mgrCcByRepTable" style="font-size:11px">
+        <div style="display:grid;grid-template-columns:1fr auto auto auto;gap:4px;padding:4px 0;border-bottom:1px solid var(--line);font-weight:700;color:var(--soft);font-size:10px;text-transform:uppercase;letter-spacing:.06em">
+          <span>DMS Rep</span><span>Calls Logged</span><span>Interested+</span><span>Promoted</span>
+        </div>
+        <!-- Populated by refreshManagerDashboard -->
+      </div>
+      <div style="border-top:1px solid var(--line);padding-top:10px;margin-top:10px;font-size:11px;color:var(--soft)">This pool never appears in the sales Leads tab — visible to DMS and managers only.</div>
     </div>
   </div>
 
@@ -8405,7 +8480,169 @@ async function harvestRunLiveCMSFireSafety(){
   setTimeout(() => { if(banner) banner.style.display = 'none'; }, 15000);
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+//  DMS COLD-CALL POOL — separate from the Leads pool sales reps work from.
+//  Per Ted: DMS needs full notes/activityLog tracking on raw volume
+//  cold-call targets (e.g. chamber-of-commerce restaurant directories)
+//  WITHOUT any of it cluttering the sales-facing Leads tab. Stored under
+//  its own crmLoad/crmSave key ('dms_coldcall'), its own tab (DMS/manager
+//  role-gated, hidden entirely from reps/division/reception), reusing the
+//  existing generic openLogModal/saveActivity machinery for notes and
+//  call tracking — no new modal needed there. When DMS logs an
+//  "Interested" outcome the existing saveActivity() logic already auto-
+//  bumps status cold→warm; "Promote to Leads" below is the explicit,
+//  one-way door that pushes a record into the real Leads pool, mirroring
+//  the existing DMS→Contact auto-route-by-ZIP pattern.
+// ══════════════════════════════════════════════════════════════════════════
 
+function openCallListImport(){
+  document.getElementById('callListImportSource').value = '';
+  document.getElementById('callListImportCSV').value = '';
+  document.getElementById('callListImportStatus').textContent = '';
+  document.getElementById('callListImportModalBg').classList.add('open');
+}
+function closeCallListImport(){
+  document.getElementById('callListImportModalBg').classList.remove('open');
+}
+
+// Minimal CSV line parser handling quoted fields with embedded commas
+// (addresses routinely contain them, e.g. "123 Main St, Suite 4").
+function parseCSVLine(line){
+  const out=[]; let cur=''; let inQuotes=false;
+  for(let i=0;i<line.length;i++){
+    const c=line[i];
+    if(inQuotes){
+      if(c==='"'){ if(line[i+1]==='"'){ cur+='"'; i++; } else { inQuotes=false; } }
+      else { cur+=c; }
+    } else {
+      if(c==='"'){ inQuotes=true; }
+      else if(c===','){ out.push(cur); cur=''; }
+      else { cur+=c; }
+    }
+  }
+  out.push(cur);
+  return out.map(s=>s.trim());
+}
+
+function processCallListImport(){
+  const defaultSource = document.getElementById('callListImportSource').value.trim() || 'Unknown chamber source';
+  const raw = document.getElementById('callListImportCSV').value;
+  const statusEl = document.getElementById('callListImportStatus');
+  if(!raw.trim()){ statusEl.style.color='#991B1B'; statusEl.textContent='⚠️ Paste some CSV data first.'; return; }
+
+  const lines = raw.split(/\r?\n/).filter(l=>l.trim().length);
+  if(lines.length < 2){ statusEl.style.color='#991B1B'; statusEl.textContent='⚠️ Need a header row plus at least one data row.'; return; }
+
+  const headers = parseCSVLine(lines[0]).map(h=>h.toLowerCase());
+  const findCol = (...names) => headers.findIndex(h => names.some(n => h.includes(n)));
+  const idxBusiness = findCol('business','name','company');
+  const idxAddress  = findCol('address','street');
+  const idxCity     = findCol('city');
+  const idxState    = findCol('state');
+  const idxZip      = findCol('zip','postal');
+  const idxPhone    = findCol('phone','tel');
+  const idxWebsite  = findCol('website','url');
+  const idxChamber  = findCol('chamber','source','category');
+
+  if(idxBusiness === -1){
+    statusEl.style.color='#991B1B';
+    statusEl.textContent='⚠️ Could not find a business/name column in the header row. First column should be the business name.';
+    return;
+  }
+
+  const existing = crmLoad('dms_coldcall');
+  const existingKeys = new Set(existing.map(r => (r.business||'').toLowerCase() + '|' + (r.zip||'')));
+  const now = Date.now();
+  let added = 0, skipped = 0;
+  const newRecs = [];
+
+  for(let i=1;i<lines.length;i++){
+    const cols = parseCSVLine(lines[i]);
+    const business = idxBusiness>-1 ? cols[idxBusiness] : '';
+    if(!business) continue;
+    const addrParts = [
+      idxAddress>-1 ? cols[idxAddress] : '',
+      idxCity>-1 ? cols[idxCity] : '',
+      idxState>-1 ? cols[idxState] : '',
+      idxZip>-1 ? cols[idxZip] : ''
+    ].filter(Boolean);
+    const zip = idxZip>-1 ? ((cols[idxZip]||'').match(/\d{5}/)?.[0] || '') : '';
+    const key = business.toLowerCase() + '|' + zip;
+    if(existingKeys.has(key)){ skipped++; continue; }
+
+    newRecs.push({
+      id: 'cc_' + now + '_' + i,
+      name: business,
+      business: business,
+      address: addrParts.join(', '),
+      zip: zip,
+      phone: idxPhone>-1 ? cols[idxPhone] : '',
+      website: idxWebsite>-1 ? cols[idxWebsite] : '',
+      chamberSource: (idxChamber>-1 && cols[idxChamber]) ? cols[idxChamber] : defaultSource,
+      company: 'UniPro',
+      status: 'new',
+      notes: '',
+      activityLog: [],
+      created: now,
+      source: 'DMS Cold Call — Chamber Directory'
+    });
+    existingKeys.add(key);
+    added++;
+  }
+
+  const allRecs = [...newRecs, ...existing];
+  crmSave('dms_coldcall', allRecs);
+
+  statusEl.style.color = '#1E7B3C';
+  statusEl.textContent = `✅ Imported ${added} new contact${added===1?'':'s'}${skipped?` (${skipped} already on file, skipped)`:''}.`;
+  setTimeout(()=>{ closeCallListImport(); if(crmCurrentTab==='dms_coldcall') renderCRMView(); }, 1500);
+}
+
+// DMS found something real — push it into the actual Leads pool sales
+// reps work from, auto-routed by ZIP exactly like the existing
+// DMS→Contact conversion. The original cold-call record stays in this
+// pool (marked promoted) so DMS's own call history and stats stay intact.
+function promoteToLeadsPool(id){
+  const data = crmLoad('dms_coldcall');
+  const r = data.find(x=>x.id===id);
+  if(!r) return;
+  if(r.promotedToLeadId){ alert('Already promoted to the Leads pool.'); return; }
+
+  const zip = r.zip || (r.address||'').match(/\b\d{5}\b/)?.[0] || '';
+  const rep = getRepForZip(zip);
+  const now = Date.now();
+  const newLead = {
+    id: 'L' + String(now).slice(-6),
+    name: r.name || r.business,
+    business: r.business,
+    phone: r.phone||'', email:'',
+    address: r.address||'', zip: zip, company: r.company||'UniPro', status:'hot',
+    services: ['unipro'], score: 8,
+    source: 'DMS', assignedRep: rep,
+    notes: r.notes || '',
+    created: now,
+    activityLog: [
+      ...(r.activityLog||[]),
+      {ts:now, type:'system', icon:'🚀', title:'Promoted from DMS Call List', note:`Promoted by ${_currentUser?.name||'DMS'} — auto-routed to ${rep} by ZIP ${zip||'unknown'}`, who: _currentUser?.name||'DMS'}
+    ]
+  };
+
+  const leads = crmLoad('leads');
+  leads.push(newLead);
+  crmSave('leads', leads);
+
+  r.promotedToLeadId = newLead.id;
+  r.status = 'hot';
+  if(!r.activityLog) r.activityLog = [];
+  r.activityLog.push({ts:now, type:'system', icon:'🚀', title:'Promoted to Leads Pool', note:`Routed to rep: ${rep}`, who: _currentUser?.name||'DMS'});
+  crmSave('dms_coldcall', data);
+
+  alert(`🚀 Promoted to Leads pool!\nRouted to: ${rep}`);
+  renderCRMView();
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//  BID PIPELINE ENGINE — Ted Scholl only
 //  Public bid sites (PA eMarketplace, NJSTART, PHLContracts, BidNet) don't
 //  expose a real API — full solicitation detail requires free supplier
 //  registration on each. "Check for New Bids" reports what's genuinely
@@ -13803,6 +14040,52 @@ function refreshManagerDashboard() {
   set('mgrDmsContacts',    dmsContacts.length || '0');
   set('mgrDmsConversion',  dmsLeads.length ? convRate+'%' : '0%');
   set('mgrDmsUnclaimedPool', poolCount);
+
+  // ── DMS COLD-CALL POOL METRICS — separate pool, separate from the
+  // qualified-lead DMS metrics above ──
+  const coldcall = crmLoad('dms_coldcall');
+  const ccCalled    = coldcall.filter(c => (c.activityLog||[]).length > 0).length;
+  const ccUncalled  = coldcall.length - ccCalled;
+  const ccInterested = coldcall.filter(c => c.status === 'warm' || c.status === 'hot').length;
+  const ccPromoted   = coldcall.filter(c => c.promotedToLeadId).length;
+  set('mgrCcTotal',      coldcall.length || '0');
+  set('mgrCcCalled',     ccCalled || '0');
+  set('mgrCcUncalled',   ccUncalled || '0');
+  set('mgrCcInterested', ccInterested || '0');
+  set('mgrCcPromoted',   ccPromoted || '0');
+
+  const ccRepTable = document.getElementById('mgrCcByRepTable');
+  if (ccRepTable) {
+    const ccRepMap = {};
+    coldcall.forEach(c => {
+      (c.activityLog||[]).forEach(a => {
+        const rep = a.who || 'Unassigned';
+        if (rep === 'System') return;
+        if (!ccRepMap[rep]) ccRepMap[rep] = { calls:0, interested:0, promoted:0 };
+        ccRepMap[rep].calls++;
+      });
+      if (c.status === 'warm' || c.status === 'hot') {
+        const lastWho = (c.activityLog||[]).filter(a=>a.who && a.who!=='System').slice(-1)[0]?.who || 'Unassigned';
+        if (!ccRepMap[lastWho]) ccRepMap[lastWho] = { calls:0, interested:0, promoted:0 };
+        ccRepMap[lastWho].interested++;
+      }
+      if (c.promotedToLeadId) {
+        const promoter = (c.activityLog||[]).find(a=>a.title==='Promoted to Leads Pool')?.who || 'Unassigned';
+        if (!ccRepMap[promoter]) ccRepMap[promoter] = { calls:0, interested:0, promoted:0 };
+        ccRepMap[promoter].promoted++;
+      }
+    });
+    const ccRows = Object.entries(ccRepMap).sort((a,b) => b[1].calls - a[1].calls).slice(0,8);
+    ccRepTable.innerHTML = '<div style="display:grid;grid-template-columns:1fr auto auto auto;gap:4px;padding:4px 0;border-bottom:1px solid var(--line);font-weight:700;color:var(--soft);font-size:10px;text-transform:uppercase;letter-spacing:.06em"><span>DMS Rep</span><span>Calls Logged</span><span>Interested+</span><span>Promoted</span></div>' +
+      ccRows.map(([rep, d]) =>
+        `<div style="display:grid;grid-template-columns:1fr auto auto auto;gap:4px;padding:5px 0;border-bottom:1px solid var(--line);font-size:11px">
+          <span style="font-weight:600">${rep.split(' ')[0]}</span>
+          <span style="text-align:right;font-family:Barlow Condensed,sans-serif;font-weight:700">${d.calls}</span>
+          <span style="text-align:right;color:var(--amber);font-family:Barlow Condensed,sans-serif;font-weight:700">${d.interested}</span>
+          <span style="text-align:right;color:var(--green);font-family:Barlow Condensed,sans-serif;font-weight:700">${d.promoted}</span>
+        </div>`
+      ).join('') || '<div style="color:var(--soft);font-size:11px">No call activity logged yet</div>';
+  }
 
   // ── SALES PIPELINE ──
   const hotLeads     = leads.filter(l => l.status === 'hot').length;
