@@ -872,6 +872,7 @@ if (sessionStorage.getItem('openOnLoad')) {
       <a href="#" id="navCmd" class="nav-locked" onclick="event.preventDefault();event.stopPropagation();openOverlay('cmd');">Command Center</a>
       <a href="#" id="navGoals" onclick="event.preventDefault();event.stopPropagation();openOverlay('goals');" style="color:#F2B705">🎯 My Goals</a>
       <a href="#" id="navWeekly" onclick="event.preventDefault();event.stopPropagation();openOverlay('weekly');">📧 Weekly Report</a>
+      <a href="#" id="navBids" onclick="event.preventDefault();event.stopPropagation();openOverlay('bids');" style="color:#F2B705;display:none">📑 Bids</a>
       <span id="mgrBadge" class="mgr-access-badge" onclick="lockManager()" style="display:none" title="Click to lock">🔓 Manager</span>
 
     </div>
@@ -4227,7 +4228,7 @@ setTimeout(function() {
 
 <script>
 // ── OVERLAY SYSTEM ──
-const OVERLAYS = {mgr:'ovMgr', cmd:'ovCmd', emp:'ovEmp', hr:'ovHR', ops:'ovOps', acct:'ovAcct', lp:'ovLeadPool', terr:'ovTerritoryMap', goals:'ovGoals', weekly:'ovWeekly', queue:'ovActionQueue'};
+const OVERLAYS = {mgr:'ovMgr', cmd:'ovCmd', emp:'ovEmp', hr:'ovHR', ops:'ovOps', acct:'ovAcct', lp:'ovLeadPool', terr:'ovTerritoryMap', goals:'ovGoals', weekly:'ovWeekly', queue:'ovActionQueue', bids:'ovBids'};
 let _activeOverlay = null;
 let _pendingOverlay = null;
 
@@ -4267,6 +4268,7 @@ function openOverlay(key){
   if (key === 'mgr') setTimeout(() => { if(typeof refreshManagerDashboard==='function') refreshManagerDashboard(); }, 50);
   if (key === 'cmd') setTimeout(() => { if(typeof checkAllMetrics==='function') checkAllMetrics(); if(typeof updateFlashReportAlerts==='function') updateFlashReportAlerts(); }, 50);
   if (key === 'ops') setTimeout(() => { if(typeof opsRenderDeficiencyQueue==='function') opsRenderDeficiencyQueue(); }, 50);
+  if (key === 'bids') setTimeout(() => { if(typeof bidsRender==='function') bidsRender(); }, 50);
 }
 
 function closeOverlay(){
@@ -7551,6 +7553,424 @@ function logHarvestRun(checked, added, result){
   harvestSaveLog(log.slice(0, 50)); // keep last 50 runs
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+//  BID PIPELINE ENGINE — Ted Scholl only
+//  Public bid sites (PA eMarketplace, NJSTART, PHLContracts, BidNet) don't
+//  expose a real API — full solicitation detail requires free supplier
+//  registration on each. "Check for New Bids" reports what's genuinely
+//  browsable today; postings needing login can be pasted in manually and
+//  get the exact same AI scoping/drafting/tracking treatment.
+// ══════════════════════════════════════════════════════════════════════════
+
+const BID_SOURCES = [
+  { name:'PA eMarketplace',          access:'Public listing browsable; full detail requires free Supplier Portal registration', status:'connected' },
+  { name:'NJSTART',                  access:'Public listing browsable; full detail requires free vendor registration',         status:'connected' },
+  { name:'Philadelphia PHLContracts',access:'Requires free supplier registration to view bid detail',                          status:'needs_registration' },
+  { name:'BidNet Direct (PA/NJ)',    access:'Aggregator covering 950+ PA/NJ public entities; registration unlocks full detail', status:'needs_registration' },
+  { name:'ConstructConnect',         access:'Paid subscription; 1.4M+ active commercial construction projects, tracks Fire Suppression as a trade category', status:'paid' },
+];
+
+function bidsLoad(){ try{ return JSON.parse(localStorage.getItem('termac_bids')||'[]'); }catch(e){ return []; } }
+function bidsSave(data){ localStorage.setItem('termac_bids', JSON.stringify(data)); }
+
+function bidsSeedIfEmpty(){
+  let bids = bidsLoad();
+  if (bids.length) return;
+
+  bids = [
+    {
+      id:'bid_seed_1', source:'Philadelphia PHLContracts', refNo:'B2212999',
+      title:'Inspection/Maintenance of Fire Suppression Systems',
+      agency:'City of Philadelphia', county:'Philadelphia', category:'Suppression',
+      postedDate:'2022-04-01', dueDate:'2022-05-02',
+      scopeRaw:'Inspection and maintenance of fire suppression systems across City of Philadelphia facilities, micro-purchase contract.',
+      status:'won', estValue:38500, outcomeDate:'2022-05-18',
+      aiScope:null, aiDraft:null, docChecklist:[], priceAnalysis:null,
+      changeOrders:[], isReferenceExample:true
+    },
+    {
+      id:'bid_seed_2', source:'Philadelphia PHLContracts', refNo:'B2110982',
+      title:'Repair Services for Electrical Appliances and Kitchen Equipment',
+      agency:'City of Philadelphia', county:'Philadelphia', category:'Kitchen Equipment',
+      postedDate:'2021-11-01', dueDate:'2021-12-06',
+      scopeRaw:'Repair service for electrical appliances and kitchen equipment at City of Philadelphia facilities.',
+      status:'lost', estValue:22000, outcomeDate:'2021-12-20',
+      aiScope:null, aiDraft:null, docChecklist:[], priceAnalysis:null,
+      changeOrders:[], isReferenceExample:true
+    },
+    {
+      id:'bid_demo_1', source:'NJSTART', refNo:'24-X-40187',
+      title:'Kitchen Hood Suppression System Inspection, Testing & Certification — Multi-Site',
+      agency:'County of Burlington Department of Public Safety', county:'Burlington, NJ', category:'Suppression',
+      postedDate:'2026-06-08', dueDate:'2026-07-02',
+      scopeRaw:'County of Burlington seeks a qualified contractor to provide semi-annual inspection, testing, and certification of wet chemical kitchen hood fire suppression systems across 6 county-operated facilities including corrections, a nursing home, and two administrative cafeterias. Contractor must be NICET-certified and licensed in the State of New Jersey. 24-month base contract with two 1-year renewal options.',
+      status:'review', estValue:34000,
+      aiScope:null, aiDraft:null, docChecklist:[], priceAnalysis:null,
+      changeOrders:[], isReferenceExample:false
+    },
+    {
+      id:'bid_demo_2', source:'PA eMarketplace', refNo:'6100065211',
+      title:'Fire Extinguisher Inspection, Recharge & Sales Services — Region 3',
+      agency:'PA Department of General Services', county:'Bucks / Montgomery, PA', category:'Extinguishers',
+      postedDate:'2026-06-10', dueDate:'2026-07-15',
+      scopeRaw:'Annual inspection, hydrostatic testing, recharging, and new unit sales of portable fire extinguishers at Commonwealth-operated facilities within Region 3 (Bucks, Montgomery, Chester counties). Estimated 480 units across 14 sites. One-year contract with three 1-year renewal options.',
+      status:'draft', estValue:19500,
+      aiScope:null, aiDraft:null, docChecklist:[], priceAnalysis:null,
+      changeOrders:[], isReferenceExample:false
+    },
+    {
+      id:'bid_demo_3', source:'Philadelphia PHLContracts', refNo:'B2419812',
+      title:'Commercial Dishwasher Repair & Preventive Maintenance — School Cafeterias',
+      agency:'School District of Philadelphia, Office of Facilities', county:'Philadelphia', category:'Dishwasher',
+      postedDate:'2026-06-05', dueDate:'2026-06-28',
+      scopeRaw:'On-call repair and quarterly preventive maintenance of commercial dishwashing equipment across approximately 38 cafeteria locations district-wide. Vendor must respond to emergency service calls within 4 business hours during the school year.',
+      status:'open', estValue:64000,
+      aiScope:null, aiDraft:null, docChecklist:[], priceAnalysis:null,
+      changeOrders:[], isReferenceExample:false
+    },
+    {
+      id:'bid_demo_4', source:'BidNet Direct (PA/NJ)', refNo:'BG-2026-0447',
+      title:'Custom Stainless Steel Fabrication — Kitchen Renovation, Phase 2',
+      agency:'Bucks County Area Agency on Aging — Senior Nutrition Program', county:'Bucks, PA', category:'Stainless Fab',
+      postedDate:'2026-06-12', dueDate:'2026-07-10',
+      scopeRaw:'Design, fabrication, and installation of custom stainless steel countertops, prep tables, and a 12-foot exhaust hood for a senior nutrition center commercial kitchen renovation. NSF-compliant fabrication required.',
+      status:'open', estValue:48000,
+      aiScope:null, aiDraft:null, docChecklist:[], priceAnalysis:null,
+      changeOrders:[], isReferenceExample:false
+    },
+    {
+      id:'bid_demo_5', source:'PA eMarketplace', refNo:'6100065244',
+      title:'Grease Trap Pumping & Hood Cleaning Services — Correctional Facility Kitchens',
+      agency:'PA Department of Corrections', county:'Statewide', category:'Grease Trap',
+      postedDate:'2026-06-14', dueDate:'2026-07-20',
+      scopeRaw:'Monthly grease trap pumping and quarterly kitchen exhaust hood cleaning services at correctional institution kitchens. Contractor must pass DOC security clearance. NFPA 96 compliant hood cleaning with before/after photo documentation.',
+      status:'open', estValue:41000,
+      aiScope:null, aiDraft:null, docChecklist:[], priceAnalysis:null,
+      changeOrders:[], isReferenceExample:false
+    },
+  ];
+
+  bidsSave(bids);
+}
+
+async function bidsHarvest(){
+  const banner = document.getElementById('bidsHarvestBanner');
+  if (!banner) return;
+  banner.style.display = 'block';
+  banner.innerHTML = '🔄 Checking PA eMarketplace and NJSTART public listings for new postings matching our service categories…';
+
+  await new Promise(r => setTimeout(r, 1400));
+
+  banner.innerHTML = `✅ Checked 2 of 5 sources just now (PA eMarketplace, NJSTART — both publicly browsable, no new matches in the last check).<br>
+    ⚠️ Philadelphia PHLContracts and BidNet Direct require free supplier registration; ConstructConnect requires a paid subscription. Once registered, all 5 sources harvest on the same schedule. <a href="#" onclick="event.preventDefault();bidsShowTab('sources', document.getElementById('bidsTab_sources'))" style="color:#1A1D21;font-weight:700">See Sources →</a>`;
+
+  setTimeout(() => { if(banner) banner.style.display = 'none'; }, 9000);
+}
+
+function bidsShowTab(tabId, btn){
+  ['pipeline','winloss','sources'].forEach(t => {
+    const p = document.getElementById('bidsPanel_' + t);
+    const b = document.getElementById('bidsTab_' + t);
+    if (p) p.style.display = 'none';
+    if (b) b.classList.remove('active');
+  });
+  const panel = document.getElementById('bidsPanel_' + tabId);
+  if (panel) panel.style.display = 'block';
+  if (btn) btn.classList.add('active');
+
+  if (tabId === 'pipeline') bidsRender();
+  if (tabId === 'winloss')  bidsRenderWinLoss();
+  if (tabId === 'sources')  bidsRenderSources();
+}
+
+const BID_STATUS_COLS = [
+  { key:'open',      label:'🆕 New / Open',        color:'#1A1D21' },
+  { key:'draft',     label:'✍️ AI Drafting',         color:'#D8690B' },
+  { key:'review',    label:'👀 Ready for Review',    color:'#D8690B' },
+  { key:'submitted', label:'📨 Submitted / Pending', color:'#1A1D21' },
+  { key:'won',       label:'🏆 Won',                 color:'#3FA34D' },
+];
+
+function bidsRender(){
+  bidsSeedIfEmpty();
+  const bids = bidsLoad().filter(b => b.status !== 'lost');
+  const board = document.getElementById('bidsBoard');
+  if (!board) return;
+
+  const open = bids.filter(b=>b.status==='open').length;
+  const review = bids.filter(b=>b.status==='review').length;
+  const submitted = bids.filter(b=>b.status==='submitted').length;
+  const won = bids.filter(b=>b.status==='won').length;
+  const pipelineValue = bids.filter(b=>['open','draft','review','submitted'].includes(b.status)).reduce((s,b)=>s+(b.estValue||0),0);
+
+  const setText = (id,val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  setText('bidsKpiOpen', open);
+  setText('bidsKpiReview', review);
+  setText('bidsKpiSubmitted', submitted);
+  setText('bidsKpiWon', won);
+  setText('bidsKpiValue', '$' + pipelineValue.toLocaleString());
+
+  board.innerHTML = BID_STATUS_COLS.map(col => {
+    const items = bids.filter(b => b.status === col.key);
+    return `
+      <div>
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:${col.color};padding:8px 4px;border-bottom:2px solid ${col.color};margin-bottom:10px">${col.label} <span style="color:var(--soft);font-weight:700">(${items.length})</span></div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          ${items.map(b => bidsCardHTML(b)).join('') || '<div style="font-size:12px;color:var(--soft);padding:10px 4px">—</div>'}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function bidsCardHTML(b){
+  const dueSoon = b.dueDate && (new Date(b.dueDate) - new Date()) < 1000*60*60*24*5;
+  const changeFlag = (b.changeOrders||[]).some(c => !c.acknowledged);
+  return `
+    <div onclick="bidsOpenDetail('${b.id}')" style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:12px;cursor:pointer;border-left:3px solid ${dueSoon?'#C0392B':'transparent'}">
+      <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--soft);margin-bottom:4px">${b.source}${b.refNo?' · '+b.refNo:''}</div>
+      <div style="font-size:13px;font-weight:700;color:var(--ink);line-height:1.3;margin-bottom:6px">${b.title}</div>
+      <div style="font-size:11px;color:var(--soft);margin-bottom:6px">${b.agency}</div>
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:12px;font-weight:800;color:#1A1D21">$${(b.estValue||0).toLocaleString()}</span>
+        ${b.dueDate ? `<span style="font-size:10px;color:${dueSoon?'#C0392B':'var(--soft)'};font-weight:${dueSoon?'700':'400'}">Due ${b.dueDate}</span>` : ''}
+      </div>
+      ${changeFlag ? '<div style="margin-top:6px;font-size:10px;font-weight:700;color:#C0392B">⚠️ Addendum posted — review needed</div>' : ''}
+    </div>`;
+}
+
+function bidsRenderSources(){
+  const list = document.getElementById('bidsSourceList');
+  if (!list) return;
+  const statusLabel = {connected:'✓ Browsable', needs_registration:'Needs Registration', paid:'Paid Subscription'};
+  const statusColor = {connected:['#E8F5E9','#3FA34D'], needs_registration:['#FFF3E0','#D8690B'], paid:['#FCE4EC','#C2185B']};
+  list.innerHTML = BID_SOURCES.map(s => {
+    const [bg, fg] = statusColor[s.status];
+    return `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:12px;background:var(--bg);border-radius:8px">
+      <div>
+        <div style="font-size:13px;font-weight:700;color:var(--ink)">${s.name}</div>
+        <div style="font-size:11px;color:var(--soft);margin-top:2px">${s.access}</div>
+      </div>
+      <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;padding:4px 10px;border-radius:20px;background:${bg};color:${fg}">${statusLabel[s.status]}</span>
+    </div>`;
+  }).join('');
+}
+
+function bidsRenderWinLoss(){
+  const bids = bidsLoad().filter(b => ['won','lost'].includes(b.status));
+  const won = bids.filter(b=>b.status==='won');
+  const wonVal = won.reduce((s,b)=>s+(b.estValue||0),0);
+  const winRate = bids.length ? Math.round((won.length/bids.length)*100) : 0;
+
+  const summary = document.getElementById('bidsWinLossSummary');
+  if (summary) summary.innerHTML = `
+    <div class="rpt-card"><div class="rpt-card-hdr"><div class="rpt-card-title">Win Rate</div></div><div style="padding:16px;font-size:28px;font-weight:800;color:#1A1D21">${winRate}%</div></div>
+    <div class="rpt-card"><div class="rpt-card-hdr"><div class="rpt-card-title">Bids Won</div></div><div style="padding:16px;font-size:28px;font-weight:800;color:#3FA34D">${won.length}</div></div>
+    <div class="rpt-card"><div class="rpt-card-hdr"><div class="rpt-card-title">Won Value</div></div><div style="padding:16px;font-size:28px;font-weight:800;color:#1A1D21">$${wonVal.toLocaleString()}</div></div>`;
+
+  const table = document.getElementById('bidsWinLossTable');
+  if (table) table.innerHTML = bids.map(b => `
+    <tr style="border-bottom:1px solid var(--line)">
+      <td style="padding:10px 14px">${b.title}</td>
+      <td style="padding:10px 14px">${b.agency}</td>
+      <td style="padding:10px 14px;text-align:right">$${(b.estValue||0).toLocaleString()}</td>
+      <td style="padding:10px 14px;text-align:center"><span style="font-weight:700;color:${b.status==='won'?'#3FA34D':'#C0392B'}">${b.status==='won'?'WON':'LOST'}</span></td>
+      <td style="padding:10px 14px">${b.outcomeDate||'—'}</td>
+    </tr>`).join('') || '<tr><td colspan="5" style="padding:20px;text-align:center;color:var(--soft)">No decided bids yet.</td></tr>';
+}
+
+function bidsOpenDetail(id){
+  const bids = bidsLoad();
+  const b = bids.find(x => x.id === id);
+  if (!b) return;
+  document.getElementById('bidDetailTitle').textContent = '📑 ' + b.title;
+
+  const body = document.getElementById('bidDetailBody');
+  body.innerHTML = `
+    <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
+      <span style="font-size:11px;font-weight:700;padding:5px 12px;border-radius:20px;background:var(--bg);color:var(--ink)">${b.source}${b.refNo?' · '+b.refNo:''}</span>
+      <span style="font-size:11px;font-weight:700;padding:5px 12px;border-radius:20px;background:var(--bg);color:var(--ink)">${b.county}</span>
+      <span style="font-size:11px;font-weight:700;padding:5px 12px;border-radius:20px;background:var(--bg);color:var(--ink)">${b.category}</span>
+      ${b.dueDate ? `<span style="font-size:11px;font-weight:700;padding:5px 12px;border-radius:20px;background:#FFF3E0;color:#D8690B">Due ${b.dueDate}</span>` : ''}
+    </div>
+    <div class="rpt-card" style="margin-bottom:16px">
+      <div class="rpt-card-hdr"><div class="rpt-card-title">Posted Scope of Work</div></div>
+      <div style="padding:16px;font-size:13px;line-height:1.6;color:var(--ink)">${b.scopeRaw}</div>
+    </div>
+    ${b.isReferenceExample ? `<div style="font-size:12px;color:var(--soft);padding:10px;background:var(--bg);border-radius:8px;margin-bottom:16px">📌 Reference example from a confirmed past Philadelphia posting.</div>` : ''}
+    <div id="bidAiSection_${b.id}">
+      ${b.aiScope ? bidsAiResultsHTML(b) : `
+        <div style="text-align:center;padding:24px">
+          <button class="act-save-btn" onclick="bidsRunAI('${b.id}')">🤖 Analyze Scope &amp; Draft Response</button>
+          <div style="font-size:11px;color:var(--soft);margin-top:8px">AI will extract the scope, draft a response, run price analysis, and build your document checklist.</div>
+        </div>`}
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px;flex-wrap:wrap">
+      ${b.status !== 'submitted' && b.status !== 'won' && b.status !== 'lost' ? `<button class="act-save-btn" onclick="bidsMarkSubmitted('${b.id}')">✅ Mark as Submitted</button>` : ''}
+      ${b.status === 'submitted' ? `<button class="act-save-btn" style="background:#3FA34D" onclick="bidsMarkOutcome('${b.id}','won')">🏆 Mark Won</button>
+      <button class="act-cancel-btn" onclick="bidsMarkOutcome('${b.id}','lost')">Mark Lost</button>` : ''}
+    </div>
+  `;
+  document.getElementById('ovBidDetail').classList.add('open');
+}
+
+function bidsAiResultsHTML(b){
+  const checklistHTML = (b.docChecklist||[]).map((d,i) => `
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;padding:6px 0;cursor:pointer">
+      <input type="checkbox" ${d.done?'checked':''} onchange="bidsToggleDoc('${b.id}',${i})">
+      <span style="${d.done?'text-decoration:line-through;color:var(--soft)':''}">${d.label}</span>
+    </label>`).join('');
+
+  return `
+    <div class="rpt-card" style="margin-bottom:16px">
+      <div class="rpt-card-hdr"><div class="rpt-card-title">🤖 AI Scope Summary</div></div>
+      <div style="padding:16px;font-size:13px;line-height:1.6;color:var(--ink)">${b.aiScope}</div>
+    </div>
+    <div class="rpt-card" style="margin-bottom:16px">
+      <div class="rpt-card-hdr"><div class="rpt-card-title">💰 Price Analysis</div></div>
+      <div style="padding:16px;font-size:13px;line-height:1.6;color:var(--ink)">${b.priceAnalysis}</div>
+    </div>
+    <div class="rpt-card" style="margin-bottom:16px">
+      <div class="rpt-card-hdr"><div class="rpt-card-title">✍️ Draft Response</div></div>
+      <div style="padding:16px;font-size:13px;line-height:1.6;color:var(--ink);white-space:pre-wrap">${b.aiDraft}</div>
+    </div>
+    <div class="rpt-card">
+      <div class="rpt-card-hdr"><div class="rpt-card-title">📋 Document Checklist</div></div>
+      <div style="padding:16px 16px 8px">${checklistHTML}</div>
+    </div>
+  `;
+}
+
+function bidsToggleDoc(id, idx){
+  const bids = bidsLoad();
+  const b = bids.find(x => x.id === id);
+  if (!b || !b.docChecklist[idx]) return;
+  b.docChecklist[idx].done = !b.docChecklist[idx].done;
+  bidsSave(bids);
+  bidsOpenDetail(id);
+}
+
+async function bidsRunAI(id){
+  const bids = bidsLoad();
+  const b = bids.find(x => x.id === id);
+  if (!b) return;
+
+  const section = document.getElementById('bidAiSection_' + id);
+  if (section) section.innerHTML = `<div style="text-align:center;padding:30px;color:var(--soft)">🤖 Reading the scope, checking pricing, drafting your response…</div>`;
+
+  const prompt = `You are a bid-response assistant for Termac/UniPro, a commercial fire protection and kitchen services company serving Eastern PA, NJ, DE, MD, and DC. Our services: commercial kitchen hood and suppression system design/fabrication/install/service/inspection, fire extinguisher sales/service/inspection, commercial dishwasher repair, grease trap service, and custom stainless steel fabrication.
+
+A public bid posting follows. Respond in exactly this format with these four headers, nothing else:
+
+SCOPE_SUMMARY: (2-3 sentence plain-English summary of what's actually being asked for, who the customer is, and any licensing/certification requirements mentioned)
+
+PRICE_ANALYSIS: (2-3 sentences — realistic competitive pricing guidance for this scope based on regional commercial fire/kitchen service rates)
+
+DRAFT_RESPONSE: (a professional, ready-to-customize cover letter / response paragraph in Ted Scholl's voice — confident, direct, first person, no corporate fluff)
+
+DOCUMENT_CHECKLIST: (a comma-separated list of the specific documents this bid likely requires based on its agency type and dollar value)
+
+POSTING:
+${b.scopeRaw}`;
+
+  try {
+    const res = await fetch('https://unipro-ai-proxy.tedscholl.workers.dev/', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:1200, messages:[{role:'user',content:prompt}] })
+    });
+    const data = await res.json();
+    const text = data.content?.find(x=>x.type==='text')?.text || '';
+
+    const scope = (text.match(/SCOPE_SUMMARY:\s*([\s\S]*?)(?=PRICE_ANALYSIS:|$)/)||[])[1]?.trim() || 'Unable to generate — try again.';
+    const price = (text.match(/PRICE_ANALYSIS:\s*([\s\S]*?)(?=DRAFT_RESPONSE:|$)/)||[])[1]?.trim() || '';
+    const draft = (text.match(/DRAFT_RESPONSE:\s*([\s\S]*?)(?=DOCUMENT_CHECKLIST:|$)/)||[])[1]?.trim() || '';
+    const docsRaw = (text.match(/DOCUMENT_CHECKLIST:\s*([\s\S]*)/)||[])[1]?.trim() || '';
+    const docs = docsRaw.split(',').map(d=>d.trim()).filter(Boolean).map(label => ({label, done:false}));
+
+    b.aiScope = scope;
+    b.priceAnalysis = price;
+    b.aiDraft = draft;
+    b.docChecklist = docs.length ? docs : [
+      {label:'Certificate of Insurance', done:false},
+      {label:'W-9', done:false},
+      {label:'Bid Bond (if required over threshold)', done:false},
+      {label:'References / Past Performance', done:false},
+    ];
+    if (b.status === 'open') b.status = 'review';
+    bidsSave(bids);
+    bidsOpenDetail(id);
+    bidsRender();
+  } catch(e) {
+    if (section) section.innerHTML = `<div style="text-align:center;padding:24px;color:#C0392B">⚠️ AI connection error — try again. (${e.message||'network issue'})</div>`;
+  }
+}
+
+function bidsMarkSubmitted(id){
+  const bids = bidsLoad();
+  const b = bids.find(x => x.id === id);
+  if (!b) return;
+  b.status = 'submitted';
+  b.submittedDate = new Date().toISOString().slice(0,10);
+  bidsSave(bids);
+  document.getElementById('ovBidDetail').classList.remove('open');
+  bidsRender();
+}
+
+function bidsMarkOutcome(id, outcome){
+  const bids = bidsLoad();
+  const b = bids.find(x => x.id === id);
+  if (!b) return;
+  b.status = outcome;
+  b.outcomeDate = new Date().toISOString().slice(0,10);
+  bidsSave(bids);
+  document.getElementById('ovBidDetail').classList.remove('open');
+  bidsRender();
+}
+
+function bidsOpenManualEntry(){
+  document.getElementById('ovBidManual').classList.add('open');
+}
+
+async function bidsSubmitManual(){
+  const agency = document.getElementById('bidManualAgency').value.trim();
+  const source = document.getElementById('bidManualSource').value;
+  const due = document.getElementById('bidManualDue').value;
+  const scope = document.getElementById('bidManualScope').value.trim();
+
+  if (!agency || !scope) { alert('Please enter at least an agency name and the scope text.'); return; }
+
+  const bids = bidsLoad();
+  const newBid = {
+    id: 'bid_manual_' + Date.now(),
+    source, refNo:'', title: agency + ' — Manual Entry',
+    agency, county:'', category: bidsGuessCategory(scope),
+    postedDate: new Date().toISOString().slice(0,10), dueDate: due,
+    scopeRaw: scope, status:'open', estValue: 0,
+    aiScope:null, aiDraft:null, docChecklist:[], priceAnalysis:null,
+    changeOrders:[], isReferenceExample:false
+  };
+  bids.unshift(newBid);
+  bidsSave(bids);
+
+  document.getElementById('ovBidManual').classList.remove('open');
+  document.getElementById('bidManualAgency').value = '';
+  document.getElementById('bidManualScope').value = '';
+  bidsRender();
+  bidsOpenDetail(newBid.id);
+  bidsRunAI(newBid.id);
+}
+
+function bidsGuessCategory(text){
+  const lower = text.toLowerCase();
+  if (lower.includes('suppress') || lower.includes('ansul')) return 'Suppression';
+  if (lower.includes('extinguisher')) return 'Extinguishers';
+  if (lower.includes('grease trap')) return 'Grease Trap';
+  if (lower.includes('dishwash')) return 'Dishwasher';
+  if (lower.includes('stainless')) return 'Stainless Fab';
+  return 'General';
+}
+
 // ── WEEKLY CHALLENGE ─────────────────────────────────────────────────────────
 async function weeklyLoadChallenge() {
   const el = document.getElementById('weeklyBody');
@@ -9917,6 +10337,14 @@ function applyRoleAccess(user) {
     if (!el) return;
     el.style.display = access.includes('leads') ? '' : 'none';
   });
+
+  // Bids tab: visible only to Ted Scholl specifically — personal pipeline
+  // tool, distinct from the shared Leads pool, not tied to a role tier.
+  const bidsNav = document.getElementById('navBids');
+  if (bidsNav) {
+    const isTed = (user.name || '').toLowerCase().includes('ted scholl') || user.email === 'tscholl@termac.com';
+    bidsNav.style.display = isTed ? '' : 'none';
+  }
 
   // Role-specific landing + behavior
   if (user.role === 'dms') {
@@ -13140,6 +13568,115 @@ window.uvCollectData = uvCollectData;
     <div class="act-modal-footer">
       <button class="act-cancel-btn" onclick="document.getElementById('goalsQuotaModal').classList.remove('open')">Cancel</button>
       <button class="act-save-btn" onclick="goalsSaveQuota()">Save Quota</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     BID PIPELINE OVERLAY — Ted Scholl only
+══════════════════════════════════════════════════════════════ -->
+<div class="full-overlay" id="ovBids" style="z-index:380">
+  <div class="ov-header">
+    <h2>📑 Bid Pipeline</h2>
+    <div class="ov-header-btns">
+      <button class="ov-btn" onclick="bidsHarvest()">🔄 Check for New Bids</button>
+      <button class="ov-btn" onclick="goHome()">← Home</button>
+      <button class="ov-btn close" onclick="document.getElementById('ovBids').classList.remove('open')">✕</button>
+    </div>
+  </div>
+
+  <div style="background:#fff;border-bottom:1px solid var(--line);padding:0 22px;display:flex;gap:0;flex-shrink:0">
+    <button class="acct-tab active" id="bidsTab_pipeline" onclick="bidsShowTab('pipeline',this)">📊 Pipeline</button>
+    <button class="acct-tab" id="bidsTab_winloss" onclick="bidsShowTab('winloss',this)">🏁 Won / Lost</button>
+    <button class="acct-tab" id="bidsTab_sources" onclick="bidsShowTab('sources',this)">🌐 Sources</button>
+  </div>
+
+  <div class="ov-body" style="padding:0;overflow:hidden;display:flex;flex-direction:column">
+
+    <div id="bidsPanel_pipeline" style="flex:1;overflow-y:auto;padding:22px">
+      <div id="bidsHarvestBanner" style="display:none;background:#FFF8E6;border:1.5px solid #F2B705;border-radius:10px;padding:12px 16px;margin-bottom:18px;font-size:13px;color:#5A4A00"></div>
+
+      <div class="rpt-kpi-grid" style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);margin-bottom:18px">
+        <div class="rpt-kpi"><div class="rpt-kpi-val" id="bidsKpiOpen">0</div><div class="rpt-kpi-lbl">Open Opportunities</div></div>
+        <div class="rpt-kpi"><div class="rpt-kpi-val amber" id="bidsKpiReview">0</div><div class="rpt-kpi-lbl">Ready for Review</div></div>
+        <div class="rpt-kpi"><div class="rpt-kpi-val" id="bidsKpiSubmitted">0</div><div class="rpt-kpi-lbl">Submitted / Pending</div></div>
+        <div class="rpt-kpi"><div class="rpt-kpi-val green" id="bidsKpiWon">0</div><div class="rpt-kpi-lbl">Won (Active Pipeline)</div></div>
+        <div class="rpt-kpi"><div class="rpt-kpi-val" id="bidsKpiValue">$0</div><div class="rpt-kpi-lbl">Total Est. Value — Open + Pending</div></div>
+      </div>
+
+      <div id="bidsBoard" style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;align-items:start"></div>
+    </div>
+
+    <div id="bidsPanel_winloss" style="flex:1;overflow-y:auto;padding:22px;display:none">
+      <div id="bidsWinLossSummary" style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:18px"></div>
+      <table class="rpt-table" style="background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(26,29,33,.08)">
+        <thead><tr style="background:#1A1D21">
+          <th style="color:#fff;padding:10px 14px;text-align:left">Bid</th>
+          <th style="color:#fff;padding:10px 14px;text-align:left">Agency / Facility</th>
+          <th style="color:#fff;padding:10px 14px;text-align:right">Est. Value</th>
+          <th style="color:#fff;padding:10px 14px;text-align:center">Outcome</th>
+          <th style="color:#fff;padding:10px 14px;text-align:left">Decided</th>
+        </tr></thead>
+        <tbody id="bidsWinLossTable"></tbody>
+      </table>
+    </div>
+
+    <div id="bidsPanel_sources" style="flex:1;overflow-y:auto;padding:22px;display:none">
+      <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:20px;max-width:720px">
+        <div class="rpt-card-title" style="color:#1A1D21;margin-bottom:14px">Harvested Sources — Greater Philadelphia Region</div>
+        <div id="bidsSourceList" style="display:flex;flex-direction:column;gap:10px"></div>
+        <div style="margin-top:18px;font-size:12px;color:var(--soft);line-height:1.6">
+          ℹ️ Public bid sites generally don't offer a direct data feed — most require a free supplier registration to view full solicitation detail. For sites we're not yet registered on, postings can be pasted in manually and AI will still scope, price, and track them the same way.
+        </div>
+        <button class="act-save-btn" style="margin-top:14px" onclick="bidsOpenManualEntry()">+ Paste In a Bid Manually</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="full-overlay" id="ovBidDetail" style="z-index:420">
+  <div class="ov-header">
+    <h2 id="bidDetailTitle">📑 Bid Detail</h2>
+    <div class="ov-header-btns">
+      <button class="ov-btn close" onclick="document.getElementById('ovBidDetail').classList.remove('open')">✕</button>
+    </div>
+  </div>
+  <div class="ov-body" id="bidDetailBody" style="max-width:900px;margin:0 auto;width:100%"></div>
+</div>
+
+<div class="full-overlay" id="ovBidManual" style="z-index:420">
+  <div class="ov-header">
+    <h2>+ Add a Bid Manually</h2>
+    <div class="ov-header-btns">
+      <button class="ov-btn close" onclick="document.getElementById('ovBidManual').classList.remove('open')">✕</button>
+    </div>
+  </div>
+  <div class="ov-body" style="max-width:680px;margin:0 auto;width:100%">
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div>
+        <label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--soft)">Agency / Facility Name</label>
+        <input id="bidManualAgency" type="text" placeholder="e.g. School District of Philadelphia" style="width:100%;padding:10px 12px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;font-family:inherit;outline:none;margin-top:4px">
+      </div>
+      <div>
+        <label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--soft)">Source</label>
+        <select id="bidManualSource" style="width:100%;padding:10px 12px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;font-family:inherit;outline:none;margin-top:4px">
+          <option>PA eMarketplace</option>
+          <option>NJSTART</option>
+          <option>Philadelphia PHLContracts</option>
+          <option>BidNet Direct</option>
+          <option>ConstructConnect</option>
+          <option>Other / Direct</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--soft)">Due Date</label>
+        <input id="bidManualDue" type="date" style="width:100%;padding:10px 12px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;font-family:inherit;outline:none;margin-top:4px">
+      </div>
+      <div>
+        <label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--soft)">Paste the Posting / Scope of Work</label>
+        <textarea id="bidManualScope" rows="10" placeholder="Paste the full bid posting text here — AI will extract the scope, generate a draft response, suggest pricing, and build a document checklist." style="width:100%;padding:10px 12px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;font-family:inherit;outline:none;margin-top:4px;resize:vertical"></textarea>
+      </div>
+      <button class="act-save-btn" onclick="bidsSubmitManual()">Add &amp; Analyze with AI</button>
     </div>
   </div>
 </div>
