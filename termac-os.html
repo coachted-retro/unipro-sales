@@ -1223,6 +1223,7 @@ setTimeout(function(){ if(typeof TECHS!=='undefined') renderLB('score'); }, 200)
       <button class="crm-btn" id="crmHarvestBtn" onclick="harvestRunLive()" style="background:#F2B705;color:#1A1D21;display:none">🌾 Harvest PA Leads</button>
       <button class="crm-btn" id="crmHarvestDEBtn" onclick="harvestRunLiveDE()" style="background:#F2B705;color:#1A1D21;display:none">🌾 Harvest DE Leads</button>
       <button class="crm-btn" id="crmHarvestDCBtn" onclick="harvestRunLiveDC()" style="background:#F2B705;color:#1A1D21;display:none">🌾 Harvest DC Leads</button>
+      <button class="crm-btn" id="crmHarvestCMSBtn" onclick="harvestRunLiveCMSFireSafety()" style="background:#DC2626;color:#fff;display:none">🚨 Harvest Fire Safety Citations</button>
       <button class="crm-btn" id="crmSourcesBtn" onclick="openLeadSources()" style="background:#fff;color:#1A1D21;border:1.5px solid var(--line);display:none">📡 Lead Sources</button>
       <button class="crm-btn" id="crmOrphanedBtn" onclick="openOrphanedReport()" style="background:#FEE2E2;color:#991B1B;border:1.5px solid #99181B40;display:none">🔍 Orphaned Customers</button>
       <button class="crm-btn primary" id="crmAddBtn" onclick="openAddModal()">+ Add New</button>
@@ -1652,6 +1653,8 @@ function switchCRMTab(tab){
   if (harvestDEBtn) harvestDEBtn.style.display = (tab === 'leads') ? '' : 'none';
   const harvestDCBtn = document.getElementById('crmHarvestDCBtn');
   if (harvestDCBtn) harvestDCBtn.style.display = (tab === 'leads') ? '' : 'none';
+  const harvestCMSBtn = document.getElementById('crmHarvestCMSBtn');
+  if (harvestCMSBtn) harvestCMSBtn.style.display = (tab === 'leads') ? '' : 'none';
   const sourcesBtn = document.getElementById('crmSourcesBtn');
   if (sourcesBtn) sourcesBtn.style.display = (tab === 'leads') ? '' : 'none';
   const orphanedBtn = document.getElementById('crmOrphanedBtn');
@@ -8242,8 +8245,167 @@ async function harvestRunLiveDC(){
   setTimeout(() => { if(banner) banner.style.display = 'none'; }, 15000);
 }
 
-// ══════════════════════════════════════════════════════════════════════════
-//  BID PIPELINE ENGINE — Ted Scholl only
+// ── CMS Fire Safety Deficiencies — national dataset, filtered to PA/NJ/DE/
+// MD/DC. UniPro + Quality III's single best lead source: every nursing
+// home cited for a fire-safety deficiency in the last 3 inspection cycles,
+// straight from CMS's own Provider Data Catalog. This isn't a cold list —
+// it's a facility with a government-documented, dated compliance gap.
+//
+// Dataset confirmed real via two independent official sources: (1) CMS's
+// own Nursing Home Data Dictionary PDF (data.cms.gov, "Table 6. Fire
+// Safety Deficiencies file variables", updated Feb 2026), which lists the
+// exact column headers below, and (2) a live sample row pulled directly
+// from a real monthly CSV release (NH_FireSafetyCitations_Jul2025.csv) —
+// e.g. "BURNS NURSING HOME, INC.", 701 MONROE STREET NW, RUSSELLVILLE, AL,
+// Deficiency Category "Egress Deficiencies", Deficiency Corrected
+// "Deficient, Provider has date of correction". Columns are confirmed
+// real, not guessed.
+//
+// QUERY ENDPOINT: CMS's Provider Data Catalog runs on DKAN (open-source
+// CKAN-like platform), confirmed via CMS's own published OpenAPI schema
+// at data.cms.gov/provider-data/api/1/metastore/schemas/dataset/items/
+// {slug}/docs. Critically, the query endpoint uses the SAME short slug
+// as the dataset's page URL (ifjz-ge4w) directly — no separate opaque
+// UUID lookup needed, unlike some other CMS datasets:
+//   POST /provider-data/api/1/datastore/query/ifjz-ge4w/0
+//   body: { conditions: [...], limit, offset }
+// This is a POST with a JSON body rather than a GET querystring, which
+// sidesteps the whole class of URL-encoding bugs that hit the DE and
+// Philadelphia harvesters (no '%' wildcard or quote-escaping to get
+// wrong). Conditions use the literal CSV column names as "property"
+// (confirmed via the data dictionary), which is DKAN's standard
+// ingestion behavior — column headers become the queryable property
+// names as-is, spaces and all.
+//
+// HONEST STATUS: dataset, schema, and endpoint pattern are all confirmed
+// real from CMS's own documentation and a real data sample — but the
+// live POST query itself has not been executed end-to-end in this
+// session (no way to issue a POST and inspect the response from here).
+// If the response shape differs from what's coded below, the catch
+// block surfaces the real error text, same self-diagnosing pattern that
+// found and fixed the DE business_activity/category mismatch.
+const HARVEST_CMS_FIRE_SAFETY_URL = 'https://data.cms.gov/provider-data/api/1/datastore/query/ifjz-ge4w/0';
+const HARVEST_CMS_TERRITORY_STATES = ['PA','NJ','DE','MD','DC'];
+
+async function harvestRunLiveCMSFireSafety(){
+  const banner = document.getElementById('harvestStatusBanner');
+  const btn = document.getElementById('crmHarvestCMSBtn');
+  if (!banner) return;
+
+  banner.style.display = 'block';
+  banner.innerHTML = '🌾 Pulling recent nursing home fire safety citations from CMS open data…';
+  if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; }
+
+  const queryBody = {
+    conditions: [
+      { property: 'State', value: HARVEST_CMS_TERRITORY_STATES, operator: 'in' }
+    ],
+    limit: 40
+  };
+
+  try {
+    const res = await fetch(HARVEST_CMS_FIRE_SAFETY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(queryBody)
+    });
+
+    let payload;
+    try { payload = await res.json(); } catch(parseErr) { payload = null; }
+    if (!res.ok) {
+      const detail = payload && (payload.message || payload.error || payload.detail) ? (payload.message || payload.error || payload.detail) : null;
+      throw new Error(detail ? `HTTP ${res.status} — ${JSON.stringify(detail)}` : `HTTP ${res.status}`);
+    }
+
+    // Defensive unwrap -- DKAN query responses are typically a bare array
+    // of row objects, but some CMS endpoints wrap results in .results or
+    // .data. Check all three rather than assume.
+    const records = Array.isArray(payload) ? payload
+      : Array.isArray(payload && payload.results) ? payload.results
+      : Array.isArray(payload && payload.data) ? payload.data
+      : null;
+
+    if (!records) throw new Error('Unexpected response shape from CMS open data — expected an array of citation records, got: ' + JSON.stringify(payload).slice(0,200));
+
+    if (!records.length) {
+      banner.innerHTML = '✅ Connected successfully — 0 matching fire safety citations returned for this query. The endpoint is live; check the State filter values against the live response.';
+      if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
+      logHarvestRun(0, 0, 'success-empty');
+      return;
+    }
+
+    const existing = crmLoad('leads');
+    const existingKeys = new Set(existing.map(l => (l.business||'').toLowerCase() + '|' + (l.zip||'')));
+
+    let added = 0;
+    const newLeads = [];
+    const now = Date.now();
+
+    records.forEach((r, i) => {
+      // Defensive field lookup -- literal CSV header names confirmed via
+      // CMS's own data dictionary, checked alongside a couple of likely
+      // alternate casings in case the live API normalizes them.
+      const business = r['Provider Name'] || r['provider_name'] || r['PROVNAME'] || '';
+      const addr1 = r['Provider Address'] || r['provider_address'] || '';
+      const city = r['City/Town'] || r['city_town'] || r['CITY'] || '';
+      const state = r['State'] || r['state'] || '';
+      const zip = r['ZIP Code'] || r['zip_code'] || r['ZIP'] || '';
+      const ccn = r['CMS Certification Number (CCN)'] || r['ccn'] || r['PROVNUM'] || '';
+      const surveyDate = r['Survey Date'] || r['survey_date'];
+      const deficiencyCategory = r['Deficiency Category'] || r['deficiency_category'] || '';
+      const deficiencyDesc = r['Deficiency Description'] || r['deficiency_description'] || '';
+      const correctedStatus = r['Deficiency Corrected'] || r['deficiency_corrected'] || '';
+      const scopeSeverity = r['Scope Severity Code'] || r['scope_severity_code'] || '';
+
+      if (!business) return; // skip blank records rather than guess
+
+      const key = business.toLowerCase() + '|' + zip;
+      if (existingKeys.has(key)) return; // dedupe against current pool
+
+      const surveyDateStr = surveyDate ? new Date(surveyDate).toISOString().slice(0,10) : 'unknown date';
+      const addr = [addr1, city, state, zip].filter(Boolean).join(', ');
+      const company = state === 'DE' ? 'Quality III' : 'UniPro';
+      const serviceKey = state === 'DE' ? 'quality3' : 'unipro';
+
+      newLeads.push({
+        id: 'harvest_cmsfire_' + now + '_' + i,
+        name: 'Administrator — TBD',
+        business: business,
+        phone: '', email: '',
+        address: addr, zip: zip, company: company, status: 'new',
+        services: [serviceKey], score: 9,
+        source: 'Live Harvester — CMS Fire Safety Deficiencies',
+        created: now,
+        notes: `Cited ${surveyDateStr} for ${deficiencyCategory || 'a fire safety deficiency'}${scopeSeverity ? ' (severity '+scopeSeverity+')' : ''}: ${deficiencyDesc || 'see citation detail'}. Status: ${correctedStatus || 'unknown'}. CCN ${ccn||'—'}. This is a documented, dated compliance gap — high-priority outreach.`,
+        activityLog: [{
+          ts: now, type:'system', icon:'🌾',
+          title:'Harvested — CMS Fire Safety Deficiencies (live)',
+          note:`Citation surveyed ${surveyDateStr}, CCN ${ccn||'—'}`,
+          who:'System'
+        }]
+      });
+      existingKeys.add(key);
+      added++;
+    });
+
+    const allLeads = [...newLeads, ...existing];
+    crmSave('leads', allLeads);
+
+    banner.innerHTML = `✅ Harvest complete — checked ${records.length} recent fire safety citations, added <b>${added} new lead${added===1?'':'s'}</b> to the pool (${records.length - added} already on file, skipped).`;
+    logHarvestRun(records.length, added, 'success');
+
+    if (typeof renderCRMView === 'function') renderCRMView();
+
+  } catch (e) {
+    banner.innerHTML = `⚠️ Harvest failed: ${e.message}. This is a real error from the live CMS API, not a placeholder — if this persists, the query body or field names may need re-checking against <a href="https://data.cms.gov/provider-data/dataset/ifjz-ge4w" target="_blank" style="color:#5A4A00;text-decoration:underline">the live dataset page</a> (use its "Access API" button to confirm the exact endpoint and try the query in your browser console first).`;
+    logHarvestRun(0, 0, 'error: ' + e.message);
+  }
+
+  if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
+  setTimeout(() => { if(banner) banner.style.display = 'none'; }, 15000);
+}
+
+
 //  Public bid sites (PA eMarketplace, NJSTART, PHLContracts, BidNet) don't
 //  expose a real API — full solicitation detail requires free supplier
 //  registration on each. "Check for New Bids" reports what's genuinely
