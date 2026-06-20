@@ -4223,7 +4223,7 @@ setTimeout(function() {
 
 <script>
 // ── OVERLAY SYSTEM ──
-const OVERLAYS = {mgr:'ovMgr', cmd:'ovCmd', emp:'ovEmp', hr:'ovHR', ops:'ovOps', acct:'ovAcct', lp:'ovLeadPool', terr:'ovTerritoryMap', goals:'ovGoals', weekly:'ovWeekly'};
+const OVERLAYS = {mgr:'ovMgr', cmd:'ovCmd', emp:'ovEmp', hr:'ovHR', ops:'ovOps', acct:'ovAcct', lp:'ovLeadPool', terr:'ovTerritoryMap', goals:'ovGoals', weekly:'ovWeekly', queue:'ovActionQueue'};
 let _activeOverlay = null;
 let _pendingOverlay = null;
 
@@ -4240,7 +4240,11 @@ const MGR_PINS = {
 const MGR_KEYS = ['mgr','cmd']; // overlays that require manager auth
 
 function isManagerUnlocked(){
-  return sessionStorage.getItem('termac_mgr_unlocked') === '1';
+  // DEMO MODE: Manager Dashboard + Command Center stay permanently unlocked
+  // until Azure SSO replaces this placeholder PIN system.
+  // To restore PIN-gating later, change this back to:
+  //   return sessionStorage.getItem('termac_mgr_unlocked') === '1';
+  return true;
 }
 
 function openOverlay(key){
@@ -9911,8 +9915,14 @@ document.addEventListener('DOMContentLoaded', () => {
     // Login screen stays hidden — skip to platform
   }
 
-  // Restore visibility (may have been hidden for flash prevention)
-  document.documentElement.style.visibility = 'visible';
+  // Restore visibility (may have been hidden for flash prevention) —
+  // but only if there's no pending openOnLoad redirect. If one exists,
+  // stay hidden until that specific flow's _showPage() callback fires,
+  // so the user never sees an intermediate screen (e.g. Dashboard) flash
+  // before the real destination (e.g. Reports) renders.
+  if (!sessionStorage.getItem('openOnLoad')) {
+    document.documentElement.style.visibility = 'visible';
+  }
 
   // Build action queue after load
   setTimeout(buildActionQueue, 600);
@@ -10749,11 +10759,12 @@ function opsRenderDeficiencyQueue() {
 
   // Update counts
   const all = queue;
-  document.getElementById('defCountCritical').textContent    = all.filter(i => i.severity==='critical').length;
-  document.getElementById('defCountModerate').textContent    = all.filter(i => i.severity==='moderate').length;
-  document.getElementById('defCountMinor').textContent       = all.filter(i => i.severity==='minor').length;
-  document.getElementById('defCountPendingQuote').textContent= all.filter(i => i.needsQuote && !i.quoteSent).length;
-  document.getElementById('defQueueCount').textContent       = filtered.length;
+  const _setTxt = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  _setTxt('defCountCritical',     all.filter(i => i.severity==='critical').length);
+  _setTxt('defCountModerate',     all.filter(i => i.severity==='moderate').length);
+  _setTxt('defCountMinor',        all.filter(i => i.severity==='minor').length);
+  _setTxt('defCountPendingQuote', all.filter(i => i.needsQuote && !i.quoteSent).length);
+  _setTxt('defQueueCount',        filtered.length);
 
   const el = document.getElementById('defQueueList');
   if (!el) return;
@@ -13720,7 +13731,7 @@ window.openOverlay = function(key) {
       buildConfidencePills();
       el.classList.add('open');
       // Show Set Quotas only for managers
-      const isManager = _currentUser?.role === 'manager' || sessionStorage.getItem('termac_mgr_unlocked') === '1';
+      const isManager = _currentUser?.role === 'manager' || (typeof isManagerUnlocked === 'function' && isManagerUnlocked());
       const setQuotaTab = document.getElementById('goalsTab_setquota');
       if (setQuotaTab) {
         setQuotaTab.classList.toggle('nav-locked', !isManager);
