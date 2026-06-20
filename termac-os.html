@@ -5298,7 +5298,7 @@ document.addEventListener('keydown', e=>{
         <div class="sv-card">
           <h3>Filter Details (confirm or adjust)</h3>
           <div class="sv-form-grid">
-            <div class="sv-field"><label>Filter Count</label><input type="number" id="sv_fm_count" placeholder="0" min="0"></div>
+            <div class="sv-field"><label>Filter Count</label><input type="number" id="sv_fm_count" placeholder="0" min="0" oninput="svFMCalcRate()"></div>
             <div class="sv-field"><label>Filter Size</label>
               <select id="sv_fm_size">
                 <option value="">— AI will suggest —</option>
@@ -5313,9 +5313,10 @@ document.addEventListener('keydown', e=>{
               </select>
             </div>
             <div class="sv-field"><label>Exchange Frequency</label>
-              <select id="sv_fm_frequency">
+              <select id="sv_fm_frequency" onchange="svFMCalcRate()">
                 <option value="">— AI will suggest —</option>
-                <option>Monthly</option><option>Every 2 Months</option><option>Quarterly</option><option>Semi-Annual</option>
+                <option>1 Week</option><option>2 Week</option><option>4 Week</option>
+                <option>6 Week</option><option>8 Week</option>
               </select>
             </div>
             <div class="sv-field"><label>Agreement Term</label>
@@ -5325,7 +5326,13 @@ document.addEventListener('keydown', e=>{
               </select>
             </div>
             <div class="sv-field"><label>Monthly Rate ($)</label><input type="number" id="sv_fm_rate" placeholder="Auto-calculated"></div>
+            <div class="sv-field"><label>Dip Tank Service?</label>
+              <select id="sv_fm_diptank" onchange="svFMCalcRate()">
+                <option value="">No</option><option value="1">Yes — 1 tank</option><option value="2">Yes — 2 tanks</option>
+              </select>
+            </div>
           </div>
+          <div id="svFMRateBreakdown" style="margin-top:10px;font-size:12px;color:var(--soft)"></div>
         </div>
         <div class="sv-card" style="background:#F8F9FA;border:none">
           <button class="objection-btn" onclick="svOpenObjection('filterman')">⚡ Objection Handler — Filter Man</button>
@@ -5364,16 +5371,19 @@ document.addEventListener('keydown', e=>{
               </select>
             </div>
             <div class="sv-field"><label>Estimated Gallonage</label>
-              <select id="sv_gto_gallons">
+              <select id="sv_gto_gallons" onchange="svGTOCalcRate()">
                 <option value="">— AI will suggest —</option>
                 <option>50 gal</option><option>100 gal</option><option>250 gal</option>
                 <option>500 gal</option><option>750 gal</option><option>1,000 gal</option>
                 <option>1,500 gal</option><option>2,000+ gal</option>
               </select>
             </div>
+            <div class="sv-field"><label>Number of Traps at This Location</label>
+              <input type="number" id="sv_gto_trapcount" min="1" value="1" oninput="svGTOCalcRate()">
+            </div>
             <div class="sv-field"><label>Last Service Date</label><input type="date" id="sv_gto_lastservice"></div>
             <div class="sv-field"><label>Pump Frequency</label>
-              <select id="sv_gto_frequency">
+              <select id="sv_gto_frequency" onchange="svGTOCalcRate()">
                 <option value="">— AI will suggest —</option>
                 <option>Monthly</option><option>Every 6 Weeks</option><option>Every 2 Months</option><option>Quarterly</option>
               </select>
@@ -5386,6 +5396,7 @@ document.addEventListener('keydown', e=>{
             </div>
             <div class="sv-field"><label>Monthly Rate ($)</label><input type="number" id="sv_gto_rate" placeholder="Auto-calculated"></div>
           </div>
+          <div id="svGTORateBreakdown" style="margin-top:10px;font-size:12px;color:var(--soft)"></div>
           <div id="svGTOConfirmBar" style="display:none;margin-top:14px;background:#FEF3C7;border:1.5px solid #F59E0B;border-radius:8px;padding:12px 16px;font-size:13px">
             ⚠️ <strong>Confirm before price locks:</strong> <span id="svGTOConfirmText"></span>
             <button onclick="svGTOConfirm()" style="margin-left:12px;background:#F59E0B;color:#fff;border:none;border-radius:6px;padding:5px 12px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;cursor:pointer">✓ Confirm</button>
@@ -8648,10 +8659,12 @@ function svSaveSurveyData(svc){
     d.fm_count=getNum('sv_fm_count'); d.fm_size=get('sv_fm_size');
     d.fm_type=get('sv_fm_type'); d.fm_frequency=get('sv_fm_frequency');
     d.fm_term=get('sv_fm_term'); d.fm_rate=getNum('sv_fm_rate');
+    d.fm_diptank=getNum('sv_fm_diptank');
   } else if(svc==='gto'){
     d.gto_type=get('sv_gto_type'); d.gto_gallons=get('sv_gto_gallons');
     d.gto_lastservice=get('sv_gto_lastservice'); d.gto_frequency=get('sv_gto_frequency');
     d.gto_term=get('sv_gto_term'); d.gto_rate=getNum('sv_gto_rate');
+    d.gto_trapcount=getNum('sv_gto_trapcount');
   } else if(svc==='allpro'){
     d.ap_description=get('sv_ap_description');
   } else if(svc==='termac'){
@@ -8759,8 +8772,8 @@ async function svFMAnalyzePhoto(input){
 
   const b64 = await fileToB64(file);
   const prompt = `Analyze this commercial kitchen exhaust hood photo. Return ONLY valid JSON:
-{"filter_count": <number>, "filter_size": "<WxH inches>", "filter_type": "<Baffle|Mesh|Cartridge>", "exchange_frequency": "<Monthly|Every 2 Months|Quarterly>", "notes": "<brief observation>"}
-Base filter count on visible filter slots. Estimate standard sizes (16x20, 16x25, 20x20, 20x25). High-volume kitchens = monthly, moderate = every 2 months, light = quarterly.`;
+{"filter_count": <number>, "filter_size": "<WxH inches>", "filter_type": "<Baffle|Mesh|Cartridge>", "exchange_frequency": "<1 Week|2 Week|4 Week|6 Week|8 Week>", "notes": "<brief observation>"}
+Base filter count on visible filter slots. Estimate standard sizes (16x20, 16x25, 20x20, 20x25). High-volume kitchens = 1-2 week, moderate = 4 week, light = 6-8 week.`;
 
   try {
     const raw = await svAICallWithImage(prompt, b64, file.type, 'Return valid JSON only. No markdown, no preamble.');
@@ -8770,6 +8783,7 @@ Base filter count on visible filter slots. Estimate standard sizes (16x20, 16x25
     document.getElementById('sv_fm_size').value = data.filter_size||'';
     document.getElementById('sv_fm_type').value = data.filter_type||'';
     document.getElementById('sv_fm_frequency').value = data.exchange_frequency||'';
+    svFMCalcRate();
     document.getElementById('svFMResult').innerHTML = `<div style="background:#D1FAE5;border-radius:8px;padding:12px 16px;font-size:13px;color:#065F46">
       ✅ <strong>AI Analysis Complete:</strong> ${data.filter_count} filters · ${data.filter_size} · ${data.exchange_frequency}<br>
       <span style="font-size:12px">${data.notes||''}</span></div>`;
@@ -8803,6 +8817,7 @@ Use reference objects in frame for scale. Under-sink = 50-100gal, small in-groun
     document.getElementById('sv_gto_type').value = data.trap_type||'';
     document.getElementById('sv_gto_gallons').value = data.estimated_gallons||'';
     document.getElementById('sv_gto_frequency').value = data.pump_frequency||'';
+    svGTOCalcRate();
 
     const confirmBar = document.getElementById('svGTOConfirmBar');
     document.getElementById('svGTOConfirmText').textContent =
@@ -8824,8 +8839,40 @@ function svGTOConfirm(){
   document.getElementById('svGTOConfirmBar').style.display='none';
   document.getElementById('svGTOConfirmBar').style.borderColor='var(--green)';
   document.getElementById('svGTOConfirmBar').style.background='#D1FAE5';
-  document.getElementById('svGTOConfirmBar').innerHTML='✅ Confirmed — price will calculate on estimate.';
+  document.getElementById('svGTOConfirmBar').innerHTML='✅ Confirmed.';
   document.getElementById('svGTOConfirmBar').style.display='block';
+  if (typeof svGTOCalcRate === 'function') svGTOCalcRate();
+}
+
+// Computes a real monthly-equivalent Filter Man rate from filter count,
+// service frequency, and optional dip tank service, using the real
+// per-visit week-based pricing sheet. Replaces the old "Auto-calculated"
+// placeholder that never actually calculated anything.
+function svFMCalcRate() {
+  const count = parseInt(document.getElementById('sv_fm_count')?.value) || 0;
+  const freq = document.getElementById('sv_fm_frequency')?.value;
+  const dipTanks = parseInt(document.getElementById('sv_fm_diptank')?.value) || 0;
+  const breakdownEl = document.getElementById('svFMRateBreakdown');
+  if (!freq || count <= 0) { if (breakdownEl) breakdownEl.textContent = ''; return; }
+
+  const rates = EST_PRICING.filterman.weekRates[freq];
+  if (!rates) return;
+  let perVisit = count * rates.perFilter;
+  let breakdown = [`${count} filters × $${rates.perFilter}`];
+  if (dipTanks > 0 && rates.dipTank) {
+    perVisit += dipTanks * rates.dipTank;
+    breakdown.push(`${dipTanks} dip tank${dipTanks>1?'s':''} × $${rates.dipTank}`);
+  } else if (dipTanks > 0 && !rates.dipTank) {
+    breakdown.push(`⚠️ dip tank not priced at ${freq} interval — confirm manually`);
+  }
+
+  const visitsPerYear = EST_PRICING.filterman.visitsPerYear[freq] || 13;
+  const monthlyRate = Math.round((perVisit * visitsPerYear) / 12);
+  document.getElementById('sv_fm_rate').value = monthlyRate;
+  if (breakdownEl) {
+    breakdownEl.innerHTML = `Per visit: $${perVisit.toFixed(2)} — ${breakdown.join(' · ')}<br>` +
+      `≈ $${monthlyRate}/mo at ${freq} service (${visitsPerYear.toFixed(1)} visits/yr) — before tax`;
+  }
 }
 
 /* ── ALLPRO VOICE + AI ── */
@@ -9135,25 +9182,118 @@ async function svObjSubmit(){
 // ── PRICING CONFIG ──
 // Rates are placeholders — update with real rate card
 const EST_PRICING = {
+  // Real per-visit pricing from FM_pricing_12-26-25.xlsx (effective 1/1/2026).
+  // "All Filters" is the per-filter rate when every filter is changed at that
+  // visit. Dip tank service is priced separately and only offered at the
+  // 2/4/8-week intervals per the source sheet (no listed rate at 1 or 6
+  // week). 12-week service exists for existing customers only, per the
+  // sheet's note -- not offered as a new-customer option here.
   filterman: {
-    baseRatePerFilter: { monthly: 18, every2months: 14, quarterly: 11 },
+    weekRates: {
+      '1 Week': { perFilter: 7,    dipTank: null },
+      '2 Week': { perFilter: 7.5,  dipTank: 95   },
+      '4 Week': { perFilter: 9,    dipTank: 115  },
+      '6 Week': { perFilter: 10.5, dipTank: null },
+      '8 Week': { perFilter: 11,   dipTank: 135  }
+    },
+    visitsPerYear: { '1 Week':52, '2 Week':26, '4 Week':13, '6 Week':52/6, '8 Week':6.5 },
     termMultiplier: { '1yr': 1.0, '3yr': 0.90 },
     setupFee: 0
   },
+  // Real per-visit pricing from GTO_PRICING_6-11-25.pdf (effective 6/11/2025).
+  // Internal grease trap tiers (up to 100gal, 101-300gal) price the 1st/2nd/3rd+
+  // trap differently at one location -- standard territory (PA/NJ/DE/MD/VA/DC)
+  // vs NY, which runs slightly higher and adds a portable-tank upcharge in the
+  // 101-300gal tier. Large internal (301-1000gal) and external (1001gal+) don't
+  // have a 1st/2nd/3rd breakdown in the source sheet -- same per-tank rate
+  // applies to each tank present.
   gto: {
-    gallonRates: {
-      '50 gal':   { monthly: 85  },
-      '100 gal':  { monthly: 110 },
-      '250 gal':  { monthly: 145 },
-      '500 gal':  { monthly: 195 },
-      '750 gal':  { monthly: 260 },
-      '1,000 gal':{ monthly: 325 },
-      '1,500 gal':{ monthly: 420 },
-      '2,000+ gal':{ monthly: 550 }
+    standard: {
+      upTo100:  { trap1: 194.99, trap2: 124.99, trap3: 99.00, envFee: 25 },
+      g101to300:{ trap1: 239.99, trap2: 124.99, trap3: 99.00, envFee: 25 }
     },
+    ny: {
+      upTo100:  { trap1: 204.99, trap2: 124.99, trap3: 99.00, envFee: 25 },
+      g101to300:{ trap1: 249.95, trap2: 124.99, trap3: 99.00, envFee: 25, portableUpcharge: 64.95 }
+    },
+    large: {
+      g301to1000: { perTank: 339.99, envFee: 25 },
+      g1001plus:  { perGallon: 0.39 }
+    },
+    // Maps the existing survey dropdown's gallon buckets to a pricing tier +
+    // a representative gallon figure (used for the per-gallon 1001+ tier).
+    bucketMap: {
+      '50 gal':    { tier:'upTo100',    gallons:50   },
+      '100 gal':   { tier:'upTo100',    gallons:100  },
+      '250 gal':   { tier:'g101to300',  gallons:250  },
+      '500 gal':   { tier:'g301to1000', gallons:500  },
+      '750 gal':   { tier:'g301to1000', gallons:750  },
+      '1,000 gal': { tier:'g301to1000', gallons:1000 },
+      '1,500 gal': { tier:'g1001plus',  gallons:1500 },
+      '2,000+ gal':{ tier:'g1001plus',  gallons:2000 }
+    },
+    visitsPerYear: { 'Monthly':12, 'Every 6 Weeks':52/6, 'Every 2 Months':6, 'Quarterly':4 },
     termMultiplier: { '1yr': 1.0, '3yr': 0.88 }
   }
 };
+
+// NY zip codes (rough 5-digit range) get GTO's NY rate table instead of the
+// standard PA/NJ/DE/MD/VA/DC table.
+function gtoIsNYZip(zip) {
+  const z = parseInt(String(zip||'').slice(0,5), 10);
+  return !isNaN(z) && z >= 10000 && z <= 14999;
+}
+
+// Computes a real per-visit + monthly-equivalent GTO rate from the survey's
+// gallon bucket, trap count, frequency, and the account's zip (for NY vs
+// standard territory). Replaces the old "Auto-calculated" placeholder that
+// never actually calculated anything.
+function svGTOCalcRate() {
+  const bucket = document.getElementById('sv_gto_gallons')?.value;
+  const trapCount = Math.max(1, parseInt(document.getElementById('sv_gto_trapcount')?.value) || 1);
+  const freq = document.getElementById('sv_gto_frequency')?.value || 'Monthly';
+  const breakdownEl = document.getElementById('svGTORateBreakdown');
+  if (!bucket) { if (breakdownEl) breakdownEl.textContent = ''; return; }
+
+  const map = EST_PRICING.gto.bucketMap[bucket];
+  if (!map) return;
+  const zip = (svState._prefillData && svState._prefillData.zip) || '';
+  const isNY = gtoIsNYZip(zip);
+  let perVisit = 0, breakdown = [];
+
+  if (map.tier === 'upTo100' || map.tier === 'g101to300') {
+    const table = (isNY ? EST_PRICING.gto.ny : EST_PRICING.gto.standard)[map.tier];
+    for (let i = 1; i <= trapCount; i++) {
+      const rate = i === 1 ? table.trap1 : i === 2 ? table.trap2 : table.trap3;
+      perVisit += rate;
+      breakdown.push(`Trap ${i}: $${rate.toFixed(2)}`);
+    }
+    perVisit += table.envFee; // one environmental fee per visit, not per trap
+    breakdown.push(`Env fee: $${table.envFee.toFixed(2)}`);
+    if (isNY && table.portableUpcharge) {
+      // Portable upcharge only applies if a portable tank is required --
+      // flagged as a note rather than auto-added, since it depends on
+      // on-site access conditions the rep needs to confirm.
+      breakdown.push(`+ $${table.portableUpcharge.toFixed(2)} if portable tank required (NY)`);
+    }
+  } else if (map.tier === 'g301to1000') {
+    const t = EST_PRICING.gto.large.g301to1000;
+    perVisit = (t.perTank + t.envFee) * trapCount;
+    breakdown.push(`${trapCount} tank${trapCount>1?'s':''} × ($${t.perTank.toFixed(2)} + $${t.envFee.toFixed(2)} env fee)`);
+  } else if (map.tier === 'g1001plus') {
+    const t = EST_PRICING.gto.large.g1001plus;
+    perVisit = t.perGallon * map.gallons * trapCount;
+    breakdown.push(`${trapCount} tank${trapCount>1?'s':''} × ${map.gallons} gal × $${t.perGallon}/gal`);
+  }
+
+  const visitsPerYear = EST_PRICING.gto.visitsPerYear[freq] || 12;
+  const monthlyRate = Math.round((perVisit * visitsPerYear) / 12);
+  document.getElementById('sv_gto_rate').value = monthlyRate;
+  if (breakdownEl) {
+    breakdownEl.innerHTML = `Per visit: $${perVisit.toFixed(2)} (${isNY?'NY':'standard'} territory) — ${breakdown.join(' · ')}<br>` +
+      `≈ $${monthlyRate}/mo at ${freq.toLowerCase()} (${(visitsPerYear).toFixed(1)} visits/yr) — before tax`;
+  }
+}
 
 // Division colors
 const DIV_COLORS = {
@@ -9240,17 +9380,19 @@ function estBuildLines(svc, d){
 
   if(svc === 'filterman'){
     const count = parseInt(d.fm_count) || 1;
-    const freq = d.fm_frequency || 'Monthly';
+    const freq = d.fm_frequency || '4 Week';
     const term = d.fm_term || '1yr';
-    const freqKey = freq === 'Monthly' ? 'monthly' : freq === 'Every 2 Months' ? 'every2months' : 'quarterly';
-    const baseRate = EST_PRICING.filterman.baseRatePerFilter[freqKey] || 18;
     const termMult = EST_PRICING.filterman.termMultiplier[term] || 1.0;
-    const monthlyRate = Math.round(count * baseRate * termMult);
-    const annualTotal = monthlyRate * (freq === 'Monthly' ? 12 : freq === 'Every 2 Months' ? 6 : 4);
+    // d.fm_rate is the real monthly-equivalent computed by svFMCalcRate()
+    // from the actual per-visit week-based pricing sheet. Falls back to a
+    // flat placeholder only if the rep never touched the count/frequency fields.
+    const baseMonthly = parseFloat(d.fm_rate) || (count * 9);
+    const monthlyRate = Math.round(baseMonthly * termMult);
+    const annualTotal = monthlyRate * 12;
 
     lines.push({
       desc:'Filter Man — Hood Filter Exchange Service',
-      detail:`${count} filters · ${d.fm_size||'standard'} · ${freq} · ${term==='3yr'?'3-Year Agreement (10% off)':'1-Year Agreement'}`,
+      detail:`${count} filters · ${d.fm_size||'standard'} · ${freq} Service · ${term==='3yr'?'3-Year Agreement (10% off)':'1-Year Agreement'}`,
       qty:1, unitPrice:annualTotal, editable:true,
       monthly: monthlyRate, isMonthly: true
     });
@@ -9261,14 +9403,18 @@ function estBuildLines(svc, d){
     const gallons = d.gto_gallons || '250 gal (unconfirmed — select tank size)';
     const freq = d.gto_frequency || 'Monthly';
     const term = d.gto_term || '1yr';
-    const gRate = EST_PRICING.gto.gallonRates[d.gto_gallons] || { monthly: 195 };
     const termMult = EST_PRICING.gto.termMultiplier[term] || 1.0;
-    const monthlyRate = Math.round(gRate.monthly * termMult);
+    // d.gto_rate is the real monthly-equivalent computed by svGTOCalcRate()
+    // from the actual per-visit tiered pricing sheet. Falls back to a flat
+    // placeholder only if the rep never touched the gallonage/trap fields.
+    const baseMonthly = parseFloat(d.gto_rate) || 145;
+    const monthlyRate = Math.round(baseMonthly * termMult);
     const annualTotal = monthlyRate * 12;
+    const trapCount = parseInt(d.gto_trapcount) || 1;
 
     lines.push({
       desc: 'G.T.O. — Grease Trap Service' + (gallonsSelected ? '' : ' ⚠️ Confirm Tank Size'),
-      detail:`${gallons} ${d.gto_type||'trap'} · ${freq} · ${term==='3yr'?'3-Year Agreement (12% off)':'1-Year Agreement'}`,
+      detail:`${gallons} · ${trapCount} trap${trapCount>1?'s':''} · ${freq} · ${term==='3yr'?'3-Year Agreement (12% off)':'1-Year Agreement'}`,
       qty:1, unitPrice:annualTotal, editable:true,
       monthly: monthlyRate, isMonthly: true,
       note: gallonsSelected ? '' : 'Tank size was not selected on the survey — this price assumes 250 gal. Confirm and adjust before sending to the client.'
