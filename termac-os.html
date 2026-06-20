@@ -7936,9 +7936,15 @@ async function harvestRunLiveDE(){
 
   // SoQL: filter business_activity for food/restaurant-type keywords,
   // order by most recently valid-from, cap at 40 -- same shape as the
-  // Philadelphia query.
+  // Philadelphia query. IMPORTANT: use a literal '%' wildcard here, not
+  // a pre-encoded '%25' -- URLSearchParams.toString() below already
+  // URL-encodes the whole value once. Pre-encoding it here and then
+  // letting URLSearchParams encode it again turns a single '%' into
+  // '%2525' on the wire, which Socrata can't parse as SoQL (this was the
+  // actual cause of the first live run's HTTP 400 -- worth keeping this
+  // note since it's an easy mistake to reintroduce).
   const activityFilter = HARVEST_FOOD_LICENSE_KEYWORDS
-    .map(k => `upper(business_activity) like '%25${k.toUpperCase()}%25'`)
+    .map(k => `upper(business_activity) like '%${k.toUpperCase()}%'`)
     .join(' OR ');
   const params = new URLSearchParams({
     '$where': activityFilter,
@@ -7948,10 +7954,18 @@ async function harvestRunLiveDE(){
 
   try {
     const res = await fetch(HARVEST_DE_LICENSES_URL + '?' + params.toString());
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const records = await res.json();
+    // Read the body before deciding how to handle a non-OK status --
+    // Socrata returns a real diagnostic JSON error body on 4xx (e.g. "Could
+    // not parse SoQL query" with the specific clause), which is far more
+    // useful than a bare HTTP status code for fixing the actual problem.
+    let records;
+    try { records = await res.json(); } catch(parseErr) { records = null; }
+    if (!res.ok) {
+      const detail = records && (records.message || records.description) ? (records.message || records.description) : null;
+      throw new Error(detail ? `HTTP ${res.status} — ${detail}` : `HTTP ${res.status}`);
+    }
 
-    if (records.error || (records.errorCode)) {
+    if (records && (records.error || records.errorCode)) {
       throw new Error(records.message || 'API returned an error — the $where clause or field names may need adjusting against the live schema.');
     }
     if (!Array.isArray(records)) throw new Error('Unexpected response shape from Delaware open data — expected an array of records.');
