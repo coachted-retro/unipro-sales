@@ -9476,7 +9476,7 @@ window.svOpenEstimate = function(){
       <!-- Tab nav -->
       <div class="acct-tabs">
         <button class="acct-tab active" onclick="acctShowTab('timeline',this)">📋 Timeline</button>
-        <button class="acct-tab" onclick="acctShowTab('service',this)">🔧 Service History</button>
+        <button class="acct-tab" onclick="acctShowTab('service',this)">🔧 Service &amp; Inspection History</button>
         <button class="acct-tab" onclick="acctShowTab('estimates',this)">📄 Estimates</button>
         <button class="acct-tab" onclick="acctShowTab('notes',this)">📝 Notes</button>
       </div>
@@ -9491,17 +9491,32 @@ window.svOpenEstimate = function(){
 
       <!-- Service history tab -->
       <div class="acct-tab-content" id="tab-service">
-        <table class="svc-hist-table">
-          <thead>
-            <tr>
-              <th>Date</th><th>Division</th><th>Service</th>
-              <th>Tech</th><th>Result</th><th>Next Due</th>
-            </tr>
-          </thead>
-          <tbody id="acctServiceHistory"></tbody>
-        </table>
-        <div id="acctServiceEmpty" style="display:none" class="tl-empty">
-          <div class="tl-empty-icon">🔧</div>No service history recorded yet.
+
+        <!-- Recurring Services — collapsible, ServiceTrade-style -->
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--soft);margin-bottom:10px">Recurring Services</div>
+        <div id="acctRecurringServices" style="margin-bottom:24px"></div>
+        <div id="acctRecurringEmpty" style="display:none" class="tl-empty">
+          <div class="tl-empty-icon">🔧</div>No recurring services on file yet.
+        </div>
+
+        <!-- Completed history — collapsible -->
+        <div onclick="acctToggleCompletedHistory()" style="cursor:pointer;display:flex;align-items:center;gap:8px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--soft);margin-bottom:10px;padding-top:6px;border-top:1px solid var(--line)">
+          <span id="acctCompletedHistoryCaret" style="transition:transform .15s;display:inline-block;margin-top:10px">▶</span>
+          <span style="margin-top:10px">Completed Visit History</span>
+        </div>
+        <div id="acctCompletedHistoryWrap" style="display:none">
+          <table class="svc-hist-table">
+            <thead>
+              <tr>
+                <th>Date</th><th>Division</th><th>Service</th>
+                <th>Tech</th><th>Result</th><th>Next Due</th>
+              </tr>
+            </thead>
+            <tbody id="acctServiceHistory"></tbody>
+          </table>
+          <div id="acctServiceEmpty" style="display:none" class="tl-empty">
+            <div class="tl-empty-icon">🔧</div>No service history recorded yet.
+          </div>
         </div>
       </div>
 
@@ -9591,6 +9606,7 @@ function openAcctDetail(id, tab) {
   acctRenderServices(r);
   acctRenderStats(r);
   acctRenderTimeline(r);
+  acctRenderRecurringServices(r);
   acctRenderServiceHistory(r);
   acctRenderEstimates(r);
   acctRenderNotes(r);
@@ -9833,6 +9849,135 @@ function acctRenderTimeline(r) {
       </div>
     </div>`;
   }).join('');
+}
+
+// ── RECURRING SERVICES (ServiceTrade-style collapsible rows) ──
+// Each account can have up to 5 independent recurring service lines:
+// UniPro: Suppression, Extinguisher, E-Lights — GTO: Grease Trap —
+// Filter Man: Hood Filters. Each renders as its own collapsible dropdown,
+// grouped under a division header, never nested into each other.
+
+const RECURRING_SERVICE_DEFS = [
+  { division:'UniPro',     line:'Suppression',  code:'SUPP', icon:'🔥', defaultFreq:'Semi-Annual' },
+  { division:'UniPro',     line:'Extinguisher', code:'EXT',  icon:'🧯', defaultFreq:'Annual' },
+  { division:'UniPro',     line:'E-Lights',     code:'ELT',  icon:'💡', defaultFreq:'Annual' },
+  { division:'GTO',        line:'Grease Trap',  code:'GTO',  icon:'🛢️', defaultFreq:'Quarterly' },
+  { division:'Filter Man', line:'Hood Filters', code:'FM',   icon:'🧼', defaultFreq:'Monthly' },
+];
+
+// If an account has no recurringServices saved yet, build a reasonable
+// starting set from what we already know about it (which divisions it
+// has via r.services[], and r.nextDue/lastService as a rough anchor) so
+// the tab isn't empty for existing demo accounts. This only runs once —
+// the result gets saved back onto the record.
+function acctEnsureRecurringServices(r) {
+  if (r.recurringServices && r.recurringServices.length) return r.recurringServices;
+
+  const accountDivisions = (r.services || [r.company]).filter(Boolean);
+  const applicable = RECURRING_SERVICE_DEFS.filter(def => accountDivisions.includes(def.division));
+  if (!applicable.length) { r.recurringServices = []; return r.recurringServices; }
+
+  const baseDue = r.nextDue ? new Date(r.nextDue) : null;
+
+  r.recurringServices = applicable.map((def, i) => {
+    const due = baseDue ? new Date(baseDue) : new Date(Date.now() + (30 + i*20)*86400000);
+    const dueEnd = new Date(due); dueEnd.setDate(dueEnd.getDate() + 30);
+    return {
+      id: 'rs_' + (r.id||'acc') + '_' + def.code,
+      division: def.division, line: def.line, code: def.code,
+      frequency: def.defaultFreq,
+      activeJob: r.lastJobNumber || null,
+      dueStart: due.toISOString().slice(0,10),
+      dueEnd: dueEnd.toISOString().slice(0,10),
+      contractRef: r.contractRef || `Termac LLC Standard Contract — ${def.division}`,
+      scheduledMonths: [due.getMonth()] // which months (0-11) show activity on the strip
+    };
+  });
+  return r.recurringServices;
+}
+
+function acctRenderRecurringServices(r) {
+  const services = acctEnsureRecurringServices(r);
+  const wrap = document.getElementById('acctRecurringServices');
+  const empty = document.getElementById('acctRecurringEmpty');
+  if (!wrap) return;
+
+  if (!services.length) {
+    wrap.innerHTML = '';
+    if (empty) empty.style.display = 'block';
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+
+  // Group by division for the header, but each line still renders as
+  // its own independent collapsible row underneath — never nested.
+  const byDivision = {};
+  services.forEach(s => { (byDivision[s.division] = byDivision[s.division] || []).push(s); });
+
+  wrap.innerHTML = Object.keys(byDivision).map(div => `
+    <div style="margin-bottom:16px">
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;letter-spacing:.06em;color:var(--ink);margin-bottom:8px;padding-bottom:4px;border-bottom:2px solid var(--line)">${div}</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        ${byDivision[div].map(s => acctRecurringRowHTML(s)).join('')}
+      </div>
+    </div>
+  `).join('');
+}
+
+function acctRecurringRowHTML(s) {
+  const today = new Date();
+  const dueDate = s.dueEnd ? new Date(s.dueEnd) : null;
+  const overdue = dueDate && dueDate < today;
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const currentMonth = today.getMonth();
+
+  const strip = months.map((m, i) => {
+    const isScheduled = (s.scheduledMonths||[]).includes(i);
+    const isCurrent = i === currentMonth;
+    return `<span style="flex:1;text-align:center;font-size:9px;font-weight:700;padding:4px 0;border-radius:3px;background:${isScheduled?'var(--red)':'var(--bg)'};color:${isScheduled?'#fff':'var(--soft)'};${isCurrent?'box-shadow:0 0 0 1.5px var(--ink) inset;':''}">${m}</span>`;
+  }).join('');
+
+  return `
+    <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);overflow:hidden">
+      <div onclick="acctToggleRecurringRow('${s.id}')" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;padding:12px 16px;gap:12px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:10px;min-width:200px">
+          <span id="caret_${s.id}" style="transition:transform .15s;font-size:11px;color:var(--soft)">▶</span>
+          <span style="font-size:18px">${RECURRING_SERVICE_DEFS.find(d=>d.code===s.code)?.icon||'🔧'}</span>
+          <div>
+            <div style="font-weight:700;font-size:13px;color:var(--ink)">${s.line}</div>
+            <div style="font-size:11px;color:var(--soft)">${s.frequency}</div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:18px;font-size:12px">
+          ${s.activeJob ? `<div><span style="color:var(--soft)">Job:</span> <strong>${s.activeJob}</strong></div>` : '<div style="color:var(--soft)">No active job</div>'}
+          <div style="color:${overdue?'var(--red)':'var(--ink)'};font-weight:${overdue?'700':'400'}">
+            ${overdue?'⚠️ Overdue — ':''}Due ${s.dueStart||'—'} – ${s.dueEnd||'—'}
+          </div>
+        </div>
+      </div>
+      <div id="row_${s.id}" style="display:none;padding:0 16px 16px">
+        <div style="display:flex;gap:2px;margin-bottom:10px">${strip}</div>
+        <div style="font-size:11px;color:var(--soft)">Contract: ${s.contractRef||'—'}</div>
+      </div>
+    </div>`;
+}
+
+function acctToggleRecurringRow(id) {
+  const row = document.getElementById('row_' + id);
+  const caret = document.getElementById('caret_' + id);
+  if (!row) return;
+  const isOpen = row.style.display !== 'none';
+  row.style.display = isOpen ? 'none' : 'block';
+  if (caret) caret.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(90deg)';
+}
+
+function acctToggleCompletedHistory() {
+  const wrap = document.getElementById('acctCompletedHistoryWrap');
+  const caret = document.getElementById('acctCompletedHistoryCaret');
+  if (!wrap) return;
+  const isOpen = wrap.style.display !== 'none';
+  wrap.style.display = isOpen ? 'none' : 'block';
+  if (caret) caret.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(90deg)';
 }
 
 // ── SERVICE HISTORY ──
