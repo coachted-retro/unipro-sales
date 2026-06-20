@@ -6472,33 +6472,22 @@ function mgrSwitchTab(tab) {
       if (isActive) {
         panel.style.flex = '1';
         panel.style.minHeight = '0';
+        // Force the panel itself (not the shared parent overlay) to
+        // recompute its own stacking/paint. Touching #ovMgr's own
+        // display directly caused a regression: other code paths
+        // (closeOverlay, the openOnLoad mgr_reports flow) also set
+        // #ovMgr's display, and the inline style this left behind
+        // collided with those, breaking the Home/close button. This
+        // targets only the panel that's actually misrendering.
+        panel.style.willChange = 'transform';
+        void panel.offsetHeight;
+        panel.style.willChange = 'auto';
       } else {
         panel.style.flex = '';
         panel.style.minHeight = '';
       }
     }
   });
-  // Force the parent overlay itself to repaint. Switching tabs only
-  // toggles display on the inner panels, never on #ovMgr — and #ovMgr's
-  // own background layer was intermittently painting on top of the
-  // freshly shown panel (confirmed via elementFromPoint returning #ovMgr
-  // instead of the panel content) until a full open/close cycle forced a
-  // complete repaint. Briefly toggling the parent's own display forces
-  // the browser to redo stacking order on every tab switch, not just on
-  // overlay open. IMPORTANT: clear the inline style afterward so
-  // closeOverlay()'s class-based display:none (via .open removal) still
-  // works — an inline style left in place permanently overrides the CSS
-  // class and breaks the Home/close button.
-  const ovMgrEl = document.getElementById('ovMgr');
-  if (ovMgrEl) {
-    ovMgrEl.style.display = 'none';
-    void ovMgrEl.offsetHeight;
-    ovMgrEl.style.display = 'flex';
-    // Release the inline style on the next tick (after the browser has
-    // painted the forced reflow) so closeOverlay()'s class-based
-    // display:none still works afterward.
-    setTimeout(() => { ovMgrEl.style.display = ''; }, 0);
-  }
   if (tab === 'reports') {
     rptPopulateRepFilter();
     rptRender();
