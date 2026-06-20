@@ -1660,6 +1660,31 @@ function switchCRMTab(tab){
 /* ═══════════════════════════════════
    RENDER
 ══════════════════════════════════════ */
+// Checks a lead's zip against a rep's territory list. Each territory
+// entry can be a full 5-digit zip (exact match) or a shorter prefix
+// (matches any zip starting with it, e.g. '190' matches 19030, 19067...).
+function zipMatchesTerritory(zip, territory) {
+  if (!zip || !Array.isArray(territory) || !territory.length) return false;
+  const z = String(zip).trim();
+  return territory.some(entry => {
+    const e = String(entry).trim();
+    return e.length >= 5 ? z === e : z.startsWith(e);
+  });
+}
+
+// Per Ted: only individual field reps get territory-prioritized sorting.
+// Managers, DMS/telemarketing, reception, scheduler/dispatcher, and
+// division-office logins all see the full pool in normal order --
+// DMS and reception explicitly so (they route leads to the right rep,
+// not work a fixed territory themselves), the rest because they already
+// have division:'all'-style broad visibility that territory filtering
+// isn't meant to narrow.
+function currentRepTerritory() {
+  if (!_currentUser || _currentUser.role !== 'rep') return null;
+  const t = _currentUser.territory;
+  return Array.isArray(t) && t.length ? t : null;
+}
+
 function renderCRMView(){
   const tab=crmCurrentTab;
   const q=document.getElementById('crmSearch').value.trim().toLowerCase();
@@ -1669,13 +1694,22 @@ function renderCRMView(){
   if(q) data=data.filter(r=>JSON.stringify(r).toLowerCase().includes(q));
   if(co) data=data.filter(r=>r.company===co);
   if(st) data=data.filter(r=>r.status===st);
-  // Sort: pinned recently viewed at top
+  // Sort: pinned recently viewed at top, then (leads tab only, reps with
+  // an assigned territory) in-territory leads next, then everything else
+  // by most recent.
   const recent=getRecent(tab).map(r=>r.id);
+  const repTerritory = tab === 'leads' ? currentRepTerritory() : null;
   data.sort((a,b)=>{
     const ai=recent.indexOf(a.id), bi=recent.indexOf(b.id);
     if(ai>-1 && bi===-1) return -1;
     if(bi>-1 && ai===-1) return 1;
     if(ai>-1 && bi>-1) return ai-bi;
+    if (repTerritory) {
+      const aIn = zipMatchesTerritory(a.zip, repTerritory);
+      const bIn = zipMatchesTerritory(b.zip, repTerritory);
+      if (aIn && !bIn) return -1;
+      if (bIn && !aIn) return 1;
+    }
     return (b.created||0)-(a.created||0);
   });
   const body=document.getElementById('crmBody');
@@ -1693,7 +1727,7 @@ function renderCRMView(){
     html+=`<div class="crm-empty"><div class="crm-empty-icon">🔍</div><div class="crm-empty-msg">No ${tab} found matching your filters.</div></div>`;
     body.innerHTML=html; return;
   }
-  html+=`<div class="crm-section-title">${data.length} ${tab.toUpperCase()}</div><div class="crm-cards">`;
+  html+=`<div class="crm-section-title">${data.length} ${tab.toUpperCase()}${repTerritory ? ` <span style="color:#1E7B3C">· ${data.filter(r=>zipMatchesTerritory(r.zip, repTerritory)).length} in your territory</span>` : ''}</div><div class="crm-cards">`;
   data.forEach(r=>{ html+=renderCard(tab,r); });
   html+=`</div>`;
   body.innerHTML=html;
@@ -1748,13 +1782,16 @@ function renderCard(tab,r){
   } else if(tab==='leads'){
     extraInfo=`<div class="crm-card-tag">Score: ${r.score||'—'}/10</div><div class="crm-card-tag">Source: ${escH(r.source||'—')}</div>`;
   }
+  const repTerritory = tab === 'leads' ? currentRepTerritory() : null;
+  const inTerritory = repTerritory && zipMatchesTerritory(r.zip, repTerritory);
+  const territoryBadge = inTerritory ? `<span class="crm-badge" style="background:#E8F5E9;color:#1E7B3C;border:1px solid #1E7B3C30">📍 Your Territory</span>` : '';
   return `<div class="crm-card" onclick="viewRecord('${tab}','${r.id}')">
     <div class="crm-card-header">
       <div>
         <div class="crm-card-name">${escH(r.name)}</div>
         <div class="crm-card-sub">${escH(r.business||r.contact||'')}</div>
       </div>
-      ${statusBadge(r.status||'new')}
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end">${territoryBadge}${statusBadge(r.status||'new')}</div>
     </div>
     <div class="crm-card-meta">
       <div class="crm-card-tag" style="background:#EBF2FD;color:var(--blue)">${escH(r.company)}</div>
@@ -11715,7 +11752,8 @@ const TERMAC_USERS = {
   'acurran@termac.com':     { name:'Aine Curran',       role:'scheduler',  division:'UniPro',     pin:'Termac2025!' },
   'jpaez@termac.com':       { name:'Jasmine Paez',      role:'scheduler',  division:'UniPro',     pin:'Termac2025!' },
   'sholmes@termac.com':     { name:'Samuel Holmes',     role:'scheduler',  division:'UniPro',     pin:'Termac2025!' },
-  // DMS / Telemarketing
+  // DMS / Telemarketing -- per Ted, DMS always sees the full leads pool,
+  // no territory filtering. No territory field needed on these.
   'cbush@termac.com':       { name:'Chrystal Bush',     role:'dms',        division:'all',        pin:'Termac2025!' },
   'tcolona@termac.com':     { name:'Tara Colona',       role:'dms',        division:'all',        pin:'Termac2025!' },
   'amcgowan@termac.com':    { name:'Amanda McGowan',    role:'dms',        division:'all',        pin:'Termac2025!' },
@@ -11728,6 +11766,7 @@ const TERMAC_USERS = {
   'demo@termac.com':        { name:'Demo User',         role:'rep',        division:'all',        pin:'Demo2025!' },
 
   // ── RECEPTIONIST — Full hub lead pool + assign + account lookup + HR/Employee ──
+  // Per Ted: reception always sees the full pool, no territory filtering.
   'receptionists@termac.com': { name:'Front Desk',       role:'reception',  division:'all',        pin:'Termac2025!' },
 
   // ── DIVISION-SPECIFIC LOGINS — Lead + account lookup scoped to own division ──
@@ -11735,6 +11774,16 @@ const TERMAC_USERS = {
   'gto@termac.com':          { name:'GTO Office',       role:'div_gto',      division:'GTO',      pin:'Termac2025!' },
   'thefilterman@termac.com': { name:'Filter Man Office', role:'div_filterman',division:'Filter Man',pin:'Termac2025!' },
   'allpro@termac.com':       { name:'ALLPro Office',    role:'div_allpro',   division:'ALLPro',   pin:'Termac2025!' },
+
+  // ── FIELD SALES REPS — territory-prioritized leads view ──
+  // Add each rep here with role:'rep' and a `territory` array. Each entry
+  // in `territory` can be a full 5-digit zip ('19030') or a shorter
+  // prefix ('190' matches every zip starting with 190). Leads whose zip
+  // falls in a rep's territory get sorted to the top of their Leads tab
+  // (see crmSortByTerritory below) -- everything else still shows below,
+  // just not first. Waiting on Ted for the actual rep roster + zip
+  // assignments; this section is intentionally empty until then so
+  // nothing gets misrouted on a guess.
 };
 
 // Role access rules
