@@ -5733,6 +5733,16 @@ function openSiteSurvey(id){
   document.getElementById('svOverlay').classList.add('open');
   fsState.activeService = 'unipro';
   if (typeof fsResetWalkthroughState === 'function') fsResetWalkthroughState();
+  // AllPro's AI spec builder stores generated line items in a global that
+  // otherwise persists across different customers' surveys in the same
+  // session -- same stale-carryover risk fsResetWalkthroughState fixes
+  // for fs-screen1/2/3.
+  window._svAPLineItems = [];
+  const apDesc = document.getElementById('sv_ap_description'); if (apDesc) apDesc.value = '';
+  const apLines = document.getElementById('svAPLineItems');
+  if (apLines) apLines.innerHTML = '<div style="color:var(--soft);font-size:13px;font-style:italic">Run the spec builder above to generate line items.</div>';
+  const apTotal = document.getElementById('svAPTotal'); if (apTotal) apTotal.textContent = '$0';
+  const apResult = document.getElementById('svAPResult'); if (apResult) apResult.style.display = 'none';
   svGotoStep(0);
 }
 
@@ -8667,6 +8677,9 @@ function svSaveSurveyData(svc){
     d.gto_trapcount=getNum('sv_gto_trapcount');
   } else if(svc==='allpro'){
     d.ap_description=get('sv_ap_description');
+    if (Array.isArray(window._svAPLineItems) && window._svAPLineItems.length) {
+      d.ap_line_items = window._svAPLineItems;
+    }
   } else if(svc==='termac'){
     d.tm_machine_type=get('sv_tm_machine_type'); d.tm_machine_qty=getNum('sv_tm_machine_qty');
     d.tm_machine_contract=get('sv_tm_machine_contract'); d.tm_machine_provider=get('sv_tm_machine_provider');
@@ -8897,6 +8910,65 @@ function svAPStartVoice(){
   document.getElementById('svAPVoiceBtn').style.background='#C8102E';
 }
 
+const ALLPRO_CATALOG = `
+Dish Tables: 26' Soiled 14 GA, 300 series SS, SS legs, & undershelf. 4' BS — $2028
+Dish Tables: 29' Soiled 14 GA, 300 series SS, SS legs, & undershelf. 4' BS — $2028
+Dish Tables: 36' Soiled 14 GA, 300 series SS, SS legs, & undershelf. 4' BS — $2131
+Dish Tables: 44' Soiled 14 GA, 300 series SS, SS legs, & undershelf. 4' BS — $2363
+Dish Tables: 48' Soiled 14 GA, 300 series SS, SS legs, & undershelf. 4' BS — $2363
+Dish Tables: 56' Soiled 14 GA, 300 series SS, SS legs, & undershelf. 4' BS — $2824
+Dish Tables: 60' Soiled 14 GA, 300 series SS, SS legs, & undershelf. 4' BS — $2824
+Dish Tables: 72' Soiled 14 GA, 300 series SS, SS legs, & undershelf. 4' BS — $2901
+Dish Tables: 96' Soiled 14 GA, 300 series SS, SS legs, & undershelf. 4' BS — $3747
+Dish Tables: 108' Soiled 14 GA, 300 series SS, SS legs, & undershelf. 4' BS — $3900
+Dish Tables: 26' Clean 14 GA, 300 series SS, SS legs, & undershelf. 4' BS — $977
+Dish Tables: 29' Clean 14 GA, 300 series SS, SS legs, & undershelf. 4' BS — $977
+Dish Tables: 36' Clean 14 GA, 300 series SS, SS legs, & undershelf. 4' BS — $1080
+Dish Tables: 44' Clean 14 GA, 300 series SS, SS legs, & undershelf. 4' BS — $1309
+Dish Tables: 48' Clean 14 GA, 300 series SS, SS legs, & undershelf. 4' BS — $1309
+Dish Tables: 56' Clean 14 GA, 300 series SS, SS legs, & undershelf. 4' BS — $1786
+Dish Tables: 60' Clean 14 GA, 300 series SS, SS legs, & undershelf. 4' BS — $1786
+Dish Tables: 72' Clean 14 GA, 300 series SS, SS legs, & undershelf. 4' BS — $1862
+Dish Tables: 96' Clean 14 GA, 300 series SS, SS legs, & undershelf. 4' BS — $2696
+Dish Tables: 108' Clean 14 GA, 300 series SS, SS legs, & undershelf. 4' BS — $2953
+Dish Tables: ET Table with sink - 20 x 20 sink, 52' (L) — $2311
+Dish Tables: ET Stand — $463
+Work Tables: 14 GA, 300 series SS, SS legs, 18 GA undershelf, 4' BS — $350 (per linear ft)
+Work Tables: 16 GA, 300 series SS, SS legs, 18 GA undershelf, 4' BS — $340 (per linear ft)
+Single Over Shelf: 12' wide 16 GA, 300 series SS. — $118 (per linear ft)
+Single Over Shelf: 14' to 18' wide 16 GA, 300 series SS. — $141 (per linear ft)
+Single Over Shelf: 20' to 24' wide 16 GA, 300 series SS. — $178 (per linear ft)
+Double Over Shelf: 12' wide 16 GA, 300 series SS. — $234 (per linear ft)
+Double Over Shelf: 14' to 18' wide 16 GA, 300 series SS. — $282 (per linear ft)
+Double Over Shelf: 20' to 24' wide 16 GA, 300 series SS. — $351 (per linear ft)
+Wall Shelf: Wall Shelf 12' 16 GA, 300 series SS. — $95 (per linear ft)
+Wall Shelf: Wall Shelf 12' 18 GA, 300 series SS. — $84 (per linear ft)
+Wall Shelf: Wall Shelf 14' to 18' 16 GA, 300 series SS. — $118
+Wall Shelf: Wall Shelf 14' to 18' 18 GA, 300 series SS. — $107
+Slant Shelf: 21' Slant Wall Shelf 16 GA, 300 series SS. — $516
+Slant Shelf: 42' Slant Wall Shelf 16 GA, 300 series SS. — $718
+Slant Shelf: 62' Slant Wall Shelf 16 GA, 300 series SS. — $1002
+Sheets of SS & components: Corners - Inside/outside 18 GA, 300 series SS. 2' x 2' x 8' — $73
+Sheets of SS & components: Corners - Inside/outside 18 GA, 300 series SS. 2' x 2' x 4' — $45
+Sheets of SS & components: Sheets of SS & components 22 GA, 300 series SS. 48' x 96' — $252
+Sheets of SS & components: Sheets of SS & components End Caps - 8' — $49
+Sheets of SS & components: Sheets of SS & components J channel - 8' — $49
+Sheets of SS & components: Sheets of SS & components End Caps - 10' — $56
+Sheets of SS & components: Sheets of SS & components J channel -10' — $56
+3 compartment Sink: 3 compartment sink (3) 18 x 20 x 14 sink 14 GA, 300 series SS, SS legs, 8' BS Specify deck or wall mount holes — $840 (per linear ft)
+3 compartment Sink/ dish table: 3 compartment dish table (3) 18 x 20 x 14 sink 14 GA, 300 series SS, SS legs, 8' BS, Custom bend for DM Specify deck or wall mount holes — $701 (per linear ft)
+Sheets of SS & components: Pot rack 1/4 ' flat bar — $109
+Sheets of SS & components: flat bar hooks — $13
+Sheets of SS & components: Dunnage rack 12' x 36' x 20',  2000 LB. CAPACITY, ALUMINUM TUBULAR — $144
+Sheets of SS & components: Sink insert Pre-Rinse Basket 20' x 20' 4' deep — $342
+Sheets of SS & components: Tray Slide unit 20' x 20' — $247
+DISP187: Dispenser Stand Stainless Steel — $348
+DISP186: Drip Tray — $8 (per linear ft)
+Misc: Pre Rinse Assembly — $535
+Misc: Used Soil Table — $575
+Misc: Used Clean Table — $575
+`;
+
 async function svAPAnalyze(){
   const desc = document.getElementById('sv_ap_description').value.trim();
   if(!desc){ alert('Please describe what the customer needs first.'); return; }
@@ -8907,17 +8979,26 @@ async function svAPAnalyze(){
 
 The salesperson described this job: "${desc}"
 
+REAL ALLPRO PRICE CATALOG (use these prices -- do not invent prices outside this list):
+${ALLPRO_CATALOG}
+
+CUSTOM-LENGTH FORMULAS (Dish Tables and Slant Wall Shelf only): the catalog above only lists fixed preset widths for these two categories. If the description calls for a Soiled Dish Table, Clean Dish Table, or Slant Wall Shelf at a length that does NOT closely match one of the preset widths listed in the catalog (within about 2 inches), use these formulas instead of the catalog's nearest preset price -- derived by linear regression against the real catalog data points (R²~0.98), accurate to roughly +/-$175:
+- Soiled Dish Table: $1,320 base + $290/linear ft
+- Clean Dish Table: $236 base + $300/linear ft
+- Slant Wall Shelf: $252 base + $142/linear ft
+If the requested length DOES closely match a preset catalog width, use the catalog's exact listed price instead of the formula. Note in "notes" whenever a formula was used instead of a catalog match, since these are estimates, not exact quoted prices.
+
+Match the description to the closest item(s) in the catalog above. For items marked "(per linear ft)", multiply the listed price by the number of linear feet implied by the description (estimate from context if not stated, and say so in notes). If something in the description has no close match in the catalog and no formula applies, include it as a line item with unit_price 0 and say so explicitly in notes -- do not guess a price for it.
+
 Return ONLY valid JSON:
 {"item_type": "<Work Table|Corner Table|Back Wall|Corner Guards|Shelf Unit|Sink Table|Custom>",
  "dimensions": "<e.g. 6ft x 2.5ft>",
  "gauge": "16-gauge 304 stainless",
  "features": ["<feature1>","<feature2>"],
  "line_items": [
-   {"description": "<item description>", "qty": 1, "unit_price": <number>}
+   {"description": "<catalog item description, with linear footage noted if applicable>", "qty": 1, "unit_price": <number from catalog>}
  ],
- "notes": "<any clarifications or assumptions>"}
-
-Price guidelines: Basic table $150-250/linear ft, sink cutout add $200-350, drawer add $150-250, lower shelf add $75-150/ft, back wall $12-18/sqft, corner guards $8-14/linear ft, installation included.`;
+ "notes": "<assumptions made, any items with no catalog match, linear footage estimates>"}`;
 
   try {
     const raw = await svAICall(prompt, 'Return valid JSON only. No markdown, no preamble. Be specific with pricing.');
@@ -8932,6 +9013,7 @@ Price guidelines: Basic table $150-250/linear ft, sink cutout add $200-350, draw
 
     // Render line items
     let total = 0;
+    window._svAPLineItems = data.line_items || [];
     document.getElementById('svAPLineItems').innerHTML = (data.line_items||[]).map((li,i)=>{
       total += (li.unit_price||0)*li.qty;
       return `<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13px">
