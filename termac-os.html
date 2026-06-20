@@ -7876,19 +7876,20 @@ const HARVEST_BUSINESS_LICENSES_URL = 'https://services.arcgis.com/fLeGjb7u4uXqe
 // Delaware statewide business license registry (Socrata SODA API). Verified
 // live via the dataset's CSV export and Socrata API Foundry docs (dataset
 // 5zy2-grhr, source domain data.delaware.gov, last updated 6/4/2026, owned
-// by Dept of Finance / Division of Revenue, public domain). Real column
-// headers confirmed from a live CSV sample: "Business name, Trade name,
-// Business Activity, Current license valid from, Current license valid to,
-// Address 1, Address 2, City, State, Zip, Country, License number,
-// Geocoded Location" -- Socrata's standard API normalizes these to
-// lowercase/underscore field names (business_name, trade_name,
-// business_activity, etc.), confirmed for business_name specifically via
-// a documented SoQL example query. This is the standard public SODA
-// /resource/{id}.json endpoint -- no auth required for this volume of
-// querying. Field names below are this session's best-informed read of
-// Socrata's normalization convention; if the live response uses slightly
-// different casing, the dedupe/parsing below checks multiple casings the
-// same way the Philadelphia harvester does, and the error path says so.
+// by Dept of Finance / Division of Revenue, public domain).
+//
+// IMPORTANT — CONFIRMED VIA LIVE QUERY ERROR (6/20/2026): the CSV export
+// labels this column "Business Activity" for humans, but the SoQL-queryable
+// field name is `category`, NOT `business_activity`. A live $where query
+// against business_activity returned a real Socrata "no such column" error
+// that listed the dataset's actual queryable fields: business_name,
+// trade_name, category, current_license_valid_from,
+// current_license_valid_to, address_1, address_2, city, state, zip,
+// country, license_number, geocoded_location. Confirmed real category
+// values from a live CSV sample include "RETAILER  RESTAURANT" (note the
+// double space), "GENERAL SERVICES", "WHOLESALER", "RESIDENT CONTRACTOR" —
+// the keyword filter below still matches correctly against these via
+// substring LIKE, no filter changes needed, just the field name.
 const HARVEST_DE_LICENSES_URL = 'https://data.delaware.gov/resource/5zy2-grhr.json';
 
 // DC Basic Business License live feed (ArcGIS FeatureServer, Dept of
@@ -8021,17 +8022,18 @@ async function harvestRunLiveDE(){
   banner.innerHTML = '🌾 Pulling recent business license filings from Delaware open data…';
   if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; }
 
-  // SoQL: filter business_activity for food/restaurant-type keywords,
-  // order by most recently valid-from, cap at 40 -- same shape as the
-  // Philadelphia query. IMPORTANT: use a literal '%' wildcard here, not
-  // a pre-encoded '%25' -- URLSearchParams.toString() below already
+  // SoQL: filter category for food/restaurant-type keywords, order by
+  // most recently valid-from, cap at 40 -- same shape as the Philadelphia
+  // query. Field is `category` (not business_activity -- see comment on
+  // HARVEST_DE_LICENSES_URL above for how that was confirmed). IMPORTANT:
+  // use a literal '%' wildcard here, not a pre-encoded '%25' -- URLSearchParams.toString() below already
   // URL-encodes the whole value once. Pre-encoding it here and then
   // letting URLSearchParams encode it again turns a single '%' into
   // '%2525' on the wire, which Socrata can't parse as SoQL (this was the
   // actual cause of the first live run's HTTP 400 -- worth keeping this
   // note since it's an easy mistake to reintroduce).
   const activityFilter = HARVEST_FOOD_LICENSE_KEYWORDS
-    .map(k => `upper(business_activity) like '%${k.toUpperCase()}%'`)
+    .map(k => `upper(category) like '%${k.toUpperCase()}%'`)
     .join(' OR ');
   const params = new URLSearchParams({
     '$where': activityFilter,
@@ -8058,7 +8060,7 @@ async function harvestRunLiveDE(){
     if (!Array.isArray(records)) throw new Error('Unexpected response shape from Delaware open data — expected an array of records.');
 
     if (!records.length) {
-      banner.innerHTML = '✅ Connected successfully — 0 matching food/restaurant-activity records returned for this query. The endpoint is live; try widening the filter or check business_activity values against the live response.';
+      banner.innerHTML = '✅ Connected successfully — 0 matching food/restaurant-activity records returned for this query. The endpoint is live; try widening the filter or check category values against the live response.';
       if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
       logHarvestRun(0, 0, 'success-empty');
       return;
@@ -8081,7 +8083,7 @@ async function harvestRunLiveDE(){
       const addr1 = r.address_1 || r.Address_1 || '';
       const city = r.city || r.City || '';
       const zip = r.zip || r.Zip || '';
-      const activity = r.business_activity || r.Business_Activity || '';
+      const activity = r.category || r.Category || '';
       const validFrom = r.current_license_valid_from || r.Current_license_valid_from;
       const licNum = r.license_number || r.License_number || '';
 
