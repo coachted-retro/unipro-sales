@@ -13077,6 +13077,13 @@ window.uvCollectData = uvCollectData;
       <button onclick="weeklySaveDraft()" style="background:none;border:1.5px solid var(--line);border-radius:8px;padding:10px 22px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;color:var(--soft)">💾 Save Draft</button>
     </div>
 
+    <!-- Sent Reports log — confirms when Send to Management was actually clicked -->
+    <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:18px;margin-top:16px">
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin-bottom:10px">📋 Sent Reports Log</div>
+      <div style="font-size:11px;color:var(--soft);margin-bottom:10px">Confirms when you clicked Send and which week/recipients it went to. This logs the moment your mail app opened with the report — it can't see whether you clicked Send inside Outlook itself, so always double-check your Sent folder for anything important.</div>
+      <div id="weeklySentLog"></div>
+    </div>
+
     <!-- Preview area -->
     <div id="weeklyPreviewBox" style="display:none;margin-top:20px;background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:22px"></div>
 
@@ -13712,7 +13719,7 @@ function checkFridayReminder() {
     '<div style="flex:1"><div style="font-weight:800;font-size:13px;letter-spacing:.06em;text-transform:uppercase">Weekly Report Due</div>' +
     '<div style="font-size:12px;color:#BFC4CA;margin-top:2px">Do not forget to submit your EOW report to Tom before you head out.</div></div>' +
     '<div style="display:flex;gap:8px">' +
-    '<button onclick="openOverlay(\'goals\');document.getElementById(\'fridayReminderBanner\').remove()" style="background:var(--red);color:#fff;border:none;border-radius:6px;padding:8px 14px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">Submit Now</button>' +
+    '<button onclick="openOverlay(\'weekly\');document.getElementById(\'fridayReminderBanner\').remove()" style="background:var(--red);color:#fff;border:none;border-radius:6px;padding:8px 14px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">Submit Now</button>' +
     '<button onclick="sessionStorage.setItem(\'wklyReminderDismissed\',new Date().toDateString());document.getElementById(\'fridayReminderBanner\').remove()" style="background:rgba(255,255,255,.1);color:#fff;border:none;border-radius:6px;padding:8px 10px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;cursor:pointer">✕</button>' +
     '</div>';
   document.body.appendChild(banner);
@@ -13878,6 +13885,8 @@ function weeklyLoadData() {
     });
     if (draft.confidence) goalsPickConfidence(draft.confidence, null);
   } catch(e) {}
+
+  weeklyRenderSentLog();
 }
 
 function weeklySaveDraft() {
@@ -13976,10 +13985,51 @@ function weeklySend() {
   const to = recipients.join(',');
   window.open('mailto:' + to + '?subject=' + subject + '&body=' + encodeURIComponent(body), '_blank');
   weeklySaveDraft();
+  weeklyLogSend(recipients);
   const t = document.createElement('div');
   t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1E7B3C;color:#fff;border-radius:8px;padding:10px 20px;font-size:13px;font-weight:600;z-index:999';
   t.textContent = '📧 Email opened — review and send from your mail app';
   document.body.appendChild(t); setTimeout(()=>t.remove(), 3500);
+}
+
+// ── SENT REPORTS LOG ── confirms when Send to Management was actually
+// clicked, since mailto: hands off to the OS mail app and the platform
+// has no way to confirm the email was actually sent from there.
+function weeklyLogSend(recipients) {
+  let log = [];
+  try { log = JSON.parse(localStorage.getItem('weekly_sent_log') || '[]'); } catch(e) {}
+  log.unshift({
+    ts: Date.now(),
+    week: goalsCurrentWeekKey(),
+    rep: _currentUser?.name || 'Ted Scholl',
+    recipients: recipients
+  });
+  log = log.slice(0, 20); // keep last 20
+  localStorage.setItem('weekly_sent_log', JSON.stringify(log));
+  weeklyRenderSentLog();
+}
+
+function weeklyRenderSentLog() {
+  const el = document.getElementById('weeklySentLog');
+  if (!el) return;
+  let log = [];
+  try { log = JSON.parse(localStorage.getItem('weekly_sent_log') || '[]'); } catch(e) {}
+  if (!log.length) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--soft);font-style:italic">No reports sent yet from this device.</div>';
+    return;
+  }
+  el.innerHTML = log.map(entry => {
+    const d = new Date(entry.ts);
+    const dateStr = d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'}) + ' at ' + d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+    const recipNames = (entry.recipients||[]).map(r => r.split('@')[0]).join(', ');
+    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);font-size:12px">
+      <span style="color:#1E7B3C;font-weight:700">✓</span>
+      <div style="flex:1">
+        <span style="font-weight:600">${entry.week.replace('_',' — ')}</span>
+        <span style="color:var(--soft)"> · sent ${dateStr} · to ${recipNames}</span>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 // Set default period to current quarter on load
