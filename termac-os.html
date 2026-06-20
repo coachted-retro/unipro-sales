@@ -12223,6 +12223,9 @@ document.addEventListener('DOMContentLoaded', () => {
     } else if (openOnLoad === 'ops_ahj') {
       if(typeof openOverlay==='function') openOverlay('ops');
       setTimeout(()=>{ if(typeof opsShowTab==='function') opsShowTab('ahj', document.getElementById('opsTab_ahj')); _showPage(); }, 100);
+    } else if (openOnLoad === 'ops_compliance') {
+      if(typeof openOverlay==='function') openOverlay('ops');
+      setTimeout(()=>{ if(typeof opsShowTab==='function') opsShowTab('compliance', document.getElementById('opsTab_compliance')); _showPage(); }, 100);
     } else if (openOnLoad === 'mgr_reports') {
       // Auto-unlock manager for reports — user already authenticated via office portal
       sessionStorage.setItem('termac_mgr_unlocked','1');
@@ -12748,6 +12751,7 @@ setInterval(buildActionQueue, 5 * 60 * 1000);
   <!-- Tab Nav -->
   <div style="background:#fff;border-bottom:1px solid var(--line);padding:0 22px;display:flex;gap:0;flex-shrink:0">
     <button class="acct-tab active" id="opsTab_deficiency" onclick="opsShowTab('deficiency',this)">⚠️ Deficiency Queue</button>
+    <button class="acct-tab" id="opsTab_compliance"  onclick="opsShowTab('compliance',this)">📋 Compliance</button>
     <button class="acct-tab" id="opsTab_ahj"        onclick="opsShowTab('ahj',this)">🏛️ AHJ Reference</button>
     <button class="acct-tab" id="opsTab_crosssell"  onclick="opsShowTab('crosssell',this)">🎯 Cross-Sell Intel</button>
     <button class="acct-tab" id="opsTab_contracts"  onclick="opsShowTab('contracts',this)">📋 Contracts</button>
@@ -12794,6 +12798,37 @@ setInterval(buildActionQueue, 5 * 60 * 1000);
       </div>
 
       <div id="defQueueList"></div>
+    </div>
+
+    <!-- ── COMPLIANCE FORM QUEUE TAB ── -->
+    <div id="opsPanel_compliance" style="display:none;flex:1;overflow-y:auto;padding:22px">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:18px">
+        <div>
+          <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:22px;color:var(--ink)">Compliance Form Queue</div>
+          <div style="font-size:13px;color:var(--soft);margin-top:2px">NFPA and GTO FOG forms submitted by techs after service — review and route to AHJ</div>
+        </div>
+        <select id="compStatusFilter" onchange="opsRenderCompliance()" style="padding:6px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;font-family:inherit;outline:none">
+          <option value="all">All Statuses</option>
+          <option value="pending_review">Pending Review</option>
+          <option value="reviewed">Reviewed</option>
+          <option value="submitted_to_ahj">Submitted to AHJ</option>
+        </select>
+      </div>
+      <div style="display:flex;gap:12px;margin-bottom:18px;flex-wrap:wrap">
+        <div style="background:#fff;border-radius:8px;padding:12px 16px;box-shadow:0 1px 3px rgba(26,29,33,.08);flex:1;min-width:100px;text-align:center">
+          <div id="compCountPending" style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:24px;color:#D8690B">0</div>
+          <div style="font-size:10px;color:var(--soft);font-family:Barlow Condensed,sans-serif;font-weight:700;letter-spacing:.08em;text-transform:uppercase">Pending Review</div>
+        </div>
+        <div style="background:#fff;border-radius:8px;padding:12px 16px;box-shadow:0 1px 3px rgba(26,29,33,.08);flex:1;min-width:100px;text-align:center">
+          <div id="compCountReviewed" style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:24px;color:#1B5FA8">0</div>
+          <div style="font-size:10px;color:var(--soft);font-family:Barlow Condensed,sans-serif;font-weight:700;letter-spacing:.08em;text-transform:uppercase">Reviewed</div>
+        </div>
+        <div style="background:#fff;border-radius:8px;padding:12px 16px;box-shadow:0 1px 3px rgba(26,29,33,.08);flex:1;min-width:100px;text-align:center">
+          <div id="compCountSubmitted" style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:24px;color:var(--green)">0</div>
+          <div style="font-size:10px;color:var(--soft);font-family:Barlow Condensed,sans-serif;font-weight:700;letter-spacing:.08em;text-transform:uppercase">Submitted to AHJ</div>
+        </div>
+      </div>
+      <div id="complianceQueueList"></div>
     </div>
 
     <!-- ── AHJ REFERENCE TAB ── -->
@@ -12951,7 +12986,7 @@ const AHJ_REFERENCE = [
    OPS HUB TAB SWITCHER
 ───────────────────────────────────────────── */
 function opsShowTab(tabId, btn) {
-  ['deficiency','ahj','crosssell','contracts'].forEach(t => {
+  ['deficiency','compliance','ahj','crosssell','contracts'].forEach(t => {
     const panel = document.getElementById('opsPanel_' + t);
     const tab   = document.getElementById('opsTab_' + t);
     if (panel) panel.style.display = 'none';
@@ -12963,6 +12998,7 @@ function opsShowTab(tabId, btn) {
 
   // Load content on tab open
   if (tabId === 'deficiency')  opsRenderDeficiencyQueue();
+  if (tabId === 'compliance')  opsRenderCompliance();
   if (tabId === 'ahj')         opsRenderAHJ();
   if (tabId === 'crosssell')   opsRenderCrossSell();
   if (tabId === 'contracts')   opsRenderContracts();
@@ -13096,6 +13132,119 @@ function opsRenderDeficiencyQueue() {
 
   // Store filtered for reference
   window._defQueueData = filtered;
+}
+
+/* ─────────────────────────────────────────────
+   COMPLIANCE FORM QUEUE — Office review of tech-submitted
+   NFPA/FOG forms, route to AHJ
+   Was previously a broken link to tech-portal.html. The data was
+   always being written correctly (officeFormQueue in localStorage,
+   via woRouteToOffice() in tech-portal.html) -- there was just no
+   office-side view reading it. This is that view.
+───────────────────────────────────────────── */
+function findAHJByZip(zip) {
+  if (!zip || typeof AHJ_REFERENCE === 'undefined') return null;
+  const z = String(zip).trim();
+  return AHJ_REFERENCE.find(a => z.startsWith(a.zip)) || null;
+}
+
+let _compSeedQueue = null;
+
+function opsRenderCompliance() {
+  let queue = [];
+  try { queue = JSON.parse(localStorage.getItem('officeFormQueue') || '[]'); } catch(e) {}
+
+  // Seed data if queue is empty (for demo). Cached in a module-level
+  // variable rather than rebuilt fresh each call, so status-change
+  // clicks during testing actually stick instead of reverting on the
+  // next render.
+  if (!queue.length) {
+    if (!_compSeedQueue) {
+      _compSeedQueue = [
+        { type:'compliance_forms', ts:Date.now()-3600000*3, account:'Ferraro Ristorante', address:'1204 Walnut St, Philadelphia PA 19103', jobId:'j2', division:'UniPro', formsCompleted:['NFPA 10 Inspection Tag','NFPA 96 Hood Report'], status:'pending_review', ahjSubmission:'manual' },
+        { type:'compliance_forms', ts:Date.now()-3600000*8, account:'Edison Commons Food Hall', address:'1600 Oak Tree Rd, Edison NJ', jobId:'j4', division:'UniPro', formsCompleted:['NFPA 96 Hood Report'], status:'reviewed', ahjSubmission:'manual' },
+        { type:'compliance_forms', ts:Date.now()-86400000, account:'Woodbridge Diner', address:'500 Route 9, Woodbridge NJ', jobId:'j7', division:'GTO', formsCompleted:['FOG Service Report','Waste Manifest','FOG Compliance Certificate'], status:'submitted_to_ahj', ahjSubmission:'manual' },
+      ];
+    }
+    queue = _compSeedQueue;
+  }
+
+  const statusFilter = document.getElementById('compStatusFilter')?.value || 'all';
+  const filtered = queue.filter(item => statusFilter === 'all' || item.status === statusFilter)
+    .sort((a, b) => b.ts - a.ts);
+
+  const _setTxt = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  _setTxt('compCountPending',   queue.filter(i => i.status === 'pending_review').length);
+  _setTxt('compCountReviewed',  queue.filter(i => i.status === 'reviewed').length);
+  _setTxt('compCountSubmitted', queue.filter(i => i.status === 'submitted_to_ahj').length);
+
+  const el = document.getElementById('complianceQueueList');
+  if (!el) return;
+
+  if (!filtered.length) {
+    el.innerHTML = `<div style="text-align:center;padding:50px 20px">
+      <div style="font-size:48px;margin-bottom:12px">📋</div>
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:18px;color:var(--ink)">No forms in this status</div>
+      <div style="font-size:13px;color:var(--soft);margin-top:4px">Forms submitted by techs after service will show up here.</div>
+    </div>`;
+    return;
+  }
+
+  const statusMeta = {
+    pending_review:    { bg:'#FEF3C7', color:'#D8690B', label:'Pending Review' },
+    reviewed:           { bg:'#DBEAFE', color:'#1B5FA8', label:'Reviewed' },
+    submitted_to_ahj:   { bg:'#D1FAE5', color:'#065F46', label:'Submitted to AHJ' },
+  };
+  const timeAgo = ts => { const m=Math.round((Date.now()-ts)/60000); return m<60?m+'m ago':m<1440?Math.round(m/60)+'h ago':Math.round(m/1440)+'d ago'; };
+
+  el.innerHTML = filtered.map((item, i) => {
+    const s = statusMeta[item.status] || statusMeta.pending_review;
+    const zip = (item.address || '').match(/\b\d{5}\b/)?.[0] || '';
+    const ahj = findAHJByZip(zip);
+    return `
+    <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);margin-bottom:12px;overflow:hidden;border-left:4px solid ${s.color}">
+      <div style="padding:14px 16px">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
+          <div style="flex:1">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap">
+              <span style="background:${s.bg};color:${s.color};border-radius:4px;padding:2px 8px;font-size:10px;font-weight:800;font-family:Barlow Condensed,sans-serif;letter-spacing:.08em;text-transform:uppercase">${s.label}</span>
+              <span style="background:#F3F4F6;color:var(--soft);border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700;font-family:Barlow Condensed,sans-serif">${item.division}</span>
+              <span style="font-size:11px;color:var(--soft)">${timeAgo(item.ts)}</span>
+            </div>
+            <div style="font-weight:700;font-size:14px;color:var(--ink);margin-bottom:2px">${item.account}</div>
+            <div style="font-size:12px;color:var(--soft);margin-bottom:6px">📍 ${item.address}</div>
+            <div style="font-size:12px;color:var(--ink);margin-bottom:2px"><strong>Forms:</strong> ${(item.formsCompleted||[]).join(', ')}</div>
+            ${ahj ? `<div style="font-size:11px;color:var(--soft)"><strong>Jurisdiction:</strong> ${ahj.name} — ${ahj.state}${ahj.fog_req ? ' (FOG permit required)' : ''}</div>` : ''}
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0">
+            ${item.status === 'pending_review' ? `<button onclick="compMarkStatus(${i},'reviewed')" style="background:var(--red);color:#fff;border:none;border-radius:8px;padding:8px 14px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">Mark Reviewed</button>` : ''}
+            ${item.status === 'reviewed' ? `<button onclick="compMarkStatus(${i},'submitted_to_ahj')" style="background:var(--green);color:#fff;border:none;border-radius:8px;padding:8px 14px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">Mark Submitted to AHJ</button>` : ''}
+            ${item.jobId ? `<div style="font-size:10px;color:var(--soft);text-align:right">Job ${item.jobId}</div>` : ''}
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  window._compQueueData = filtered;
+}
+
+function compMarkStatus(idx, newStatus) {
+  const item = window._compQueueData?.[idx];
+  if (!item) return;
+  let queue = [];
+  try { queue = JSON.parse(localStorage.getItem('officeFormQueue') || '[]'); } catch(e) {}
+  // Match by ts + jobId since the queue array has no stable id of its own
+  const real = queue.find(q => q.ts === item.ts && q.jobId === item.jobId);
+  if (real) {
+    real.status = newStatus;
+    localStorage.setItem('officeFormQueue', JSON.stringify(queue));
+  } else {
+    // Item was demo seed data, not in real localStorage yet -- just
+    // update in place for this render so the UI still responds.
+    item.status = newStatus;
+  }
+  opsRenderCompliance();
 }
 
 function defOpenQuoteModal(idx) {
