@@ -684,6 +684,10 @@ if (sessionStorage.getItem('openDispatcher') === '1') {
   <div class="section-hdr">Badges &amp; Milestones</div>
   <div class="badges-grid" id="badgesGrid"></div>
 
+  <!-- MONTHLY GOALS & TARGETS -->
+  <div class="section-hdr">🎯 Monthly Goals &amp; Targets</div>
+  <div id="goalsCard"></div>
+
   <!-- REFERRAL EARNINGS CARD -->
   <div class="section-hdr">Cross-Sell Referral Earnings — Q2 2025</div>
   <div class="referral-card" id="referralCard"></div>
@@ -752,6 +756,77 @@ var TIER_CONFIG = {
 };
 function getTechTier(score){ return score>=90?'platinum':score>=80?'gold':score>=70?'silver':'watch'; }
 
+// ── MONTHLY GOALS & TARGETS ──────────────────────────────────
+// Per Ted's direction, June 2026.
+//
+// CONFIRMED with Ted:
+//  - FTFR / Wrench Time / Satisfaction tiers: industry-benchmarked
+//    (ServiceTitan, Aberdeen Group, FieldEdge research), unchallenged
+//    when proposed.
+//  - Jobs/day = 5 for inspection-paced roles (Fire Inspector,
+//    Suppression Tech) -- Ted's explicit number, matches his own
+//    UniPro background.
+//  - Referral submissions: ramp-up tier first (build the habit before
+//    the full target), full target is 1-2 SUBMITTED per day. Per Ted,
+//    techs are accountable for submitting -- conversion depends on the
+//    rep closing it, so conversion rate is shown as context only, never
+//    graded against the tech.
+//
+// NOT YET CONFIRMED -- placeholder logic, flagged for Ted to override:
+//  - The flat 5/day target doesn't fit every role. Tony Ferraro (Filter
+//    Exchange) already averages ~203 jobs/month (~9-10/day); Chris Dolan
+//    (AllPro Fabricator) averages ~12/month (~1 every other day). Until
+//    Ted gives role-specific numbers, non-inspection roles default to
+//    their OWN current monthly pace + 10% (a modest, individualized
+//    stretch) rather than a one-size-fits-all number that would be
+//    trivial for some roles and impossible for others.
+var TECH_GOALS = {
+  workingDaysPerMonth: 21,
+  jobsPerDayByRole: {
+    'Fire Inspector':    5,
+    'Suppression Tech':  5
+    // Grease Trap Tech, Filter Exchange, Fabricator: no confirmed
+    // role-specific number yet -- see getJobsTarget() fallback below.
+  },
+  ftfr:         { silver:75, gold:85, platinum:90 },
+  wrench:       { silver:65, gold:75, platinum:80 },
+  satisfaction: { silver:75, gold:85, platinum:90 }, // 0-100 scale (5-star x 20)
+  referrals: {
+    // Flip to 'full' once the team has built the habit of submitting
+    // consistently -- this is the one switch to throw when ready.
+    activePhase: 'rampup',
+    rampup: { perWeek: 1 },            // ~13/quarter -- realistic first step
+    full:   { perDayMin: 1, perDayMax: 2 } // ~65-130/quarter -- Ted's real target
+  }
+};
+
+function getJobsTarget(t) {
+  var perDay = TECH_GOALS.jobsPerDayByRole[t.role];
+  if (perDay) return Math.round(perDay * TECH_GOALS.workingDaysPerMonth);
+  // Fallback for roles without a confirmed target: current pace + 10%.
+  return Math.round((t.jobsMonth || 0) * 1.10);
+}
+
+function getMetricTier(value, thresholds) {
+  if (value >= thresholds.platinum) return 'platinum';
+  if (value >= thresholds.gold) return 'gold';
+  if (value >= thresholds.silver) return 'silver';
+  return 'watch';
+}
+
+// Referral target for the current quarter, in both quarter-total and
+// daily-equivalent form (the daily number is what a tech can actually
+// self-check against day to day).
+function getReferralTarget() {
+  var r = TECH_GOALS.referrals;
+  if (r.activePhase === 'full') {
+    return { label: 'Full Target', qtrMin: r.full.perDayMin * 65, qtrMax: r.full.perDayMax * 65,
+              daily: r.full.perDayMin + '-' + r.full.perDayMax + '/day' };
+  }
+  var qtr = Math.round(r.rampup.perWeek * 13);
+  return { label: 'Ramp-Up', qtrMin: qtr, qtrMax: qtr, daily: r.rampup.perWeek + '/week' };
+}
+
 
 // ── SAMPLE JOBS FOR TODAY ──
 var JOBS = [
@@ -772,6 +847,7 @@ function renderAll() {
   renderMiniLb();
   renderScoreBreakdown();
   renderBadges();
+  renderGoalsCard();
   renderFeedback();
   renderReferralCard();
   setDate();
@@ -845,9 +921,15 @@ function renderJobs() {
   var statusLabel = { scheduled:'Scheduled', enroute:'En Route', onsite:'On Site', complete:'Complete' };
   var btnMap = {
     scheduled: '<button class="job-btn job-btn-secondary" onclick="startEnroute(this)">🚗 Start En Route</button><button class="job-btn job-btn-secondary">📋 View Job Details</button>',
-    enroute: '<button class="job-btn job-btn-primary" onclick="startOnsite(this)">✅ Arrived — Start Job</button><button class="job-btn job-btn-secondary">🗺 Navigate</button>',
-    onsite: '<button class="job-btn job-btn-green" onclick="openWorkOrder(\'' + j.id + '\')" >📝 Open Work Order</button><button class="job-btn job-btn-secondary">📷 Add Photo</button><button class="job-btn job-btn-secondary">⚠ Log Deficiency</button>',
-    complete: '<button class="job-btn job-btn-secondary" onclick="viewInvoice(\"'+j.id+'\")" >📄 View Invoice</button>',
+    enroute: '<button class="job-btn job-btn-primary" onclick="startOnsite(this)">✅ Arrived — Start Job</button><button class="job-btn job-btn-secondary">🗺 Navigate</button>'
+    // 'onsite' and 'complete' used to be defined here too, but they
+    // referenced j.id outside the loop where j is actually defined --
+    // threw "j is not defined" the instant this object literal was
+    // built, crashing renderJobs() (and everything renderAll() calls
+    // after it) on every single render. Removing them is safe: the
+    // actual render line below already handles onsite/complete inline
+    // with j correctly in scope, and never reads these two keys from
+    // btnMap in the first place -- they were dead code.
   };
 
   var count = document.getElementById('jobCount');
@@ -3666,6 +3748,60 @@ function loadDemoBrief() {
     total: '$1,381.95'
   };
   renderBriefFromData(demoData);
+}
+
+// ── MONTHLY GOALS & TARGETS CARD ────────────────────────────
+function renderGoalsCard() {
+  var card = document.getElementById('goalsCard');
+  if (!card) return;
+  var t = getCurrentTech();
+  var satPct = Math.round(t.satisfaction * 20);
+  var jobsTarget = getJobsTarget(t);
+  var jobsPct = jobsTarget > 0 ? Math.min(Math.round((t.jobsMonth / jobsTarget) * 100), 100) : 0;
+  var refTarget = getReferralTarget();
+  var refActual = (t.referrals && t.referrals.submitted) || 0;
+  var refPct = refTarget.qtrMax > 0 ? Math.min(Math.round((refActual / refTarget.qtrMax) * 100), 100) : 0;
+  var hasRoleTarget = !!TECH_GOALS.jobsPerDayByRole[t.role];
+
+  function tierColor(tier) { return tier==='platinum'?'green':tier==='gold'?'green':tier==='silver'?'amber':'red'; }
+  function tierBadge(tier) {
+    var tc = TIER_CONFIG[tier];
+    return '<span style="background:'+tc.bg+';color:'+tc.color+';border-radius:4px;padding:2px 8px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.3px">'+tc.label+'</span>';
+  }
+
+  var ftfrTier = getMetricTier(t.ftfr, TECH_GOALS.ftfr);
+  var wrenchTier = getMetricTier(t.wrench, TECH_GOALS.wrench);
+  var satTier = getMetricTier(satPct, TECH_GOALS.satisfaction);
+
+  var html = '';
+  html += '<div class="referral-card">';
+
+  // Jobs This Month
+  html += '<div class="referral-body" style="border-bottom:1px solid var(--bg)">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'
+    + '<div style="font-size:13px;font-weight:700;color:var(--ink)">Jobs This Month</div>'
+    + '<div style="font-size:13px;color:var(--soft)">' + t.jobsMonth + ' / ' + jobsTarget + (hasRoleTarget ? '' : ' <span style="font-size:10px;color:var(--orange)">(provisional target)</span>') + '</div></div>'
+    + '<div class="referral-bar-track"><div class="referral-bar-fill ' + (jobsPct>=100?'green':jobsPct>=70?'amber':'red') + '" style="width:' + jobsPct + '%"></div></div>'
+    + '</div>';
+
+  // FTFR / Wrench / Satisfaction row
+  html += '<div class="referral-metrics" style="padding:14px 18px;border-bottom:1px solid var(--bg)">'
+    + '<div class="referral-metric"><div class="referral-metric-val ' + tierColor(ftfrTier) + '">' + t.ftfr + '%</div><div class="referral-metric-sub">Fix Rate</div>' + tierBadge(ftfrTier) + '</div>'
+    + '<div class="referral-metric"><div class="referral-metric-val ' + tierColor(wrenchTier) + '">' + t.wrench + '%</div><div class="referral-metric-sub">Wrench Time</div>' + tierBadge(wrenchTier) + '</div>'
+    + '<div class="referral-metric"><div class="referral-metric-val ' + tierColor(satTier) + '">' + satPct + '%</div><div class="referral-metric-sub">Satisfaction</div>' + tierBadge(satTier) + '</div>'
+    + '</div>';
+
+  // Referrals Submitted (the tech's own controllable metric)
+  html += '<div class="referral-body">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'
+    + '<div style="font-size:13px;font-weight:700;color:var(--ink)">Referrals Submitted This Qtr <span style="font-size:10px;font-weight:700;color:var(--soft);text-transform:uppercase;background:var(--bg);border-radius:4px;padding:2px 6px;margin-left:4px">' + refTarget.label + '</span></div>'
+    + '<div style="font-size:13px;color:var(--soft)">' + refActual + ' / ' + refTarget.qtrMax + ' &nbsp;(' + refTarget.daily + ')</div></div>'
+    + '<div class="referral-bar-track"><div class="referral-bar-fill ' + (refPct>=100?'green':refPct>=50?'amber':'red') + '" style="width:' + refPct + '%"></div></div>'
+    + '<div style="font-size:11px;color:var(--soft);margin-top:8px;line-height:1.4">This is the number you\'re measured on — flagging the opportunity. Whether it converts is on the rep who follows up, not on you, so conversion rate isn\'t part of this goal.</div>'
+    + '</div>';
+
+  html += '</div>';
+  card.innerHTML = html;
 }
 
 // ── REFERRAL EARNINGS CARD ──────────────────────────────────
