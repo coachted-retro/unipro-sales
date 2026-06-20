@@ -44,6 +44,20 @@ body{font-family:'Barlow',-apple-system,sans-serif;background:var(--bg);color:va
 .topnav-links a{touch-action:manipulation;-webkit-tap-highlight-color:transparent;}
 .topnav-links a.active{background:var(--red);color:#fff}
 
+/* ── MOBILE: iOS Safari auto-zooms the whole page when focusing any
+   input/textarea/select with computed font-size under 16px. This file
+   has many inline font-size:13px-ish form fields built for desktop; this
+   override (author stylesheet !important beats inline style without
+   !important) kills that zoom-jump on phones without touching every
+   inline style individually. Also makes the top nav horizontally
+   scrollable instead of overflowing/wrapping awkwardly on phone widths. ── */
+@media(max-width:768px){
+  input,textarea,select{font-size:16px!important}
+  .topnav-inner{flex-wrap:nowrap}
+  .topnav-links{overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  .topnav-links::-webkit-scrollbar{display:none}
+}
+
 /* ─── HERO ─── */
 .hero{
   max-width:1180px;margin:0 auto;padding:32px 16px 0;
@@ -18123,6 +18137,309 @@ window.openOverlay = function(key) {
 };
 
 console.log('✅ Termac Intelligence Engine v2.0 loaded — Trip Stacking, Churn Score, Competitor Intel, Voice-to-CRM, AI Proposal, Tech Referral Tracker, Route Profitability, Dynamic Pricing');
+</script>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     FIELD TAG SCANNER — global floating button, every page.
+     Revives the round red camera icon: rep scans a competitor's
+     inspection tag in the field. Reuses the existing FS_PROXY vision
+     pipeline (same Claude Sonnet vision call already used for hood/ext/
+     light photo analysis) to read the tag, Web Speech API for hands-free
+     address/notes dictation (strong on Chrome/Android -- i.e. the
+     Samsung tablets everyone in the field actually carries -- weaker on
+     Safari/iOS, which falls back to typing), and the existing competitor
+     list + isAICall() for a one-line positioning suggestion. Saves
+     straight into the real Leads pool with a 60-day-prior-to-due-date
+     follow-up reminder using the same followupDate/followupNote fields
+     saveActivity() already uses everywhere else.
+     ══════════════════════════════════════════════════════════════════ -->
+<button id="fieldScanBtn" onclick="openFieldScan()" title="Scan Inspection Tag"
+  style="position:fixed;bottom:22px;right:22px;width:60px;height:60px;border-radius:50%;
+  background:var(--red);border:3px solid #fff;box-shadow:0 4px 14px rgba(0,0,0,.35);
+  font-size:26px;display:flex;align-items:center;justify-content:center;cursor:pointer;
+  z-index:150;touch-action:manipulation;-webkit-tap-highlight-color:transparent;padding:0">📷</button>
+
+<div class="crm-modal-bg" id="fieldScanModalBg">
+  <div class="crm-modal" id="fieldScanModal" style="width:min(480px,94vw)">
+    <h3>📷 Scan Inspection Tag</h3>
+    <div style="font-size:12px;color:var(--soft);margin-bottom:14px;line-height:1.5">
+      Snap the competitor's tag, dictate or type the address, save — it drops straight into the Leads pool assigned to you, with a follow-up reminder set 60 days before the inspection comes due.
+    </div>
+
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+      <label style="display:flex;align-items:center;gap:6px;background:#fff;border:1.5px solid var(--line);border-radius:7px;padding:9px 16px;cursor:pointer;font-size:13px;font-weight:700;min-height:44px">
+        📷 Take Photo of Tag
+        <input type="file" accept="image/*" capture="environment" style="display:none" onchange="fieldScanCapturePhoto(this)">
+      </label>
+      <span id="fsScanPhotoStatus" style="font-size:12px;color:var(--soft)">No photo yet</span>
+    </div>
+    <div id="fsScanPhotoThumb" style="margin-bottom:10px"></div>
+
+    <label>Business / Location Name</label>
+    <input id="fsScanBusiness" placeholder="Auto-filled from tag if visible">
+
+    <div style="display:flex;align-items:center;gap:8px;margin-top:10px">
+      <label style="flex:1;margin:0">Address</label>
+      <button id="fsDictateBtn" onclick="fieldScanToggleDictation('fsScanAddress')" type="button"
+        style="background:var(--ink);color:#fff;border:none;border-radius:6px;padding:5px 12px;font-size:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;min-height:32px">🎙️ Dictate</button>
+    </div>
+    <input id="fsScanAddress" placeholder="Tap Dictate to speak it, or type">
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">
+      <div>
+        <label>Inspection Due Date</label>
+        <input type="date" id="fsScanDueDate">
+      </div>
+      <div>
+        <label>Equipment / System</label>
+        <input id="fsScanEquipment" placeholder="e.g. Hood suppression">
+      </div>
+    </div>
+
+    <label style="margin-top:10px;display:block">Currently Serviced By (Competitor)</label>
+    <select id="fsScanCompetitor" onchange="fieldScanCompetitorChanged()">
+      <option value="">— Select —</option>
+    </select>
+    <input id="fsScanCompetitorOther" placeholder="Competitor name" style="display:none;margin-top:6px">
+
+    <div id="fsScanPositioning" style="display:none;background:#EBF2FD;border-radius:7px;padding:10px 12px;font-size:12px;color:#1E40AF;margin-top:10px;line-height:1.5"></div>
+
+    <label style="margin-top:10px;display:block">Notes</label>
+    <textarea id="fsScanNotes" rows="3" placeholder="Anything else worth capturing about the site..."></textarea>
+
+    <div class="crm-modal-actions">
+      <button class="crm-btn secondary" onclick="closeFieldScan()">Cancel</button>
+      <button class="crm-btn primary" onclick="fieldScanSave()">Save as Lead</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── PHOTO CAPTURE + AI TAG EXTRACTION ──
+async function fieldScanCapturePhoto(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const statusEl = document.getElementById('fsScanPhotoStatus');
+  const thumbEl  = document.getElementById('fsScanPhotoThumb');
+  if (statusEl) { statusEl.textContent = '📷 Photo captured — reading tag...'; statusEl.style.color = '#D8690B'; }
+
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    const b64 = e.target.result.split(',')[1];
+    if (thumbEl) thumbEl.innerHTML = `<img src="${e.target.result}" style="max-width:160px;max-height:110px;border-radius:7px;border:2px solid var(--line)">`;
+
+    const prompt = `This is a photo of a fire protection inspection tag/sticker on equipment in the field. Extract what you can see and return ONLY valid JSON, no markdown, no explanation:
+{"business":"business or location name if visible, else empty string","dueDate":"inspection due date in YYYY-MM-DD format if visible, else empty string","competitor":"the service company name printed on the tag if visible, else empty string","equipment":"type of equipment/system (e.g. hood suppression, fire extinguisher, exit lighting) if identifiable, else empty string","raw":"anything else useful you can read off the tag, one short sentence, else empty string"}`;
+
+    try {
+      const res = await fetch(FS_PROXY, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 300,
+          messages: [{ role: 'user', content: [
+            { type: 'image', source: { type: 'base64', media_type: file.type, data: b64 } },
+            { type: 'text', text: prompt }
+          ]}]
+        })
+      });
+      const json = await res.json();
+      const text = (json.content && json.content[0] && json.content[0].text) || '{}';
+      let extracted = {};
+      try { extracted = JSON.parse(text.replace(/```json|```/g,'').trim()); } catch(parseErr) { extracted = {}; }
+
+      if (extracted.business) document.getElementById('fsScanBusiness').value = extracted.business;
+      if (extracted.dueDate)  document.getElementById('fsScanDueDate').value  = extracted.dueDate;
+      if (extracted.equipment) document.getElementById('fsScanEquipment').value = extracted.equipment;
+      if (extracted.competitor) {
+        const sel = document.getElementById('fsScanCompetitor');
+        const match = (typeof COMPETITORS !== 'undefined' ? COMPETITORS : []).find(c =>
+          c.toLowerCase().includes(extracted.competitor.toLowerCase()) || extracted.competitor.toLowerCase().includes(c.toLowerCase().split(' ')[0]));
+        if (sel) sel.value = match || 'Other';
+        if (!match) {
+          const otherEl = document.getElementById('fsScanCompetitorOther');
+          otherEl.style.display = '';
+          otherEl.value = extracted.competitor;
+        }
+        fieldScanCompetitorChanged();
+      }
+      if (extracted.raw) {
+        const notesEl = document.getElementById('fsScanNotes');
+        if (notesEl && !notesEl.value) notesEl.value = extracted.raw;
+      }
+      if (statusEl) {
+        const gotAnything = extracted.business || extracted.dueDate || extracted.competitor || extracted.equipment;
+        statusEl.textContent = gotAnything ? '✅ Tag read — verify the fields below before saving.' : '📷 Photo saved — couldn\'t auto-read the tag, fill in manually.';
+        statusEl.style.color = '#1E7B3C';
+      }
+    } catch (err) {
+      if (statusEl) { statusEl.textContent = '⚠️ Could not read the tag automatically — fill in the fields manually.'; statusEl.style.color = '#991B1B'; }
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
+// ── WEB SPEECH DICTATION ──
+// Best-effort: solid on Chrome/Android (the Samsung tablets used in the
+// field), inconsistent on Safari/iOS. Falls back to plain typing on
+// anything unsupported -- the textarea/input always works regardless.
+let _fsRecognition = null;
+let _fsRecognizing = false;
+
+function fieldScanToggleDictation(targetId) {
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const btn = document.getElementById('fsDictateBtn');
+  const target = document.getElementById(targetId);
+  if (!SpeechRec) {
+    alert('Voice dictation isn\'t supported in this browser. Works reliably on Chrome/Android (the Samsung tablets) — on iPhone/Safari, just type the note instead.');
+    return;
+  }
+  if (_fsRecognizing) {
+    _fsRecognition.stop();
+    return;
+  }
+  _fsRecognition = new SpeechRec();
+  _fsRecognition.continuous = true;
+  _fsRecognition.interimResults = true;
+  _fsRecognition.lang = 'en-US';
+  let finalText = target.value ? target.value.trim() + ' ' : '';
+  _fsRecognition.onresult = (e) => {
+    let interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      if (e.results[i].isFinal) finalText += e.results[i][0].transcript + ' ';
+      else interim += e.results[i][0].transcript;
+    }
+    target.value = (finalText + interim).trim();
+  };
+  const reset = () => { _fsRecognizing = false; if (btn) { btn.textContent = '🎙️ Dictate'; btn.style.background = 'var(--ink)'; } };
+  _fsRecognition.onerror = reset;
+  _fsRecognition.onend = reset;
+  _fsRecognition.start();
+  _fsRecognizing = true;
+  if (btn) { btn.textContent = '⏹ Stop'; btn.style.background = '#1E7B3C'; }
+}
+
+// ── COMPETITOR → POSITIONING SUGGESTION ──
+// AI-reasoned, not a literal product database lookup (no Termac product
+// catalog exists in this app to query against). Uses the same isAICall()
+// pattern as the existing Dynamic Pricing Suggestions feature.
+function fieldScanGetCompetitor() {
+  const sel = document.getElementById('fsScanCompetitor')?.value || '';
+  if (sel === 'Other') return document.getElementById('fsScanCompetitorOther')?.value.trim() || '';
+  return sel;
+}
+
+function fieldScanCompetitorChanged() {
+  const sel = document.getElementById('fsScanCompetitor');
+  const otherEl = document.getElementById('fsScanCompetitorOther');
+  if (sel && otherEl) otherEl.style.display = (sel.value === 'Other') ? '' : 'none';
+  fieldScanSuggestPositioning();
+}
+
+async function fieldScanSuggestPositioning() {
+  const competitor = fieldScanGetCompetitor();
+  const equipment = document.getElementById('fsScanEquipment')?.value.trim() || '';
+  const el = document.getElementById('fsScanPositioning');
+  if (!competitor) { if (el) el.style.display = 'none'; return; }
+  if (el) { el.style.display = 'block'; el.textContent = '🤖 Thinking...'; }
+  const prompt = `A field rep just found that a prospect is currently serviced by competitor "${competitor}" for ${equipment || 'fire protection equipment'}. Termac Family of Companies offers fire suppression/hood cleaning (UniPro/Quality III), fire extinguisher service, emergency/exit lighting, filter exchange (Filter Man), and grease trap/other commercial kitchen services (GTO/ALLPro) depending on division. In 2 sentences max, give the rep: 1) the single best Termac service/angle to lead with against this competitor, 2) one specific talking point or question to ask the decision-maker on site right now.`;
+  try {
+    const result = await isAICall(prompt, 'You are a field sales coach for a fire protection company. Be specific and actionable, not generic.', 150);
+    if (el) el.textContent = '💡 ' + result;
+  } catch(e) {
+    if (el) el.textContent = '⚠️ AI suggestion unavailable right now.';
+  }
+}
+
+// ── OPEN / CLOSE / SAVE ──
+function openFieldScan() {
+  if (!_currentUser) { alert('Please log in first.'); return; }
+  ['fsScanBusiness','fsScanAddress','fsScanDueDate','fsScanEquipment','fsScanCompetitorOther','fsScanNotes'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  const sel = document.getElementById('fsScanCompetitor');
+  if (sel) {
+    const opts = ['<option value="">— Select —</option>']
+      .concat((typeof COMPETITORS !== 'undefined' ? COMPETITORS : []).map(c => `<option>${c}</option>`));
+    sel.innerHTML = opts.join('');
+  }
+  const otherEl = document.getElementById('fsScanCompetitorOther'); if (otherEl) otherEl.style.display = 'none';
+  const statusEl = document.getElementById('fsScanPhotoStatus'); if (statusEl) { statusEl.textContent = 'No photo yet'; statusEl.style.color = 'var(--soft)'; }
+  const thumbEl = document.getElementById('fsScanPhotoThumb'); if (thumbEl) thumbEl.innerHTML = '';
+  const posEl = document.getElementById('fsScanPositioning'); if (posEl) posEl.style.display = 'none';
+  document.getElementById('fieldScanModalBg').classList.add('open');
+}
+
+function closeFieldScan() {
+  if (_fsRecognizing && _fsRecognition) _fsRecognition.stop();
+  document.getElementById('fieldScanModalBg').classList.remove('open');
+}
+
+function fieldScanSave() {
+  const business    = document.getElementById('fsScanBusiness').value.trim();
+  const address     = document.getElementById('fsScanAddress').value.trim();
+  const dueDate     = document.getElementById('fsScanDueDate').value;
+  const equipment   = document.getElementById('fsScanEquipment').value.trim();
+  const competitor  = fieldScanGetCompetitor();
+  const notes       = document.getElementById('fsScanNotes').value.trim();
+
+  if (!business && !address) {
+    alert('Add at least a business name or address before saving.');
+    return;
+  }
+
+  const now = Date.now();
+  let followupDate = '', followupNote = '';
+  if (dueDate) {
+    const due = new Date(dueDate + 'T00:00:00');
+    const fu  = new Date(due.getTime() - 60*86400000);
+    followupDate = fu.toISOString().slice(0,10);
+    followupNote = `Inspection due ${dueDate}${competitor ? ' — currently serviced by ' + competitor : ''}. Scanned tag in the field — follow up 60 days prior to try to win the business.`;
+  }
+
+  const zip = (address.match(/\b\d{5}\b/) || [])[0] || '';
+  const noteParts = [
+    equipment ? `Equipment: ${equipment}.` : '',
+    competitor ? `Currently serviced by: ${competitor}.` : '',
+    dueDate ? `Inspection due: ${dueDate}.` : '',
+    notes
+  ].filter(Boolean);
+
+  const newLead = {
+    id: 'fieldscan_' + now,
+    name: business || ('Field Tag Scan — ' + new Date(now).toLocaleDateString()),
+    business: business || '',
+    address, zip, phone: '', email: '',
+    company: 'UniPro', services: ['unipro'],
+    status: dueDate ? 'warm' : 'new', score: 8,
+    source: 'Field Tag Scan',
+    assignedRep: _currentUser?.name || 'Unassigned',
+    competitorTags: competitor ? [competitor] : [],
+    notes: noteParts.join(' '),
+    created: now,
+    followupDate: followupDate || undefined,
+    followupNote: followupNote || undefined,
+    followupPriority: followupDate ? 'High' : undefined,
+    activityLog: [{
+      ts: now, type: 'system', icon: '📷',
+      title: 'Inspection tag scanned in field',
+      note: noteParts.join(' ') || 'Scanned via field camera tool',
+      who: _currentUser?.name || 'Field Rep'
+    }]
+  };
+
+  const leads = crmLoad('leads');
+  leads.push(newLead);
+  crmSave('leads', leads);
+
+  alert(`✅ Lead saved${followupDate ? '\nFollow-up reminder set for ' + followupDate : ''}`);
+  closeFieldScan();
+}
+
+document.getElementById('fieldScanModalBg')?.addEventListener('click', e => {
+  if (e.target.id === 'fieldScanModalBg') closeFieldScan();
+});
 </script>
 
 </body><script>
