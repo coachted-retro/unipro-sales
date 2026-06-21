@@ -1328,7 +1328,7 @@ setTimeout(function(){ if(typeof TECHS!=='undefined') renderLB('score'); }, 200)
     <div style="font-size:12px;color:var(--soft);margin-bottom:10px;line-height:1.5">
       Pulls businesses from Google Maps into the DMS cold-call pool. Anything already an account, lead, contact,
       or already on the call list is skipped automatically. Costs Outscraper credits per record returned —
-      not free, so run this deliberately rather than on a schedule.
+      capped server-side at $3/day (≈1,000 records), resetting at midnight Eastern.
     </div>
     <label>Category</label>
     <select id="gmh_category">
@@ -9209,15 +9209,33 @@ async function runGoogleMapsHarvest(){
     });
     let payload;
     try { payload = await res.json(); } catch(e) { payload = null; }
+
+    // Daily budget fully used — the Worker rejects before ever calling
+    // Outscraper, so there's nothing to dedup/insert. Show this as a
+    // guardrail working as intended, not as a failure.
+    if (res.status === 429) {
+      statusEl.style.color = '#C05F00';
+      statusEl.textContent = '🛑 ' + (payload?.error || 'Daily harvest budget reached. Resets at midnight Eastern.');
+      runBtn.disabled = false; runBtn.style.opacity = '1';
+      return;
+    }
     if (!res.ok) {
       const detail = payload && (payload.error || payload.detail) ? (payload.error + (payload.detail ? ' — ' + payload.detail : '')) : `HTTP ${res.status}`;
       throw new Error(detail);
     }
 
+    const dailyUsageNote = (du => {
+      if (!du) return ''; // KV not bound on the Worker -- daily cap isn't being tracked
+      return ` · Daily harvest budget: ${du.used}/${du.cap} records used today`;
+    })(payload?.dailyUsage);
+    const clampNote = payload?.clampedByDailyBudget
+      ? ` (capped below your requested ${limit} — only ${payload.dailyUsage?.remaining + payload.results.length || '?'} were left in today's budget)`
+      : '';
+
     const results = Array.isArray(payload?.results) ? payload.results : [];
     if (!results.length) {
       statusEl.style.color = '#5A616B';
-      statusEl.textContent = `✅ Connected successfully — 0 results for "${GMH_CATEGORY_LABELS[categoryKey]} near ${location}". Try a broader location or different category.`;
+      statusEl.textContent = `✅ Connected successfully — 0 results for "${GMH_CATEGORY_LABELS[categoryKey]} near ${location}". Try a broader location or different category.${dailyUsageNote}`;
       runBtn.disabled = false; runBtn.style.opacity = '1';
       return;
     }
@@ -9277,7 +9295,8 @@ async function runGoogleMapsHarvest(){
     statusEl.style.color = '#1E7B3C';
     statusEl.textContent = `✅ Added ${added} new contact${added===1?'':'s'}` +
       (skippedDup ? ` · ${skippedDup} already on the call list` : '') +
-      (skippedKnown ? ` · ${skippedKnown} already a lead/contact/account` : '') + '.';
+      (skippedKnown ? ` · ${skippedKnown} already a lead/contact/account` : '') + '.' +
+      clampNote + dailyUsageNote;
     runBtn.disabled = false; runBtn.style.opacity = '1';
     if (crmCurrentTab === 'dms_coldcall') renderCRMView();
   } catch (e) {
