@@ -860,9 +860,15 @@ function renderAll() {
   renderMiniLb();
   renderScoreBreakdown();
   renderBadges();
-  renderGoalsCard();
+  // renderGoalsCard and renderReferralCard are both defined in a LATER
+  // <script> block (this one runs before that block loads on first page
+  // execution) -- guarding them here stops that from throwing and
+  // silently killing setDate() below, which used to never run on first
+  // load as a result. The window-load safety net further down re-runs
+  // renderAll() once everything's loaded so these always end up populated.
+  if (typeof renderGoalsCard === 'function') renderGoalsCard();
   renderFeedback();
-  renderReferralCard();
+  if (typeof renderReferralCard === 'function') renderReferralCard();
   setDate();
 }
 
@@ -3587,9 +3593,18 @@ function loadBriefById() {
   var id = document.getElementById('briefJobIdInput').value.trim();
   if (!id) { alert('Enter a Job ID.'); return; }
   var raw = null;
-  for (var i = 0; i < localStorage.length; i++) {
-    var key = localStorage.key(i);
-    if (key && key.includes(id)) { raw = localStorage.getItem(key); break; }
+  // Exact match on the known real-brief key convention (index.html writes
+  // 'unipro_last_job_'+jobId) takes priority. Fallback below only matches
+  // a key ENDING in '_'+id, not just containing it -- a loose .includes(id)
+  // match would incorrectly hit job 'j10' while looking for 'j1'.
+  var exactKey = 'unipro_last_job_' + id;
+  if (localStorage.getItem(exactKey) != null) {
+    raw = localStorage.getItem(exactKey);
+  } else {
+    for (var i = 0; i < localStorage.length; i++) {
+      var key = localStorage.key(i);
+      if (key && key.endsWith('_' + id)) { raw = localStorage.getItem(key); break; }
+    }
   }
   if (raw) {
     try { renderBriefFromData(JSON.parse(raw)); return; }
@@ -3991,5 +4006,16 @@ if ('serviceWorker' in navigator) {
     });
   });
 }
+</script>
+
+<script>
+// Safety-net re-render once everything has loaded. The very first
+// renderAll() call (top of the page) runs before later <script> blocks
+// (renderGoalsCard, etc.) have executed, so those pieces get skipped on
+// that first pass even with the typeof guard in renderAll(). This second
+// pass, after window 'load', guarantees they actually populate.
+window.addEventListener('load', () => {
+  if (typeof renderAll === 'function') renderAll();
+});
 </script>
 </body>
