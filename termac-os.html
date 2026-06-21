@@ -1407,7 +1407,45 @@ function crmLoad(key){ try{ return JSON.parse(localStorage.getItem('termac_crm_'
   }
 })();
 
-function crmSave(key,data){ localStorage.setItem('termac_crm_'+key, JSON.stringify(data)); }
+function crmSave(key,data){ localStorage.setItem('termac_crm_'+key, JSON.stringify(data)); crmBackupPush(key, data); }
+
+// ── CRM Backup Layer (Cloudflare KV) ────────────────────────────────────
+// localStorage stays the primary, synchronous, instant source of truth —
+// nothing about crmLoad()/crmSave() call sites changes. This layer just
+// quietly backs up to Cloudflare KV (via termac-leads Worker) so a cleared
+// cache or a new device doesn't lose data. NOT live multi-rep sync.
+// CRM_BACKUP_KEYS lists which crmSave() keys get backed up; add more once
+// this is proven out (e.g. 'accounts', 'contacts').
+const CRM_BACKUP_URL = ''; // set once the termac-leads Worker URL is confirmed
+const CRM_BACKUP_KEYS = ['dms_coldcall'];
+
+function crmBackupPush(key, data){
+  if (!CRM_BACKUP_URL || !CRM_BACKUP_KEYS.includes(key)) return;
+  fetch(CRM_BACKUP_URL + '?key=' + encodeURIComponent(key), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  }).catch(()=>{}); // silent fail — localStorage already has it, this is just the backup copy
+}
+
+async function crmHydrateBackup(){
+  if (!CRM_BACKUP_URL) return;
+  for (const key of CRM_BACKUP_KEYS) {
+    const local = crmLoad(key);
+    if (local.length > 0) continue; // local data wins — don't overwrite with possibly-older backup
+    try {
+      const res = await fetch(CRM_BACKUP_URL + '?key=' + encodeURIComponent(key));
+      const remote = await res.json();
+      if (Array.isArray(remote) && remote.length > 0) {
+        localStorage.setItem('termac_crm_'+key, JSON.stringify(remote));
+        if (typeof renderCRMView === 'function' && typeof crmCurrentTab !== 'undefined' && crmCurrentTab === key) {
+          renderCRMView();
+        }
+      }
+    } catch(e) {} // silent fail — local stays as-is, nothing lost
+  }
+}
+crmHydrateBackup();
 
 // Seed demo data if empty
 (function seedCRM(){
