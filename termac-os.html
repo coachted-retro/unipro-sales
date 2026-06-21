@@ -6025,26 +6025,34 @@ document.addEventListener('keydown', e=>{
       </div>
     </div>
 
-    <!-- ── STEP 9: Scope of Work Summary ── -->
+    <!-- ── STEP 9: Scope of Work Summary + Disclaimer + Build Estimate ── -->
     <div class="sv-panel" id="svPanel9">
       <div style="max-width:860px;margin:0 auto;padding:28px 24px">
         <div class="sv-panel-title">📋 Scope of Work Summary</div>
-        <div class="sv-panel-sub">Review all surveyed services before moving to the estimate.</div>
+        <div class="sv-panel-sub">Review all surveyed services with the client before continuing.</div>
         <div id="svScopeSummary"><!-- dynamically built --></div>
-      </div>
-    </div>
 
-    <!-- ── STEP 10: Done / Next Steps ── -->
-    <div class="sv-panel" id="svPanel10">
-      <div style="max-width:860px;margin:0 auto;padding:28px 24px">
-        <div style="text-align:center;padding:40px 20px">
-          <div style="font-size:56px;margin-bottom:16px">✅</div>
-          <div class="sv-panel-title" style="text-align:center">Site Visit Complete</div>
-          <div class="sv-panel-sub" style="text-align:center;margin-bottom:32px">All surveys saved to <strong id="svDoneBizName">this account</strong>. Ready to build the estimate.</div>
-          <div style="display:flex;gap:14px;justify-content:center;flex-wrap:wrap">
-            <button onclick="svClose()" style="background:#fff;border:1.5px solid var(--line);border-radius:8px;padding:12px 24px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">Back to CRM</button>
-            <button onclick="svOpenEstimate()" style="background:var(--red);color:#fff;border:none;border-radius:8px;padding:12px 28px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;letter-spacing:.10em;text-transform:uppercase;cursor:pointer">Build Estimate →</button>
+        <!-- What We Found — photos with AI condition notes, same source as
+             the Account Info Photos tab. Shown here so findings are
+             reviewed before the disclaimer/pricing, not after. -->
+        <div id="svFindingsPhotos" style="margin-top:20px"></div>
+
+        <!-- Disclaimer — required before Build Estimate. Lives here, before
+             any pricing is generated, per the actual field-sales
+             conversation flow: review findings, review disclaimer, THEN
+             price gets built and presented. -->
+        <div class="fs-disclaimer" id="svDisclaimerBlock" style="margin-top:20px">
+          <div class="fs-disclaimer-title">⚖️ Estimate Disclaimer — Client Initials Required</div>
+          <div class="fs-disclaimer-text"><strong>IMPORTANT NOTICE REGARDING SCOPE AND PRICING:</strong> The pricing set forth in this estimate constitutes an estimate based upon conditions observed during the initial compliance walkthrough conducted by Universal Fire Protection. This estimate is not a final or guaranteed price. The parties acknowledge and agree that the total amount due may be adjusted following the technician's on-site service visit to reflect actual findings, including but not limited to: (i) additional deficiencies identified during the service visit that were not observable during the walkthrough; (ii) additional parts, materials, or labor required to bring all systems into full compliance with applicable NFPA standards; (iii) corrections necessitated by conditions that were concealed, inaccessible, or not apparent at the time of the initial assessment. Universal Fire Protection shall notify the client of any material price adjustment prior to performing additional work. Client acknowledges that inspection fees, compliance fees, and the dispatch fee are non-refundable once service has been initiated.</div>
+          <div class="fs-initials-row">
+            <input type="text" class="fs-initials-input" id="sv_disclaimerInitials" placeholder="Initials" maxlength="4" autocomplete="off" autocapitalize="characters">
+            <div class="fs-initials-label">By initialing, client confirms they have read, understand, and agree to the disclaimer above. Required before the estimate can be built.</div>
           </div>
+        </div>
+
+        <div style="display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin-top:24px">
+          <button onclick="svClose()" style="background:#fff;border:1.5px solid var(--line);border-radius:8px;padding:12px 24px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">Back to CRM</button>
+          <button onclick="svBuildEstimateFromScope()" style="background:var(--red);color:#fff;border:none;border-radius:8px;padding:12px 28px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;letter-spacing:.10em;text-transform:uppercase;cursor:pointer">Build Estimate →</button>
         </div>
       </div>
     </div>
@@ -6104,7 +6112,9 @@ const SV_STEPS_FIXED = [
   { id: 'services',     label: 'Services',      panel: 2 },
 ];
 const SV_STEP_SCOPE  = { id: 'scope', label: 'Scope', panel: 9 };
-const SV_STEP_DONE   = { id: 'done',  label: 'Done',  panel: 10 };
+// SV_STEP_DONE removed — the old "Site Visit Complete" interstitial is
+// gone. Disclaimer + Build Estimate now live directly on the Scope panel,
+// so Scope is the final outer step.
 
 // Survey panel map
 // quality3 -> 3 (same panel as unipro): Quality III is Termac's DE-specific
@@ -6127,7 +6137,7 @@ function svGetSteps(){
     label: SVC_LABEL[svc]||svc,
     panel: SVC_PANEL[svc]
   }));
-  return [...SV_STEPS_FIXED, ...surveySteps, SV_STEP_SCOPE, SV_STEP_DONE];
+  return [...SV_STEPS_FIXED, ...surveySteps, SV_STEP_SCOPE];
 }
 
 /* ── OPEN / CLOSE ── */
@@ -6256,10 +6266,14 @@ function openSiteSurvey(id){
   if (typeof fsPrefillClientInfo === 'function') fsPrefillClientInfo();
 
   document.getElementById('svBizName').textContent = svState.bizName;
-  document.getElementById('svDoneBizName').textContent = svState.bizName;
   document.getElementById('svOverlay').classList.add('open');
   fsState.activeService = 'unipro';
   if (typeof fsResetWalkthroughState === 'function') fsResetWalkthroughState();
+  // fsResetWalkthroughState() wipes fs_taxState (to avoid stale carryover
+  // between different accounts) -- re-run prefill right after so it gets
+  // re-filled from THIS account's address. Harmless no-op for the other
+  // fields, which are already filled from the call above.
+  if (typeof fsPrefillClientInfo === 'function') fsPrefillClientInfo();
   // AllPro's AI spec builder stores generated line items in a global that
   // otherwise persists across different customers' surveys in the same
   // session -- same stale-carryover risk fsResetWalkthroughState fixes
@@ -6345,8 +6359,13 @@ function svGotoStep(idx){
   // Render progress
   svRenderProgress();
 
-  // Scope step — build summary
-  if(step.id === 'scope') svBuildScope();
+  // Scope step — build summary, findings recap, reset disclaimer
+  if(step.id === 'scope') {
+    svBuildScope();
+    svBuildFindingsPhotos();
+    const initialsEl = document.getElementById('sv_disclaimerInitials');
+    if (initialsEl) initialsEl.value = '';
+  }
 
   // Footer
   svUpdateFooter();
@@ -6553,11 +6572,21 @@ function fsResetWalkthroughState() {
   setVal('fs_findImmediate',''); setVal('fs_findRecommended',''); setVal('fs_findAdvisory','');
 
   // ── fs-screen3: Pricing quantities ──
+  // q-dispatch/q-compliance are intentionally excluded from this wipe —
+  // they default to standard fees (Yes/1 visit) below instead of $0,
+  // since these apply to nearly every visit and shouldn't require the rep
+  // to remember to turn them on.
   ['q-hood-tanks','q-hood-extra','q-ext-units','q-fusible','q-cartridge','q-seal',
    'q-metal-cap','q-rubber-cap','q-kclass','q-kclass-new','q-abc5-swap','q-abc5-new',
-   'q-abc10-swap','q-abc10-new','q-sign-sm','q-sign-lg','q-light-units',
-   'q-dispatch','q-compliance'].forEach(id => setVal(id, ''));
-  setVal('fs_taxState',''); setVal('fs_propNotes','');
+   'q-abc10-swap','q-abc10-new','q-sign-sm','q-sign-lg','q-light-units'].forEach(id => setVal(id, ''));
+  setVal('q-dispatch', '1');     // Standard Dispatch / Site Visit Fee included by default
+  setVal('q-compliance', '1');   // 1 AHJ Compliance Reporting visit by default
+  setVal('fs_taxState', '');     // wiped here to avoid stale carryover from a
+                                  // previous account's survey this session —
+                                  // fsPrefillClientInfo() (called right after
+                                  // this everywhere it's invoked) re-fills it
+                                  // from the current account's business address
+  setVal('fs_propNotes', '');
   if (typeof fsCalcProposal === 'function') fsCalcProposal();
 }
 
@@ -6592,6 +6621,13 @@ function fsPrefillClientInfo() {
   setIfEmpty('fs_bizCity',    r.city || city);
   setIfEmpty('fs_bizZip',     r.zip || zip);
   setSelectIfEmpty('fs_bizState', r.state || state);
+  // Tax dropdown auto-fills from the same business-address state — the rep
+  // no longer has to remember to pick it manually for every estimate.
+  // Quality III still force-overrides this to DE in svGotoStep (DE has no
+  // state sales tax and that division is DE-specific), which still works
+  // since that override runs after this prefill, not before.
+  setSelectIfEmpty('fs_taxState', r.state || state);
+  if (typeof fsCalcProposal === 'function') fsCalcProposal();
   setIfEmpty('fs_visitDate',  new Date().toISOString().slice(0,10));
 
   setIfEmpty('fs_contactName',  r.contactName || '');
@@ -10489,12 +10525,11 @@ function svUpdateFooter(){
   _svSteps = svGetSteps();
   const step = _svSteps[svState.currentStep];
   const isFirst = svState.currentStep === 0;
-  const isLast  = step.id === 'done';
+  const isLast  = step.id === 'scope'; // scope's own Build Estimate button replaces the outer footer here
 
   document.getElementById('svBackBtn').style.display = isFirst ? 'none' : '';
   document.getElementById('svNextBtn').style.display = isLast  ? 'none' : '';
   document.getElementById('svNextBtn').textContent =
-    step.id === 'scope' ? 'Looks Good — Finish →' :
     step.id === 'services' ? 'Start Surveys →' : 'Continue →';
   document.getElementById('svStepLabel').textContent =
     `Step ${svState.currentStep+1} of ${_svSteps.length}`;
@@ -10597,6 +10632,47 @@ function svBuildScope(){
       <p>${details}</p>
     </div>`;
   }).join('');
+}
+
+// ── Findings photos — shown on the Scope panel, before the disclaimer.
+//    Reuses the flat photos[] builder from Phase 1 so this stays the
+//    single source of truth, same as the Account Info Photos tab.
+function svBuildFindingsPhotos(){
+  const el = document.getElementById('svFindingsPhotos');
+  if (!el) return;
+  const photos = (typeof buildAccountPhotosArray === 'function' ? buildAccountPhotosArray(svState.surveyData) : [])
+    .filter(p => p.aiNote);
+  if (!photos.length) { el.innerHTML = ''; return; }
+  el.innerHTML = `
+    <div class="est-section-title" style="margin-bottom:10px">🔍 What We Found On-Site</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px">
+      ${photos.map(p => `
+        <div style="background:#F9FAFB;border-radius:8px;overflow:hidden;border:1px solid var(--line)">
+          <img src="${p.url}" style="width:100%;height:95px;object-fit:cover;display:block" loading="lazy">
+          <div style="padding:7px 9px;font-size:11px;color:var(--ink);line-height:1.4">🤖 ${p.aiNote}</div>
+        </div>`).join('')}
+    </div>`;
+}
+
+// ── Disclaimer gate -> Build Estimate. Replaces the old separate Done
+//    interstitial. Validates initials, persists immediately (so the
+//    acknowledgment is on record even if the customer declines the price
+//    afterward), then opens the Estimate overlay straight to pricing.
+function svBuildEstimateFromScope(){
+  const initials = document.getElementById('sv_disclaimerInitials')?.value || '';
+  if (!initials.trim()) { alert('Client initials are required on the disclaimer before building the estimate.'); return; }
+
+  if (svState.accountId) {
+    const data = crmLoad('accounts');
+    const r = data.find(x => x.id === svState.accountId);
+    if (r) {
+      r.finalDisclaimerInitials = initials.trim().toUpperCase();
+      r.finalDisclaimerInitialedAt = Date.now();
+      crmSave('accounts', data);
+    }
+  }
+
+  svOpenEstimate();
 }
 
 /* ── SAVE SURVEY DATA (called on Next from each survey step) ── */
@@ -11490,29 +11566,13 @@ async function svObjSubmit(){
 
   <div class="est-body" id="estBody">
 
-    <!-- ── DISCLAIMER GATE — shown first. Findings review + disclaimer
-         initials happen here, before any pricing is visible. Pricing
-         section below stays hidden until estContinueToPricing() fires. ── -->
-    <div id="estGateSection">
-      <div class="est-section" id="estFindingsSummary"></div>
-
-      <div class="fs-disclaimer" id="estDisclaimerBlock">
-        <div class="fs-disclaimer-title">⚖️ Estimate Disclaimer — Client Initials Required</div>
-        <div class="fs-disclaimer-text"><strong>IMPORTANT NOTICE REGARDING SCOPE AND PRICING:</strong> The pricing set forth in this estimate constitutes an estimate based upon conditions observed during the initial compliance walkthrough conducted by Universal Fire Protection. This estimate is not a final or guaranteed price. The parties acknowledge and agree that the total amount due may be adjusted following the technician's on-site service visit to reflect actual findings, including but not limited to: (i) additional deficiencies identified during the service visit that were not observable during the walkthrough; (ii) additional parts, materials, or labor required to bring all systems into full compliance with applicable NFPA standards; (iii) corrections necessitated by conditions that were concealed, inaccessible, or not apparent at the time of the initial assessment. Universal Fire Protection shall notify the client of any material price adjustment prior to performing additional work. Client acknowledges that inspection fees, compliance fees, and the dispatch fee are non-refundable once service has been initiated.</div>
-        <div class="fs-initials-row">
-          <input type="text" class="fs-initials-input" id="est_disclaimerInitials" placeholder="Initials" maxlength="4" autocomplete="off" autocapitalize="characters">
-          <div class="fs-initials-label">By initialing, client confirms they have read, understand, and agree to the disclaimer above. Pricing will be shown once initialed.</div>
-        </div>
-      </div>
-
-      <button class="est-action-btn primary" onclick="estContinueToPricing()" style="width:100%;padding:14px">Continue to Pricing →</button>
-    </div>
-
-    <!-- ── PRICING SECTION — hidden until the gate above is cleared ── -->
-    <div id="estPricingSection" style="display:none">
+    <!-- Disclaimer + initials now happen on the Scope panel, before this
+         overlay ever opens (svBuildEstimateFromScope). Pricing shows
+         immediately here — no second gate. -->
 
     <!-- Line items by division — dynamically built -->
     <div id="estLineItemsContainer"></div>
+
 
     <!-- Add item row -->
     <div class="est-section" style="border:2px dashed var(--line);background:transparent;box-shadow:none">
@@ -11667,7 +11727,7 @@ async function svObjSubmit(){
       <button onclick="estLogDecline()" class="est-action-btn secondary">Log &amp; Close</button>
     </div>
 
-    </div><!-- /estPricingSection -->
+
 
   </div><!-- /est-body -->
 </div>
@@ -11826,7 +11886,6 @@ function svOpenEstimate(){
   estState.sections = {};
   estState.customLines = [];
   estState.decision = null;
-  estState.disclaimerInitials = null;
 
   document.getElementById('estBizName').textContent = estState.bizName;
 
@@ -11836,16 +11895,9 @@ function svOpenEstimate(){
     estState.sections[svc] = estBuildLines(svc, d);
   });
 
-  // Render pricing (built now, revealed once disclaimer is initialed)
+  // Render pricing — disclaimer was already initialed on the Scope panel
+  // (svBuildEstimateFromScope), so pricing shows immediately here
   estRender();
-
-  // Reset to the disclaimer gate every time the estimate opens — findings
-  // review and initialing happen before pricing is visible
-  estBuildFindingsSummary();
-  const initialsEl = document.getElementById('est_disclaimerInitials');
-  if (initialsEl) initialsEl.value = '';
-  document.getElementById('estGateSection').style.display = 'block';
-  document.getElementById('estPricingSection').style.display = 'none';
 
   // Show decision panel
   document.getElementById('estDecision').classList.add('open');
@@ -11855,62 +11907,6 @@ function svOpenEstimate(){
   document.getElementById('estNotInterestedPanel').style.display = 'none';
 
   document.getElementById('estOverlay').classList.add('open');
-}
-
-// ── Findings recap — shown above the disclaimer so the rep and customer
-//    review what was actually found before pricing appears. Pulls the
-//    same per-service summary line used to build pricing, plus any photo
-//    findings with an AI condition note attached.
-function estBuildFindingsSummary(){
-  const el = document.getElementById('estFindingsSummary');
-  if (!el) return;
-  let html = '<div class="est-section-title">🔍 What We Found On-Site</div>';
-  let anyText = false;
-
-  (svState.selectedServices || []).forEach(svc => {
-    const d = svState.surveyData[svc] || {};
-    if (d.fs_summary) {
-      anyText = true;
-      html += `<div style="font-size:13px;color:var(--ink);margin-bottom:8px"><strong>${SVC_LABEL[svc]||svc}:</strong> ${d.fs_summary}</div>`;
-    }
-  });
-
-  const photosWithNotes = (typeof buildAccountPhotosArray === 'function' ? buildAccountPhotosArray(svState.surveyData) : []).filter(p => p.aiNote);
-  if (photosWithNotes.length) {
-    anyText = true;
-    html += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-top:10px">
-      ${photosWithNotes.map(p => `
-        <div style="background:#F9FAFB;border-radius:8px;overflow:hidden;border:1px solid var(--line)">
-          <img src="${p.url}" style="width:100%;height:95px;object-fit:cover;display:block" loading="lazy">
-          <div style="padding:7px 9px;font-size:11px;color:var(--ink);line-height:1.4">🤖 ${p.aiNote}</div>
-        </div>`).join('')}
-    </div>`;
-  }
-
-  if (!anyText) {
-    html += '<div style="font-size:13px;color:var(--soft)">Findings recorded during the site survey — review with the client before continuing.</div>';
-  }
-  el.innerHTML = html;
-}
-
-// ── Disclaimer gate → pricing reveal ──
-function estContinueToPricing(){
-  const initials = document.getElementById('est_disclaimerInitials')?.value || '';
-  if (!initials.trim()) { alert('Client initials are required on the disclaimer before continuing to pricing.'); return; }
-  estState.disclaimerInitials = initials.trim().toUpperCase();
-
-  // Persist immediately — recorded even if the customer declines afterward
-  const data = crmLoad('accounts');
-  const r = data.find(x => x.id === estState.accountId);
-  if (r) {
-    r.finalDisclaimerInitials = estState.disclaimerInitials;
-    r.finalDisclaimerInitialedAt = Date.now();
-    crmSave('accounts', data);
-  }
-
-  document.getElementById('estGateSection').style.display = 'none';
-  document.getElementById('estPricingSection').style.display = 'block';
-  document.getElementById('estPricingSection').scrollIntoView({ behavior:'smooth' });
 }
 
 function estClose(){
@@ -12104,8 +12100,8 @@ function estRender(){
     html += `</div>`;
   }
 
-  // Site photos now live in the findings gate step (estBuildFindingsSummary)
-  // shown before pricing, alongside their AI notes — not duplicated here.
+  // Site photos now live on the Scope panel's findings recap
+  // (svBuildFindingsPhotos), shown before the disclaimer — not duplicated here.
 
   container.innerHTML = html;
 
@@ -12207,9 +12203,10 @@ function estPrint(){
 
 /* ── ACCEPT / DECLINE ── */
 function estAccept(){
-  // Disclaimer initials are already validated and persisted at the gate
-  // (estContinueToPricing) — that timestamp marks when the disclaimer was
-  // acknowledged, distinct from this one, which marks acceptance.
+  // Disclaimer initials are already validated and persisted on the Scope
+  // panel (svBuildEstimateFromScope) — that timestamp marks when the
+  // disclaimer was acknowledged, distinct from this one, which marks
+  // acceptance.
   estState.decision = 'accepted';
   document.getElementById('estDecision').classList.remove('open');
   document.getElementById('estSquarePanel').style.display = 'block';
