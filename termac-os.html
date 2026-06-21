@@ -11490,6 +11490,27 @@ async function svObjSubmit(){
 
   <div class="est-body" id="estBody">
 
+    <!-- ── DISCLAIMER GATE — shown first. Findings review + disclaimer
+         initials happen here, before any pricing is visible. Pricing
+         section below stays hidden until estContinueToPricing() fires. ── -->
+    <div id="estGateSection">
+      <div class="est-section" id="estFindingsSummary"></div>
+
+      <div class="fs-disclaimer" id="estDisclaimerBlock">
+        <div class="fs-disclaimer-title">⚖️ Estimate Disclaimer — Client Initials Required</div>
+        <div class="fs-disclaimer-text"><strong>IMPORTANT NOTICE REGARDING SCOPE AND PRICING:</strong> The pricing set forth in this estimate constitutes an estimate based upon conditions observed during the initial compliance walkthrough conducted by Universal Fire Protection. This estimate is not a final or guaranteed price. The parties acknowledge and agree that the total amount due may be adjusted following the technician's on-site service visit to reflect actual findings, including but not limited to: (i) additional deficiencies identified during the service visit that were not observable during the walkthrough; (ii) additional parts, materials, or labor required to bring all systems into full compliance with applicable NFPA standards; (iii) corrections necessitated by conditions that were concealed, inaccessible, or not apparent at the time of the initial assessment. Universal Fire Protection shall notify the client of any material price adjustment prior to performing additional work. Client acknowledges that inspection fees, compliance fees, and the dispatch fee are non-refundable once service has been initiated.</div>
+        <div class="fs-initials-row">
+          <input type="text" class="fs-initials-input" id="est_disclaimerInitials" placeholder="Initials" maxlength="4" autocomplete="off" autocapitalize="characters">
+          <div class="fs-initials-label">By initialing, client confirms they have read, understand, and agree to the disclaimer above. Pricing will be shown once initialed.</div>
+        </div>
+      </div>
+
+      <button class="est-action-btn primary" onclick="estContinueToPricing()" style="width:100%;padding:14px">Continue to Pricing →</button>
+    </div>
+
+    <!-- ── PRICING SECTION — hidden until the gate above is cleared ── -->
+    <div id="estPricingSection" style="display:none">
+
     <!-- Line items by division — dynamically built -->
     <div id="estLineItemsContainer"></div>
 
@@ -11541,20 +11562,6 @@ async function svObjSubmit(){
       <div style="display:flex;gap:10px;flex-wrap:wrap">
         <button id="estBundleApplyBtn" onclick="estApplyBundle()" style="background:#F2B705;color:#1A1D21;border:none;border-radius:8px;padding:11px 24px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;letter-spacing:.10em;text-transform:uppercase;cursor:pointer">Apply Bundle →</button>
         <button onclick="estDismissBundle()" style="background:transparent;color:#8A909A;border:1.5px solid #3A3E45;border-radius:8px;padding:11px 16px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;cursor:pointer">No Thanks</button>
-      </div>
-    </div>
-
-    <!-- Estimate Disclaimer — required before Accept. Lives inside #estBody
-         so it's automatically included in Present/Print/Email output, not
-         just the in-survey proposal step. The rep can edit line items on
-         this screen after the survey-stage initialing, so the price being
-         accepted here needs its own acknowledgment. -->
-    <div class="fs-disclaimer" id="estDisclaimerBlock">
-      <div class="fs-disclaimer-title">⚖️ Estimate Disclaimer — Client Initials Required</div>
-      <div class="fs-disclaimer-text"><strong>IMPORTANT NOTICE REGARDING SCOPE AND PRICING:</strong> The pricing set forth in this estimate constitutes an estimate based upon conditions observed during the initial compliance walkthrough conducted by Universal Fire Protection. This estimate is not a final or guaranteed price. The parties acknowledge and agree that the total amount due may be adjusted following the technician's on-site service visit to reflect actual findings, including but not limited to: (i) additional deficiencies identified during the service visit that were not observable during the walkthrough; (ii) additional parts, materials, or labor required to bring all systems into full compliance with applicable NFPA standards; (iii) corrections necessitated by conditions that were concealed, inaccessible, or not apparent at the time of the initial assessment. Universal Fire Protection shall notify the client of any material price adjustment prior to performing additional work. Client acknowledges that inspection fees, compliance fees, and the dispatch fee are non-refundable once service has been initiated.</div>
-      <div class="fs-initials-row">
-        <input type="text" class="fs-initials-input" id="est_disclaimerInitials" placeholder="Initials" maxlength="4" autocomplete="off" autocapitalize="characters">
-        <div class="fs-initials-label">By initialing, client confirms they have read, understand, and agree to the estimate disclaimer above. Initials are required before accepting.</div>
       </div>
     </div>
 
@@ -11659,6 +11666,8 @@ async function svObjSubmit(){
       </select>
       <button onclick="estLogDecline()" class="est-action-btn secondary">Log &amp; Close</button>
     </div>
+
+    </div><!-- /estPricingSection -->
 
   </div><!-- /est-body -->
 </div>
@@ -11817,6 +11826,7 @@ function svOpenEstimate(){
   estState.sections = {};
   estState.customLines = [];
   estState.decision = null;
+  estState.disclaimerInitials = null;
 
   document.getElementById('estBizName').textContent = estState.bizName;
 
@@ -11826,8 +11836,16 @@ function svOpenEstimate(){
     estState.sections[svc] = estBuildLines(svc, d);
   });
 
-  // Render
+  // Render pricing (built now, revealed once disclaimer is initialed)
   estRender();
+
+  // Reset to the disclaimer gate every time the estimate opens — findings
+  // review and initialing happen before pricing is visible
+  estBuildFindingsSummary();
+  const initialsEl = document.getElementById('est_disclaimerInitials');
+  if (initialsEl) initialsEl.value = '';
+  document.getElementById('estGateSection').style.display = 'block';
+  document.getElementById('estPricingSection').style.display = 'none';
 
   // Show decision panel
   document.getElementById('estDecision').classList.add('open');
@@ -11837,6 +11855,62 @@ function svOpenEstimate(){
   document.getElementById('estNotInterestedPanel').style.display = 'none';
 
   document.getElementById('estOverlay').classList.add('open');
+}
+
+// ── Findings recap — shown above the disclaimer so the rep and customer
+//    review what was actually found before pricing appears. Pulls the
+//    same per-service summary line used to build pricing, plus any photo
+//    findings with an AI condition note attached.
+function estBuildFindingsSummary(){
+  const el = document.getElementById('estFindingsSummary');
+  if (!el) return;
+  let html = '<div class="est-section-title">🔍 What We Found On-Site</div>';
+  let anyText = false;
+
+  (svState.selectedServices || []).forEach(svc => {
+    const d = svState.surveyData[svc] || {};
+    if (d.fs_summary) {
+      anyText = true;
+      html += `<div style="font-size:13px;color:var(--ink);margin-bottom:8px"><strong>${SVC_LABEL[svc]||svc}:</strong> ${d.fs_summary}</div>`;
+    }
+  });
+
+  const photosWithNotes = (typeof buildAccountPhotosArray === 'function' ? buildAccountPhotosArray(svState.surveyData) : []).filter(p => p.aiNote);
+  if (photosWithNotes.length) {
+    anyText = true;
+    html += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-top:10px">
+      ${photosWithNotes.map(p => `
+        <div style="background:#F9FAFB;border-radius:8px;overflow:hidden;border:1px solid var(--line)">
+          <img src="${p.url}" style="width:100%;height:95px;object-fit:cover;display:block" loading="lazy">
+          <div style="padding:7px 9px;font-size:11px;color:var(--ink);line-height:1.4">🤖 ${p.aiNote}</div>
+        </div>`).join('')}
+    </div>`;
+  }
+
+  if (!anyText) {
+    html += '<div style="font-size:13px;color:var(--soft)">Findings recorded during the site survey — review with the client before continuing.</div>';
+  }
+  el.innerHTML = html;
+}
+
+// ── Disclaimer gate → pricing reveal ──
+function estContinueToPricing(){
+  const initials = document.getElementById('est_disclaimerInitials')?.value || '';
+  if (!initials.trim()) { alert('Client initials are required on the disclaimer before continuing to pricing.'); return; }
+  estState.disclaimerInitials = initials.trim().toUpperCase();
+
+  // Persist immediately — recorded even if the customer declines afterward
+  const data = crmLoad('accounts');
+  const r = data.find(x => x.id === estState.accountId);
+  if (r) {
+    r.finalDisclaimerInitials = estState.disclaimerInitials;
+    r.finalDisclaimerInitialedAt = Date.now();
+    crmSave('accounts', data);
+  }
+
+  document.getElementById('estGateSection').style.display = 'none';
+  document.getElementById('estPricingSection').style.display = 'block';
+  document.getElementById('estPricingSection').scrollIntoView({ behavior:'smooth' });
 }
 
 function estClose(){
@@ -12030,23 +12104,8 @@ function estRender(){
     html += `</div>`;
   }
 
-  // Site photos — pulled from the account record's flat photos[] array
-  // (same source the Account Info Photos tab reads from). Shown here so
-  // the customer sees the documented findings during the close, not just
-  // line-item pricing.
-  if (estState.accountId) {
-    const acctData = crmLoad('accounts');
-    const acct = acctData.find(a => a.id === estState.accountId);
-    const photos = (acct && acct.photos) || [];
-    if (photos.length) {
-      html += `<div class="est-section">
-        <div class="est-section-title">📷 Site Photos</div>
-        <div style="display:flex;gap:10px;overflow-x:auto;padding:4px 2px 8px">
-          ${photos.map(p => `<img src="${p.url}" style="width:90px;height:90px;object-fit:cover;border-radius:7px;border:1.5px solid var(--line);flex-shrink:0" loading="lazy">`).join('')}
-        </div>
-      </div>`;
-    }
-  }
+  // Site photos now live in the findings gate step (estBuildFindingsSummary)
+  // shown before pricing, alongside their AI notes — not duplicated here.
 
   container.innerHTML = html;
 
@@ -12148,8 +12207,9 @@ function estPrint(){
 
 /* ── ACCEPT / DECLINE ── */
 function estAccept(){
-  const initials = document.getElementById('est_disclaimerInitials')?.value || '';
-  if (!initials.trim()) { alert('Client initials are required on the disclaimer above before accepting.'); return; }
+  // Disclaimer initials are already validated and persisted at the gate
+  // (estContinueToPricing) — that timestamp marks when the disclaimer was
+  // acknowledged, distinct from this one, which marks acceptance.
   estState.decision = 'accepted';
   document.getElementById('estDecision').classList.remove('open');
   document.getElementById('estSquarePanel').style.display = 'block';
@@ -12161,8 +12221,6 @@ function estAccept(){
     r.status='active';
     r.estimateAccepted=true;
     r.estimateDate=new Date().toISOString().split('T')[0];
-    r.finalDisclaimerInitials = initials.trim().toUpperCase();
-    r.finalDisclaimerInitialedAt = Date.now();
     crmSave('accounts',data);
   }
 }
