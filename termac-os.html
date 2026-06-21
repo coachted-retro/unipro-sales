@@ -1269,6 +1269,7 @@ setTimeout(function(){ if(typeof TECHS!=='undefined') renderLB('score'); }, 200)
       <button class="crm-btn" id="crmHarvestDEBtn" onclick="harvestRunLiveDE()" style="background:#F2B705;color:#1A1D21;display:none">🌾 Harvest DE Leads</button>
       <button class="crm-btn" id="crmHarvestDCBtn" onclick="harvestRunLiveDC()" style="background:#F2B705;color:#1A1D21;display:none">🌾 Harvest DC Leads</button>
       <button class="crm-btn" id="crmHarvestNJBtn" onclick="harvestRunLiveNJ()" style="background:#F2B705;color:#1A1D21;display:none">🌾 Harvest NJ Leads</button>
+      <button class="crm-btn" id="crmHarvestMDBtn" onclick="harvestRunLiveMD()" style="background:#F2B705;color:#1A1D21;display:none">🌾 Harvest MD Leads</button>
       <button class="crm-btn" id="crmHarvestCMSBtn" onclick="harvestRunLiveCMSFireSafety()" style="background:#DC2626;color:#fff;display:none">🚨 Harvest Fire Safety Citations</button>
       <button class="crm-btn" id="crmSourcesBtn" onclick="openLeadSources()" style="background:#fff;color:#1A1D21;border:1.5px solid var(--line);display:none">📡 Lead Sources</button>
       <button class="crm-btn" id="crmOrphanedBtn" onclick="openOrphanedReport()" style="background:#FEE2E2;color:#991B1B;border:1.5px solid #99181B40;display:none">🔍 Orphaned Customers</button>
@@ -1882,6 +1883,8 @@ function switchCRMTab(tab){
   if (harvestDCBtn) harvestDCBtn.style.display = (tab === 'leads' && isHarvestAdmin) ? '' : 'none';
   const harvestNJBtn = document.getElementById('crmHarvestNJBtn');
   if (harvestNJBtn) harvestNJBtn.style.display = (tab === 'leads' && isHarvestAdmin) ? '' : 'none';
+  const harvestMDBtn = document.getElementById('crmHarvestMDBtn');
+  if (harvestMDBtn) harvestMDBtn.style.display = (tab === 'leads' && isHarvestAdmin) ? '' : 'none';
   const harvestCMSBtn = document.getElementById('crmHarvestCMSBtn');
   if (harvestCMSBtn) harvestCMSBtn.style.display = (tab === 'leads' && isHarvestAdmin) ? '' : 'none';
   const sourcesBtn = document.getElementById('crmSourcesBtn');
@@ -8931,6 +8934,135 @@ async function harvestRunLiveNJ(){
   setTimeout(() => { if(banner) banner.style.display = 'none'; }, 15000);
 }
 
+// ── Maryland: Montgomery County Food Inspection (Socrata SODA API).
+// Unlike PA/DE/DC, Maryland has no statewide business-license open-data
+// feed -- confirmed during this same research pass (state-level SDAT/BLIS
+// portals are search-only, no bulk API; the state's own open data portal,
+// opendata.maryland.gov, only publishes aggregate business counts, not
+// individual license records). Montgomery County's Food Inspection
+// dataset is the best live-API candidate found in MD: every non-mobile
+// food establishment inspection in the county, confirmed real via a live
+// CSV sample pull (data.montgomerycountymd.gov/resource/5pue-gfbe.csv)
+// showing real establishment rows -- e.g. "168 ASIAN BURRITO", 18000
+// Georgia Ave, Olney, zip 20832, inspected 2024-03-12, result "Critical
+// Violations Corrected". Confirmed Socrata field names from that same
+// sample: establishment_id, name, address1, address2, city, zip,
+// inspectiondate, inspectionresults, organization, category, type,
+// latitude, longitude.
+//
+// UNLIKE the PA/DE/DC harvesters, no category/activity filter is needed
+// here -- the entire dataset is already scoped to food establishments
+// (the county's own dataset description confirms this), so every record
+// is already in the commercial-kitchen population relevant to UniPro.
+// Ordered by most recent inspection so the freshest activity surfaces
+// first. Records with an uncorrected critical violation are flagged in
+// the notes as a stronger conversation opener than a routine inspection.
+//
+// NOTE: Prince George's County runs the same open-data platform family
+// (data.princegeorgescountymd.gov, dataset umjn-t2iz) and is a strong
+// candidate to add the same way later -- catalogued in the Lead Sources
+// panel as 'known' but not yet independently pulled live the way this
+// one was.
+const HARVEST_MD_FOOD_INSPECTION_URL = 'https://data.montgomerycountymd.gov/resource/5pue-gfbe.json';
+
+async function harvestRunLiveMD(){
+  const banner = document.getElementById('harvestStatusBanner');
+  const btn = document.getElementById('crmHarvestMDBtn');
+  if (!banner) return;
+
+  banner.style.display = 'block';
+  banner.innerHTML = '🌾 Pulling recent food establishment inspections from Montgomery County, MD open data…';
+  if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; }
+
+  const params = new URLSearchParams({
+    '$order': 'inspectiondate DESC',
+    '$limit': '40'
+  });
+
+  try {
+    const res = await fetch(HARVEST_MD_FOOD_INSPECTION_URL + '?' + params.toString());
+    let records;
+    try { records = await res.json(); } catch(parseErr) { records = null; }
+    if (!res.ok) {
+      const detail = records && (records.message || records.description) ? (records.message || records.description) : null;
+      throw new Error(detail ? `HTTP ${res.status} — ${detail}` : `HTTP ${res.status}`);
+    }
+    if (records && (records.error || records.errorCode)) {
+      throw new Error(records.message || 'API returned an error — the query or field names may need adjusting against the live schema.');
+    }
+    if (!Array.isArray(records)) throw new Error('Unexpected response shape from Montgomery County open data — expected an array of records.');
+
+    if (!records.length) {
+      banner.innerHTML = '✅ Connected successfully — 0 records returned. The endpoint is live; the dataset may just be empty for this query.';
+      if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
+      logHarvestRun(0, 0, 'success-empty');
+      return;
+    }
+
+    const existing = crmLoad('leads');
+    const existingKeys = new Set(existing.map(l => (l.business||'').toLowerCase() + '|' + (l.zip||'')));
+
+    let added = 0;
+    const newLeads = [];
+    const now = Date.now();
+
+    records.forEach((r, i) => {
+      const business = r.name || r.organization || '';
+      const legalName = r.organization || '';
+      const addr1 = r.address1 || '';
+      const city = r.city || '';
+      const zip = r.zip || '';
+      const inspectDate = r.inspectiondate;
+      const result = r.inspectionresults || '';
+      const estId = r.establishment_id || '';
+
+      if (!business) return; // skip blank records rather than guess
+
+      const key = business.toLowerCase() + '|' + zip;
+      if (existingKeys.has(key)) return; // dedupe against current pool
+
+      const inspectDateStr = inspectDate ? new Date(inspectDate).toISOString().slice(0,10) : 'unknown date';
+      const addr = [addr1, city, 'MD', zip].filter(Boolean).join(', ');
+      const hasViolation = /critical/i.test(result) && !/corrected/i.test(result);
+
+      newLeads.push({
+        id: 'harvest_md_' + now + '_' + i,
+        name: 'Owner — TBD',
+        business: legalName && legalName !== business ? `${business} (${legalName})` : business,
+        phone: '', email: '',
+        address: addr, zip: zip, company: 'UniPro', status: 'new',
+        services: ['unipro'], score: 6,
+        source: 'Live Harvester — Montgomery County MD Food Inspections',
+        created: now,
+        notes: `Inspected ${inspectDateStr} — result: "${result||'unknown'}"${hasViolation ? '. Open critical violation, not yet corrected -- strong opener for a compliance conversation.' : '. Verify current fire suppression / extinguisher coverage as part of standard outreach.'}`,
+        activityLog: [{
+          ts: now, type:'system', icon:'🌾',
+          title:'Harvested — Montgomery County MD Open Data (live)',
+          note:`Establishment #${estId||'—'}, inspected ${inspectDateStr}, result: ${result||'—'}`,
+          who:'System'
+        }]
+      });
+      existingKeys.add(key);
+      added++;
+    });
+
+    const allLeads = [...newLeads, ...existing];
+    crmSave('leads', allLeads);
+
+    banner.innerHTML = `✅ Harvest complete — checked ${records.length} recent Montgomery County MD food inspections, added <b>${added} new lead${added===1?'':'s'}</b> to the pool (${records.length - added} already on file, skipped).`;
+    logHarvestRun(records.length, added, 'success');
+
+    if (typeof renderCRMView === 'function') renderCRMView();
+
+  } catch (e) {
+    banner.innerHTML = `⚠️ Harvest failed: ${e.message}. This is a real error from the live Montgomery County MD open data API, not a placeholder — if this persists, the endpoint or field names may need re-checking against the current schema at <a href="https://data.montgomerycountymd.gov/Health-and-Human-Services/Food-Inspection/5pue-gfbe" target="_blank" style="color:#5A4A00;text-decoration:underline">the live dataset page</a>.`;
+    logHarvestRun(0, 0, 'error: ' + e.message);
+  }
+
+  if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
+  setTimeout(() => { if(banner) banner.style.display = 'none'; }, 15000);
+}
+
 // ── CMS Fire Safety Deficiencies — national dataset, filtered to PA/NJ/DE/
 // MD/DC. UniPro + Quality III's single best lead source: every nursing
 // home cited for a fire-safety deficiency in the last 3 inspection cycles,
@@ -9957,7 +10089,7 @@ const LEAD_SOURCE_GROUPS = [
     { name:'DE Bid Notifications', status:'needs_registration', note:'Free registration for bid alerts by industry — single statewide portal.', url:'https://bids.delaware.gov' },
   ]},
   { region:"Maryland — Montgomery & Prince George's County", items:[
-    { name:'Montgomery County MD — Food Inspection (open data)', status:'connected', note:'Most detailed feed found anywhere in the territory — itemized pass/fail per check (hot holding temp, pest control, etc.), not just an overall result.', url:'https://data.montgomerycountymd.gov/Health-and-Human-Services/Food-Inspection/5pue-gfbe' },
+    { name:'Montgomery County MD — Food Inspection (open data)', status:'connected', note:'Most detailed feed found anywhere in the territory — itemized pass/fail per check (hot holding temp, pest control, etc.), not just an overall result. Confirmed Socrata SODA API, all fields independently verified against a live sample. Powers the Harvest MD Leads button above — Maryland has no statewide business-license open-data feed the way PA/DE/DC do, so this is the best live-API candidate found in the state. Whole dataset is already scoped to food establishments, so no category filter needed.', url:'https://data.montgomerycountymd.gov/Health-and-Human-Services/Food-Inspection/5pue-gfbe' },
     { name:"Prince George's County MD — Food Inspection (open data)", status:'known', note:'Same open-data platform family as Montgomery County.', url:'https://data.princegeorgescountymd.gov/Health/Food-Inspection/umjn-t2iz' },
     { name:'Maryland Comptroller — Statewide Alcoholic Beverages Retail License Database', status:'connected', note:'Upgrades the earlier Montgomery-County-only finding — this one is statewide, searchable by trade name/license class/status, covers every MD county.', url:'https://interactive.marylandtaxes.gov/webapps/licprt/user/ilu_queryRetailer.asp' },
     { name:'Maryland OHCQ — Licensed Assisted Living Directory + Map', status:'known', note:'Complete list of licensed assisted living programs statewide, plus an interactive map. Found, not yet pulled live.', url:'https://health.maryland.gov/ohcq/Pages/Assisted-Living-Programs-Consumers.aspx' },
