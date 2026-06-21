@@ -16335,12 +16335,7 @@ window.uvCollectData = uvCollectData;
     <div class="act-modal-body">
       <div class="act-field">
         <label>Sales Rep</label>
-        <select id="sqRepSelect" style="width:100%;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;font-family:inherit;outline:none">
-          <option value="Ted Scholl">Ted Scholl</option>
-          <option value="J. Smith">J. Smith</option>
-          <option value="M. Johnson">M. Johnson</option>
-          <option value="S. Davis">S. Davis</option>
-        </select>
+        <select id="sqRepSelect" style="width:100%;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;font-family:inherit;outline:none"></select>
       </div>
       <div class="act-field">
         <label>Period</label>
@@ -16726,6 +16721,15 @@ function goalsPeriodDates(period) {
 
 // ── TAB SWITCHING ──
 function goalsShowTab(tabId, btn) {
+  // Set Quotas is a real manager-only action, not just a dimmed/locked-
+  // looking tab -- the dimming was purely cosmetic (CSS opacity + a lock
+  // icon) and didn't actually stop a non-manager from clicking through and
+  // seeing every rep's quota, closed revenue, and commission rate. This is
+  // the actual enforcement.
+  if (tabId === 'setquota') {
+    const isManager = _currentUser?.role === 'manager' || (typeof isManagerUnlocked === 'function' && isManagerUnlocked());
+    if (!isManager) { tabId = 'my'; btn = document.getElementById('goalsTab_my'); }
+  }
   ['my','pipeline','activity','winloss','setquota'].forEach(t => {
     const p = document.getElementById('goalsPanel_' + t);
     const b = document.getElementById('goalsTab_' + t);
@@ -16733,7 +16737,11 @@ function goalsShowTab(tabId, btn) {
     if (b) b.classList.remove('active');
   });
   const panel = document.getElementById('goalsPanel_' + tabId);
-  if (panel) panel.style.display = 'flex';
+  // block, not flex -- each panel's direct children (title, description,
+  // table, button, etc.) are meant to stack vertically. flex defaults to
+  // row + stretch, which was squashing the layout sideways and stretching
+  // the "+ Set/Update Quota" button into a full-height block.
+  if (panel) panel.style.display = 'block';
   if (btn) btn.classList.add('active');
 
   if (tabId === 'my')       goalsRender();
@@ -17133,8 +17141,20 @@ function goalsRenderWinLoss() {
 }
 
 // ── QUOTA TABLE (managers) ──
+// Quota-eligible reps: anyone who can carry a personal sales quota -- the
+// same population currentRepTerritory() already treats as "has their own
+// territory" (rank-and-file reps, plus the two managers -- Tom Pittakas
+// and Terence O'Reilly -- who also work a personal territory). Derived
+// live from TERMAC_USERS instead of a hardcoded list so it never goes
+// stale as the roster changes.
+function getQuotaEligibleReps() {
+  return Object.values(TERMAC_USERS)
+    .filter(u => u.role === 'rep' || (u.role === 'manager' && Array.isArray(u.territory) && u.territory.length))
+    .map(u => u.name);
+}
+
 function goalsRenderQuotaTable() {
-  const reps = ['Ted Scholl','J. Smith','M. Johnson','S. Davis'];
+  const reps = getQuotaEligibleReps();
   const period = document.getElementById('goalsPeriod')?.value || 'q2';
   const el = document.getElementById('goalsQuotaTable');
   if (!el) return;
@@ -17193,6 +17213,10 @@ function goalsRenderQuotaTable() {
 
 // ── SET QUOTA MODAL ──
 function goalsOpenSetQuotaModal() {
+  const sel = document.getElementById('sqRepSelect');
+  if (sel) {
+    sel.innerHTML = getQuotaEligibleReps().map(name => `<option value="${escH(name)}">${escH(name)}</option>`).join('');
+  }
   document.getElementById('goalsQuotaModal').classList.add('open');
 }
 
@@ -17306,7 +17330,7 @@ window.openOverlay = function(key) {
    Added to refreshManagerDashboard()
 ────────────────────────────────────── */
 function mgrRenderGoalsRollup() {
-  const reps    = ['Ted Scholl','J. Smith','M. Johnson','S. Davis'];
+  const reps    = getQuotaEligibleReps();
   const period  = 'q2';
   const pd      = goalsPeriodDates(period);
   const daysDone= Math.max(1, Math.round((new Date() - pd.start) / 86400000));
