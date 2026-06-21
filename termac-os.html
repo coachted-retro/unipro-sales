@@ -7259,6 +7259,16 @@ function fsAcceptProposal() {
   const initials = document.getElementById('fs_disclaimerInitials')?.value||'';
   if (!initials.trim()) { alert('Client initials are required before proceeding. Please have the client initial the disclaimer above.'); return; }
   if (!fsState.signed) { alert('Client signature is required before proceeding. Please have the client sign or generate a signature above.'); return; }
+  // Persist initials — previously validated but never saved anywhere
+  if (svState.accountId) {
+    const data = crmLoad('accounts');
+    const r = data.find(x => x.id === svState.accountId);
+    if (r) {
+      r.surveyDisclaimerInitials = initials.trim().toUpperCase();
+      r.surveyDisclaimerInitialedAt = Date.now();
+      crmSave('accounts', data);
+    }
+  }
   fsGo(4, 5);
 }
 
@@ -11534,6 +11544,20 @@ async function svObjSubmit(){
       </div>
     </div>
 
+    <!-- Estimate Disclaimer — required before Accept. Lives inside #estBody
+         so it's automatically included in Present/Print/Email output, not
+         just the in-survey proposal step. The rep can edit line items on
+         this screen after the survey-stage initialing, so the price being
+         accepted here needs its own acknowledgment. -->
+    <div class="fs-disclaimer" id="estDisclaimerBlock">
+      <div class="fs-disclaimer-title">⚖️ Estimate Disclaimer — Client Initials Required</div>
+      <div class="fs-disclaimer-text"><strong>IMPORTANT NOTICE REGARDING SCOPE AND PRICING:</strong> The pricing set forth in this estimate constitutes an estimate based upon conditions observed during the initial compliance walkthrough conducted by Universal Fire Protection. This estimate is not a final or guaranteed price. The parties acknowledge and agree that the total amount due may be adjusted following the technician's on-site service visit to reflect actual findings, including but not limited to: (i) additional deficiencies identified during the service visit that were not observable during the walkthrough; (ii) additional parts, materials, or labor required to bring all systems into full compliance with applicable NFPA standards; (iii) corrections necessitated by conditions that were concealed, inaccessible, or not apparent at the time of the initial assessment. Universal Fire Protection shall notify the client of any material price adjustment prior to performing additional work. Client acknowledges that inspection fees, compliance fees, and the dispatch fee are non-refundable once service has been initiated.</div>
+      <div class="fs-initials-row">
+        <input type="text" class="fs-initials-input" id="est_disclaimerInitials" placeholder="Initials" maxlength="4" autocomplete="off" autocapitalize="characters">
+        <div class="fs-initials-label">By initialing, client confirms they have read, understand, and agree to the estimate disclaimer above. Initials are required before accepting.</div>
+      </div>
+    </div>
+
     <!-- Action buttons -->
     <div class="est-actions">
       <button class="est-action-btn primary" onclick="estPresent()">📋 Present to Customer</button>
@@ -12124,6 +12148,8 @@ function estPrint(){
 
 /* ── ACCEPT / DECLINE ── */
 function estAccept(){
+  const initials = document.getElementById('est_disclaimerInitials')?.value || '';
+  if (!initials.trim()) { alert('Client initials are required on the disclaimer above before accepting.'); return; }
   estState.decision = 'accepted';
   document.getElementById('estDecision').classList.remove('open');
   document.getElementById('estSquarePanel').style.display = 'block';
@@ -12131,7 +12157,14 @@ function estAccept(){
   // Update account status
   const data = crmLoad('accounts');
   const r = data.find(x=>x.id===estState.accountId);
-  if(r){ r.status='active'; r.estimateAccepted=true; r.estimateDate=new Date().toISOString().split('T')[0]; crmSave('accounts',data); }
+  if(r){
+    r.status='active';
+    r.estimateAccepted=true;
+    r.estimateDate=new Date().toISOString().split('T')[0];
+    r.finalDisclaimerInitials = initials.trim().toUpperCase();
+    r.finalDisclaimerInitialedAt = Date.now();
+    crmSave('accounts',data);
+  }
 }
 
 function estDecline(){
