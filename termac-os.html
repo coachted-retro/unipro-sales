@@ -1273,6 +1273,7 @@ setTimeout(function(){ if(typeof TECHS!=='undefined') renderLB('score'); }, 200)
       <button class="crm-btn" id="crmSourcesBtn" onclick="openLeadSources()" style="background:#fff;color:#1A1D21;border:1.5px solid var(--line);display:none">📡 Lead Sources</button>
       <button class="crm-btn" id="crmOrphanedBtn" onclick="openOrphanedReport()" style="background:#FEE2E2;color:#991B1B;border:1.5px solid #99181B40;display:none">🔍 Orphaned Customers</button>
       <button class="crm-btn" id="crmImportCallListBtn" onclick="openCallListImport()" style="background:#1E3A8A;color:#fff;display:none">⬇ Import Call List (CSV)</button>
+      <button class="crm-btn" id="crmHarvestGMapsBtn" onclick="openGoogleMapsHarvest()" style="background:#0F9D58;color:#fff;display:none">🌎 Harvest Google Maps</button>
       <button class="crm-btn primary" id="crmAddBtn" onclick="openAddModal()">+ Add New</button>
     </div>
     <!-- harvest status banner -->
@@ -1312,6 +1313,40 @@ setTimeout(function(){ if(typeof TECHS!=='undefined') renderLB('score'); }, 200)
     <div class="crm-modal-actions">
       <button class="crm-btn secondary" onclick="closeCallListImport()">Cancel</button>
       <button class="crm-btn primary" onclick="processCallListImport()">Import</button>
+    </div>
+  </div>
+</div>
+
+<!-- GOOGLE MAPS HARVEST MODAL — pulls businesses from Google Maps via the
+     Outscraper API (through a Cloudflare Worker proxy, see
+     outscraper-proxy-worker.js) into the DMS cold-call pool. Costs real
+     money per record (~$3/1,000 from Outscraper), so this is admin-gated
+     and deliberately a manual, intentional action -- not on a timer. -->
+<div class="crm-modal-bg" id="gmHarvestModalBg">
+  <div class="crm-modal" id="gmHarvestModal">
+    <h3>🌎 Harvest Google Maps</h3>
+    <div style="font-size:12px;color:var(--soft);margin-bottom:10px;line-height:1.5">
+      Pulls businesses from Google Maps into the DMS cold-call pool. Anything already an account, lead, contact,
+      or already on the call list is skipped automatically. Costs Outscraper credits per record returned —
+      not free, so run this deliberately rather than on a schedule.
+    </div>
+    <label>Category</label>
+    <select id="gmh_category">
+      <option value="restaurants">Restaurants</option>
+      <option value="hotels">Hotels &amp; Hospitality</option>
+      <option value="assisted_living">Assisted Living / Senior Care</option>
+      <option value="nursing_homes">Nursing Homes</option>
+      <option value="catering">Catering Companies</option>
+      <option value="schools">Schools</option>
+    </select>
+    <label style="margin-top:10px;display:block">Location (city, ZIP, or county + state)</label>
+    <input id="gmh_location" placeholder="e.g. Bristol, PA or 19007">
+    <label style="margin-top:10px;display:block">Max results this run</label>
+    <input id="gmh_limit" type="number" value="40" min="1" max="200">
+    <div id="gmHarvestStatus" style="margin-top:10px;font-size:13px;font-weight:600"></div>
+    <div class="crm-modal-actions">
+      <button class="crm-btn secondary" onclick="closeGoogleMapsHarvest()">Cancel</button>
+      <button class="crm-btn primary" id="gmHarvestRunBtn" onclick="runGoogleMapsHarvest()">Harvest</button>
     </div>
   </div>
 </div>
@@ -1816,6 +1851,10 @@ function switchCRMTab(tab){
   if (orphanedBtn) orphanedBtn.style.display = (tab === 'accounts') ? '' : 'none';
   const importCallListBtn = document.getElementById('crmImportCallListBtn');
   if (importCallListBtn) importCallListBtn.style.display = (tab === 'dms_coldcall') ? '' : 'none';
+  // Costs real money per record (Outscraper credits) -- gated to admin only,
+  // same as the other live harvest buttons above, unlike the free CSV import.
+  const harvestGMapsBtn = document.getElementById('crmHarvestGMapsBtn');
+  if (harvestGMapsBtn) harvestGMapsBtn.style.display = (tab === 'dms_coldcall' && isHarvestAdmin) ? '' : 'none';
   renderCRMView();
 }
 
@@ -9100,6 +9139,152 @@ function processCallListImport(){
   statusEl.textContent = `✅ Imported ${added} new contact${added===1?'':'s'}${skipped?` (${skipped} already on file, skipped)`:''}.`;
   updateDmsCallCountBadge();
   setTimeout(()=>{ closeCallListImport(); if(crmCurrentTab==='dms_coldcall') renderCRMView(); }, 1500);
+}
+
+/* ═══════════════════════════════════
+   GOOGLE MAPS HARVEST (Outscraper) — pulls businesses by category +
+   location into the DMS cold-call pool. Unlike the permit/license
+   harvesters above (which catch brand-new businesses as a time-sensitive
+   signal), Google Maps listings are largely static -- this is for
+   building out total market coverage, not catching fresh openings.
+   Recommended cadence: one big initial pull per territory, then
+   quarterly refresh for restaurants/foodservice (real turnover),
+   semi-annual/annual for assisted living/hospitality (low turnover).
+   Dedup means re-running it costs nothing extra for records already on
+   file -- only genuinely new listings get added.
+
+   SETUP REQUIRED: deploy outscraper-proxy-worker.js to Cloudflare
+   Workers (holds the Outscraper API key as an encrypted secret -- see
+   the setup comment at the top of that file), then paste the resulting
+   workers.dev URL in below.
+══════════════════════════════════════ */
+const OUTSCRAPER_PROXY_URL = ''; // TODO: paste your deployed Worker URL here, e.g. 'https://unipro-outscraper-proxy.tedscholl.workers.dev'
+
+const GMH_CATEGORY_LABELS = {
+  restaurants:      'Restaurants',
+  hotels:           'Hotels & Hospitality',
+  assisted_living:  'Assisted Living',
+  nursing_homes:    'Nursing Homes',
+  catering:         'Catering',
+  schools:          'Schools'
+};
+
+function openGoogleMapsHarvest(){
+  document.getElementById('gmHarvestStatus').textContent = '';
+  document.getElementById('gmHarvestModalBg').classList.add('open');
+}
+function closeGoogleMapsHarvest(){
+  document.getElementById('gmHarvestModalBg').classList.remove('open');
+}
+
+async function runGoogleMapsHarvest(){
+  const statusEl = document.getElementById('gmHarvestStatus');
+  const runBtn   = document.getElementById('gmHarvestRunBtn');
+
+  if (!OUTSCRAPER_PROXY_URL) {
+    statusEl.style.color = '#991B1B';
+    statusEl.textContent = '⚠️ No Worker URL configured yet. Deploy outscraper-proxy-worker.js to Cloudflare Workers, then paste the URL into OUTSCRAPER_PROXY_URL in this file.';
+    return;
+  }
+
+  const categoryKey = document.getElementById('gmh_category').value;
+  const location = document.getElementById('gmh_location').value.trim();
+  const limit = Math.max(1, Math.min(200, Number(document.getElementById('gmh_limit').value) || 40));
+
+  if (!location) {
+    statusEl.style.color = '#991B1B';
+    statusEl.textContent = '⚠️ Enter a location first (city, ZIP, or county + state).';
+    return;
+  }
+
+  statusEl.style.color = '#5A616B';
+  statusEl.textContent = '⏳ Harvesting from Google Maps — this can take a few seconds…';
+  runBtn.disabled = true; runBtn.style.opacity = '0.6';
+
+  try {
+    const res = await fetch(OUTSCRAPER_PROXY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ categoryKey, location, limit })
+    });
+    let payload;
+    try { payload = await res.json(); } catch(e) { payload = null; }
+    if (!res.ok) {
+      const detail = payload && (payload.error || payload.detail) ? (payload.error + (payload.detail ? ' — ' + payload.detail : '')) : `HTTP ${res.status}`;
+      throw new Error(detail);
+    }
+
+    const results = Array.isArray(payload?.results) ? payload.results : [];
+    if (!results.length) {
+      statusEl.style.color = '#5A616B';
+      statusEl.textContent = `✅ Connected successfully — 0 results for "${GMH_CATEGORY_LABELS[categoryKey]} near ${location}". Try a broader location or different category.`;
+      runBtn.disabled = false; runBtn.style.opacity = '1';
+      return;
+    }
+
+    // Dedup against the existing cold-call pool AND against anything
+    // already a lead/contact/account -- a harvested restaurant that's
+    // already a customer (or already in someone's pipeline) should never
+    // land back in the cold-call pool as if it were untouched.
+    const existing = crmLoad('dms_coldcall');
+    const existingKeys = new Set(existing.map(r => (r.business||'').toLowerCase() + '|' + (r.zip||'')));
+    const accounts = crmLoad('accounts');
+    const leads    = crmLoad('leads');
+    const contacts = crmLoad('contacts');
+    const knownBizNames = new Set([
+      ...accounts.map(a => (a.business||a.name||'').toLowerCase()),
+      ...leads.map(l => (l.business||l.name||'').toLowerCase()),
+      ...contacts.map(c => (c.company||'').toLowerCase())
+    ].filter(Boolean));
+
+    const now = Date.now();
+    const categoryLabel = GMH_CATEGORY_LABELS[categoryKey] || categoryKey;
+    const sourceLabel = `Google Maps — ${categoryLabel}`;
+
+    let added = 0, skippedDup = 0, skippedKnown = 0;
+    const newRecs = [];
+    results.forEach((p, i) => {
+      const business = (p.name || '').trim();
+      if (!business) return;
+      const zip = (p.postal_code || (p.full_address||'').match(/\b\d{5}\b/)?.[0] || '');
+      const key = business.toLowerCase() + '|' + zip;
+      if (knownBizNames.has(business.toLowerCase())) { skippedKnown++; return; }
+      if (existingKeys.has(key)) { skippedDup++; return; }
+
+      newRecs.push({
+        id: 'cc_gm_' + now + '_' + i,
+        name: business,
+        business: business,
+        address: p.full_address || [p.street, p.city, p.state, zip].filter(Boolean).join(', '),
+        zip: zip,
+        phone: p.phone || '',
+        website: p.site || '',
+        chamberSource: categoryLabel,
+        company: 'UniPro',
+        status: 'new',
+        notes: p.rating ? `${p.rating}★ (${p.reviews||0} reviews) on Google Maps` : '',
+        activityLog: [],
+        created: now,
+        source: sourceLabel
+      });
+      existingKeys.add(key);
+      added++;
+    });
+
+    crmSave('dms_coldcall', [...newRecs, ...existing]);
+    updateDmsCallCountBadge();
+
+    statusEl.style.color = '#1E7B3C';
+    statusEl.textContent = `✅ Added ${added} new contact${added===1?'':'s'}` +
+      (skippedDup ? ` · ${skippedDup} already on the call list` : '') +
+      (skippedKnown ? ` · ${skippedKnown} already a lead/contact/account` : '') + '.';
+    runBtn.disabled = false; runBtn.style.opacity = '1';
+    if (crmCurrentTab === 'dms_coldcall') renderCRMView();
+  } catch (e) {
+    statusEl.style.color = '#991B1B';
+    statusEl.textContent = '❌ Harvest failed: ' + e.message;
+    runBtn.disabled = false; runBtn.style.opacity = '1';
+  }
 }
 
 // DMS found something real — push it into the actual Leads pool sales
