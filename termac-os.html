@@ -5,6 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="author" content="George E. Scholl (Ted) — Termac Corporation">
 <title>Termac One — Home</title>
+
+<!-- PWA: installable as "Termac One" (the hub app — Sales/Office/Manager) -->
+<link rel="manifest" href="manifest-main.json">
+<meta name="theme-color" content="#1A1D21">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Termac One">
+<link rel="apple-touch-icon" href="icons/icon-main-apple-180.png">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/icon-main-32.png">
+
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
@@ -1218,7 +1229,7 @@ setTimeout(function(){ if(typeof TECHS!=='undefined') renderLB('score'); }, 200)
         <a href="#" id="crmTabMyQueue" onclick="event.preventDefault();event.stopPropagation();openOverlay('queue')" style="display:flex;align-items:center;gap:5px;color:#BFC4CA;text-decoration:none;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;letter-spacing:.08em;text-transform:uppercase;padding:9px 12px;border-radius:7px;white-space:nowrap;flex-shrink:0" onmouseover="this.style.background='#2A2E33';this.style.color='#fff'" onmouseout="this.style.background='';this.style.color='#BFC4CA'">🎯 My Queue <span id="aqNavBadge" style="display:none;background:#C8102E;color:#fff;border-radius:10px;padding:1px 6px;font-size:10px;font-weight:800;line-height:1.4">0</span></a>
       </div>
       <div class="crm-header-right">
-        <button class="crm-close" onclick="window.location.href='termac-os.html'" title="Home" style="font-size:16px">🏠</button>
+        <button class="crm-close js-portal-back-title" onclick="goBackSmart()" title="Home" style="font-size:16px">🏠</button>
         <button class="crm-close" onclick="closeCRM()">✕</button>
       </div>
     </div>
@@ -1674,6 +1685,7 @@ let crmCurrentTab='leads';
 function openCRM(tab, viaDmsDashboard){
   crmCurrentTab=tab||'leads';
   document.getElementById('crmOverlay').classList.add('open');
+  refreshPortalBackLabels();
   const role = _currentUser?.role;
   const isReception = role === 'reception';
 
@@ -2339,7 +2351,7 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
   <div class="ov-header">
     <h2>📊 Manager Dashboard</h2>
   <div class="ov-header-btns">
-      <button class="ov-btn" onclick="goHome()">← Home</button>
+      <button class="ov-btn" onclick="goBackSmart()"><span class="js-portal-back-label">← Home</span></button>
       <button class="ov-btn close" onclick="document.getElementById('ovMgr').classList.remove('open');document.getElementById('ovMgr').style.display='none'">✕</button>
     </div>
   </div>
@@ -4705,6 +4717,7 @@ function openOverlay(key){
   if(!id) return;
   const el = document.getElementById(id);
   if(el){ el.classList.add('open'); _activeOverlay = key; }
+  refreshPortalBackLabels();
   // Trigger data refresh when specific overlays open
   if (key === 'mgr') setTimeout(() => { if(typeof refreshManagerDashboard==='function') refreshManagerDashboard(); }, 50);
   if (key === 'cmd') setTimeout(() => { if(typeof checkAllMetrics==='function') checkAllMetrics(); if(typeof updateFlashReportAlerts==='function') updateFlashReportAlerts(); }, 50);
@@ -4724,6 +4737,26 @@ function goHome(){
   closeOverlay();
   closeCRM();
   window.scrollTo({top:0, behavior:'smooth'});
+}
+
+// ── PORTAL "BACK" BREADCRUMB ──
+// Launcher pages (Office Portal, etc.) set sessionStorage 'returnPortal' /
+// 'returnPortalLabel' alongside their openOnLoad flag when sending someone
+// into a tool. Overlay headers then offer a direct "← Back to X" instead of
+// forcing Home -> manually re-click the portal nav to get back to the menu.
+// Falls back to the normal Home behavior when there's no breadcrumb (the
+// overlay was opened some other way, e.g. straight from the dashboard).
+function goBackSmart(){
+  const back = sessionStorage.getItem('returnPortal');
+  if (back) { window.location.href = back; return; }
+  goHome();
+}
+function refreshPortalBackLabels(){
+  const back = sessionStorage.getItem('returnPortal');
+  const label = sessionStorage.getItem('returnPortalLabel') || 'Home';
+  const text = back ? ('← Back to ' + label) : '← Home';
+  document.querySelectorAll('.js-portal-back-label').forEach(el=>{ el.textContent = text; });
+  document.querySelectorAll('.js-portal-back-title').forEach(el=>{ el.title = back ? ('Back to ' + label) : 'Home'; });
 }
 
 function companyComingSoon(name){
@@ -6021,6 +6054,21 @@ function openSiteSurvey(id){
     card.classList.toggle('selected', shouldCheck);
     card.querySelector('.svc-check-mark').textContent = shouldCheck ? '✓' : '';
   });
+
+  // Force-clear screen0 Client Info fields before this account's prefill runs.
+  // fsPrefillClientInfo() only fills EMPTY fields (so it doesn't clobber a
+  // user's edits while staying on the same account) -- but that meant a
+  // second survey in the same browser session inherited the PREVIOUS
+  // account's stale fs_bizName/contact/address instead of picking up this
+  // one, since the field was never empty to begin with. Clearing here
+  // guarantees the next fsPrefillClientInfo() call (panel activation or
+  // fsGo to screen 0) fills in with the correct account's data.
+  ['fs_bizName','fs_bizAddress','fs_bizCity','fs_bizZip','fs_bizState',
+   'fs_contactName','fs_contactTitle','fs_contactPhone','fs_contactMobile',
+   'fs_contactEmail','fs_currentVendor','fs_referredBy','fs_generalObs'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  if (typeof fsPrefillClientInfo === 'function') fsPrefillClientInfo();
 
   document.getElementById('svBizName').textContent = svState.bizName;
   document.getElementById('svDoneBizName').textContent = svState.bizName;
@@ -12955,6 +13003,13 @@ document.addEventListener('DOMContentLoaded', () => {
   // before the real destination (e.g. Reports) renders.
   if (!sessionStorage.getItem('openOnLoad')) {
     document.documentElement.style.visibility = 'visible';
+    // A plain, non-redirected load of termac-os.html means the user
+    // explicitly navigated to the real dashboard (top-nav Home link, the
+    // brand logo, etc.) -- clear any "return to portal" breadcrumb so
+    // overlay exit buttons go back to a plain "← Home" instead of bouncing
+    // back out to a portal page the user has already moved on from.
+    sessionStorage.removeItem('returnPortal');
+    sessionStorage.removeItem('returnPortalLabel');
   }
 
   // Build action queue after load
@@ -13492,7 +13547,7 @@ setInterval(buildActionQueue, 5 * 60 * 1000);
   <div class="ov-header">
     <h2>⚠️ UniPro Deficiency Log</h2>
   <div class="ov-header-btns">
-      <button class="ov-btn" onclick="goHome()">← Home</button>
+      <button class="ov-btn" onclick="goBackSmart()"><span class="js-portal-back-label">← Home</span></button>
       <button class="ov-btn close" onclick="document.getElementById('ovOps').classList.remove('open');document.getElementById('ovOps').style.display='none'">✕</button>
     </div>
   </div>
@@ -20671,4 +20726,18 @@ setInterval(() => {
 }, 6 * 60 * 60 * 1000);
 
 console.log('✅ Termac Intelligence Engine v4.0 — Invoice Aging · Estimate Recovery · Agreement Gaps · Bundle Tracker · Price Reviews · Emergency Conversions · Drive Time · FTFR Analysis · Proposal Aging · Seasonal Distribution · AHJ Calendar · Cert Dispatch Block · Proof of Service');
+</script>
+
+<script>
+// PWA: register the shared service worker so "Termac One" is installable
+// (Add to Home Screen) and keeps working with no/weak signal in the field.
+// Network-first inside the worker means staff still get same-day fixes
+// whenever they have signal -- offline is the fallback, not the default.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('service-worker.js').catch((err) => {
+      console.warn('Service worker registration failed:', err);
+    });
+  });
+}
 </script>
