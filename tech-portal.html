@@ -1417,6 +1417,57 @@ renderAll();
   </div>
 </div>
 
+<!-- STANDALONE LEAD SUBMISSION MODAL — works from the home screen with no
+     active job required. If the tech is at a job (or picks one from
+     today's schedule in the dropdown below), business name/address/
+     contact auto-fill from that job and divisions it already has are
+     filtered out of the picker, same heuristic as the in-job Cross-Sell
+     Scout (job.typeKey -> currentDivisions). -->
+<div id="leadModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(10,12,16,.7);z-index:650;align-items:center;justify-content:center;overflow-y:auto;padding:20px 0">
+  <div style="background:#fff;border-radius:14px;width:min(480px,94vw);padding:24px;box-shadow:0 8px 32px rgba(0,0,0,.2);max-height:90vh;overflow-y:auto">
+    <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:14px;letter-spacing:.12em;text-transform:uppercase;color:#1B5FA8;margin-bottom:4px">📋 Submit a Lead</div>
+    <div style="font-size:12px;color:#5A616B;margin-bottom:14px">Scan a tag or enter the business info — routes straight to the territory rep, with a 60-day pre-expiration follow-up if you've got an expiry date.</div>
+
+    <div class="form-field">
+      <label>📍 At a job right now?</label>
+      <select id="lead_jobPick" onchange="leadModalOnJobPick(this.value)">
+        <option value="">— New prospect, not on today's schedule —</option>
+      </select>
+    </div>
+
+    <!-- TAG PHOTO SCAN (optional convenience) -->
+    <div style="background:#F0F7FF;border:1.5px solid #1B5FA8;border-radius:10px;padding:14px 16px;margin:4px 0 16px">
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#1B5FA8;margin-bottom:8px">📸 Scan Tag (optional)</div>
+      <div style="font-size:12px;color:#5A616B;margin-bottom:10px">Got a tag to photograph? The AI reads the service type, expiry, and company off it and fills in the fields below for you to confirm.</div>
+      <label style="display:flex;align-items:center;gap:8px;background:#fff;border:1.5px solid #1B5FA8;border-radius:8px;padding:9px 14px;cursor:pointer;font-size:13px;font-weight:700;color:#1B5FA8;width:fit-content">
+        📷 Take Photo of Tag
+        <input type="file" accept="image/*" capture="environment" style="display:none" onchange="leadModalAnalyzeTag(this)">
+      </label>
+      <div id="leadTagThumb" style="margin-top:8px"></div>
+      <div id="leadTagStatus" style="font-size:12px;margin-top:6px;display:none"></div>
+    </div>
+
+    <div class="form-field"><label>Business Name *</label><input id="lead_biz" placeholder="e.g. Tony's Diner"></div>
+    <div class="form-field"><label>Address *</label><input id="lead_addr" placeholder="Street, City, State ZIP"></div>
+    <div class="form-field"><label>Contact Name</label><input id="lead_contact" placeholder="Owner / manager name (optional)"></div>
+    <div class="form-field"><label>Contact Phone</label><input id="lead_phone" type="tel" placeholder="(optional)"></div>
+    <div class="form-field"><label>Division / Service *</label>
+      <select id="lead_division"></select>
+    </div>
+    <div style="display:flex;gap:8px">
+      <div class="form-field" style="flex:1"><label>Expiry / Next Service</label><input type="month" id="lead_expiry"></div>
+      <div class="form-field" style="flex:1"><label>Competitor on Tag</label><input id="lead_competitor" placeholder="If applicable"></div>
+    </div>
+    <div class="form-field"><label>Notes</label><textarea id="lead_notes" rows="2" placeholder="Anything else the rep should know..."></textarea></div>
+
+    <div style="display:flex;gap:10px;margin-top:16px">
+      <button onclick="closeLeadModal()" style="flex:1;background:#fff;border:1.5px solid #D7DBE0;border-radius:8px;padding:10px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;cursor:pointer">Cancel</button>
+      <button onclick="submitNewLead()" style="flex:2;background:#1B5FA8;color:#fff;border:none;border-radius:8px;padding:10px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">📲 Submit Lead → Rep's Pipeline</button>
+    </div>
+    <div id="leadSubmitResult" style="margin-top:10px;font-size:12px;color:#1E7B3C;font-weight:600;display:none"></div>
+  </div>
+</div>
+
 
 <!-- ══════════════════════════════════════════════════════════
      DISPATCHER / SCHEDULER OVERLAY
@@ -2247,6 +2298,247 @@ function submitTagScan() {
     resultEl.style.display = 'block';
     resultEl.innerHTML = `✅ Tag logged — hot lead sent to <strong>${repName}</strong>'s pipeline${followUpDate ? ', follow-up queued for <strong>'+followUpLabel+'</strong>' : ''}. Bonus eligible when converted.`;
   }
+}
+
+// ── STANDALONE LEAD SUBMISSION (home screen, no active job required) ──
+// Same proxy the survey tool's AI photo notes use -- not job-specific,
+// so this works whether the tech opened it from the dashboard or mid-job.
+const LEAD_TAG_PROXY = 'https://unipro-ai-proxy.tedscholl.workers.dev/';
+
+const LEAD_DIVISION_OPTIONS = [
+  { key:'unipro',    label:'UniPro — Fire Protection (Extinguishers/Hood/Alarm)' },
+  { key:'filterman', label:'Filter Man — Hood Filter Exchange' },
+  { key:'gto',       label:'G.T.O. — Grease Trap Service' },
+  { key:'allpro',    label:'ALLPro — Stainless / Equipment' },
+  { key:'quality3',  label:'Quality III — Fire Alarm (DE)' },
+  { key:'termac',    label:'Termac — Facility Maintenance / Supplies' },
+];
+
+// Same heuristic woRenderCrossSell() uses -- job.typeKey implies which
+// divisions the account already has, so we don't list them as referrals.
+function leadModalDivisionsAlreadyAtJob(job) {
+  const has = new Set();
+  if (!job) return has;
+  if (job.typeKey === 'fire')   { has.add('unipro'); has.add('quality3'); }
+  if (job.typeKey === 'grease') has.add('gto');
+  if (job.typeKey === 'filter') has.add('filterman');
+  return has;
+}
+
+function leadModalRenderDivisionOptions(excludeKeys) {
+  const sel = document.getElementById('lead_division');
+  if (!sel) return;
+  const exclude = excludeKeys || new Set();
+  sel.innerHTML = '<option value="">— Select —</option>' +
+    LEAD_DIVISION_OPTIONS.filter(d => !exclude.has(d.key))
+      .map(d => `<option value="${d.key}">${d.label}</option>`).join('');
+}
+
+function openLeadModal() {
+  const m = document.getElementById('leadModal');
+  if (!m) return;
+  ['lead_biz','lead_addr','lead_contact','lead_phone','lead_expiry','lead_competitor','lead_notes'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  const thumb = document.getElementById('leadTagThumb'); if (thumb) thumb.innerHTML = '';
+  const status = document.getElementById('leadTagStatus'); if (status) { status.style.display = 'none'; status.textContent = ''; }
+  const result = document.getElementById('leadSubmitResult'); if (result) { result.style.display = 'none'; result.textContent = ''; }
+
+  // Populate today's jobs into the "at a job right now?" picker
+  const pick = document.getElementById('lead_jobPick');
+  if (pick) {
+    pick.innerHTML = '<option value="">— New prospect, not on today\'s schedule —</option>' +
+      (typeof JOBS !== 'undefined' ? JOBS : []).map(j => `<option value="${j.id}">${j.account} — ${j.time}</option>`).join('');
+    pick.value = '';
+  }
+  leadModalRenderDivisionOptions(new Set());
+  m.style.display = 'flex';
+}
+
+function closeLeadModal() {
+  const m = document.getElementById('leadModal');
+  if (m) m.style.display = 'none';
+}
+
+// Fired when the tech picks a job from the dropdown (or clears it).
+// Prefills business/address/contact from the job and hides whatever
+// divisions that account already has from the dropdown.
+function leadModalOnJobPick(jobId) {
+  const bizEl = document.getElementById('lead_biz');
+  const addrEl = document.getElementById('lead_addr');
+  const contactEl = document.getElementById('lead_contact');
+  const phoneEl = document.getElementById('lead_phone');
+
+  if (!jobId) {
+    if (bizEl) bizEl.value = '';
+    if (addrEl) addrEl.value = '';
+    if (contactEl) contactEl.value = '';
+    if (phoneEl) phoneEl.value = '';
+    leadModalRenderDivisionOptions(new Set());
+    return;
+  }
+
+  const job = (typeof JOBS !== 'undefined' ? JOBS : []).find(j => j.id === jobId);
+  if (!job) return;
+
+  if (bizEl) bizEl.value = job.account || '';
+  if (addrEl) addrEl.value = job.addr || '';
+  if (contactEl) contactEl.value = job.gc || '';
+  if (phoneEl) phoneEl.value = job.phone || '';
+  leadModalRenderDivisionOptions(leadModalDivisionsAlreadyAtJob(job));
+}
+
+async function leadModalAnalyzeTag(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const thumb = document.getElementById('leadTagThumb');
+  const status = document.getElementById('leadTagStatus');
+  if (status) { status.style.display = 'block'; status.style.color = '#D8690B'; status.textContent = '🤖 Reading tag...'; }
+
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    const b64 = e.target.result.split(',')[1];
+    if (thumb) thumb.innerHTML = `<img src="${e.target.result}" style="max-width:160px;max-height:110px;border-radius:7px;border:2px solid #1B5FA8">`;
+
+    try {
+      const res = await fetch(LEAD_TAG_PROXY, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 60,
+          messages: [{ role: 'user', content: [{
+            type: 'image',
+            source: { type: 'base64', media_type: file.type, data: b64 }
+          }, {
+            type: 'text',
+            text: 'This is a photo of a fire/life-safety service inspection tag. Extract exactly three things and respond in exactly this format with no other text:\nSERVICE: <Fire Extinguisher, Hood Suppression, Fire Alarm, Exit Lighting, Grease Trap, or Other>\nEXPIRY: <MM/YYYY if legible, otherwise UNKNOWN>\nCOMPANY: <company name printed on the tag, otherwise UNKNOWN>'
+          }]}]
+        })
+      });
+      const json = await res.json();
+      const text = (json.content && json.content[0] && json.content[0].text) || '';
+      const serviceMatch = text.match(/SERVICE:\s*(.+)/i);
+      const expiryMatch  = text.match(/EXPIRY:\s*(.+)/i);
+      const companyMatch = text.match(/COMPANY:\s*(.+)/i);
+
+      // Map the AI's plain-language service name back to a division key
+      const serviceToDivision = {
+        'fire extinguisher': 'unipro', 'hood suppression': 'unipro',
+        'fire alarm': 'quality3', 'exit lighting': 'unipro', 'grease trap': 'gto'
+      };
+      const serviceRaw = (serviceMatch ? serviceMatch[1] : '').trim();
+      const divKey = serviceToDivision[serviceRaw.toLowerCase()];
+      if (divKey) {
+        const divSel = document.getElementById('lead_division');
+        if (divSel && [...divSel.options].some(o => o.value === divKey)) divSel.value = divKey;
+      }
+
+      const expiryRaw = (expiryMatch ? expiryMatch[1] : '').trim();
+      if (expiryRaw && expiryRaw.toUpperCase() !== 'UNKNOWN' && /^\d{1,2}\/\d{4}$/.test(expiryRaw)) {
+        const [mm, yyyy] = expiryRaw.split('/');
+        const expEl = document.getElementById('lead_expiry');
+        if (expEl) expEl.value = `${yyyy}-${mm.padStart(2,'0')}`;
+      }
+
+      const companyRaw = (companyMatch ? companyMatch[1] : '').trim();
+      const isTermac = /termac|unipro|filter ?man|gto|allpro|quality ?iii/i.test(companyRaw);
+      if (companyRaw && companyRaw.toUpperCase() !== 'UNKNOWN' && !isTermac) {
+        const compEl = document.getElementById('lead_competitor');
+        if (compEl) compEl.value = companyRaw;
+      }
+
+      if (status) { status.style.color = '#1E7B3C'; status.textContent = `✅ Tag read — ${serviceRaw || 'service'}${expiryRaw && expiryRaw.toUpperCase()!=='UNKNOWN' ? ', expires '+expiryRaw : ''}. Check the fields below and adjust if needed.`; }
+    } catch (err) {
+      if (status) { status.style.color = '#C0392B'; status.textContent = '⚠️ Could not read the tag automatically — fill in the fields below manually.'; }
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
+function submitNewLead() {
+  const biz = document.getElementById('lead_biz')?.value.trim();
+  const addr = document.getElementById('lead_addr')?.value.trim();
+  const contact = document.getElementById('lead_contact')?.value.trim();
+  const phone = document.getElementById('lead_phone')?.value.trim();
+  const divKey = document.getElementById('lead_division')?.value;
+  const expiry = document.getElementById('lead_expiry')?.value; // YYYY-MM
+  const competitor = document.getElementById('lead_competitor')?.value.trim();
+  const notes = document.getElementById('lead_notes')?.value.trim();
+  const jobId = document.getElementById('lead_jobPick')?.value || null;
+  const resultEl = document.getElementById('leadSubmitResult');
+
+  if (!biz)  { alert('Business name is required.'); return; }
+  if (!addr) { alert('Address is required — it\'s how the lead gets routed to the right rep.'); return; }
+  if (!divKey) { alert('Please select which division/service this lead is for.'); return; }
+
+  const companyMap = { unipro:'UniPro', filterman:'Filter Man', gto:'GTO', allpro:'AllPro', quality3:'Quality III', termac:'Termac' };
+  const zip = (addr.match(/\b\d{5}\b/) || [''])[0];
+  const repName = (typeof getRepForZip === 'function') ? getRepForZip(zip) : 'Territory Rep';
+  const techName = (typeof getCurrentTech === 'function') ? getCurrentTech()?.name || 'Tech' : 'Tech';
+  const tagPhotoUsed = !!document.getElementById('leadTagThumb')?.innerHTML;
+  const now = Date.now();
+
+  let followUpDate = null;
+  let followUpLabel = 'asap';
+  if (expiry) {
+    const expiryDate = new Date(expiry + '-01');
+    const followUp = new Date(expiryDate.getTime() - 60 * 86400000);
+    followUpDate = followUp.toISOString().split('T')[0];
+    followUpLabel = followUp.toLocaleDateString('en-US', { month:'short', year:'numeric' });
+  }
+
+  const lead = {
+    id: 'REF_' + now + '_' + divKey,
+    name: biz, business: biz,
+    phone: phone || '',
+    contactName: contact || '',
+    address: addr, zip,
+    company: companyMap[divKey] || divKey,
+    services: [divKey],
+    status: 'hot', score: 8, aiScore: 8,
+    source: 'Tech Cross-Sell',
+    crossSellTech: techName,
+    associatedJobId: jobId,
+    sourceDetail: `Field referral by ${techName}${jobId ? ' — associated with today\'s job' : ' — new prospect, not on schedule'}${tagPhotoUsed ? ' — tag photo scanned' : ' — manual entry'}`,
+    assignedRep: repName, claimedBy: repName,
+    followUpDate,
+    expiryDate: expiry ? expiry + '-01' : null,
+    competitorOnSite: competitor || null,
+    notes: `${notes ? notes + ' ' : ''}Referred by ${techName}${jobId ? ' while on-site at today\'s job' : ' as a new prospect'}.${expiry ? ' Expires '+expiry+'.' : ''}${competitor ? ' Competitor on tag: '+competitor+'.' : ''} Follow-up: ${followUpLabel}.`,
+    created: now, updated: now,
+    activityLog: [{
+      ts: now, type:'system', icon:'📋',
+      title: `Field Referral — ${LEAD_DIVISION_OPTIONS.find(d=>d.key===divKey)?.label || divKey}`,
+      note: `Submitted by ${techName}.${jobId ? ' Associated with job '+jobId+'.' : ''}${tagPhotoUsed ? ' Tag photo scanned and AI-analyzed.' : ''}${followUpDate ? ' Rep follow-up queued for '+followUpLabel+'.' : ''}`,
+      who: 'System'
+    }]
+  };
+
+  try {
+    const existing = JSON.parse(localStorage.getItem('crm_leads') || '[]');
+    existing.push(lead);
+    localStorage.setItem('crm_leads', JSON.stringify(existing));
+  } catch(e) {}
+  try {
+    const existing2 = JSON.parse(localStorage.getItem('termac_crm_leads') || '[]');
+    existing2.push(lead);
+    localStorage.setItem('termac_crm_leads', JSON.stringify(existing2));
+  } catch(e) {}
+
+  // Bump the tech's referral-submitted count so the earnings card reflects it immediately
+  const tech = (typeof getCurrentTech === 'function') ? getCurrentTech() : null;
+  if (tech) {
+    if (!tech.referrals) tech.referrals = { submitted:0, converted:0, single:0, bundled:0, bonusEarned:0, bonusEligible:true, satPct:0 };
+    tech.referrals.submitted = (tech.referrals.submitted || 0) + 1;
+    if (typeof renderReferralCard === 'function') renderReferralCard();
+  }
+
+  if (resultEl) {
+    resultEl.style.display = 'block';
+    resultEl.innerHTML = `✅ Lead sent to <strong>${repName}</strong>'s pipeline${followUpDate ? ', follow-up queued for <strong>'+followUpLabel+'</strong>' : ''}. Bonus eligible when converted.`;
+  }
+  setTimeout(closeLeadModal, 1800);
 }
 
 // ── COMPLETE + ROUTE CROSS-SELL LEADS ──
@@ -3971,8 +4263,8 @@ function renderReferralCard() {
   }
 
   html += '<div class="referral-cta" style="margin-top:14px;">'
-    + '<div class="referral-cta-text">Spot a cross-sell on-site? Flag it at job close — routes to the rep for follow-up and earns your bonus when it converts. $10 single service · $25 bundled.</div>'
-    + '<button class="referral-cta-btn" data-action="log-referral">+ Log Referral</button>'
+    + '<div class="referral-cta-text">Found a referral — on-site or out in the field? Scan the tag or enter the business info. Routes to the territory rep instantly, with a 60-day pre-expiration follow-up if there\'s an expiry date. $10 single service · $25 bundled.</div>'
+    + '<button class="referral-cta-btn" data-action="log-referral" onclick="openLeadModal()">+ Log Referral</button>'
     + '</div>';
 
   html += '</div>';
