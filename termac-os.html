@@ -12006,6 +12006,24 @@ function estRender(){
     html += `</div>`;
   }
 
+  // Site photos — pulled from the account record's flat photos[] array
+  // (same source the Account Info Photos tab reads from). Shown here so
+  // the customer sees the documented findings during the close, not just
+  // line-item pricing.
+  if (estState.accountId) {
+    const acctData = crmLoad('accounts');
+    const acct = acctData.find(a => a.id === estState.accountId);
+    const photos = (acct && acct.photos) || [];
+    if (photos.length) {
+      html += `<div class="est-section">
+        <div class="est-section-title">📷 Site Photos</div>
+        <div style="display:flex;gap:10px;overflow-x:auto;padding:4px 2px 8px">
+          ${photos.map(p => `<img src="${p.url}" style="width:90px;height:90px;object-fit:cover;border-radius:7px;border:1.5px solid var(--line);flex-shrink:0" loading="lazy">`).join('')}
+        </div>
+      </div>`;
+    }
+  }
+
   container.innerHTML = html;
 
   // Grand total
@@ -12508,6 +12526,7 @@ window.svOpenEstimate = function(){
         <button class="acct-tab active" onclick="acctShowTab('timeline',this)">📋 Timeline</button>
         <button class="acct-tab" onclick="acctShowTab('service',this)">🔧 Service &amp; Inspection History</button>
         <button class="acct-tab" onclick="acctShowTab('estimates',this)">📄 Estimates</button>
+        <button class="acct-tab" onclick="acctShowTab('photos',this)">📷 Photos</button>
         <button class="acct-tab" onclick="acctShowTab('notes',this)">📝 Notes</button>
       </div>
 
@@ -12553,6 +12572,11 @@ window.svOpenEstimate = function(){
       <!-- Estimates tab -->
       <div class="acct-tab-content" id="tab-estimates">
         <div id="acctEstimatesList"></div>
+      </div>
+
+      <!-- Photos tab -->
+      <div class="acct-tab-content" id="tab-photos">
+        <div id="acctPhotosGrid"></div>
       </div>
 
       <!-- Notes tab -->
@@ -12639,6 +12663,7 @@ function openAcctDetail(id, tab) {
   acctRenderRecurringServices(r);
   acctRenderServiceHistory(r);
   acctRenderEstimates(r);
+  acctRenderPhotos(r);
   acctRenderNotes(r);
 
   // Reset to timeline tab
@@ -13063,6 +13088,38 @@ function acctRenderEstimates(r) {
   } else {
     el.innerHTML = `<div class="tl-empty"><div class="tl-empty-icon">📄</div>No estimate on file yet.<br><button onclick="acctLaunchSurvey()" style="margin-top:14px;background:var(--red);color:#fff;border:none;border-radius:8px;padding:9px 20px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;text-transform:uppercase;cursor:pointer">Start Site Survey</button></div>`;
   }
+}
+
+// ── PHOTOS TAB ──
+// Reads the flat photos[] array built by buildAccountPhotosArray() at
+// survey-save time. Single universal source — this same array is what
+// Phase 3 will surface on Change Order / Work Order / Invoice.
+function acctRenderPhotos(r) {
+  const el = document.getElementById('acctPhotosGrid');
+  const photos = r.photos || [];
+  if (!photos.length) {
+    el.innerHTML = `<div class="tl-empty"><div class="tl-empty-icon">📷</div>No photos on file yet.<br><span style="font-size:12px">Photos captured during a site survey will appear here automatically.</span></div>`;
+    return;
+  }
+  el.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px">
+      ${photos.map(p => {
+        const c = serviceColor(p.service);
+        const label = (p.slot || '').replace(/_\d+$/, '').replace(/^./, ch => ch.toUpperCase());
+        return `
+        <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);overflow:hidden">
+          <img src="${p.url}" style="width:100%;height:150px;object-fit:cover;display:block;background:#F3F4F6" loading="lazy">
+          <div style="padding:10px 12px">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px">
+              <span style="background:${c.bg};color:${c.color};border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700">${serviceLabel(p.service)}</span>
+              <span style="font-size:11px;color:var(--soft)">${label}</span>
+            </div>
+            ${p.aiNote ? `<div style="font-size:12px;color:var(--ink);line-height:1.4">🤖 ${p.aiNote}</div>` : ''}
+            ${!p.isPermanent ? `<div style="font-size:10px;color:#D8690B;margin-top:6px">⏳ Backing up...</div>` : ''}
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`;
 }
 
 // ── NOTES TAB ──
