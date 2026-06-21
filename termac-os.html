@@ -6719,10 +6719,18 @@ async function fsAnalyzePhoto(key, idx, input) {
     const b64 = e.target.result.split(',')[1];
     if (thumbEl) thumbEl.innerHTML = `<img src="${e.target.result}" style="max-width:160px;max-height:110px;border-radius:7px;border:2px solid var(--line)">`;
 
-    // Store photo on svState so it carries into the estimate/findings
+    // Store photo on svState so it carries into the estimate/findings.
+    // Starts as base64 (instant, works offline) — if R2_UPLOAD_URL is
+    // configured, it gets swapped for a permanent URL below once the
+    // background upload resolves, so localStorage doesn't bloat with
+    // full-size images and the photo survives a cleared cache.
     if (!svState.surveyData[fsState.activeService]) svState.surveyData[fsState.activeService] = {};
     if (!svState.surveyData[fsState.activeService].photos) svState.surveyData[fsState.activeService].photos = {};
-    svState.surveyData[fsState.activeService].photos[key + '_' + idx] = e.target.result;
+    const photoSlot = key + '_' + idx;
+    svState.surveyData[fsState.activeService].photos[photoSlot] = e.target.result;
+
+    // Fire-and-forget upload to R2 — does not block AI analysis or the rep's workflow
+    fsUploadPhotoToR2(key, idx, b64, file.type, photoSlot);
 
     try {
       if (aiEl) { aiEl.style.display = 'block'; aiEl.textContent = '🤖 Analyzing...'; }
@@ -6752,6 +6760,60 @@ async function fsAnalyzePhoto(key, idx, input) {
     }
   };
   reader.readAsDataURL(file);
+}
+
+// ── R2 Photo Backup (Phase 1 of account-wide photo standard) ────────────
+// Uploads the captured photo to Cloudflare R2 in the background. On
+// success, swaps the base64 sitting in svState for the permanent URL —
+// silently no-ops if R2_UPLOAD_URL isn't configured yet, so survey
+// capture keeps working exactly as before regardless of deploy status.
+const R2_UPLOAD_URL = ''; // set once termac-photo-upload Worker is deployed
+
+async function fsUploadPhotoToR2(key, idx, base64, contentType, photoSlot) {
+  if (!R2_UPLOAD_URL || !svState.accountId) return;
+  try {
+    const res = await fetch(R2_UPLOAD_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        accountId: svState.accountId,
+        key: fsState.activeService + '_' + photoSlot,
+        base64,
+        contentType
+      })
+    });
+    const result = await res.json();
+    if (result.ok && result.url) {
+      const slot = svState.surveyData[fsState.activeService]?.photos;
+      if (slot && slot[photoSlot]) slot[photoSlot] = result.url; // swap base64 → permanent URL
+    }
+  } catch (e) {} // silent fail — base64 copy already in svState, nothing lost
+}
+
+// ── Flat photos[] array — single universal source for Account Info,
+//    Estimate, Change Order, Work Order, and Invoice views (Phase 2/3).
+//    Derives a flat list from the per-service nested capture structure
+//    so downstream screens don't need to know about service-specific
+//    photo shapes. Safe to call repeatedly — fully rebuilds each time.
+function buildAccountPhotosArray(surveyData) {
+  const out = [];
+  if (!surveyData) return out;
+  Object.keys(surveyData).forEach(service => {
+    const d = surveyData[service];
+    if (!d || !d.photos) return;
+    Object.keys(d.photos).forEach(slot => {
+      const value = d.photos[slot];
+      if (!value) return;
+      out.push({
+        url: value, // either a permanent R2 URL or, until upload resolves, a base64 data URI
+        service,
+        slot,
+        aiNote: d[slot + '_ai'] || null,
+        isPermanent: typeof value === 'string' && value.startsWith('http')
+      });
+    });
+  });
+  return out;
 }
 
 function fsBuildHoodChecklist() { fsBuildChecklist('fs_hoodList','hood','red'); }
@@ -7183,7 +7245,7 @@ function fsFinishUniProSurvey() {
   // Save to account record
   const data = crmLoad('accounts');
   const r = data.find(x => x.id === svState.accountId);
-  if (r) { r.surveyData = svState.surveyData; crmSave('accounts', data); }
+  if (r) { r.surveyData = svState.surveyData; r.photos = buildAccountPhotosArray(svState.surveyData); crmSave('accounts', data); }
 
   if (typeof svGoNext === 'function') {
     svGoNext();
@@ -10580,7 +10642,7 @@ function svSaveSurveyData(svc){
   // Persist to account record
   const data = crmLoad('accounts');
   const r = data.find(x=>x.id===svState.accountId);
-  if(r){ r.surveyData = svState.surveyData; crmSave('accounts',data); }
+  if(r){ r.surveyData = svState.surveyData; r.photos = buildAccountPhotosArray(svState.surveyData); crmSave('accounts',data); }
 }
 
 // Intercept svGoNext to save survey data first
