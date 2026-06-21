@@ -8934,36 +8934,42 @@ async function harvestRunLiveNJ(){
   setTimeout(() => { if(banner) banner.style.display = 'none'; }, 15000);
 }
 
-// ── Maryland: Montgomery County Food Inspection (Socrata SODA API).
-// Unlike PA/DE/DC, Maryland has no statewide business-license open-data
-// feed -- confirmed during this same research pass (state-level SDAT/BLIS
-// portals are search-only, no bulk API; the state's own open data portal,
-// opendata.maryland.gov, only publishes aggregate business counts, not
-// individual license records). Montgomery County's Food Inspection
-// dataset is the best live-API candidate found in MD: every non-mobile
-// food establishment inspection in the county, confirmed real via a live
-// CSV sample pull (data.montgomerycountymd.gov/resource/5pue-gfbe.csv)
-// showing real establishment rows -- e.g. "168 ASIAN BURRITO", 18000
-// Georgia Ave, Olney, zip 20832, inspected 2024-03-12, result "Critical
-// Violations Corrected". Confirmed Socrata field names from that same
-// sample: establishment_id, name, address1, address2, city, zip,
-// inspectiondate, inspectionresults, organization, category, type,
-// latitude, longitude.
+// ── Maryland: Baltimore County Building Permits (ArcGIS FeatureServer).
+// SUPERSEDES an earlier Montgomery County version -- corrected after Ted
+// clarified the real MD territory is northeastern MD within a 2hr drive
+// of the office (7330 Tulip St, Philadelphia), not the DC suburbs.
+// Montgomery/Prince George's County are ~2.5-3hrs south and out of scope.
 //
-// UNLIKE the PA/DE/DC harvesters, no category/activity filter is needed
-// here -- the entire dataset is already scoped to food establishments
-// (the county's own dataset description confirms this), so every record
-// is already in the commercial-kitchen population relevant to UniPro.
-// Ordered by most recent inspection so the freshest activity surfaces
-// first. Records with an uncorrected critical violation are flagged in
-// the notes as a stronger conversation opener than a routine inspection.
+// Checked Cecil and Harford counties first (closest to PA/DE territory) --
+// neither has a live API: Cecil's business licenses route through the
+// Circuit Court Clerk (search-portal only), Harford's through an
+// EnerGov self-service portal (same situation, no bulk/API access).
+// Maryland's own state open data portal (opendata.maryland.gov) only
+// publishes aggregate business counts, not individual records, same dead
+// end found during the original MD research pass.
 //
-// NOTE: Prince George's County runs the same open-data platform family
-// (data.princegeorgescountymd.gov, dataset umjn-t2iz) and is a strong
-// candidate to add the same way later -- catalogued in the Lead Sources
-// panel as 'known' but not yet independently pulled live the way this
-// one was.
-const HARVEST_MD_FOOD_INSPECTION_URL = 'https://data.montgomerycountymd.gov/resource/5pue-gfbe.json';
+// Baltimore County is the only northeastern MD county with real live API
+// infrastructure: a full ArcGIS REST services tree at
+// bcgis.baltimorecountymd.gov, confirmed by directly browsing the service
+// directory (not guessed). The DevelopmentManagement/ActiveDevelopment
+// FeatureServer's "Permits" layer (id 0) has confirmed-real fields from
+// its live schema: OWNER_NAME, OWNER_ADD, P_ADDRESS, P_ST_NO, P_ST_NAME,
+// ZIP, PERMIT_TYPE (coded values include NEW CONSTRUCTION and CHANGE OF
+// OCCUPANCY -- the latter fires when a new tenant/restaurant takes over
+// an existing space, same buildout signal as a new business license),
+// DESC_WORK / PRO_USE / EXT_USE (free-text work description and
+// proposed/existing use), STATUS, EST_COST. Same keyword-filter approach
+// as the PA/DE harvesters (HARVEST_FOOD_LICENSE_KEYWORDS), applied across
+// DESC_WORK/PRO_USE/EXT_USE since any of the three can carry the
+// restaurant/kitchen signal depending on how a given permit was logged.
+//
+// NOTE: no separate city field on this layer (P_ADDRESS appears to be
+// the full premise address; P_ST_NO/P_ST_NAME are the street-number/name
+// components) -- address is built from whichever is present, same
+// "don't guess a missing field" principle as the NJ harvester's missing
+// ZIP. Cecil and Harford remain uncovered until/unless a CSV-import path
+// is built for them specifically.
+const HARVEST_MD_PERMITS_URL = 'https://bcgis.baltimorecountymd.gov/arcgis/rest/services/DevelopmentManagement/ActiveDevelopment/FeatureServer/0/query';
 
 async function harvestRunLiveMD(){
   const banner = document.getElementById('harvestStatusBanner');
@@ -8971,29 +8977,32 @@ async function harvestRunLiveMD(){
   if (!banner) return;
 
   banner.style.display = 'block';
-  banner.innerHTML = '🌾 Pulling recent food establishment inspections from Montgomery County, MD open data…';
+  banner.innerHTML = '🌾 Pulling recent building permits from Baltimore County, MD open data…';
   if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; }
 
+  const activityFilter = HARVEST_FOOD_LICENSE_KEYWORDS
+    .map(k => `UPPER(DESC_WORK) LIKE '%${k.toUpperCase()}%' OR UPPER(PRO_USE) LIKE '%${k.toUpperCase()}%' OR UPPER(EXT_USE) LIKE '%${k.toUpperCase()}%'`)
+    .join(' OR ');
   const params = new URLSearchParams({
-    '$order': 'inspectiondate DESC',
-    '$limit': '40'
+    where: activityFilter,
+    outFields: 'OWNER_NAME,OWNER_ADD,P_ADDRESS,P_ST_NO,P_ST_NAME,ZIP,PERMITNO,PERMIT_TYPE,DESC_WORK,PRO_USE,EXT_USE,APPL_DATE,ISSDATE,STATUS,EST_COST',
+    orderByFields: 'APPL_DATE DESC',
+    resultRecordCount: '40',
+    f: 'json'
   });
 
   try {
-    const res = await fetch(HARVEST_MD_FOOD_INSPECTION_URL + '?' + params.toString());
-    let records;
-    try { records = await res.json(); } catch(parseErr) { records = null; }
-    if (!res.ok) {
-      const detail = records && (records.message || records.description) ? (records.message || records.description) : null;
-      throw new Error(detail ? `HTTP ${res.status} — ${detail}` : `HTTP ${res.status}`);
-    }
-    if (records && (records.error || records.errorCode)) {
-      throw new Error(records.message || 'API returned an error — the query or field names may need adjusting against the live schema.');
-    }
-    if (!Array.isArray(records)) throw new Error('Unexpected response shape from Montgomery County open data — expected an array of records.');
+    const res = await fetch(HARVEST_MD_PERMITS_URL + '?' + params.toString());
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
 
-    if (!records.length) {
-      banner.innerHTML = '✅ Connected successfully — 0 records returned. The endpoint is live; the dataset may just be empty for this query.';
+    if (data.error) {
+      throw new Error(data.error.message || 'API returned an error — the where clause or field names may need adjusting against the live schema.');
+    }
+
+    const features = data.features || [];
+    if (!features.length) {
+      banner.innerHTML = '✅ Connected successfully — 0 matching permits returned for this query. The endpoint is live; try widening the keyword filter or check field values against the live response.';
       if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
       logHarvestRun(0, 0, 'success-empty');
       return;
@@ -9006,39 +9015,43 @@ async function harvestRunLiveMD(){
     const newLeads = [];
     const now = Date.now();
 
-    records.forEach((r, i) => {
-      const business = r.name || r.organization || '';
-      const legalName = r.organization || '';
-      const addr1 = r.address1 || '';
-      const city = r.city || '';
-      const zip = r.zip || '';
-      const inspectDate = r.inspectiondate;
-      const result = r.inspectionresults || '';
-      const estId = r.establishment_id || '';
+    features.forEach((f, i) => {
+      const attrs = f.attributes || f;
+      const business = attrs.OWNER_NAME || '';
+      const fullAddr = attrs.P_ADDRESS || '';
+      const stNo = attrs.P_ST_NO || '';
+      const stName = attrs.P_ST_NAME || '';
+      const zip = attrs.ZIP || '';
+      const permitType = attrs.PERMIT_TYPE || '';
+      const descWork = attrs.DESC_WORK || attrs.DESC_WORK2 || '';
+      const permitNo = attrs.PERMITNO || '';
+      const issDate = attrs.ISSDATE; // string field, format unconfirmed -- displayed as-is rather than parsed
+      const applDate = attrs.APPL_DATE; // confirmed real Date field (epoch ms)
+      const status = attrs.STATUS || '';
 
       if (!business) return; // skip blank records rather than guess
 
       const key = business.toLowerCase() + '|' + zip;
       if (existingKeys.has(key)) return; // dedupe against current pool
 
-      const inspectDateStr = inspectDate ? new Date(inspectDate).toISOString().slice(0,10) : 'unknown date';
-      const addr = [addr1, city, 'MD', zip].filter(Boolean).join(', ');
-      const hasViolation = /critical/i.test(result) && !/corrected/i.test(result);
+      const applDateStr = applDate ? new Date(applDate).toISOString().slice(0,10) : 'unknown date';
+      const addr = fullAddr || [stNo, stName, 'MD', zip].filter(Boolean).join(' ');
+      const isChangeOfOccupancy = /change of occupancy/i.test(permitType);
 
       newLeads.push({
         id: 'harvest_md_' + now + '_' + i,
         name: 'Owner — TBD',
-        business: legalName && legalName !== business ? `${business} (${legalName})` : business,
+        business: business,
         phone: '', email: '',
         address: addr, zip: zip, company: 'UniPro', status: 'new',
         services: ['unipro'], score: 6,
-        source: 'Live Harvester — Montgomery County MD Food Inspections',
+        source: 'Live Harvester — Baltimore County MD Permits',
         created: now,
-        notes: `Inspected ${inspectDateStr} — result: "${result||'unknown'}"${hasViolation ? '. Open critical violation, not yet corrected -- strong opener for a compliance conversation.' : '. Verify current fire suppression / extinguisher coverage as part of standard outreach.'}`,
+        notes: `${permitType || 'Permit'} #${permitNo||'—'} applied ${applDateStr}${issDate ? ', issued '+issDate : ''}${status ? ' — status: '+status : ''}. ${descWork ? 'Work: '+descWork+'. ' : ''}${isChangeOfOccupancy ? 'Change of occupancy -- likely a new tenant/restaurant taking over the space, worth checking suppression/extinguisher coverage.' : 'Verify current fire suppression / extinguisher coverage — likely new or relocating kitchen.'}`,
         activityLog: [{
           ts: now, type:'system', icon:'🌾',
-          title:'Harvested — Montgomery County MD Open Data (live)',
-          note:`Establishment #${estId||'—'}, inspected ${inspectDateStr}, result: ${result||'—'}`,
+          title:'Harvested — Baltimore County MD Open Data (live)',
+          note:`Permit #${permitNo||'—'} (${permitType||'—'}) applied ${applDateStr}`,
           who:'System'
         }]
       });
@@ -9049,13 +9062,13 @@ async function harvestRunLiveMD(){
     const allLeads = [...newLeads, ...existing];
     crmSave('leads', allLeads);
 
-    banner.innerHTML = `✅ Harvest complete — checked ${records.length} recent Montgomery County MD food inspections, added <b>${added} new lead${added===1?'':'s'}</b> to the pool (${records.length - added} already on file, skipped).`;
-    logHarvestRun(records.length, added, 'success');
+    banner.innerHTML = `✅ Harvest complete — checked ${features.length} recent Baltimore County MD permits, added <b>${added} new lead${added===1?'':'s'}</b> to the pool (${features.length - added} already on file, skipped).`;
+    logHarvestRun(features.length, added, 'success');
 
     if (typeof renderCRMView === 'function') renderCRMView();
 
   } catch (e) {
-    banner.innerHTML = `⚠️ Harvest failed: ${e.message}. This is a real error from the live Montgomery County MD open data API, not a placeholder — if this persists, the endpoint or field names may need re-checking against the current schema at <a href="https://data.montgomerycountymd.gov/Health-and-Human-Services/Food-Inspection/5pue-gfbe" target="_blank" style="color:#5A4A00;text-decoration:underline">the live dataset page</a>.`;
+    banner.innerHTML = `⚠️ Harvest failed: ${e.message}. This is a real error from the live Baltimore County MD API, not a placeholder — if this persists, the endpoint or field names may need re-checking against the current schema at <a href="https://bcgis.baltimorecountymd.gov/arcgis/rest/services/DevelopmentManagement/ActiveDevelopment/FeatureServer/0" target="_blank" style="color:#5A4A00;text-decoration:underline">the live service definition</a>.`;
     logHarvestRun(0, 0, 'error: ' + e.message);
   }
 
@@ -10088,12 +10101,17 @@ const LEAD_SOURCE_GROUPS = [
     { name:'DE Food Establishment Inspection Violations', status:'connected', note:'Statewide, all 3 counties in one feed, geocoded lat/long included.', url:'https://data.delaware.gov/Health/Food-Establishment-Inspection-Violations/384s-wygj' },
     { name:'DE Bid Notifications', status:'needs_registration', note:'Free registration for bid alerts by industry — single statewide portal.', url:'https://bids.delaware.gov' },
   ]},
-  { region:"Maryland — Montgomery & Prince George's County", items:[
-    { name:'Montgomery County MD — Food Inspection (open data)', status:'connected', note:'Most detailed feed found anywhere in the territory — itemized pass/fail per check (hot holding temp, pest control, etc.), not just an overall result. Confirmed Socrata SODA API, all fields independently verified against a live sample. Powers the Harvest MD Leads button above — Maryland has no statewide business-license open-data feed the way PA/DE/DC do, so this is the best live-API candidate found in the state. Whole dataset is already scoped to food establishments, so no category filter needed.', url:'https://data.montgomerycountymd.gov/Health-and-Human-Services/Food-Inspection/5pue-gfbe' },
-    { name:"Prince George's County MD — Food Inspection (open data)", status:'known', note:'Same open-data platform family as Montgomery County.', url:'https://data.princegeorgescountymd.gov/Health/Food-Inspection/umjn-t2iz' },
-    { name:'Maryland Comptroller — Statewide Alcoholic Beverages Retail License Database', status:'connected', note:'Upgrades the earlier Montgomery-County-only finding — this one is statewide, searchable by trade name/license class/status, covers every MD county.', url:'https://interactive.marylandtaxes.gov/webapps/licprt/user/ilu_queryRetailer.asp' },
+  { region:'Maryland — Northeastern (Cecil, Harford, Baltimore County)', items:[
+    { name:'Baltimore County MD — Building Permits (open data)', status:'connected', note:'Confirmed live ArcGIS FeatureServer at bcgis.baltimorecountymd.gov, found by directly browsing the service directory. Powers the Harvest MD Leads button above. Owner name, address, permit type, and free-text work description all confirmed from the live schema. CHANGE OF OCCUPANCY permits are a strong signal -- a new tenant/restaurant taking over an existing space.', url:'https://bcgis.baltimorecountymd.gov/arcgis/rest/services/DevelopmentManagement/ActiveDevelopment/FeatureServer/0' },
+    { name:'Cecil County MD — Business Licenses', status:'known', note:'No live API found. Routes through the Circuit Court Clerk -- search-portal only (mdcourts.gov/clerks/cecil/business). Closest county to existing PA/DE territory; CSV-import candidate if this becomes a priority.', url:'https://www.mdcourts.gov/clerks/cecil/business' },
+    { name:'Harford County MD — Permits & Licenses', status:'known', note:'No live API found. Routes through an EnerGov self-service portal (epermitcenter.harfordcountymd.gov) -- search-only, no bulk/API access. Same CSV-import situation as Cecil.', url:'https://www.harfordcountymd.gov/1107/Permits-Licenses' },
+    { name:'Maryland Comptroller — Statewide Alcoholic Beverages Retail License Database', status:'connected', note:'Statewide, searchable by trade name/license class/status, covers every MD county including Cecil/Harford/Baltimore County. Search-portal only, no API.', url:'https://interactive.marylandtaxes.gov/webapps/licprt/user/ilu_queryRetailer.asp' },
+    { name:'eMaryland Marketplace Advantage (eMMA)', status:'known', note:'Statewide bid board.', url:'https://procurement.maryland.gov' },
+  ]},
+  { region:"Maryland — DC suburbs (OUT OF TERRITORY, kept for reference)", items:[
+    { name:'Montgomery County MD — Food Inspection (open data)', status:'connected', note:'Confirmed live Socrata API -- previously powered the Harvest MD Leads button, but Ted clarified actual MD territory is northeastern (Cecil/Harford/Baltimore County, within 2hrs of the office), not the DC suburbs. Kept here in case territory ever expands south; not currently wired to any button.', url:'https://data.montgomerycountymd.gov/Health-and-Human-Services/Food-Inspection/5pue-gfbe' },
+    { name:"Prince George's County MD — Food Inspection (open data)", status:'known', note:'Same open-data platform family as Montgomery County. Same out-of-territory status.', url:'https://data.princegeorgescountymd.gov/Health/Food-Inspection/umjn-t2iz' },
     { name:'Maryland OHCQ — Licensed Assisted Living Directory + Map', status:'known', note:'Complete list of licensed assisted living programs statewide, plus an interactive map. Found, not yet pulled live.', url:'https://health.maryland.gov/ohcq/Pages/Assisted-Living-Programs-Consumers.aspx' },
-    { name:'eMaryland Marketplace Advantage (eMMA)', status:'known', note:'Statewide bid board — covers both counties, no county-by-county version needed.', url:'https://procurement.maryland.gov' },
   ]},
   { region:'Washington, DC', items:[
     { name:'DC Basic Business License — Last 30 Days', status:'connected', note:'Pre-filtered to NEW licenses only. Best single lead feed found in this entire project — powers the Harvest DC Leads button above.', url:'https://opendata.dc.gov/datasets/a9ac9f8d9d1546e8bd6610b48cb29810_1' },
