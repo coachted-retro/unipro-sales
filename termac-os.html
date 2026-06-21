@@ -1216,6 +1216,10 @@ setTimeout(function(){ if(typeof TECHS!=='undefined') renderLB('score'); }, 200)
     <div class="crm-header">
       <div class="crm-header-left">
         <h2 id="crmTitle">Leads</h2>
+        <div id="crmUserBadge" style="display:flex;align-items:center;gap:6px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:20px;padding:4px 12px 4px 4px;flex-shrink:0">
+          <span style="display:flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--red);color:#fff;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px" id="crmUserInitial">—</span>
+          <span style="font-size:12px;font-weight:600;color:#fff;white-space:nowrap" id="crmUserName">—</span>
+        </div>
         <div class="crm-tabs">
           <button class="crm-tab active" id="crmTabLeads" onclick="switchCRMTab('leads')">Leads</button>
           <button class="crm-tab" id="crmTabContacts" onclick="switchCRMTab('contacts')">Contacts</button>
@@ -1689,6 +1693,15 @@ function openCRM(tab, viaDmsDashboard){
   const role = _currentUser?.role;
   const isReception = role === 'reception';
 
+  // Make it unmistakable whose CRM this is -- name + initial badge next to
+  // the title. Reps work this page daily; they should never have to
+  // wonder if they're looking at their own pipeline or someone else's.
+  const repName = _currentUser?.name || 'Guest';
+  const nameEl = document.getElementById('crmUserName');
+  const initialEl = document.getElementById('crmUserInitial');
+  if (nameEl) nameEl.textContent = repName;
+  if (initialEl) initialEl.textContent = repName.trim().charAt(0).toUpperCase() || '?';
+
   // Call List (cold-call pool) belongs to the DMS tool, not to a role tier --
   // Ted's call: it must never appear on the Sales Dashboard, but it DOES
   // belong on the nav whenever someone is actually inside the DMS Dashboard.
@@ -1775,16 +1788,22 @@ function switchCRMTab(tab){
   } else {
     sf.innerHTML='<option value="">All</option>';
   }
+  // Harvesting is an admin action now -- Ted runs it on a schedule and
+  // whatever comes in routes into each rep's OWN territory automatically
+  // (see renderCRMView's territory filter below). Showing "Harvest" buttons
+  // on every rep's page implied each of them should be running harvests
+  // themselves, which isn't the workflow -- so these are admin-only.
+  const isHarvestAdmin = _currentUser?.email === 'tscholl@termac.com';
   const harvestBtn = document.getElementById('crmHarvestBtn');
-  if (harvestBtn) harvestBtn.style.display = (tab === 'leads') ? '' : 'none';
+  if (harvestBtn) harvestBtn.style.display = (tab === 'leads' && isHarvestAdmin) ? '' : 'none';
   const harvestDEBtn = document.getElementById('crmHarvestDEBtn');
-  if (harvestDEBtn) harvestDEBtn.style.display = (tab === 'leads') ? '' : 'none';
+  if (harvestDEBtn) harvestDEBtn.style.display = (tab === 'leads' && isHarvestAdmin) ? '' : 'none';
   const harvestDCBtn = document.getElementById('crmHarvestDCBtn');
-  if (harvestDCBtn) harvestDCBtn.style.display = (tab === 'leads') ? '' : 'none';
+  if (harvestDCBtn) harvestDCBtn.style.display = (tab === 'leads' && isHarvestAdmin) ? '' : 'none';
   const harvestNJBtn = document.getElementById('crmHarvestNJBtn');
-  if (harvestNJBtn) harvestNJBtn.style.display = (tab === 'leads') ? '' : 'none';
+  if (harvestNJBtn) harvestNJBtn.style.display = (tab === 'leads' && isHarvestAdmin) ? '' : 'none';
   const harvestCMSBtn = document.getElementById('crmHarvestCMSBtn');
-  if (harvestCMSBtn) harvestCMSBtn.style.display = (tab === 'leads') ? '' : 'none';
+  if (harvestCMSBtn) harvestCMSBtn.style.display = (tab === 'leads' && isHarvestAdmin) ? '' : 'none';
   const sourcesBtn = document.getElementById('crmSourcesBtn');
   if (sourcesBtn) sourcesBtn.style.display = (tab === 'leads') ? '' : 'none';
   const orphanedBtn = document.getElementById('crmOrphanedBtn');
@@ -1836,22 +1855,23 @@ function renderCRMView(){
   if(q) data=data.filter(r=>JSON.stringify(r).toLowerCase().includes(q));
   if(co) data=data.filter(r=>r.company===co);
   if(st) data=data.filter(r=>r.status===st);
-  // Sort: pinned recently viewed at top, then (leads tab only, reps with
-  // an assigned territory) in-territory leads next, then everything else
-  // by most recent.
-  const recent=getRecent(tab).map(r=>r.id);
+  // Leads tab: reps (and territory-carrying managers) only see leads that
+  // actually fall in their own territory -- harvested leads route to the
+  // right person automatically by ZIP rather than dumping the whole pool
+  // on everyone. DMS/reception and managers without a personal territory
+  // still see the full pool, since their job is routing/oversight across
+  // all of it (see currentRepTerritory()'s own comment for why).
   const repTerritory = tab === 'leads' ? currentRepTerritory() : null;
+  if (tab === 'leads' && repTerritory) {
+    data = data.filter(r => zipMatchesTerritory(r.zip, repTerritory));
+  }
+  // Sort: pinned recently viewed at top, then everything else by most recent.
+  const recent=getRecent(tab).map(r=>r.id);
   data.sort((a,b)=>{
     const ai=recent.indexOf(a.id), bi=recent.indexOf(b.id);
     if(ai>-1 && bi===-1) return -1;
     if(bi>-1 && ai===-1) return 1;
     if(ai>-1 && bi>-1) return ai-bi;
-    if (repTerritory) {
-      const aIn = zipMatchesTerritory(a.zip, repTerritory);
-      const bIn = zipMatchesTerritory(b.zip, repTerritory);
-      if (aIn && !bIn) return -1;
-      if (bIn && !aIn) return 1;
-    }
     return (b.created||0)-(a.created||0);
   });
   const body=document.getElementById('crmBody');
@@ -1866,10 +1886,13 @@ function renderCRMView(){
     html+=`</div></div>`;
   }
   if(!data.length){
-    html+=`<div class="crm-empty"><div class="crm-empty-icon">🔍</div><div class="crm-empty-msg">No ${tab} found matching your filters.</div></div>`;
+    const emptyMsg = (tab === 'leads' && repTerritory)
+      ? 'No leads in your territory right now — check back after the next harvest run.'
+      : `No ${tab} found matching your filters.`;
+    html+=`<div class="crm-empty"><div class="crm-empty-icon">🔍</div><div class="crm-empty-msg">${emptyMsg}</div></div>`;
     body.innerHTML=html; return;
   }
-  html+=`<div class="crm-section-title">${data.length} ${tab.toUpperCase()}${repTerritory ? ` <span style="color:#1E7B3C">· ${data.filter(r=>zipMatchesTerritory(r.zip, repTerritory)).length} in your territory</span>` : ''}</div><div class="crm-cards">`;
+  html+=`<div class="crm-section-title">${data.length} ${tab.toUpperCase()}${repTerritory ? ` <span style="color:#1E7B3C">· Your Territory</span>` : ''}</div><div class="crm-cards">`;
   data.forEach(r=>{ html+=renderCard(tab,r); });
   html+=`</div>`;
   body.innerHTML=html;
@@ -1938,9 +1961,11 @@ function renderCard(tab,r){
   } else if(tab==='dms_coldcall'){
     extraInfo=`<div class="crm-card-tag">📡 ${escH(r.chamberSource||'Unknown source')}</div>${r.assignedDmsRep?`<div class="crm-card-tag">${escH(r.assignedDmsRep)}</div>`:''}${r.phone?`<div class="crm-card-tag">${escH(r.phone)}</div>`:''}`;
   }
-  const repTerritory = tab === 'leads' ? currentRepTerritory() : null;
-  const inTerritory = repTerritory && zipMatchesTerritory(r.zip, repTerritory);
-  const territoryBadge = inTerritory ? `<span class="crm-badge" style="background:#E8F5E9;color:#1E7B3C;border:1px solid #1E7B3C30">📍 Your Territory</span>` : '';
+  // Note: no per-card "Your Territory" badge here anymore -- now that the
+  // leads list is filtered to territory-only (see renderCRMView), every
+  // visible card would show it, which is just noise. The section header
+  // already says "Your Territory" once for the whole list.
+  const territoryBadge = '';
   return `<div class="crm-card" onclick="viewRecord('${tab}','${r.id}')">
     <div class="crm-card-header">
       <div>
@@ -16051,9 +16076,22 @@ window.uvCollectData = uvCollectData;
 ══════════════════════════════════════════════════════════════ -->
 <div class="full-overlay" id="ovGoals" style="z-index:380">
   <div class="ov-header">
-    <h2>🎯 Goals &amp; Forecast</h2>
+    <div style="display:flex;align-items:center;gap:18px;min-width:0">
+      <h2 style="flex-shrink:0">🎯 Goals &amp; Forecast</h2>
+      <div style="display:flex;align-items:center;gap:10px;padding-left:18px;border-left:1.5px solid rgba(255,255,255,.22);min-width:0">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:15px;color:#fff;white-space:nowrap" id="goalsRepName">My Goals</div>
+        <select id="goalsPeriod" onchange="goalsRender()" style="padding:5px 10px;border:1.5px solid rgba(255,255,255,.3);border-radius:7px;font-size:12px;font-family:inherit;outline:none;background:rgba(255,255,255,.1);color:#fff">
+          <option value="q1">Q1 (Jan–Mar)</option>
+          <option value="q2">Q2 (Apr–Jun)</option>
+          <option value="q3">Q3 (Jul–Sep)</option>
+          <option value="q4">Q4 (Oct–Dec)</option>
+          <option value="annual">Full Year</option>
+        </select>
+        <div id="goalsPeriodLabel" style="font-size:11px;color:rgba(255,255,255,.6);white-space:nowrap"></div>
+      </div>
+    </div>
     <div class="ov-header-btns">
-      <button class="ov-btn" onclick="goHome()">← Home</button>
+      <button class="ov-btn" onclick="goBackSmart()"><span class="js-portal-back-label">← Home</span></button>
       <button class="ov-btn close" onclick="document.getElementById('ovGoals').classList.remove('open')">✕</button>
     </div>
   </div>
@@ -16070,142 +16108,123 @@ window.uvCollectData = uvCollectData;
   <div class="ov-body" style="padding:0;overflow:hidden;display:flex;flex-direction:column">
 
     <!-- ── MY DASHBOARD TAB ── -->
-    <div id="goalsPanel_my" style="flex:1;overflow-y:auto;padding:22px">
+    <div id="goalsPanel_my" style="flex:1;overflow-y:auto;padding:24px 28px">
 
-      <!-- Rep selector (managers see all reps) -->
-      <div id="goalsRepSelectorWrap" style="display:none;margin-bottom:16px">
-        <select id="goalsRepSelector" onchange="goalsLoadRep(this.value)" style="padding:8px 12px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;font-family:inherit;outline:none;min-width:200px">
-          <option value="">— Select Rep —</option>
-        </select>
+      <!-- Single responsive grid for the whole dashboard -- cards size
+           themselves to the available width and wrap onto new rows
+           instead of being squeezed into one overflowing horizontal
+           strip. This is each person's OWN dashboard only: no rep
+           selector here, by design -- if a manager needs a team-wide
+           view, that lives in the separate Manager Dashboard rollup,
+           not in anyone's personal Goals & Forecast page. -->
+      <div id="goalsMainGrid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px;max-width:1400px;margin:0 auto">
+
+      <!-- Quota gauge -- spans 2 cells for visual prominence as the hero metric -->
+      <div style="grid-column:span 2;background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:22px;text-align:center">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft);margin-bottom:14px">Quota Attainment</div>
+        <svg width="200" height="120" viewBox="0 0 200 120" style="overflow:visible;display:block;margin:0 auto">
+          <!-- Background arc -->
+          <path d="M 20 105 A 80 80 0 0 1 180 105" fill="none" stroke="#EEF0F2" stroke-width="18" stroke-linecap="round"/>
+          <!-- Progress arc (filled by JS) -->
+          <path id="goalsArcFill" d="M 20 105 A 80 80 0 0 1 180 105" fill="none" stroke="#C8102E" stroke-width="18" stroke-linecap="round" stroke-dasharray="251.2" stroke-dashoffset="251.2" style="transition:stroke-dashoffset .6s ease,stroke .3s"/>
+          <!-- Center text -->
+          <text x="100" y="90" text-anchor="middle" font-family="Barlow Condensed,sans-serif" font-weight="800" font-size="32" fill="#1A1D21" id="goalsArcPct">0%</text>
+          <text x="100" y="108" text-anchor="middle" font-family="Barlow Condensed,sans-serif" font-weight="700" font-size="11" fill="#9CA3AF" id="goalsArcLabel">of quota</text>
+        </svg>
+        <!-- Distance to milestone -->
+        <div id="goalsMilestone" style="margin-top:10px;font-size:12px;color:var(--soft);line-height:1.5"></div>
+        <!-- Bonus tier -->
+        <div id="goalsBonusTier" style="margin-top:10px"></div>
       </div>
 
-      <!-- Quarter + Period selector -->
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px;flex-wrap:wrap">
-        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:22px;color:var(--ink)" id="goalsRepName">My Goals</div>
-        <select id="goalsPeriod" onchange="goalsRender()" style="padding:6px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;font-family:inherit;outline:none">
-          <option value="q1">Q1 (Jan–Mar)</option>
-          <option value="q2">Q2 (Apr–Jun)</option>
-          <option value="q3">Q3 (Jul–Sep)</option>
-          <option value="q4">Q4 (Oct–Dec)</option>
-          <option value="annual">Full Year</option>
-        </select>
-        <div id="goalsPeriodLabel" style="font-size:12px;color:var(--soft)"></div>
+      <!-- KPI cards -- each its own grid cell, wraps naturally -->
+      <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;text-align:center">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:26px;color:var(--green)" id="goalsRevClosed">$0</div>
+        <div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.08em">Revenue Closed</div>
+        <div style="font-size:11px;color:var(--soft);margin-top:3px" id="goalsRevTarget"></div>
+      </div>
+      <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;text-align:center">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:26px;color:var(--blue)" id="goalsRevPipeline">$0</div>
+        <div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.08em">In Pipeline</div>
+        <div style="font-size:11px;color:var(--soft);margin-top:3px" id="goalsPipelineCount"></div>
+      </div>
+      <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;text-align:center">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:26px;color:var(--amber)" id="goalsRevForecast">$0</div>
+        <div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.08em">Forecasted Close</div>
+        <div style="font-size:11px;color:var(--soft);margin-top:3px" id="goalsForecastBasis"></div>
+      </div>
+      <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;text-align:center">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:26px;color:var(--ink)" id="goalsCommission">$0</div>
+        <div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.08em">Commission Earned</div>
+        <div style="font-size:11px;color:var(--soft);margin-top:3px" id="goalsCommRate"></div>
+      </div>
+      <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;text-align:center">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:26px;color:var(--red)" id="goalsDealsWon">0</div>
+        <div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.08em">Deals Won</div>
+        <div style="font-size:11px;color:var(--soft);margin-top:3px" id="goalsWinRate"></div>
+      </div>
+      <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;text-align:center">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:26px;color:var(--soft)" id="goalsDaysLeft">0</div>
+        <div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.08em">Days Left in Period</div>
+        <div style="font-size:11px;color:var(--soft);margin-top:3px" id="goalsPaceLabel"></div>
       </div>
 
-      <!-- ── QUOTA ATTAINMENT ARC ── -->
-      <div style="display:grid;grid-template-columns:260px 1fr;gap:20px;margin-bottom:20px;align-items:start">
-
-        <!-- Arc gauge -->
-        <div style="background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:22px;text-align:center">
-          <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft);margin-bottom:14px">Quota Attainment</div>
-          <svg width="200" height="120" viewBox="0 0 200 120" style="overflow:visible;display:block;margin:0 auto">
-            <!-- Background arc -->
-            <path d="M 20 105 A 80 80 0 0 1 180 105" fill="none" stroke="#EEF0F2" stroke-width="18" stroke-linecap="round"/>
-            <!-- Progress arc (filled by JS) -->
-            <path id="goalsArcFill" d="M 20 105 A 80 80 0 0 1 180 105" fill="none" stroke="#C8102E" stroke-width="18" stroke-linecap="round" stroke-dasharray="251.2" stroke-dashoffset="251.2" style="transition:stroke-dashoffset .6s ease,stroke .3s"/>
-            <!-- Center text -->
-            <text x="100" y="90" text-anchor="middle" font-family="Barlow Condensed,sans-serif" font-weight="800" font-size="32" fill="#1A1D21" id="goalsArcPct">0%</text>
-            <text x="100" y="108" text-anchor="middle" font-family="Barlow Condensed,sans-serif" font-weight="700" font-size="11" fill="#9CA3AF" id="goalsArcLabel">of quota</text>
-          </svg>
-          <!-- Distance to milestone -->
-          <div id="goalsMilestone" style="margin-top:10px;font-size:12px;color:var(--soft);line-height:1.5"></div>
-          <!-- Bonus tier -->
-          <div id="goalsBonusTier" style="margin-top:10px"></div>
-        </div>
-
-        <!-- KPI row -->
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
-          <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;text-align:center">
-            <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:26px;color:var(--green)" id="goalsRevClosed">$0</div>
-            <div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.08em">Revenue Closed</div>
-            <div style="font-size:11px;color:var(--soft);margin-top:3px" id="goalsRevTarget"></div>
-          </div>
-          <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;text-align:center">
-            <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:26px;color:var(--blue)" id="goalsRevPipeline">$0</div>
-            <div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.08em">In Pipeline</div>
-            <div style="font-size:11px;color:var(--soft);margin-top:3px" id="goalsPipelineCount"></div>
-          </div>
-          <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;text-align:center">
-            <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:26px;color:var(--amber)" id="goalsRevForecast">$0</div>
-            <div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.08em">Forecasted Close</div>
-            <div style="font-size:11px;color:var(--soft);margin-top:3px" id="goalsForecastBasis"></div>
-          </div>
-          <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;text-align:center">
-            <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:26px;color:var(--ink)" id="goalsCommission">$0</div>
-            <div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.08em">Commission Earned</div>
-            <div style="font-size:11px;color:var(--soft);margin-top:3px" id="goalsCommRate"></div>
-          </div>
-          <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;text-align:center">
-            <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:26px;color:var(--red)" id="goalsDealsWon">0</div>
-            <div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.08em">Deals Won</div>
-            <div style="font-size:11px;color:var(--soft);margin-top:3px" id="goalsWinRate"></div>
-          </div>
-          <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;text-align:center">
-            <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:26px;color:var(--soft)" id="goalsDaysLeft">0</div>
-            <div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.08em">Days Left in Period</div>
-            <div style="font-size:11px;color:var(--soft);margin-top:3px" id="goalsPaceLabel"></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- ── FUEL / ENGINE / FINISH LINE ── -->
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:20px">
-
-        <!-- Fuel — Activity -->
-        <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px">
-          <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft);margin-bottom:12px">⛽ Fuel — Weekly Activity</div>
-          <div id="goalsActivityBars" style="display:flex;flex-direction:column;gap:10px"></div>
-          <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
-            <div style="font-size:11px;color:var(--soft);margin-bottom:8px;font-weight:600">This Week — Log Activity</div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
-              <div>
-                <label style="font-size:10px;color:var(--soft);font-weight:700;letter-spacing:.06em;text-transform:uppercase">Calls Made</label>
-                <input type="number" id="goalsInputCalls" min="0" value="0" oninput="goalsSaveActivity()" style="width:100%;padding:5px 8px;border:1.5px solid var(--line);border-radius:6px;font-size:14px;font-family:Barlow Condensed,sans-serif;font-weight:700;text-align:center;outline:none;box-sizing:border-box">
-              </div>
-              <div>
-                <label style="font-size:10px;color:var(--soft);font-weight:700;letter-spacing:.06em;text-transform:uppercase">Site Visits</label>
-                <input type="number" id="goalsInputVisits" min="0" value="0" oninput="goalsSaveActivity()" style="width:100%;padding:5px 8px;border:1.5px solid var(--line);border-radius:6px;font-size:14px;font-family:Barlow Condensed,sans-serif;font-weight:700;text-align:center;outline:none;box-sizing:border-box">
-              </div>
-              <div>
-                <label style="font-size:10px;color:var(--soft);font-weight:700;letter-spacing:.06em;text-transform:uppercase">Surveys Done</label>
-                <input type="number" id="goalsInputSurveys" min="0" value="0" oninput="goalsSaveActivity()" style="width:100%;padding:5px 8px;border:1.5px solid var(--line);border-radius:6px;font-size:14px;font-family:Barlow Condensed,sans-serif;font-weight:700;text-align:center;outline:none;box-sizing:border-box">
-              </div>
-              <div>
-                <label style="font-size:10px;color:var(--soft);font-weight:700;letter-spacing:.06em;text-transform:uppercase">Proposals Sent</label>
-                <input type="number" id="goalsInputProposals" min="0" value="0" oninput="goalsSaveActivity()" style="width:100%;padding:5px 8px;border:1.5px solid var(--line);border-radius:6px;font-size:14px;font-family:Barlow Condensed,sans-serif;font-weight:700;text-align:center;outline:none;box-sizing:border-box">
-              </div>
+      <!-- Fuel — Activity -->
+      <div style="grid-column:span 2;background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft);margin-bottom:12px">⛽ Fuel — Weekly Activity</div>
+        <div id="goalsActivityBars" style="display:flex;flex-direction:column;gap:10px"></div>
+        <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
+          <div style="font-size:11px;color:var(--soft);margin-bottom:8px;font-weight:600">This Week — Log Activity</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+            <div>
+              <label style="font-size:10px;color:var(--soft);font-weight:700;letter-spacing:.06em;text-transform:uppercase">Calls Made</label>
+              <input type="number" id="goalsInputCalls" min="0" value="0" oninput="goalsSaveActivity()" style="width:100%;padding:5px 8px;border:1.5px solid var(--line);border-radius:6px;font-size:14px;font-family:Barlow Condensed,sans-serif;font-weight:700;text-align:center;outline:none;box-sizing:border-box">
+            </div>
+            <div>
+              <label style="font-size:10px;color:var(--soft);font-weight:700;letter-spacing:.06em;text-transform:uppercase">Site Visits</label>
+              <input type="number" id="goalsInputVisits" min="0" value="0" oninput="goalsSaveActivity()" style="width:100%;padding:5px 8px;border:1.5px solid var(--line);border-radius:6px;font-size:14px;font-family:Barlow Condensed,sans-serif;font-weight:700;text-align:center;outline:none;box-sizing:border-box">
+            </div>
+            <div>
+              <label style="font-size:10px;color:var(--soft);font-weight:700;letter-spacing:.06em;text-transform:uppercase">Surveys Done</label>
+              <input type="number" id="goalsInputSurveys" min="0" value="0" oninput="goalsSaveActivity()" style="width:100%;padding:5px 8px;border:1.5px solid var(--line);border-radius:6px;font-size:14px;font-family:Barlow Condensed,sans-serif;font-weight:700;text-align:center;outline:none;box-sizing:border-box">
+            </div>
+            <div>
+              <label style="font-size:10px;color:var(--soft);font-weight:700;letter-spacing:.06em;text-transform:uppercase">Proposals Sent</label>
+              <input type="number" id="goalsInputProposals" min="0" value="0" oninput="goalsSaveActivity()" style="width:100%;padding:5px 8px;border:1.5px solid var(--line);border-radius:6px;font-size:14px;font-family:Barlow Condensed,sans-serif;font-weight:700;text-align:center;outline:none;box-sizing:border-box">
             </div>
           </div>
         </div>
+      </div>
 
-        <!-- Engine — Pipeline Health -->
-        <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px">
-          <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft);margin-bottom:12px">🔧 Engine — Pipeline Health</div>
-          <div id="goalsPipelineHealth" style="display:flex;flex-direction:column;gap:8px"></div>
-          <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
-            <div style="font-size:11px;color:var(--soft);margin-bottom:6px;font-weight:600">Avg Days to Close</div>
-            <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:28px;color:var(--ink)" id="goalsAvgClose">—</div>
-            <div style="font-size:11px;color:var(--soft);margin-top:2px">days from first contact to won</div>
-          </div>
-        </div>
-
-        <!-- Finish Line — Revenue -->
-        <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px">
-          <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft);margin-bottom:12px">🏁 Finish Line — Bonus Tiers</div>
-          <div id="goalsBonusTiers" style="display:flex;flex-direction:column;gap:8px"></div>
-          <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
-            <div style="font-size:11px;color:var(--soft);margin-bottom:4px;font-weight:600">Projected Quarter-End</div>
-            <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:22px;color:var(--green)" id="goalsProjectedEnd">$0</div>
-            <div style="font-size:11px;color:var(--soft);margin-top:2px" id="goalsProjectionNote"></div>
-          </div>
+      <!-- Engine — Pipeline Health -->
+      <div style="grid-column:span 2;background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft);margin-bottom:12px">🔧 Engine — Pipeline Health</div>
+        <div id="goalsPipelineHealth" style="display:flex;flex-direction:column;gap:8px"></div>
+        <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
+          <div style="font-size:11px;color:var(--soft);margin-bottom:6px;font-weight:600">Avg Days to Close</div>
+          <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:28px;color:var(--ink)" id="goalsAvgClose">—</div>
+          <div style="font-size:11px;color:var(--soft);margin-top:2px">days from first contact to won</div>
         </div>
       </div>
 
-      <!-- ── BEHIND PROJECTION WARNING ── -->
-      <div id="goalsBehindWarning" style="display:none;background:#FEF2F2;border-radius:10px;border-left:4px solid var(--red);padding:14px 18px;margin-bottom:16px">
+      <!-- Finish Line — Revenue -->
+      <div style="grid-column:span 2;background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft);margin-bottom:12px">🏁 Finish Line — Bonus Tiers</div>
+        <div id="goalsBonusTiers" style="display:flex;flex-direction:column;gap:8px"></div>
+        <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
+          <div style="font-size:11px;color:var(--soft);margin-bottom:4px;font-weight:600">Projected Quarter-End</div>
+          <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:22px;color:var(--green)" id="goalsProjectedEnd">$0</div>
+          <div style="font-size:11px;color:var(--soft);margin-top:2px" id="goalsProjectionNote"></div>
+        </div>
+      </div>
+
+      <!-- Behind Projection warning -- spans full width when shown -->
+      <div id="goalsBehindWarning" style="display:none;grid-column:1/-1;background:#FEF2F2;border-radius:10px;border-left:4px solid var(--red);padding:14px 18px">
         <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;color:var(--red);margin-bottom:4px">⚠️ Behind Projection</div>
         <div id="goalsBehindMsg" style="font-size:13px;color:var(--ink)"></div>
       </div>
+
+      </div><!-- /goalsMainGrid -->
 
     </div><!-- /goalsPanel_my -->
 
@@ -16632,7 +16651,8 @@ const GOALS_QUOTA    = 'termac_goals_quotas';
 const GOALS_ACTIVITY = 'termac_goals_activity';
 const GOALS_WL       = 'termac_goals_winloss';
 
-let _goalsCurrentRep = null;  // null = current user, string = manager viewing a rep
+// Goals & Forecast is always the logged-in person's own data -- no
+// manager override, no rep selector, by design.
 let _wqConfidence    = 0;
 
 // ── LOAD / SAVE ──
@@ -16725,7 +16745,7 @@ function goalsShowTab(tabId, btn) {
 
 // ── MAIN RENDER ──
 function goalsRender() {
-  const rep    = _goalsCurrentRep || (_currentUser?.name || 'Ted Scholl');
+  const rep    = (_currentUser?.name || 'Ted Scholl');
   const period = document.getElementById('goalsPeriod')?.value || 'q2';
   const quota  = goalsGetQuota(rep, period);
   const pDates = goalsPeriodDates(period);
@@ -16930,7 +16950,7 @@ function goalsRender() {
 
 // ── SAVE ACTIVITY (from inputs) ──
 function goalsSaveActivity() {
-  const rep = _goalsCurrentRep || (_currentUser?.name || 'Ted Scholl');
+  const rep = (_currentUser?.name || 'Ted Scholl');
   const data = {
     calls:     parseInt(document.getElementById('goalsInputCalls')?.value     || 0),
     visits:    parseInt(document.getElementById('goalsInputVisits')?.value    || 0),
@@ -16944,7 +16964,7 @@ function goalsSaveActivity() {
 
 // ── PIPELINE TAB ──
 function goalsRenderPipeline() {
-  const rep     = _goalsCurrentRep || (_currentUser?.name || 'Ted Scholl');
+  const rep     = (_currentUser?.name || 'Ted Scholl');
   const leads   = crmLoad('leads');
   const myLeads = leads.filter(l => (l.assignedRep === rep || l.claimedBy === rep));
   const el      = document.getElementById('goalsPipelineList');
@@ -16984,7 +17004,7 @@ function goalsRenderPipeline() {
 
 // ── ACTIVITY HISTORY TAB ──
 function goalsRenderActivityHistory() {
-  const rep  = _goalsCurrentRep || (_currentUser?.name || 'Ted Scholl');
+  const rep  = (_currentUser?.name || 'Ted Scholl');
   const logs = [];
   const leads    = crmLoad('leads');
   const accounts = crmLoad('accounts');
@@ -17032,7 +17052,7 @@ function goalsLogWinLoss() {
   if (!biz) { alert('Enter business name.'); return; }
   if (outcome === 'lost' && !reason) { alert('Select a loss reason.'); return; }
 
-  const rep     = _goalsCurrentRep || (_currentUser?.name || 'Ted Scholl');
+  const rep     = (_currentUser?.name || 'Ted Scholl');
   const records = goalsGetWinLoss(rep);
   const created = new Date().toISOString();
   const daysToClose = Math.round(Math.random() * 20 + 10); // placeholder
@@ -17057,7 +17077,7 @@ function goalsLogWinLoss() {
 }
 
 function goalsRenderWinLoss() {
-  const rep     = _goalsCurrentRep || (_currentUser?.name || 'Ted Scholl');
+  const rep     = (_currentUser?.name || 'Ted Scholl');
   const records = goalsGetWinLoss(rep);
   const won     = records.filter(r => r.outcome === 'won');
   const lost    = records.filter(r => r.outcome === 'lost');
@@ -17257,25 +17277,18 @@ window.openOverlay = function(key) {
     if (el) {
       buildConfidencePills();
       el.classList.add('open');
-      // Show Set Quotas only for managers
+      // Show Set Quotas only for managers. This is the ONLY manager
+      // exception on this page -- setting a quota target is a manager
+      // action, but everything else here (revenue, pipeline, commission,
+      // activity) is the logged-in person's own data only. There is
+      // deliberately no rep selector: this page never shows anyone
+      // someone else's numbers, manager or not. Team-wide visibility
+      // belongs in the separate Manager Dashboard rollup.
       const isManager = _currentUser?.role === 'manager' || (typeof isManagerUnlocked === 'function' && isManagerUnlocked());
       const setQuotaTab = document.getElementById('goalsTab_setquota');
       if (setQuotaTab) {
         setQuotaTab.classList.toggle('nav-locked', !isManager);
         setQuotaTab.style.opacity = isManager ? '1' : '.4';
-      }
-      // Show rep selector for managers
-      const repWrap = document.getElementById('goalsRepSelectorWrap');
-      if (repWrap && isManager) {
-        repWrap.style.display = 'block';
-        const sel = document.getElementById('goalsRepSelector');
-        if (sel && sel.options.length <= 1) {
-          ['Ted Scholl','J. Smith','M. Johnson','S. Davis'].forEach(r => {
-            const opt = document.createElement('option');
-            opt.value = opt.textContent = r;
-            sel.appendChild(opt);
-          });
-        }
       }
       goalsShowTab('my', document.getElementById('goalsTab_my'));
       return;
@@ -17287,11 +17300,6 @@ window.openOverlay = function(key) {
   }
   if (_origOpenOverlayGoals) _origOpenOverlayGoals(key);
 };
-
-function goalsLoadRep(rep) {
-  _goalsCurrentRep = rep || null;
-  goalsRender();
-}
 
 /* ──────────────────────────────────────
    MANAGER DASHBOARD — Goals Rollup Panel
@@ -19756,12 +19764,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ── Inject commission card into rep goals dashboard ──
   setTimeout(() => {
-    const goalsMy = document.getElementById('goalsPanel_my');
-    if (goalsMy && !document.getElementById('repCommissionCard')) {
+    const goalsGrid = document.getElementById('goalsMainGrid');
+    if (goalsGrid && !document.getElementById('repCommissionCard')) {
       const commDiv = document.createElement('div');
-      commDiv.style.cssText = 'margin-top:16px';
+      commDiv.style.cssText = 'grid-column:1/-1';
       commDiv.innerHTML = '<div id="repCommissionCard"></div>';
-      goalsMy.appendChild(commDiv);
+      goalsGrid.appendChild(commDiv);
     }
   }, 1000);
 
