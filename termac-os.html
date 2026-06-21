@@ -240,9 +240,9 @@ footer{text-align:center;margin-top:40px;color:#9AA0A8;font-size:11px;letter-spa
 .crm-mini-name{font-weight:600;color:var(--ink);margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px}
 .crm-mini-sub{font-size:11px;color:var(--soft)}
 /* 3-across card grid */
-.crm-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
-@media(max-width:900px){.crm-cards{grid-template-columns:repeat(2,1fr)}}
-@media(max-width:580px){.crm-cards{grid-template-columns:1fr}}
+.crm-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media(max-width:900px){.crm-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:580px){.crm-cards{grid-template-columns:minmax(0,1fr)}}
 .crm-card{background:#fff;border:1.5px solid var(--line);border-radius:10px;padding:16px;position:relative;transition:all .15s;cursor:pointer}
 .crm-card:hover{border-color:var(--red);box-shadow:0 2px 10px rgba(200,16,46,.08)}
 .crm-card-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:8px}
@@ -1274,6 +1274,7 @@ setTimeout(function(){ if(typeof TECHS!=='undefined') renderLB('score'); }, 200)
       <button class="crm-btn" id="crmOrphanedBtn" onclick="openOrphanedReport()" style="background:#FEE2E2;color:#991B1B;border:1.5px solid #99181B40;display:none">🔍 Orphaned Customers</button>
       <button class="crm-btn" id="crmImportCallListBtn" onclick="openCallListImport()" style="background:#1E3A8A;color:#fff;display:none">⬇ Import Call List (CSV)</button>
       <button class="crm-btn" id="crmHarvestGMapsBtn" onclick="openGoogleMapsHarvest()" style="background:#0F9D58;color:#fff;display:none">🌎 Harvest Google Maps</button>
+      <button class="crm-btn" id="crmDuplicatesBtn" onclick="openDuplicateFinder()" style="background:#fff;color:#1A1D21;border:1.5px solid var(--line);display:none">🔍 Find Duplicates</button>
       <button class="crm-btn primary" id="crmAddBtn" onclick="openAddModal()">+ Add New</button>
     </div>
     <!-- harvest status banner -->
@@ -1855,6 +1856,11 @@ function switchCRMTab(tab){
   // same as the other live harvest buttons above, unlike the free CSV import.
   const harvestGMapsBtn = document.getElementById('crmHarvestGMapsBtn');
   if (harvestGMapsBtn) harvestGMapsBtn.style.display = (tab === 'dms_coldcall' && isHarvestAdmin) ? '' : 'none';
+  // Can delete records (after merging activity history into whichever
+  // one is kept) -- admin-gated like the harvesters, not open to every
+  // DMS rep, even though it's free to run.
+  const duplicatesBtn = document.getElementById('crmDuplicatesBtn');
+  if (duplicatesBtn) duplicatesBtn.style.display = ((tab === 'leads' || tab === 'dms_coldcall') && isHarvestAdmin) ? '' : 'none';
   renderCRMView();
 }
 
@@ -9304,6 +9310,218 @@ async function runGoogleMapsHarvest(){
     statusEl.textContent = '❌ Harvest failed: ' + e.message;
     runBtn.disabled = false; runBtn.style.opacity = '1';
   }
+}
+
+/* ═══════════════════════════════════
+   DUPLICATE FINDER — Call List & Leads
+   Confirms the harvest/import-time dedup actually worked, and catches
+   anything that slipped in another way (manual entry, CSV import,
+   multiple live harvesters touching the same business, an account that
+   churned and got re-harvested as a cold call, etc). Read-only scan --
+   nothing is deleted until a group is explicitly merged.
+══════════════════════════════════════ */
+function dupNormBizKey(business, zip){
+  const b = (business||'').toLowerCase().trim().replace(/\s+/g,' ');
+  const z = (zip||'').trim();
+  return b + '|' + z;
+}
+function dupNormPhone(phone){
+  return (phone||'').replace(/\D/g,''); // digits only, so formatting differences don't matter
+}
+
+// Within one pool (dms_coldcall or leads), groups records two ways:
+// name+zip (the same key already used at harvest/import time) and phone
+// number (catches name variants at the same number, e.g. "Tony's Pizza"
+// vs "Tony's Pizza LLC"). A phone group is only reported separately if
+// it isn't already fully covered by a name+zip group, so the same pair
+// of records doesn't show up twice for two different reasons.
+function findDuplicateGroups(poolName, records){
+  const byKey = new Map();
+  const byPhone = new Map();
+  records.forEach(r => {
+    const key = dupNormBizKey(r.business || r.name, r.zip);
+    if (key !== '|') {
+      if (!byKey.has(key)) byKey.set(key, []);
+      byKey.get(key).push(r);
+    }
+    const ph = dupNormPhone(r.phone);
+    if (ph && ph.length >= 7) {
+      if (!byPhone.has(ph)) byPhone.set(ph, []);
+      byPhone.get(ph).push(r);
+    }
+  });
+
+  const groups = [];
+  const idsInKeyGroups = new Set();
+  byKey.forEach((recs, key) => {
+    if (recs.length > 1) {
+      groups.push({ pool: poolName, matchType: 'Same business name + ZIP', matchValue: key.split('|')[0], records: recs });
+      recs.forEach(r => idsInKeyGroups.add(r.id));
+    }
+  });
+  byPhone.forEach((recs, ph) => {
+    if (recs.length > 1 && !recs.every(r => idsInKeyGroups.has(r.id))) {
+      groups.push({ pool: poolName, matchType: 'Same phone number', matchValue: ph, records: recs });
+    }
+  });
+  return groups;
+}
+
+// Worse than a within-pool duplicate: a business sitting in the cold-call
+// pool that's ALSO a lead, contact, or account means DMS could be cold-
+// calling someone already in the pipeline or already a customer.
+// Accounts win over leads/contacts as the more authoritative match (if
+// it's already a customer, that's the relevant fact regardless of
+// whether it also happens to be sitting in the leads pool too).
+function findCrossPoolOverlaps(){
+  const coldcall = crmLoad('dms_coldcall') || [];
+  const leads    = crmLoad('leads') || [];
+  const contacts = crmLoad('contacts') || [];
+  const accounts = crmLoad('accounts') || [];
+
+  function indexByName(records, nameField){
+    const m = new Map();
+    records.forEach(r => {
+      const k = (typeof nameField === 'function' ? nameField(r) : r[nameField] || '').toLowerCase().trim();
+      if (!k) return;
+      if (!m.has(k)) m.set(k, []);
+      m.get(k).push(r);
+    });
+    return m;
+  }
+  const acctIdx = indexByName(accounts, r => r.business || r.name);
+  const leadIdx = indexByName(leads, r => r.business || r.name);
+  const contactIdx = indexByName(contacts, 'company');
+
+  const overlaps = [];
+  coldcall.forEach(cc => {
+    const k = (cc.business || cc.name || '').toLowerCase().trim();
+    if (!k) return;
+    if (acctIdx.has(k)) overlaps.push({ coldcallRecord: cc, matchedIn: 'accounts', matchedLabel: 'an existing Account (already a customer)', matchedRecords: acctIdx.get(k) });
+    else if (leadIdx.has(k)) overlaps.push({ coldcallRecord: cc, matchedIn: 'leads', matchedLabel: 'an existing Lead', matchedRecords: leadIdx.get(k) });
+    else if (contactIdx.has(k)) overlaps.push({ coldcallRecord: cc, matchedIn: 'contacts', matchedLabel: 'an existing Contact', matchedRecords: contactIdx.get(k) });
+  });
+  return overlaps;
+}
+
+function openDuplicateFinder(){
+  document.getElementById('ovDuplicates').classList.add('open');
+  renderDuplicateFinder();
+}
+function closeDuplicateFinder(){
+  document.getElementById('ovDuplicates').classList.remove('open');
+}
+
+function renderDuplicateFinder(){
+  const summaryEl = document.getElementById('duplicatesSummary');
+  const listEl = document.getElementById('duplicatesList');
+  if (!summaryEl || !listEl) return;
+
+  const coldcallGroups = findDuplicateGroups('dms_coldcall', crmLoad('dms_coldcall') || []);
+  const leadGroups = findDuplicateGroups('leads', crmLoad('leads') || []);
+  const overlaps = findCrossPoolOverlaps();
+  const totalIssues = coldcallGroups.length + leadGroups.length + overlaps.length;
+
+  if (!totalIssues){
+    summaryEl.textContent = '';
+    listEl.innerHTML = `<div style="text-align:center;padding:32px;color:var(--soft)">
+      <div style="font-size:32px;margin-bottom:10px">✅</div>
+      <div style="font-size:14px;font-weight:700;color:var(--ink)">No duplicates found</div>
+      <div style="font-size:12px;margin-top:4px">Scanned ${(crmLoad('dms_coldcall')||[]).length.toLocaleString()} call list records and ${(crmLoad('leads')||[]).length.toLocaleString()} leads — clean.</div>
+    </div>`;
+    return;
+  }
+
+  summaryEl.textContent = `${coldcallGroups.length} duplicate group${coldcallGroups.length===1?'':'s'} in the call list · ${leadGroups.length} in leads · ${overlaps.length} call-list ${overlaps.length===1?'entry':'entries'} already elsewhere in the system`;
+
+  const renderRecordRow = (r, groupId, idx, pool) => `
+    <label style="display:flex;align-items:flex-start;gap:10px;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;margin-bottom:6px;cursor:pointer;background:#fff">
+      <input type="radio" name="dupKeep_${groupId}" value="${r.id}" ${idx===0?'checked':''} style="margin-top:3px">
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:700;font-size:13px;color:var(--ink)">${escH(r.business||r.name||'(no name)')}</div>
+        <div style="font-size:11px;color:var(--soft);margin-top:2px">${escH(r.address||'')} ${r.zip?'· '+escH(r.zip):''} ${r.phone?'· '+escH(r.phone):''}</div>
+        <div style="font-size:10px;color:#9CA3AF;margin-top:2px">Source: ${escH(r.source||r.chamberSource||'—')} · ${(r.activityLog||[]).length} activity entr${(r.activityLog||[]).length===1?'y':'ies'}${r.status?' · Status: '+escH(r.status):''}</div>
+      </div>
+    </label>`;
+
+  const renderGroupCard = (g, i) => {
+    const groupId = `${g.pool}_${i}`;
+    return `
+    <div class="crm-card" style="margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div>
+          <span class="crm-badge" style="background:${g.pool==='dms_coldcall'?'#1E3A8A':'#0F9D58'};color:#fff">${g.pool==='dms_coldcall'?'Call List':'Leads'}</span>
+          <span style="font-size:11px;color:var(--soft);margin-left:8px">${escH(g.matchType)}: <strong>${escH(g.matchValue)}</strong></span>
+        </div>
+        <span style="font-size:11px;color:var(--soft)">${g.records.length} records</span>
+      </div>
+      ${g.records.map((r,idx) => renderRecordRow(r, groupId, idx, g.pool)).join('')}
+      <button class="crm-action-btn" style="margin-top:6px;background:var(--red);color:#fff;border-color:var(--red)" onclick="mergeDuplicateGroup('${g.pool}','${groupId}',${JSON.stringify(g.records.map(r=>r.id)).replace(/"/g,'&quot;')})">⚭ Merge — keep selected, delete the rest</button>
+    </div>`;
+  };
+
+  const renderOverlapCard = (o, i) => `
+    <div class="crm-card" style="margin-bottom:12px;border-color:#F2B705">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <span class="crm-badge" style="background:#FFF3CD;color:#856404">Already in the system</span>
+        <span style="font-size:11px;color:var(--soft)">Found in ${o.matchedLabel}</span>
+      </div>
+      <div style="font-size:13px;font-weight:700;color:var(--ink)">${escH(o.coldcallRecord.business||o.coldcallRecord.name)}</div>
+      <div style="font-size:11px;color:var(--soft);margin-top:2px">On the call list as: ${escH(o.coldcallRecord.address||'')} ${o.coldcallRecord.phone?'· '+escH(o.coldcallRecord.phone):''}</div>
+      <div style="font-size:11px;color:var(--soft);margin-top:4px">Matches ${o.matchedRecords.length} record${o.matchedRecords.length===1?'':'s'} in ${o.matchedIn}: ${o.matchedRecords.map(m=>escH(m.business||m.name)).join(', ')}</div>
+      <button class="crm-action-btn" style="margin-top:8px;background:#F2B705;color:#1A1D21;border-color:#F2B705" onclick="removeOverlapFromCallList('${o.coldcallRecord.id}')">🗑 Remove from Call List</button>
+    </div>`;
+
+  listEl.innerHTML =
+    (coldcallGroups.length ? `<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--soft);margin:16px 0 8px">Duplicates within the Call List</div>` + coldcallGroups.map(renderGroupCard).join('') : '') +
+    (leadGroups.length ? `<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--soft);margin:16px 0 8px">Duplicates within Leads</div>` + leadGroups.map(renderGroupCard).join('') : '') +
+    (overlaps.length ? `<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--soft);margin:16px 0 8px">Call List entries already elsewhere in the system</div>` + overlaps.map(renderOverlapCard).join('') : '');
+}
+
+// Keeps whichever record the radio button selected, folds the OTHER
+// records' activity logs into the kept one (so call history isn't lost),
+// and deletes the rest. Pool is whichever one the group came from --
+// duplicate groups never span pools (cross-pool matches are handled by
+// removeOverlapFromCallList instead).
+function mergeDuplicateGroup(pool, groupId, recordIds){
+  const keepId = document.querySelector(`input[name="dupKeep_${groupId}"]:checked`)?.value;
+  if (!keepId){ alert('Select which record to keep first.'); return; }
+  if (!confirm(`Keep 1 record and delete ${recordIds.length-1} other${recordIds.length-1===1?'':'s'}? Their call/activity history will be merged into the one you keep.`)) return;
+
+  const data = crmLoad(pool);
+  const keepRec = data.find(r => r.id === keepId);
+  if (!keepRec) return;
+
+  const toDelete = recordIds.filter(id => id !== keepId);
+  let mergedActivity = keepRec.activityLog || [];
+  toDelete.forEach(id => {
+    const rec = data.find(r => r.id === id);
+    if (rec && Array.isArray(rec.activityLog) && rec.activityLog.length){
+      mergedActivity = mergedActivity.concat(rec.activityLog);
+    }
+  });
+  // Newest first, consistent with how activity logs render elsewhere
+  mergedActivity.sort((a,b) => (b.ts||0) - (a.ts||0));
+  keepRec.activityLog = mergedActivity;
+
+  const remaining = data.filter(r => !toDelete.includes(r.id));
+  crmSave(pool, remaining);
+  if (pool === 'dms_coldcall') updateDmsCallCountBadge();
+  renderDuplicateFinder();
+  if (crmCurrentTab === pool) renderCRMView();
+}
+
+// Cross-pool overlap: the cold-call entry is the redundant one (the
+// lead/contact/account is the authoritative record), so this just
+// removes the call-list copy -- no merge needed since it's a different
+// pool's record being kept, not a sibling in the same pool.
+function removeOverlapFromCallList(coldcallId){
+  if (!confirm('Remove this entry from the call list? It already exists elsewhere in the system, so this just stops DMS from cold-calling it.')) return;
+  const data = crmLoad('dms_coldcall');
+  crmSave('dms_coldcall', data.filter(r => r.id !== coldcallId));
+  updateDmsCallCountBadge();
+  renderDuplicateFinder();
+  if (crmCurrentTab === 'dms_coldcall') renderCRMView();
 }
 
 // DMS found something real — push it into the actual Leads pool sales
@@ -16905,6 +17123,25 @@ window.uvCollectData = uvCollectData;
         Accounts with no rep on file — usually a vacated territory or a customer that came in before a rep was assigned. Assign <strong>Permanently</strong> if this is the account's real long-term rep, or <strong>Temporarily</strong> if someone's just covering until a rep is hired for that area — temporary assignments stay flagged on the account so they're easy to revisit later.
       </div>
       <div id="orphanedList"></div>
+    </div>
+  </div>
+</div>
+
+<div class="full-overlay" id="ovDuplicates" style="z-index:410">
+  <div class="ov-header">
+    <h2>🔍 Duplicate Finder — Call List &amp; Leads</h2>
+    <div class="ov-header-btns">
+      <button class="ov-btn" onclick="renderDuplicateFinder()" style="background:rgba(255,255,255,.12)">↻ Re-scan</button>
+      <button class="ov-btn close" onclick="closeDuplicateFinder()">✕</button>
+    </div>
+  </div>
+  <div class="ov-body" style="padding:22px;overflow-y:auto">
+    <div style="max-width:820px;margin:0 auto">
+      <div style="font-size:12px;color:var(--soft);line-height:1.6;margin-bottom:18px;padding:12px;background:var(--bg);border-radius:8px">
+        Read-only scan — nothing is deleted until you choose to merge a group or remove an overlap below. Matches on business name + ZIP (the same key the harvest/import dedup already uses) and separately on phone number, which catches name variants like "Tony's Pizza" vs. "Tony's Pizza LLC" at the same number. Merging keeps whichever record you pick and folds the others' call/activity history into it before deleting them — nothing gets silently lost.
+      </div>
+      <div id="duplicatesSummary" style="font-size:12px;font-weight:700;color:var(--ink);margin-bottom:14px"></div>
+      <div id="duplicatesList"></div>
     </div>
   </div>
 </div>
