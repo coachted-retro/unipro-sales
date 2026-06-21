@@ -6725,9 +6725,9 @@ function fsBuildChecklist(containerId, key, colorClass) {
 // flow into the combined estimate and findings summary automatically.
 const FS_PROXY = 'https://unipro-ai-proxy.tedscholl.workers.dev/';
 const FS_CAMERA_PROMPTS = {
-  hood:  'This is a kitchen hood suppression system. In 2-3 sentences, assess: (1) visible condition of nozzles, actuation cable, pull station, and agent cylinder, (2) any visible deficiencies or damage, (3) whether it appears current or overdue for service. Be specific and professional.',
-  ext:   'This is a fire extinguisher. In 2-3 sentences, assess: (1) whether the pressure gauge needle is in the green zone, (2) visible condition of the pin, tamper seal, and hose, (3) whether a compliant location/inspection sign is visible above or near the unit. Be specific and professional.',
-  light: 'This is an emergency exit light or illuminated exit sign. In 2-3 sentences, assess: (1) whether the unit appears to be illuminated/functional, (2) any visible damage, painted-over lenses, or missing covers, (3) overall condition. Be specific and professional.'
+  hood:  'Photo of a kitchen hood suppression system. State the single most important visible finding in ONE short sentence, under 20 words: a specific deficiency if you see one (damage, missing pull station, expired tag, blocked nozzle, etc.), or "No visible deficiencies" if it looks properly maintained. Plain text only -- no headers, no markdown, no bullet points, no multi-part breakdown.',
+  ext:   'Photo of a fire extinguisher. State the single most important visible finding in ONE short sentence, under 20 words: gauge needle position if visible, a specific deficiency (damaged hose, missing pin/seal, missing signage), or "No visible deficiencies" if it looks compliant. Plain text only -- no headers, no markdown, no bullet points, no multi-part breakdown.',
+  light: 'Photo of an emergency exit light or sign. State the single most important visible finding in ONE short sentence, under 20 words: whether it appears illuminated/functional, a specific deficiency (damage, painted-over lens, missing cover), or "No visible deficiencies" if it looks functional. Plain text only -- no headers, no markdown, no bullet points, no multi-part breakdown.'
 };
 
 function fsCameraButtonHTML(key, idx) {
@@ -6775,13 +6775,13 @@ async function fsAnalyzePhoto(key, idx, input) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: 'claude-sonnet-4-6',
-          max_tokens: 250,
+          max_tokens: 60, // hard cap -- forces brevity even if the model ignores the "one sentence" prompt instruction
           messages: [{ role: 'user', content: [{
             type: 'image',
             source: { type: 'base64', media_type: file.type, data: b64 }
           }, {
             type: 'text',
-            text: FS_CAMERA_PROMPTS[key] || 'Briefly assess the condition of this fire protection equipment.'
+            text: FS_CAMERA_PROMPTS[key] || 'Briefly assess the condition of this fire protection equipment in one short sentence.'
           }]}]
         })
       });
@@ -10637,21 +10637,52 @@ function svBuildScope(){
 // ── Findings photos — shown on the Scope panel, before the disclaimer.
 //    Reuses the flat photos[] builder from Phase 1 so this stays the
 //    single source of truth, same as the Account Info Photos tab.
+//    Grouped by service + device type (hood/ext/light) rather than one
+//    flat grid -- multiple photos of the same equipment type sit
+//    together under a shared header, so reviewing this with the client
+//    reads as "here's the hood findings... here's the extinguishers..."
+//    instead of an undifferentiated photo wall.
+const FS_DEVICE_ICON  = { hood:'🔥', ext:'🧯', light:'💡' };
+const FS_DEVICE_LABEL = { hood:'Hood Suppression', ext:'Fire Extinguishers', light:'Exit / Emergency Lighting' };
+
 function svBuildFindingsPhotos(){
   const el = document.getElementById('svFindingsPhotos');
   if (!el) return;
   const photos = (typeof buildAccountPhotosArray === 'function' ? buildAccountPhotosArray(svState.surveyData) : [])
     .filter(p => p.aiNote);
   if (!photos.length) { el.innerHTML = ''; return; }
-  el.innerHTML = `
-    <div class="est-section-title" style="margin-bottom:10px">🔍 What We Found On-Site</div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px">
-      ${photos.map(p => `
-        <div style="background:#F9FAFB;border-radius:8px;overflow:hidden;border:1px solid var(--line)">
-          <img src="${p.url}" style="width:100%;height:95px;object-fit:cover;display:block" loading="lazy">
-          <div style="padding:7px 9px;font-size:11px;color:var(--ink);line-height:1.4">🤖 ${p.aiNote}</div>
-        </div>`).join('')}
-    </div>`;
+
+  const groups = {};
+  const order = [];
+  photos.forEach(p => {
+    const deviceType = (p.slot || '').replace(/_\d+$/, '');
+    const groupKey = p.service + '|' + deviceType;
+    if (!groups[groupKey]) { groups[groupKey] = { service: p.service, deviceType, photos: [] }; order.push(groupKey); }
+    groups[groupKey].photos.push(p);
+  });
+
+  el.innerHTML = `<div class="est-section-title" style="margin-bottom:10px">🔍 What We Found On-Site</div>` +
+    order.map(k => {
+      const g = groups[k];
+      const c = serviceColor(g.service);
+      const icon = FS_DEVICE_ICON[g.deviceType] || '📷';
+      const label = FS_DEVICE_LABEL[g.deviceType] || (g.deviceType.charAt(0).toUpperCase() + g.deviceType.slice(1));
+      return `
+      <div style="margin-bottom:16px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+          <span style="background:${c.bg};color:${c.color};border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700">${serviceLabel(g.service)}</span>
+          <span style="font-size:13px;font-weight:700;color:var(--ink)">${icon} ${label}</span>
+          <span style="font-size:11px;color:var(--soft)">${g.photos.length} photo${g.photos.length > 1 ? 's' : ''}</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px">
+          ${g.photos.map(p => `
+            <div style="background:#F9FAFB;border-radius:8px;overflow:hidden;border:1px solid var(--line)">
+              <img src="${p.url}" style="width:100%;height:110px;object-fit:cover;display:block" loading="lazy">
+              <div style="padding:7px 9px;font-size:11px;color:var(--ink);line-height:1.4">🤖 ${p.aiNote}</div>
+            </div>`).join('')}
+        </div>
+      </div>`;
+    }).join('');
 }
 
 // ── Disclaimer gate -> Build Estimate. Replaces the old separate Done
