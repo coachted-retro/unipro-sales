@@ -256,6 +256,7 @@ footer{text-align:center;margin-top:40px;color:#9AA0A8;font-size:11px;letter-spa
 .badge-active{background:#E8F5E9;color:var(--green)}
 .badge-inactive{background:#F3F4F6;color:var(--soft)}
 .badge-winback{background:#F3E8FF;color:#7C3AED}
+.badge-dead{background:#1A1D21;color:#fff}
 .crm-card-meta{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
 .crm-card-tag{font-size:11px;color:var(--soft);background:var(--bg);border-radius:4px;padding:2px 6px}
 .crm-card-actions{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
@@ -263,6 +264,10 @@ footer{text-align:center;margin-top:40px;color:#9AA0A8;font-size:11px;letter-spa
 .crm-action-btn:hover{background:var(--ink);color:#fff;border-color:var(--ink)}
 .crm-action-btn.convert{background:var(--red);color:#fff;border-color:var(--red)}
 .crm-action-btn.convert:hover{background:#8B0A1E}
+.crm-action-btn.dead{background:#fff;color:#6B7280;border-color:var(--line)}
+.crm-action-btn.dead:hover{background:#1A1D21;color:#fff;border-color:#1A1D21}
+.crm-action-btn.restore{background:var(--green);color:#fff;border-color:var(--green)}
+.crm-action-btn.restore:hover{background:#15602F}
 .crm-empty{text-align:center;padding:60px 20px;color:var(--soft)}
 .crm-empty-icon{font-size:40px;margin-bottom:12px}
 .crm-empty-msg{font-size:14px}
@@ -1258,6 +1263,7 @@ setTimeout(function(){ if(typeof TECHS!=='undefined') renderLB('score'); }, 200)
         <option value="active">Active</option>
         <option value="inactive">Inactive</option>
         <option value="winback">Win-Back</option>
+        <option value="dead">💀 Dead</option>
       </select>
       <button class="crm-btn" id="crmHarvestBtn" onclick="harvestRunLive()" style="background:#F2B705;color:#1A1D21;display:none">🌾 Harvest PA Leads</button>
       <button class="crm-btn" id="crmHarvestDEBtn" onclick="harvestRunLiveDE()" style="background:#F2B705;color:#1A1D21;display:none">🌾 Harvest DE Leads</button>
@@ -1782,11 +1788,11 @@ function switchCRMTab(tab){
   // Update status filter options per tab
   const sf=document.getElementById('crmStatusFilter');
   if(tab==='leads' || tab==='dms_coldcall'){
-    sf.innerHTML='<option value="">All Statuses</option><option value="hot">🔥 Hot — Promote me</option><option value="warm">☀️ Warm — Interested/Callback</option><option value="cold">❄️ Cold — No answer/Not interested</option><option value="new">New — Not yet called</option>';
+    sf.innerHTML='<option value="">All Statuses</option><option value="hot">🔥 Hot — Promote me</option><option value="warm">☀️ Warm — Interested/Callback</option><option value="cold">❄️ Cold — No answer/Not interested</option><option value="new">New — Not yet called</option><option value="dead">💀 Dead</option>';
   } else if(tab==='accounts'){
-    sf.innerHTML='<option value="">All Statuses</option><option value="active">Active</option><option value="inactive">Inactive</option><option value="winback">Win-Back</option>';
+    sf.innerHTML='<option value="">All Statuses</option><option value="active">Active</option><option value="inactive">Inactive</option><option value="winback">Win-Back</option><option value="dead">💀 Dead</option>';
   } else {
-    sf.innerHTML='<option value="">All</option>';
+    sf.innerHTML='<option value="">All</option><option value="dead">💀 Dead</option>';
   }
   // Harvesting is an admin action now -- Ted runs it on a schedule and
   // whatever comes in routes into each rep's OWN territory automatically
@@ -1855,6 +1861,7 @@ function renderCRMView(){
   if(q) data=data.filter(r=>JSON.stringify(r).toLowerCase().includes(q));
   if(co) data=data.filter(r=>r.company===co);
   if(st) data=data.filter(r=>r.status===st);
+  else data=data.filter(r=>r.status!=='dead'); // dead records hidden by default — use Status filter to view them
   // Leads tab: reps (and territory-carrying managers) only see leads that
   // actually fall in their own territory -- harvested leads route to the
   // right person automatically by ZIP rather than dumping the whole pool
@@ -1901,8 +1908,8 @@ function renderCRMView(){
 function escH(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
 function statusBadge(s){
-  const map={hot:'badge-hot',warm:'badge-warm',cold:'badge-cold',new:'badge-new',active:'badge-active',inactive:'badge-inactive',winback:'badge-winback'};
-  const labels={hot:'🔥 Hot',warm:'☀️ Warm',cold:'❄️ Cold',new:'New',active:'Active',inactive:'Inactive',winback:'Win-Back'};
+  const map={hot:'badge-hot',warm:'badge-warm',cold:'badge-cold',new:'badge-new',active:'badge-active',inactive:'badge-inactive',winback:'badge-winback',dead:'badge-dead'};
+  const labels={hot:'🔥 Hot',warm:'☀️ Warm',cold:'❄️ Cold',new:'New',active:'Active',inactive:'Inactive',winback:'Win-Back',dead:'💀 Dead'};
   return `<span class="crm-badge ${map[s]||'badge-cold'}">${labels[s]||s}</span>`;
 }
 
@@ -1910,32 +1917,42 @@ function renderCard(tab,r){
   let actions='';
   const isReception = _currentUser?.role === 'reception';
   const isDivision  = _currentUser?.role?.startsWith('div_');
-  if(tab==='leads'){
+  if (r.status === 'dead') {
+    // Dead records are locked down to a single action: restore them.
+    // This is the only way back in — keeps the dead list honest as a
+    // record of what was disqualified and by whom (see openDeadModal).
+    actions=`<button class="crm-action-btn restore" onclick="restoreRecord('${r.id}','${tab}')">↩ Restore</button>`;
+  } else if(tab==='leads'){
     if (isReception) {
       // Reception: assign leads + view account — no log/appt/convert
       actions=`<button class="crm-action-btn" onclick="receptionAssignLead('${r.id}')">📋 Assign to Rep</button>
-               <button class="crm-action-btn" onclick="openLogModal('${r.id}','leads')">📞 Log</button>`;
+               <button class="crm-action-btn" onclick="openLogModal('${r.id}','leads')">📞 Log</button>
+               <button class="crm-action-btn dead" onclick="openDeadModal('${r.id}','leads')">💀 Dead</button>`;
     } else if (isDivision) {
       // Division offices: log and view only — no convert
       actions=`<button class="crm-action-btn" onclick="openLogModal('${r.id}','leads')">📞 Log</button>
-               <button class="crm-action-btn" onclick="openFollowupModal('${r.id}','leads')">🔔 Follow-Up</button>`;
+               <button class="crm-action-btn" onclick="openFollowupModal('${r.id}','leads')">🔔 Follow-Up</button>
+               <button class="crm-action-btn dead" onclick="openDeadModal('${r.id}','leads')">💀 Dead</button>`;
     } else {
       actions=`<button class="crm-action-btn" onclick="openLogModal('${r.id}','leads')">📞 Log Call</button>
                <button class="crm-action-btn" onclick="openApptModal('${r.id}','leads')">📅 Appt</button>
                <button class="crm-action-btn" onclick="openFollowupModal('${r.id}','leads')">🔔 Follow-Up</button>
-               <button class="crm-action-btn convert" onclick="convertRecord('${r.id}','leads','contacts')">→ Contact</button>`;
+               <button class="crm-action-btn convert" onclick="convertRecord('${r.id}','leads','contacts')">→ Contact</button>
+               <button class="crm-action-btn dead" onclick="openDeadModal('${r.id}','leads')">💀 Dead</button>`;
     }
   } else if(tab==='contacts'){
     actions=`<button class="crm-action-btn" onclick="openLogModal('${r.id}','contacts')">📞 Log</button>
              <button class="crm-action-btn" onclick="openApptModal('${r.id}','contacts')">📅 Appt</button>
              <button class="crm-action-btn" onclick="openFollowupModal('${r.id}','contacts')">🔔 Follow-Up</button>
-             <button class="crm-action-btn convert" onclick="convertRecord('${r.id}','contacts','accounts')">→ Account</button>`;
+             <button class="crm-action-btn convert" onclick="convertRecord('${r.id}','contacts','accounts')">→ Account</button>
+             <button class="crm-action-btn dead" onclick="openDeadModal('${r.id}','contacts')">💀 Dead</button>`;
   } else if(tab==='accounts'){
     actions=`<button class="crm-action-btn" onclick="openSiteSurvey('${r.id}')">📋 Survey</button>
              <button class="crm-action-btn" onclick="openLogModal('${r.id}','accounts')">📞 Log</button>
              <button class="crm-action-btn" onclick="openApptModal('${r.id}','accounts')">📅 Appt</button>
              <button class="crm-action-btn" onclick="openFollowupModal('${r.id}','accounts')">🔔 Follow-Up</button>
-             <button class="crm-action-btn" onclick="editRecord('${r.id}','accounts')">✏️ Edit</button>`;
+             <button class="crm-action-btn" onclick="editRecord('${r.id}','accounts')">✏️ Edit</button>
+             <button class="crm-action-btn dead" onclick="openDeadModal('${r.id}','accounts')">💀 Dead</button>`;
   } else if(tab==='dms_coldcall'){
     if (r.promotedToLeadId) {
       actions=`<button class="crm-action-btn" onclick="openLogModal('${r.id}','dms_coldcall')">📞 Log</button>
@@ -2467,6 +2484,37 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
         <!-- Populated by refreshManagerDashboard -->
       </div>
       <div style="border-top:1px solid var(--line);padding-top:10px;margin-top:10px;font-size:11px;color:var(--soft)">This pool never appears in the sales Leads tab — visible to DMS and managers only.</div>
+    </div>
+  </div>
+
+  <!-- DEAD / DISQUALIFIED RECORDS — leads, contacts, and accounts marked
+       dead (do-not-contact, bad lead, out of business, duplicate, etc).
+       These are pulled from every active list (see renderCRMView) but
+       tracked here for accountability: how many, by whom, for what reason. -->
+  <div style="margin-bottom:16px">
+    <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px">
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft);margin-bottom:12px">💀 Dead / Disqualified Records</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:12px">
+        <div style="text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:22px;color:var(--ink)" id="mgrDeadTotal">—</div><div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.06em">Total Dead</div></div>
+        <div style="text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:22px;color:var(--red)" id="mgrDeadLeads">—</div><div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.06em">Leads</div></div>
+        <div style="text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:22px;color:var(--blue)" id="mgrDeadContacts">—</div><div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.06em">Contacts</div></div>
+        <div style="text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:22px;color:var(--amber)" id="mgrDeadAccounts">—</div><div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.06em">Accounts</div></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+        <div id="mgrDeadByRepTable" style="font-size:11px">
+          <div style="display:grid;grid-template-columns:1fr auto;gap:4px;padding:4px 0;border-bottom:1px solid var(--line);font-weight:700;color:var(--soft);font-size:10px;text-transform:uppercase;letter-spacing:.06em">
+            <span>Marked By</span><span>Count</span>
+          </div>
+          <!-- Populated by refreshManagerDashboard -->
+        </div>
+        <div id="mgrDeadByReasonTable" style="font-size:11px">
+          <div style="display:grid;grid-template-columns:1fr auto;gap:4px;padding:4px 0;border-bottom:1px solid var(--line);font-weight:700;color:var(--soft);font-size:10px;text-transform:uppercase;letter-spacing:.06em">
+            <span>Reason</span><span>Count</span>
+          </div>
+          <!-- Populated by refreshManagerDashboard -->
+        </div>
+      </div>
+      <div style="border-top:1px solid var(--line);padding-top:10px;margin-top:10px;font-size:11px;color:var(--soft)">Dead records are hidden from the Leads/Contacts/Accounts lists by default — filter Status to "💀 Dead" in the CRM to view or restore them.</div>
     </div>
   </div>
 
@@ -12759,6 +12807,47 @@ document.addEventListener('keydown', e => {
 </div>
 
 <!-- ══════════════════════════════════════════════════════════
+     MARK DEAD MODAL — disqualify a lead/contact/account: bad
+     number, do-not-contact request, out of business, duplicate,
+     etc. Pulls it out of every active list and logs who did it
+     and why, for manager reporting.
+══════════════════════════════════════════════════════════════ -->
+<div class="act-modal-bg" id="deadModal">
+  <div class="act-modal" style="width:min(420px,94vw)">
+    <div class="act-modal-header">
+      <h3 id="deadModalTitle">💀 Mark as Dead</h3>
+      <button onclick="closeActModal('deadModal')" style="background:none;border:none;color:#BFC4CA;font-size:20px;cursor:pointer;line-height:1">✕</button>
+    </div>
+    <div class="act-modal-body">
+      <div style="font-size:12px;color:var(--soft);margin-bottom:12px;line-height:1.5">
+        This pulls the record out of every active list. It stays in the system as a dead record —
+        visible only by filtering Status to "Dead" — and managers can see who marked it and why.
+      </div>
+      <div class="act-field">
+        <label>Reason</label>
+        <div class="act-outcome-pills" id="deadReasonPills">
+          <span class="act-outcome-pill sel" onclick="actPillToggle(this,'deadReasonPills')">Do Not Contact</span>
+          <span class="act-outcome-pill" onclick="actPillToggle(this,'deadReasonPills')">Bad / Invalid Lead</span>
+          <span class="act-outcome-pill" onclick="actPillToggle(this,'deadReasonPills')">Not Interested</span>
+          <span class="act-outcome-pill" onclick="actPillToggle(this,'deadReasonPills')">Out of Business</span>
+          <span class="act-outcome-pill" onclick="actPillToggle(this,'deadReasonPills')">Duplicate Record</span>
+          <span class="act-outcome-pill" onclick="actPillToggle(this,'deadReasonPills')">Wrong Number / Unreachable</span>
+          <span class="act-outcome-pill" onclick="actPillToggle(this,'deadReasonPills')">Other</span>
+        </div>
+      </div>
+      <div class="act-field">
+        <label>Notes (optional)</label>
+        <textarea id="deadNotes" rows="3" placeholder="Any context worth keeping on file..."></textarea>
+      </div>
+    </div>
+    <div class="act-modal-footer">
+      <button class="act-cancel-btn" onclick="closeActModal('deadModal')">Cancel</button>
+      <button class="act-save-btn" style="background:#1A1D21" onclick="confirmMarkDead()">💀 Mark Dead</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
      ROLE LOGIN SCREEN (Placeholder — replaces with Azure SSO)
 ══════════════════════════════════════════════════════════════ -->
 <div class="role-login-bg" id="roleLoginBg">
@@ -14609,6 +14698,52 @@ function refreshManagerDashboard() {
       ).join('') || '<div style="color:var(--soft);font-size:11px">No call activity logged yet</div>';
   }
 
+  // ── DEAD / DISQUALIFIED RECORDS — pulled from raw crmLoad (not the
+  // filtered renderCRMView data), so this always sees dead records
+  // regardless of what's currently hidden in the active lists. ──
+  const deadLeads    = leads.filter(l => l.status === 'dead');
+  const deadContacts = contacts.filter(c => c.status === 'dead');
+  const deadAccounts = accounts.filter(a => a.status === 'dead');
+  const allDead = [...deadLeads, ...deadContacts, ...deadAccounts];
+  set('mgrDeadTotal',    allDead.length || '0');
+  set('mgrDeadLeads',    deadLeads.length || '0');
+  set('mgrDeadContacts', deadContacts.length || '0');
+  set('mgrDeadAccounts', deadAccounts.length || '0');
+
+  const deadByRepTable = document.getElementById('mgrDeadByRepTable');
+  if (deadByRepTable) {
+    const repMap = {};
+    allDead.forEach(r => {
+      const who = r.deadBy || 'Unknown';
+      repMap[who] = (repMap[who]||0) + 1;
+    });
+    const rows = Object.entries(repMap).sort((a,b) => b[1]-a[1]);
+    deadByRepTable.innerHTML = '<div style="display:grid;grid-template-columns:1fr auto;gap:4px;padding:4px 0;border-bottom:1px solid var(--line);font-weight:700;color:var(--soft);font-size:10px;text-transform:uppercase;letter-spacing:.06em"><span>Marked By</span><span>Count</span></div>' +
+      rows.map(([who, count]) =>
+        `<div style="display:grid;grid-template-columns:1fr auto;gap:4px;padding:5px 0;border-bottom:1px solid var(--line);font-size:11px">
+          <span style="font-weight:600">${who}</span>
+          <span style="text-align:right;font-family:Barlow Condensed,sans-serif;font-weight:700">${count}</span>
+        </div>`
+      ).join('') || '<div style="color:var(--soft);font-size:11px">None marked dead yet</div>';
+  }
+
+  const deadByReasonTable = document.getElementById('mgrDeadByReasonTable');
+  if (deadByReasonTable) {
+    const reasonMap = {};
+    allDead.forEach(r => {
+      const reason = r.deadReason || 'Unspecified';
+      reasonMap[reason] = (reasonMap[reason]||0) + 1;
+    });
+    const rows = Object.entries(reasonMap).sort((a,b) => b[1]-a[1]);
+    deadByReasonTable.innerHTML = '<div style="display:grid;grid-template-columns:1fr auto;gap:4px;padding:4px 0;border-bottom:1px solid var(--line);font-weight:700;color:var(--soft);font-size:10px;text-transform:uppercase;letter-spacing:.06em"><span>Reason</span><span>Count</span></div>' +
+      rows.map(([reason, count]) =>
+        `<div style="display:grid;grid-template-columns:1fr auto;gap:4px;padding:5px 0;border-bottom:1px solid var(--line);font-size:11px">
+          <span style="font-weight:600">${reason}</span>
+          <span style="text-align:right;font-family:Barlow Condensed,sans-serif;font-weight:700">${count}</span>
+        </div>`
+      ).join('') || '<div style="color:var(--soft);font-size:11px">None marked dead yet</div>';
+  }
+
   // ── SALES PIPELINE ──
   const hotLeads     = leads.filter(l => l.status === 'hot').length;
   const claimedLeads = leads.filter(l => l.claimedBy).length;
@@ -14958,6 +15093,88 @@ function releaseToPool(id) {
     who: 'System'
   });
   crmSave('leads', data);
+  renderCRMView();
+  buildActionQueue();
+}
+
+/* ─────────────────────────────────────────────
+   MARK DEAD / RESTORE — disqualify a lead, contact, or
+   account (bad number, do-not-contact, out of business,
+   duplicate, etc). Dead records drop out of every default
+   list view (see renderCRMView's status filter) but are
+   never deleted — they stay queryable via Status: Dead, and
+   feed the Manager Dashboard's dead-record tracking so there's
+   accountability for who marked what and why.
+───────────────────────────────────────────── */
+let _deadRecordId  = null;
+let _deadRecordTab = null;
+
+function openDeadModal(id, tab) {
+  _deadRecordId  = id;
+  _deadRecordTab = tab;
+  const data = crmLoad(tab);
+  const r    = data.find(x => x.id === id);
+  const name = r ? (r.name || r.business || 'Record') : 'Record';
+  document.getElementById('deadModalTitle').textContent = `💀 Mark as Dead — ${name}`;
+  document.getElementById('deadNotes').value = '';
+  document.querySelectorAll('#deadReasonPills .act-outcome-pill').forEach((p,i)=>p.classList.toggle('sel', i===0));
+  document.getElementById('deadModal').classList.add('open');
+}
+
+function confirmMarkDead() {
+  if (!_deadRecordId || !_deadRecordTab) return;
+  const reason = getSelectedPill('deadReasonPills') || 'Other';
+  const notes  = document.getElementById('deadNotes')?.value.trim() || '';
+  markRecordDead(_deadRecordId, _deadRecordTab, reason, notes);
+  closeActModal('deadModal');
+  _deadRecordId = null; _deadRecordTab = null;
+}
+
+function markRecordDead(id, tab, reason, notes) {
+  const data = crmLoad(tab);
+  const r    = data.find(x => x.id === id);
+  if (!r) return;
+  const who = _currentUser?.name || 'Unknown';
+  r.priorStatus = r.status; // so Restore can put it back where it came from
+  r.status       = 'dead';
+  r.deadReason   = reason;
+  r.deadNotes    = notes;
+  r.deadBy       = who;
+  r.deadAt       = Date.now();
+  if (!r.activityLog) r.activityLog = [];
+  r.activityLog.push({
+    ts: Date.now(), type:'system', icon:'💀',
+    title: `Marked Dead by ${who}`,
+    note: `Reason: ${reason}${notes ? ' — '+notes : ''}`,
+    who: who
+  });
+  crmSave(tab, data);
+  renderCRMView();
+  buildActionQueue();
+
+  const toast = document.createElement('div');
+  toast.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1A1D21;color:#fff;border-radius:8px;padding:10px 20px;font-size:13px;font-weight:600;z-index:999;box-shadow:0 4px 16px rgba(0,0,0,.25)';
+  toast.textContent = `💀 Marked dead — ${r.name || r.business}`;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 2500);
+}
+
+function restoreRecord(id, tab) {
+  if (!confirm('Restore this record? It will reappear in the active list.')) return;
+  const data = crmLoad(tab);
+  const r    = data.find(x => x.id === id);
+  if (!r) return;
+  const who = _currentUser?.name || 'Unknown';
+  r.status = r.priorStatus || (tab==='accounts' ? 'active' : tab==='leads' ? 'new' : 'active');
+  if (!r.activityLog) r.activityLog = [];
+  r.activityLog.push({
+    ts: Date.now(), type:'system', icon:'↩️',
+    title: `Restored by ${who}`,
+    note: `Returned to active list (was marked dead${r.deadReason ? ': '+r.deadReason : ''})`,
+    who: who
+  });
+  delete r.priorStatus;
+  crmSave(tab, data);
   renderCRMView();
   buildActionQueue();
 }
@@ -15348,12 +15565,17 @@ function openHRPortal() {
   const user = _currentUser;
   const isFullHR = user && (user.role === 'manager' || user.role === 'reception');
   const hrRole = isFullHR ? 'manager' : 'employee';
-  // Derive a username from email (before @)
+  const userEmail = user ? user.email : 'tscholl@termac.com';
+  // Derive a username from email (before @) — kept as a fallback match key;
+  // email is the primary key HR Portal uses to find the real employee record
+  // (see resolveSession() in hr-portal.html — TERMAC_USERS keys and the HR
+  // Portal's seeded users[].email values are the same addresses on purpose).
   const hrUsername = user ? user.email.split('@')[0].replace(/[^a-z0-9.]/g,'') : 'ted.scholl';
   const hrName = user ? user.name : 'Ted Scholl';
 
   localStorage.setItem('hr_session', JSON.stringify({
     username: hrUsername,
+    email: userEmail,
     name: hrName,
     role: hrRole,
     selfOnly: !isFullHR,   // employee tier: can only see own data

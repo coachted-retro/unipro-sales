@@ -890,49 +890,14 @@ function saveOnboarding(o){ lsSet('onboarding',o); }
 
 var currentUser = null;
 var calYear = new Date().getFullYear();
-
-// ── SESSION FROM TERMAC ONE PLATFORM (or demo default) ──
-// Reads identity passed by openHRPortal() in termac-os.html
-(function resolveSession() {
-  var selfOnly = localStorage.getItem('hr_self_only') === 'true';
-  var session = null;
-  try { session = JSON.parse(localStorage.getItem('hr_session') || 'null'); } catch(e) {}
-
-  if (session && session.loggedIn && (Date.now() - session.ts) < 4 * 60 * 60 * 1000) {
-    // Valid session from platform — map to HR portal user object
-    var nameParts = (session.name || 'Ted Scholl').split(' ');
-    var isManager = session.role === 'manager' || session.role === 'admin';
-    currentUser = {
-      id: 'session_' + (session.username || 'user'),
-      fname: nameParts[0] || 'Staff',
-      lname: nameParts.slice(1).join(' ') || 'Member',
-      username: session.username || 'staff',
-      role: session.role || 'employee',
-      access: isManager ? 'manager' : 'employee',
-      selfOnly: selfOnly,   // employee tier: cannot see other employees' data
-      division: 'Termac',
-      title: isManager ? 'Manager' : 'Team Member',
-      mustChange: false
-    };
-  } else {
-    // Default demo user (no platform session)
-    currentUser = {
-      id: 'usr_ted',
-      fname: 'Ted',
-      lname: 'Scholl',
-      username: 'ted.scholl',
-      role: 'admin',
-      access: 'admin',
-      selfOnly: false,
-      division: 'Management',
-      title: 'Fire Protection Specialist',
-      mustChange: false
-    };
-  }
-})();
 var calMonth = new Date().getMonth();
 
 // ── SEED DATA ─────────────────────────────────────────────────────
+// Runs BEFORE resolveSession() below — resolveSession() looks up real
+// employee records in this seeded list, so the list has to exist first.
+// (Previously this ran after, so every platform-login session missed
+// the real record and fell back to a synthetic, unsaveable user — see
+// resolveSession()'s comments for the full story.)
 (function seedData(){
   if(getUsers().length) return;
   var users = [
@@ -1001,6 +966,85 @@ var calMonth = new Date().getMonth();
   ]);
 })();
 
+// ── SESSION FROM TERMAC ONE PLATFORM (or demo default) ──
+// Reads identity passed by openHRPortal() in termac-os.html.
+//
+// IMPORTANT: this used to build a throwaway "synthetic" currentUser
+// object (id: 'session_'+username) that didn't exist anywhere in the
+// real users[] list. Two things broke because of that:
+//   1. saveProfile() looks up the user by id in users[] to save edits --
+//      a synthetic id was never found, the lookup returned -1, and
+//      writing to users[-1] threw silently. Save Changes did nothing.
+//   2. Employment Info (work email, division, role/title, start date,
+//      manager) was hand-built from whatever the platform session
+//      carried -- which doesn't carry most of those fields -- instead
+//      of pulling the real seeded record, so most fields showed blank
+//      or a generic placeholder ("Termac" / "Manager") instead of the
+//      employee's actual data.
+// Fix: match the session to the REAL employee record (by email first,
+// since TERMAC_USERS in termac-os.html and the users[].email values
+// here are deliberately the same addresses; username as a fallback),
+// and use that record directly as currentUser. Unrecognized sessions
+// (someone not yet in the roster) get auto-provisioned as a real,
+// saveable record instead of a dead-end synthetic one.
+(function resolveSession() {
+  var selfOnly = localStorage.getItem('hr_self_only') === 'true';
+  var session = null;
+  try { session = JSON.parse(localStorage.getItem('hr_session') || 'null'); } catch(e) {}
+
+  if (session && session.loggedIn && (Date.now() - session.ts) < 4 * 60 * 60 * 1000) {
+    var users = getUsers();
+    var sessionEmail = (session.email || '').toLowerCase();
+    var sessionUsername = (session.username || '').toLowerCase();
+    var match = null;
+    if (sessionEmail) {
+      match = users.find(function(u){ return (u.email||'').toLowerCase() === sessionEmail; });
+    }
+    if (!match && sessionUsername) {
+      match = users.find(function(u){ return (u.username||'').toLowerCase() === sessionUsername; });
+    }
+    if (match) {
+      // Real employee record found -- use it as-is so every field
+      // (work email, division, real job title, start date, manager)
+      // is correct, and saveProfile() can find it again.
+      currentUser = match;
+      currentUser.selfOnly = selfOnly;
+    } else {
+      // No matching record yet -- auto-provision one (same shape as
+      // doRegister()) so this session is real and saveable rather than
+      // a dead end. A manager can fill in the real role/division/etc.
+      // later from the Employee Directory.
+      var nameParts = (session.name || 'Staff Member').split(' ');
+      var isManager = session.role === 'manager' || session.role === 'admin';
+      var newUser = {
+        id: 'u' + Date.now(),
+        fname: nameParts[0] || 'Staff',
+        lname: nameParts.slice(1).join(' ') || 'Member',
+        username: session.username || ('staff' + Date.now()),
+        password: '',
+        role: isManager ? 'Manager' : 'TBD',
+        division: 'Termac',
+        access: isManager ? 'manager' : 'employee',
+        email: session.email || '',
+        phone: '', startDate: '', manager: '',
+        status: 'active', mustChange: false, commType: 'none',
+        selfOnly: selfOnly
+      };
+      users.push(newUser);
+      saveUsers(users);
+      currentUser = newUser;
+    }
+  } else {
+    // Default demo user (no platform session) -- this is the real u001
+    // record, not a synthetic stand-in, so demo edits save normally too.
+    var demoUsers = getUsers();
+    currentUser = demoUsers.find(function(u){ return u.id === 'u001'; }) || {
+      id: 'usr_ted', fname: 'Ted', lname: 'Scholl', username: 'ted.scholl',
+      role: 'Fire Protection Specialist', division: 'Management', access: 'admin',
+      email: 'tscholl@termac.com', selfOnly: false, mustChange: false
+    };
+  }
+})();
 // ── LOGIN ─────────────────────────────────────────────────────────
 function showLoginTab(tab){
   document.querySelectorAll('.login-tab').forEach(function(t){ t.classList.remove('active'); });
@@ -1261,6 +1305,14 @@ function populateSelfService(){
 function saveProfile(){
   var users = getUsers();
   var idx = users.findIndex(function(u){ return u.id===currentUser.id; });
+  if (idx === -1) {
+    // Shouldn't happen now that sessions resolve to a real record (see
+    // resolveSession()), but fail loud instead of throwing silently if
+    // it ever does.
+    alert('Could not find your employee record to save to. Please sign out and back in.');
+    return;
+  }
+  var wasSelfOnly = currentUser.selfOnly; // runtime-only flag, not persisted -- preserve across reassignment
   users[idx].fname = document.getElementById('ess-fname').value.trim();
   users[idx].lname = document.getElementById('ess-lname').value.trim();
   users[idx].email = document.getElementById('ess-email').value.trim();
@@ -1270,6 +1322,7 @@ function saveProfile(){
   users[idx].ecPhone = document.getElementById('ess-ec-phone').value.trim();
   saveUsers(users);
   currentUser = users[idx];
+  currentUser.selfOnly = wasSelfOnly;
   document.getElementById('heroName').textContent = currentUser.fname+' '+currentUser.lname;
   alert('Profile saved successfully!');
 }
@@ -1496,7 +1549,8 @@ function renderCandidates(){
     cnt.textContent = stageCands.length;
     col.innerHTML = stageCands.map(function(c){ 
       var wCls = c.warmth==='hot'?'tag-fire':c.warmth==='warm'?'tag-warm':c.warmth==='cold'?'tag-cold':'tag-silver';
-      return '<div class="pipeline-card" onclick="viewCandidate(\''+c.id+'\')"><div class="pipeline-card-name">'+c.name+'</div><div class="pipeline-card-role">'+c.role+' · '+c.division+'</div><div class="pipeline-card-tags"><span class="tag '+wCls+'">'+c.warmth+'</span><span class="tag">'+c.source+'</span></div></div>';
+      var divLabel = c.division ? ' · '+c.division : '';
+      return '<div class="pipeline-card" onclick="viewCandidate(\''+c.id+'\')"><div class="pipeline-card-name">'+c.name+'</div><div class="pipeline-card-role">'+c.role+divLabel+'</div><div class="pipeline-card-tags"><span class="tag '+wCls+'">'+c.warmth+'</span><span class="tag">'+c.source+'</span></div></div>';
     }).join('');
   });
 }
@@ -1882,16 +1936,16 @@ document.addEventListener('DOMContentLoaded', function() {
   var now = Date.now(), day = 86400000;
   var seeded = [
     // Sourced
-    { id:'cand_001', name:'James Okafor', role:'Fire Protection Tech', source:'Indeed', stage:'sourced', warmth:'warm', added:now-day*5, notes:'3 yrs UniPro-type experience, NFPA 10 trained. Applied to job post.', tags:['UniPro','Tech','NFPA 10'], score:8, email:'james.okafor@email.com', phone:'215-555-0101' },
-    { id:'cand_002', name:'Maria Delgado', role:'Grease Trap Technician', source:'Facebook Job Post', stage:'sourced', warmth:'cold', added:now-day*3, notes:'FOG experience from prior restaurant maintenance role. No formal cert.', tags:['GTO','Tech'], score:6, email:'mdelgado@email.com', phone:'609-555-0202' },
-    { id:'cand_003', name:'Kevin Stroud', role:'DMS / Inside Sales', source:'LinkedIn', stage:'sourced', warmth:'hot', added:now-day*2, notes:'Currently at a pest control company doing outbound calls. Hungry to move up.', tags:['DMS','Sales'], score:9, email:'kstroud@email.com', phone:'856-555-0303' },
+    { id:'cand_001', name:'James Okafor', role:'Fire Protection Tech', division:'UniPro', source:'Indeed', stage:'sourced', warmth:'warm', added:now-day*5, notes:'3 yrs UniPro-type experience, NFPA 10 trained. Applied to job post.', tags:['UniPro','Tech','NFPA 10'], score:8, email:'james.okafor@email.com', phone:'215-555-0101' },
+    { id:'cand_002', name:'Maria Delgado', role:'Grease Trap Technician', division:'GTO', source:'Facebook Job Post', stage:'sourced', warmth:'cold', added:now-day*3, notes:'FOG experience from prior restaurant maintenance role. No formal cert.', tags:['GTO','Tech'], score:6, email:'mdelgado@email.com', phone:'609-555-0202' },
+    { id:'cand_003', name:'Kevin Stroud', role:'DMS / Inside Sales', division:'DMS', source:'LinkedIn', stage:'sourced', warmth:'hot', added:now-day*2, notes:'Currently at a pest control company doing outbound calls. Hungry to move up.', tags:['DMS','Sales'], score:9, email:'kstroud@email.com', phone:'856-555-0303' },
     // Contacted
-    { id:'cand_004', name:'Angela Torres', role:'Fire Inspector / Technician', source:'Referral — Marcus W.', stage:'contacted', warmth:'hot', added:now-day*8, notes:'Referred by Marcus Williams. 5 yrs fire inspection, holds extinguisher cert. Interested in full-time.', tags:['UniPro','Tech','Certified'], score:10, email:'atorres@email.com', phone:'215-555-0404' },
-    { id:'cand_005', name:'Devon Hall', role:'Hood Filter Exchange Tech', source:'Indeed', stage:'contacted', warmth:'warm', added:now-day*6, notes:'Restaurant equipment background. Quick learner. Set first call for next week.', tags:['Filter Man','Tech'], score:7, email:'devon.hall@email.com', phone:'267-555-0505' },
+    { id:'cand_004', name:'Angela Torres', role:'Fire Inspector / Technician', division:'UniPro', source:'Referral — Marcus W.', stage:'contacted', warmth:'hot', added:now-day*8, notes:'Referred by Marcus Williams. 5 yrs fire inspection, holds extinguisher cert. Interested in full-time.', tags:['UniPro','Tech','Certified'], score:10, email:'atorres@email.com', phone:'215-555-0404' },
+    { id:'cand_005', name:'Devon Hall', role:'Hood Filter Exchange Tech', division:'Filter Man', source:'Indeed', stage:'contacted', warmth:'warm', added:now-day*6, notes:'Restaurant equipment background. Quick learner. Set first call for next week.', tags:['Filter Man','Tech'], score:7, email:'devon.hall@email.com', phone:'267-555-0505' },
     // Interviewing
-    { id:'cand_006', name:'Priya Nair', role:'Scheduler / Dispatcher', source:'ZipRecruiter', stage:'interviewing', warmth:'hot', added:now-day*12, notes:'2 yrs dispatching at HVAC company. Strong with routing software. Panel interview scheduled.', tags:['Scheduler','Office'], score:9, email:'pnair@email.com', phone:'732-555-0606' },
+    { id:'cand_006', name:'Priya Nair', role:'Scheduler / Dispatcher', division:'UniPro', source:'ZipRecruiter', stage:'interviewing', warmth:'hot', added:now-day*12, notes:'2 yrs dispatching at HVAC company. Strong with routing software. Panel interview scheduled.', tags:['Scheduler','Office'], score:9, email:'pnair@email.com', phone:'732-555-0606' },
     // Silver Medalist
-    { id:'cand_007', name:'Tom Brannigan', role:'Sales Rep — Tri-State', source:'LinkedIn', stage:'silver', warmth:'warm', added:now-day*21, notes:'Strong candidate — lost to internal hire. Keep warm. Check back Q3.', tags:['Sales','Rep'], score:8, email:'tbrannigan@email.com', phone:'610-555-0707' },
+    { id:'cand_007', name:'Tom Brannigan', role:'Sales Rep — Tri-State', division:'all', source:'LinkedIn', stage:'silver', warmth:'warm', added:now-day*21, notes:'Strong candidate — lost to internal hire. Keep warm. Check back Q3.', tags:['Sales','Rep'], score:8, email:'tbrannigan@email.com', phone:'610-555-0707' },
   ];
 
   saveCandidates(seeded);
