@@ -7470,7 +7470,49 @@ const FS_CAMERA_PROMPTS = {
   light: 'Photo of an emergency exit light or sign. State the single most important visible finding in ONE short sentence, under 20 words: whether it appears illuminated/functional, a specific deficiency (damage, painted-over lens, missing cover), or "No visible deficiencies" if it looks functional. Plain text only -- no headers, no markdown, no bullet points, no multi-part breakdown.'
 };
 
+// Hood photo slots — labeled categories that matter for a full inspection doc
+const FS_HOOD_PHOTO_SLOTS = [
+  { slug:'layout',   label:'Full Layout',      icon:'🏗️' },
+  { slug:'links',    label:'Fusible Links',    icon:'🔗' },
+  { slug:'cylinder', label:'Cylinder / Agent', icon:'🟥' },
+  { slug:'tag',      label:'Certification Tag',icon:'🏷️' },
+  { slug:'pull',     label:'Pull Station',     icon:'🔴' },
+  { slug:'nozzles',  label:'Nozzles',          icon:'💧' },
+];
+
 function fsCameraButtonHTML(key, idx) {
+  if (key === 'hood') {
+    // Multi-photo grid — one slot per inspection category + Add Photo for extras
+    const slots = FS_HOOD_PHOTO_SLOTS.map(s => `
+      <div style="display:flex;flex-direction:column;align-items:center;gap:4px">
+        <label style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;background:#fff;border:1.5px solid var(--line);border-radius:8px;padding:8px 6px;cursor:pointer;width:80px;min-height:80px;text-align:center" title="${s.label}">
+          <div id="fs_hood_thumb_${idx}_${s.slug}" style="width:64px;height:48px;border-radius:5px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:#F3F4F6">
+            <span style="font-size:20px">${s.icon}</span>
+          </div>
+          <input type="file" accept="image/*" capture="environment" style="display:none" onchange="fsAnalyzeHoodPhoto(${idx},'${s.slug}',this)">
+          <span id="fs_hood_lbl_${idx}_${s.slug}" style="font-size:9px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.04em;line-height:1.2">${s.label}</span>
+        </label>
+      </div>`).join('');
+
+    return `
+      <div style="margin-top:8px">
+        <div style="font-size:10px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">📷 Inspection Photos</div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px">
+          ${slots}
+          <div id="fs_hood_extras_${idx}" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:4px">
+            <label style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;background:#F9FAFB;border:1.5px dashed var(--line);border-radius:8px;padding:8px 6px;cursor:pointer;width:80px;min-height:80px;text-align:center">
+              <span style="font-size:24px;color:var(--soft)">＋</span>
+              <input type="file" accept="image/*" capture="environment" style="display:none" onchange="fsAddHoodExtra(${idx},this)">
+              <span style="font-size:9px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.04em">Add Photo</span>
+            </label>
+          </div>
+        </div>
+        <div id="fs_hood_ai_${idx}" style="display:none;background:#EBF2FD;border-radius:7px;padding:8px 12px;font-size:12px;color:#1E40AF;margin-top:8px"></div>
+      </div>`;
+  }
+
+  // Single photo for ext / light (unchanged)
   return `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:4px">
     <label style="display:flex;align-items:center;gap:6px;background:#fff;border:1.5px solid var(--line);border-radius:7px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:600">
       📷 Take Photo
@@ -7480,6 +7522,137 @@ function fsCameraButtonHTML(key, idx) {
   </div>
   <div id="fs_photo_ai_${key}_${idx}" style="display:none;background:#EBF2FD;border-radius:7px;padding:8px 12px;font-size:12px;color:#1E40AF;margin-top:4px"></div>
   <div id="fs_photo_thumb_${key}_${idx}" style="margin-top:4px"></div>`;
+}
+
+// ── Handler for labeled hood photo slots ─────────────────────────
+async function fsAnalyzeHoodPhoto(systemIdx, slug, input) {
+  const file = input.files[0];
+  if (!file) return;
+
+  const thumbEl = document.getElementById(`fs_hood_thumb_${systemIdx}_${slug}`);
+  const lblEl   = document.getElementById(`fs_hood_lbl_${systemIdx}_${slug}`);
+  const aiEl    = document.getElementById(`fs_hood_ai_${systemIdx}`);
+
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    const b64 = e.target.result.split(',')[1];
+
+    // Show thumbnail in the slot
+    if (thumbEl) thumbEl.innerHTML = `<img src="${e.target.result}" style="width:64px;height:48px;object-fit:cover;border-radius:5px">`;
+    if (lblEl) { lblEl.style.color = '#1E7B3C'; }
+
+    // Store photo in svState under descriptive key
+    if (!svState.surveyData[fsState.activeService]) svState.surveyData[fsState.activeService] = {};
+    if (!svState.surveyData[fsState.activeService].photos) svState.surveyData[fsState.activeService].photos = {};
+    const photoKey = `hood_${systemIdx}_${slug}`;
+    svState.surveyData[fsState.activeService].photos[photoKey] = e.target.result;
+
+    // Background R2 upload
+    fsUploadPhotoToR2('hood', systemIdx, b64, file.type, photoKey);
+
+    // AI analysis
+    try {
+      if (aiEl) { aiEl.style.display = 'block'; aiEl.textContent = `🤖 Analyzing ${slug} photo…`; }
+      const slotPrompts = {
+        layout:   'Wide photo of a kitchen hood suppression system. Briefly describe the overall system condition and any obvious deficiencies in one sentence under 20 words.',
+        links:    'Photo of fusible links or detection elements in a kitchen hood system. State any visible deficiency (missing, damaged, improper installation) or "Links appear properly installed" in one sentence.',
+        cylinder: 'Photo of a suppression system agent cylinder or tank. State the condition — pressure indicator reading if visible, damage, service date tag — in one sentence under 20 words.',
+        tag:      'Photo of a suppression system certification tag. State whether the tag is current (within 6 months), expired, or missing, plus the date if visible. One sentence.',
+        pull:     'Photo of a manual pull station. State whether it appears intact and accessible, or note any deficiency, in one sentence under 20 words.',
+        nozzles:  'Photo of suppression system nozzles. State whether nozzles appear unobstructed and properly positioned, or note any blockage or damage, in one sentence under 20 words.',
+      };
+      const prompt = slotPrompts[slug] || FS_CAMERA_PROMPTS.hood;
+      const res = await fetch(FS_PROXY, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-6', max_tokens: 60,
+          messages: [{ role: 'user', content: [
+            { type: 'image', source: { type: 'base64', media_type: file.type, data: b64 } },
+            { type: 'text', text: prompt }
+          ]}]
+        })
+      });
+      const json = await res.json();
+      const text = (json.content?.[0]?.text) || 'Unable to analyze photo.';
+      const slotName = FS_HOOD_PHOTO_SLOTS.find(s => s.slug === slug)?.label || slug;
+      if (aiEl) {
+        // Append finding (don't overwrite — may have multiple analyzed)
+        const existing = aiEl.dataset.findings ? JSON.parse(aiEl.dataset.findings) : {};
+        existing[slug] = text;
+        aiEl.dataset.findings = JSON.stringify(existing);
+        aiEl.innerHTML = Object.entries(existing)
+          .map(([k,v]) => `<div style="margin-bottom:4px"><strong>${FS_HOOD_PHOTO_SLOTS.find(s=>s.slug===k)?.label||k}:</strong> ${v}</div>`)
+          .join('');
+        aiEl.style.display = 'block';
+      }
+      svState.surveyData[fsState.activeService][`hood_${systemIdx}_${slug}_ai`] = text;
+    } catch(err) {
+      if (aiEl) { aiEl.style.display = 'block'; aiEl.textContent = '⚠️ AI unavailable — photo saved.'; }
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
+// ── Extra (uncategorized) photos via the + Add Photo button ──────
+let _hoodExtraCount = {};
+async function fsAddHoodExtra(systemIdx, input) {
+  const file = input.files[0];
+  if (!file) return;
+  if (!_hoodExtraCount[systemIdx]) _hoodExtraCount[systemIdx] = 0;
+  const extraIdx = _hoodExtraCount[systemIdx]++;
+  const slug = `extra${extraIdx}`;
+  const extrasEl = document.getElementById(`fs_hood_extras_${systemIdx}`);
+  if (!extrasEl) return;
+
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    const b64 = e.target.result.split(',')[1];
+    const photoKey = `hood_${systemIdx}_${slug}`;
+
+    // Add thumbnail tile
+    const tile = document.createElement('div');
+    tile.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:4px;position:relative';
+    tile.innerHTML = `
+      <div style="width:80px;height:80px;border-radius:8px;overflow:hidden;border:1.5px solid var(--line)">
+        <img src="${e.target.result}" style="width:100%;height:100%;object-fit:cover">
+      </div>
+      <button onclick="this.closest('div[style]').remove()" style="position:absolute;top:-4px;right:-4px;background:#C8102E;color:#fff;border:none;border-radius:50%;width:18px;height:18px;font-size:10px;cursor:pointer;line-height:18px;text-align:center">✕</button>
+      <span style="font-size:9px;font-weight:700;color:var(--soft);text-transform:uppercase">Photo ${extraIdx+1}</span>`;
+    extrasEl.appendChild(tile);
+
+    // Store + upload
+    if (!svState.surveyData[fsState.activeService]) svState.surveyData[fsState.activeService] = {};
+    if (!svState.surveyData[fsState.activeService].photos) svState.surveyData[fsState.activeService].photos = {};
+    svState.surveyData[fsState.activeService].photos[photoKey] = e.target.result;
+    fsUploadPhotoToR2('hood', systemIdx, b64, file.type, photoKey);
+
+    // Quick AI on extras too
+    try {
+      const res = await fetch(FS_PROXY, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:60,
+          messages:[{role:'user',content:[
+            {type:'image',source:{type:'base64',media_type:file.type,data:b64}},
+            {type:'text',text:FS_CAMERA_PROMPTS.hood}
+          ]}]})
+      });
+      const json = await res.json();
+      const text = json.content?.[0]?.text || '';
+      svState.surveyData[fsState.activeService][`hood_${systemIdx}_${slug}_ai`] = text;
+      const aiEl = document.getElementById(`fs_hood_ai_${systemIdx}`);
+      if (aiEl && text) {
+        const existing = aiEl.dataset.findings ? JSON.parse(aiEl.dataset.findings) : {};
+        existing[slug] = text;
+        aiEl.dataset.findings = JSON.stringify(existing);
+        aiEl.innerHTML = Object.entries(existing)
+          .map(([k,v]) => `<div style="margin-bottom:4px"><strong>${FS_HOOD_PHOTO_SLOTS.find(s=>s.slug===k)?.label||('Photo '+(parseInt(k.replace('extra',''))+1))}</strong>: ${v}</div>`)
+          .join('');
+        aiEl.style.display = 'block';
+      }
+    } catch(e) {}
+  };
+  reader.readAsDataURL(file);
 }
 
 async function fsAnalyzePhoto(key, idx, input) {
