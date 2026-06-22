@@ -2398,6 +2398,113 @@ function renderCRMView(){
       </div>`;
     }
   }
+  // ── Harvest intel bar (Leads tab only) ─────────────────────────────
+  if (tab === 'leads') {
+    const allLeads = crmLoad('leads');
+    const harvested = allLeads.filter(l => (l.source||'').toLowerCase().includes('harvest') || (l.source||'').toLowerCase().includes('harvester'));
+    const now = Date.now();
+    const ageBuckets = { fresh:0, active:0, aging:0, stale:0 };
+    const sourceCounts = {};
+    harvested.forEach(l => {
+      const ageDays = (now - (l.created || now)) / 86400000;
+      if (ageDays <= 7)       ageBuckets.fresh++;
+      else if (ageDays <= 30) ageBuckets.active++;
+      else if (ageDays <= 60) ageBuckets.aging++;
+      else                    ageBuckets.stale++;
+      const src = (l.source||'').replace('Live Harvester — ','').replace('Live Harvester—','') || 'Other';
+      sourceCounts[src] = (sourceCounts[src]||0) + 1;
+    });
+    const topSources = Object.entries(sourceCounts).sort((a,b)=>b[1]-a[1]).slice(0,4);
+    if (harvested.length) {
+      html += `<div style="background:#fff;border:1.5px solid var(--line);border-radius:10px;padding:12px 16px;margin-bottom:12px">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+          <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--soft)">🌾 Harvest Pool</div>
+          <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:18px;color:var(--ink)">${harvested.length} <span style="font-size:12px;font-weight:600;color:var(--soft)">total harvested</span></div>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+          ${ageBuckets.fresh  ? `<div style="flex:1;min-width:80px;background:#DCFCE7;border-radius:7px;padding:8px 10px;text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:20px;color:#166534">${ageBuckets.fresh}</div><div style="font-size:10px;color:#166534;font-weight:700">FRESH<br><span style="font-weight:400">0–7 days</span></div></div>` : ''}
+          ${ageBuckets.active ? `<div style="flex:1;min-width:80px;background:#DBEAFE;border-radius:7px;padding:8px 10px;text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:20px;color:#1E40AF">${ageBuckets.active}</div><div style="font-size:10px;color:#1E40AF;font-weight:700">ACTIVE<br><span style="font-weight:400">8–30 days</span></div></div>` : ''}
+          ${ageBuckets.aging  ? `<div style="flex:1;min-width:80px;background:#FEF3C7;border-radius:7px;padding:8px 10px;text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:20px;color:#92400E">${ageBuckets.aging}</div><div style="font-size:10px;color:#92400E;font-weight:700">AGING<br><span style="font-weight:400">31–60 days</span></div></div>` : ''}
+          ${ageBuckets.stale  ? `<div style="flex:1;min-width:80px;background:#FEE2E2;border-radius:7px;padding:8px 10px;text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:20px;color:#991B1B">${ageBuckets.stale}</div><div style="font-size:10px;color:#991B1B;font-weight:700">STALE<br><span style="font-weight:400">60+ days</span></div></div>` : ''}
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          ${topSources.map(([src,n])=>`<span style="background:#F3F4F6;border-radius:5px;padding:3px 9px;font-size:10px;font-weight:700;color:var(--ink)">${src}: ${n}</span>`).join('')}
+        </div>
+      </div>`;
+    }
+
+    // New urgency alerts: fresh harvests + aging permit/citation leads
+    const repName2 = _currentUser?.name;
+    const dismissed2 = (() => { try { return JSON.parse(sessionStorage.getItem('rep_alerts_dismissed') || '[]'); } catch(e) { return []; } })();
+    const urgentAlerts = [];
+
+    // Fresh harvested leads unclaimed/uncontacted within 48h
+    harvested.filter(l => {
+      const ageDays = (now - (l.created||now)) / 86400000;
+      const mine = !l.assignedRep || l.assignedRep === repName2 || l.claimedBy === repName2;
+      return ageDays <= 2 && mine && l.status === 'new' && !l.lastActivity;
+    }).slice(0,3).forEach(l => {
+      const hrs = Math.floor((now - (l.created||now)) / 3600000);
+      const key = `fresh_harvest_${l.id}`;
+      if (!dismissed2.includes(key)) urgentAlerts.push({
+        key, color:'#166534', bg:'#DCFCE7', icon:'🌾',
+        label:`New harvest — contact within 24h (${hrs}h old)`,
+        detail: `${l.business||l.name} · ${(l.source||'').replace('Live Harvester — ','')}`,
+        action:`openAcctDetail('${l.id}','leads')`
+      });
+    });
+
+    // Permit leads 7+ days untouched — construction window closing
+    harvested.filter(l => {
+      const ageDays = (now - (l.created||now)) / 86400000;
+      const isPermit = (l.source||'').toLowerCase().includes('permit');
+      const mine = !l.assignedRep || l.assignedRep === repName2 || l.claimedBy === repName2;
+      return isPermit && ageDays >= 7 && mine && l.status === 'new';
+    }).slice(0,2).forEach(l => {
+      const ageDays = Math.floor((now - (l.created||now)) / 86400000);
+      const key = `permit_aging_${l.id}`;
+      if (!dismissed2.includes(key)) urgentAlerts.push({
+        key, color:'#D97706', bg:'#FEF3C7', icon:'🏗️',
+        label:`Permit lead ${ageDays}d old — construction window closing`,
+        detail:`${l.business||l.name} · Act before they're already contracted`,
+        action:`openAcctDetail('${l.id}','leads')`
+      });
+    });
+
+    // CMS fire safety citations 14+ days untouched — compliance gap may be resolved
+    harvested.filter(l => {
+      const ageDays = (now - (l.created||now)) / 86400000;
+      const isCMS = (l.source||'').toLowerCase().includes('cms');
+      const mine = !l.assignedRep || l.assignedRep === repName2 || l.claimedBy === repName2;
+      return isCMS && ageDays >= 14 && mine && l.status === 'new';
+    }).slice(0,2).forEach(l => {
+      const ageDays = Math.floor((now - (l.created||now)) / 86400000);
+      const key = `cms_aging_${l.id}`;
+      if (!dismissed2.includes(key)) urgentAlerts.push({
+        key, color:'#C8102E', bg:'#FEE2E2', icon:'🚨',
+        label:`Fire citation lead ${ageDays}d old — facility may self-correct`,
+        detail:`${l.business||l.name} · Contact before they resolve it without you`,
+        action:`openAcctDetail('${l.id}','leads')`
+      });
+    });
+
+    if (urgentAlerts.length) {
+      html += `<div id="repAlertBar2" style="margin-bottom:14px">
+        ${urgentAlerts.map(a => `
+        <div style="background:${a.bg};border-left:3px solid ${a.color};border-radius:8px;padding:9px 12px;margin-bottom:6px;display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <div style="flex:1;min-width:0;cursor:pointer" onclick="${a.action}">
+            <div style="font-size:11px;font-weight:700;color:${a.color}">${a.icon} ${a.label}</div>
+            <div style="font-size:11px;color:var(--ink);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${a.detail}</div>
+          </div>
+          <div style="display:flex;gap:6px;flex-shrink:0">
+            <button onclick="${a.action}" style="background:${a.color};color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:10px;font-family:Barlow Condensed,sans-serif;font-weight:700;cursor:pointer">Act →</button>
+            <button onclick="(function(){var d=JSON.parse(sessionStorage.getItem('rep_alerts_dismissed')||'[]');d.push('${a.key}');sessionStorage.setItem('rep_alerts_dismissed',JSON.stringify(d));this.closest('div[id]').remove()})()" style="background:none;border:1px solid ${a.color};color:${a.color};border-radius:5px;padding:4px 8px;font-size:10px;cursor:pointer;opacity:.7">✕</button>
+          </div>
+        </div>`).join('')}
+      </div>`;
+    }
+  }
+
   html+=`<div class="crm-section-title">${data.length} ${tab.toUpperCase()}${repTerritory ? ` <span style="color:#1E7B3C">· Your Territory</span>` : ''}</div><div class="crm-cards">`;
   data.forEach(r=>{ html+=renderCard(tab,r); });
   html+=`</div>`;
@@ -2473,7 +2580,16 @@ function renderCard(tab,r){
       : `<div class="crm-card-tag">${r.repAssignmentType==='temporary'?'⏳ ':''}${escH(r.assignedRep)}</div>`;
     extraInfo=`<div class="crm-card-tag">Next: ${r.nextDue||'—'}</div><div class="crm-card-tag">$${(r.annualValue||0).toLocaleString()}/yr</div>${repTag}`;
   } else if(tab==='leads'){
-    extraInfo=`<div class="crm-card-tag">Score: ${r.score||'—'}/10</div><div class="crm-card-tag">Source: ${escH(r.source||'—')}</div>`;
+    const isHarvested = (r.source||'').toLowerCase().includes('harvest');
+    let ageBadge = '';
+    if (isHarvested && r.created) {
+      const ageDays = Math.floor((Date.now() - r.created) / 86400000);
+      if (ageDays <= 7)       ageBadge = `<div class="crm-card-tag" style="background:#DCFCE7;color:#166534;font-weight:700">🌾 ${ageDays}d old</div>`;
+      else if (ageDays <= 30) ageBadge = `<div class="crm-card-tag" style="background:#DBEAFE;color:#1E40AF;font-weight:700">🌾 ${ageDays}d old</div>`;
+      else if (ageDays <= 60) ageBadge = `<div class="crm-card-tag" style="background:#FEF3C7;color:#92400E;font-weight:700">⏳ ${ageDays}d old</div>`;
+      else                    ageBadge = `<div class="crm-card-tag" style="background:#FEE2E2;color:#991B1B;font-weight:700">🚨 ${ageDays}d old</div>`;
+    }
+    extraInfo=`<div class="crm-card-tag">Score: ${r.score||'—'}/10</div><div class="crm-card-tag">Source: ${escH(r.source||'—')}</div>${ageBadge}`;
   } else if(tab==='dms_coldcall'){
     extraInfo=`<div class="crm-card-tag">📡 ${escH(r.chamberSource||'Unknown source')}</div>${r.assignedDmsRep?`<div class="crm-card-tag">${escH(r.assignedDmsRep)}</div>`:''}${r.phone?`<div class="crm-card-tag">${escH(r.phone)}</div>`:''}`;
   }
