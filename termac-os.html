@@ -5800,9 +5800,50 @@ document.addEventListener('keydown', e=>{
                   <div class="fs-field"><label>Contact Phone</label><input type="tel" id="fs_acctPhone"></div>
                   <div class="fs-field"><label>Contact Email</label><input type="email" id="fs_acctEmail"></div>
                 </div>
-                <div class="fs-field"><label>Payment Terms</label>
-                  <select id="fs_acctPayTerms"><option value="">Select account type</option><option value="Restaurant / Food Service - Payment due day of service. Credit card or check only. Card on file required before dispatch.">Restaurant / Food Service - Payment due day of service</option><option value="Commercial Property - Net 30.">Commercial Property - Net 30</option><option value="Other - see notes">Other - see notes</option></select>
+                <div class="fs-field"><label>Business Type</label>
+                  <select id="fs_bizType" onchange="fsOnBizTypeChange(this.value)" style="margin-bottom:8px">
+                    <option value="">— Select business type —</option>
+                    <option value="smb">Restaurant / Food Service / Small Business</option>
+                    <option value="corporate">Corporate Account / Chain / Enterprise / Institution</option>
+                  </select>
                 </div>
+
+                <!-- SMB path: card/ACH required, no terms option -->
+                <div id="fs_payPath_smb" style="display:none">
+                  <div class="fs-callout" style="background:#EFF6FF;border-color:#1B5FA8;color:#1E40AF;margin-bottom:10px">
+                    <strong>💳 Payment due day of service.</strong> Credit card or ACH on file required before dispatch. No net terms.
+                  </div>
+                </div>
+
+                <!-- Corporate path: credit card OR apply for Net 30 -->
+                <div id="fs_payPath_corporate" style="display:none">
+                  <div class="fs-field"><label>Payment Method</label>
+                    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">
+                      <label style="text-transform:none;font-size:14px;display:flex;align-items:center;gap:6px;cursor:pointer">
+                        <input type="radio" name="fs_corpPayMethod" value="card" onchange="fsOnCorpPayMethod('card')"> Credit Card / ACH on file
+                      </label>
+                      <label style="text-transform:none;font-size:14px;display:flex;align-items:center;gap:6px;cursor:pointer">
+                        <input type="radio" name="fs_corpPayMethod" value="terms" onchange="fsOnCorpPayMethod('terms')"> Apply for Net 30 Terms
+                      </label>
+                    </div>
+                  </div>
+                  <!-- Card selected -->
+                  <div id="fs_corp_card" style="display:none">
+                    <div class="fs-callout" style="background:#EFF6FF;border-color:#1B5FA8;color:#1E40AF">
+                      <strong>💳 Credit card or ACH on file required before dispatch.</strong> Standard corporate billing.
+                    </div>
+                  </div>
+                  <!-- Terms selected -->
+                  <div id="fs_corp_terms" style="display:none">
+                    <div id="fs_creditAppStatus" style="margin-bottom:10px"></div>
+                    <button type="button" onclick="fsOpenCreditApp()" style="background:#1B5FA8;color:#fff;border:none;border-radius:8px;padding:10px 18px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;letter-spacing:.06em;cursor:pointer">
+                      📄 Open Credit Application
+                    </button>
+                    <div style="font-size:11px;color:#AEB6BF;margin-top:6px">Fill out on the spot — or email the application directly to the customer's AP department.</div>
+                  </div>
+                </div>
+                <!-- Single hidden field updated by JS — read by fsSendAccountSetupEmail -->
+                <input type="hidden" id="fs_acctPayTerms" value="">
                 <div class="fs-field"><label>Services Contracted</label>
                   <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">
                     <label style="text-transform:none;font-size:14px;display:flex;align-items:center;gap:6px"><input type="checkbox" id="fs_acctSvcHood"> Hood Suppression (NFPA 96)</label>
@@ -7492,7 +7533,211 @@ function fsSendAccountSetupEmail() {
   window.open(`mailto:${to}?cc=tscholl@termac.com&subject=New Account Setup — ${encodeURIComponent(biz)}&body=${body}`);
 }
 
-// Pipeline & Onboarding
+// ── BUSINESS TYPE / PAYMENT PATH ─────────────────────────────────────────────
+// Two-tier payment flow: SMB/restaurant → card/ACH required, no terms.
+// Corporate/enterprise → choice between card on file OR apply for Net 30.
+// For Net 30 applicants, a credit application modal captures EIN, bank ref,
+// trade references, and AP contact — fillable on the spot or emailed directly
+// to the customer's AP department, same pattern as the office setup email.
+
+function fsOnBizTypeChange(val) {
+  document.getElementById('fs_payPath_smb').style.display       = val === 'smb'       ? 'block' : 'none';
+  document.getElementById('fs_payPath_corporate').style.display = val === 'corporate' ? 'block' : 'none';
+  const termsEl = document.getElementById('fs_acctPayTerms');
+  if (val === 'smb' && termsEl) {
+    termsEl.value = 'Restaurant / Food Service — Payment due day of service. Credit card or ACH on file required before dispatch. No net terms.';
+  } else if (val !== 'smb' && termsEl) {
+    termsEl.value = '';
+  }
+  // Reset corporate sub-sections when switching types
+  if (val !== 'corporate') {
+    document.getElementById('fs_corp_card').style.display = 'none';
+    document.getElementById('fs_corp_terms').style.display = 'none';
+    document.querySelectorAll('input[name="fs_corpPayMethod"]').forEach(r => r.checked = false);
+  }
+}
+
+function fsOnCorpPayMethod(val) {
+  document.getElementById('fs_corp_card').style.display  = val === 'card'  ? 'block' : 'none';
+  document.getElementById('fs_corp_terms').style.display = val === 'terms' ? 'block' : 'none';
+  const termsEl = document.getElementById('fs_acctPayTerms');
+  if (val === 'card' && termsEl) {
+    termsEl.value = 'Corporate — Credit card or ACH on file. Payment due on invoice.';
+  } else if (val === 'terms' && termsEl) {
+    termsEl.value = 'Corporate — Net 30 Terms Requested (Pending Credit Application)';
+  }
+}
+
+function fsOpenCreditApp() {
+  // Pre-fill business name from account info if already entered
+  const biz = document.getElementById('fs_acctLegalName')?.value || document.getElementById('fs_bizName')?.value || '';
+  const contact = document.getElementById('fs_acctContact')?.value || '';
+  const email = document.getElementById('fs_acctEmail')?.value || '';
+  const phone = document.getElementById('fs_acctPhone')?.value || '';
+  if (!document.getElementById('fsCreditAppModal')) {
+    document.body.insertAdjacentHTML('beforeend', fsBuildCreditAppModal());
+  }
+  const el = document.getElementById('fsCreditAppModal');
+  if (el) {
+    el.querySelector('#fca_biz').value     = biz;
+    el.querySelector('#fca_apName').value  = contact;
+    el.querySelector('#fca_apEmail').value = email;
+    el.querySelector('#fca_apPhone').value = phone;
+    el.style.display = 'flex';
+  }
+}
+
+function fsCloseCreditApp() {
+  const el = document.getElementById('fsCreditAppModal');
+  if (el) el.style.display = 'none';
+}
+
+function fsSubmitCreditApp(action) {
+  const biz        = document.getElementById('fca_biz')?.value.trim();
+  const ein        = document.getElementById('fca_ein')?.value.trim();
+  const years      = document.getElementById('fca_years')?.value.trim();
+  const revenue    = document.getElementById('fca_revenue')?.value.trim();
+  const bankName   = document.getElementById('fca_bankName')?.value.trim();
+  const bankAcct   = document.getElementById('fca_bankAcctType')?.value;
+  const bankContact= document.getElementById('fca_bankContact')?.value.trim();
+  const ref1Name   = document.getElementById('fca_ref1Name')?.value.trim();
+  const ref1Phone  = document.getElementById('fca_ref1Phone')?.value.trim();
+  const ref2Name   = document.getElementById('fca_ref2Name')?.value.trim();
+  const ref2Phone  = document.getElementById('fca_ref2Phone')?.value.trim();
+  const apName     = document.getElementById('fca_apName')?.value.trim();
+  const apTitle    = document.getElementById('fca_apTitle')?.value.trim();
+  const apEmail    = document.getElementById('fca_apEmail')?.value.trim();
+  const apPhone    = document.getElementById('fca_apPhone')?.value.trim();
+  const signedBy   = document.getElementById('fca_signedBy')?.value.trim();
+
+  if (!biz)   { alert('Business name is required.'); return; }
+  if (!ein)   { alert('Federal Tax ID / EIN is required.'); return; }
+  if (!apEmail && action === 'email') { alert('AP department email is required to send the application.'); return; }
+
+  // Persist terms selection with pending credit status
+  const termsEl = document.getElementById('fs_acctPayTerms');
+  if (termsEl) termsEl.value = `Corporate — Net 30 Terms Applied (Pending Credit Review). EIN: ${ein}`;
+
+  // Update status badge in the form
+  const statusEl = document.getElementById('fs_creditAppStatus');
+  if (statusEl) {
+    statusEl.innerHTML = `<div style="background:#FEF9C3;border:1.5px solid #CA8A04;border-radius:8px;padding:10px 14px;font-size:12px;font-weight:700;color:#78350F">⏳ Credit Application Submitted — Pending Review<br><span style="font-weight:400;color:#92400E">EIN ${ein} · ${biz}</span></div>`;
+  }
+
+  if (action === 'email') {
+    // Email the application to the customer's AP department for signature/return
+    const subject = encodeURIComponent(`Net 30 Credit Application — ${biz}`);
+    const body = [
+      `NET 30 CREDIT APPLICATION`,``,
+      `Dear ${apName||'Accounts Payable'},`,``,
+      `Thank you for your interest in establishing a Net 30 account with Universal Fire Protection (UniPro) / Termac Family of Companies. Please review and complete the information below and return this email to tscholl@termac.com.`,``,
+      `── BUSINESS INFORMATION ──`,
+      `Legal Business Name: ${biz}`,
+      `Federal Tax ID / EIN: ${ein}`,
+      `Years in Business: ${years||'—'}`,
+      `Estimated Annual Revenue: ${revenue||'—'}`,``,
+      `── BANK REFERENCE ──`,
+      `Bank Name: ${bankName||'—'}`,
+      `Account Type: ${bankAcct||'—'}`,
+      `Bank Contact: ${bankContact||'—'}`,``,
+      `── TRADE REFERENCES ──`,
+      `Reference 1: ${ref1Name||'—'} · ${ref1Phone||'—'}`,
+      `Reference 2: ${ref2Name||'—'} · ${ref2Phone||'—'}`,``,
+      `── AP DEPARTMENT CONTACT ──`,
+      `Name / Title: ${apName||'—'} / ${apTitle||'—'}`,
+      `Email: ${apEmail||'—'}`,
+      `Phone: ${apPhone||'—'}`,``,
+      `── AUTHORIZATION ──`,
+      `Authorized Signature: ${signedBy||'_________________________'}`,
+      `Date: _________________________`,``,
+      `By returning this application, the above-named business agrees that the information provided is accurate and authorizes Universal Fire Protection to verify credit with the listed references and banking institution.`,``,
+      `Please return completed application to: tscholl@termac.com`,
+      `Questions? Call Ted Scholl: 267-421-6336`,
+    ].map(l => encodeURIComponent(l)).join('%0A');
+    window.open(`mailto:${apEmail}?cc=tscholl@termac.com&subject=${subject}&body=${body}`);
+    fsCloseCreditApp();
+    alert(`✅ Credit application emailed to ${apEmail}. Once returned and approved, update the account's payment terms status.`);
+  } else {
+    // Filled out on the spot — mark as submitted and close
+    fsCloseCreditApp();
+    alert(`✅ Credit application recorded for ${biz} (EIN: ${ein}). Submit to tscholl@termac.com for credit review. Account will be set up as Net 30 pending approval.`);
+  }
+}
+
+function fsBuildCreditAppModal() {
+  return `
+  <div id="fsCreditAppModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(10,12,16,.75);z-index:1100;align-items:center;justify-content:center;overflow-y:auto;padding:20px 0">
+    <div style="background:#fff;border-radius:14px;width:min(560px,95vw);padding:0;box-shadow:0 8px 40px rgba(0,0,0,.25);max-height:92vh;overflow-y:auto">
+      <div style="background:#1A1D21;padding:18px 22px;border-radius:14px 14px 0 0;display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:15px;letter-spacing:.06em;color:#fff">📄 Net 30 Credit Application</div>
+          <div style="font-size:11px;color:#8A909A;margin-top:2px">Universal Fire Protection — Termac Family of Companies</div>
+        </div>
+        <button onclick="fsCloseCreditApp()" style="background:none;border:none;color:#8A909A;font-size:20px;cursor:pointer">✕</button>
+      </div>
+      <div style="padding:20px 22px">
+        <div style="background:#FEF3C7;border:1.5px solid #D97706;border-radius:8px;padding:10px 14px;font-size:12px;color:#92400E;margin-bottom:16px">
+          <strong>Fillable on the spot</strong> — or tap "Email to AP Department" to send this directly to the customer's accounts payable for their signature and return.
+        </div>
+
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:#5A616B;margin-bottom:10px">Business Information</div>
+        <div class="form-field"><label>Legal Business Name *</label><input id="fca_biz" placeholder="Exact legal name on file"></div>
+        <div style="display:flex;gap:10px">
+          <div class="form-field" style="flex:1"><label>Federal Tax ID / EIN *</label><input id="fca_ein" placeholder="XX-XXXXXXX"></div>
+          <div class="form-field" style="flex:1"><label>Years in Business</label><input id="fca_years" type="number" placeholder="e.g. 12" min="0"></div>
+        </div>
+        <div class="form-field"><label>Estimated Annual Revenue</label>
+          <select id="fca_revenue">
+            <option value="">— Select range —</option>
+            <option>Under $500K</option><option>$500K – $1M</option><option>$1M – $5M</option>
+            <option>$5M – $25M</option><option>$25M – $100M</option><option>Over $100M</option>
+          </select>
+        </div>
+
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:#5A616B;margin:14px 0 10px">Bank Reference</div>
+        <div class="form-field"><label>Bank Name</label><input id="fca_bankName" placeholder="e.g. First National Bank"></div>
+        <div style="display:flex;gap:10px">
+          <div class="form-field" style="flex:1"><label>Account Type</label>
+            <select id="fca_bankAcctType"><option value="">—</option><option>Checking</option><option>Savings</option><option>Business Checking</option></select>
+          </div>
+          <div class="form-field" style="flex:1"><label>Bank Contact / Phone</label><input id="fca_bankContact" placeholder="Banker name & number"></div>
+        </div>
+
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:#5A616B;margin:14px 0 10px">Trade References (2 minimum)</div>
+        <div style="display:flex;gap:10px">
+          <div class="form-field" style="flex:1"><label>Reference 1 — Company</label><input id="fca_ref1Name" placeholder="Vendor or supplier"></div>
+          <div class="form-field" style="flex:1"><label>Phone</label><input id="fca_ref1Phone" type="tel"></div>
+        </div>
+        <div style="display:flex;gap:10px">
+          <div class="form-field" style="flex:1"><label>Reference 2 — Company</label><input id="fca_ref2Name" placeholder="Vendor or supplier"></div>
+          <div class="form-field" style="flex:1"><label>Phone</label><input id="fca_ref2Phone" type="tel"></div>
+        </div>
+
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:#5A616B;margin:14px 0 10px">AP Department Contact</div>
+        <div style="display:flex;gap:10px">
+          <div class="form-field" style="flex:1"><label>AP Contact Name</label><input id="fca_apName" placeholder="Name"></div>
+          <div class="form-field" style="flex:1"><label>Title</label><input id="fca_apTitle" placeholder="e.g. AP Manager"></div>
+        </div>
+        <div style="display:flex;gap:10px">
+          <div class="form-field" style="flex:1"><label>AP Email *</label><input id="fca_apEmail" type="email" placeholder="ap@company.com"></div>
+          <div class="form-field" style="flex:1"><label>AP Phone</label><input id="fca_apPhone" type="tel"></div>
+        </div>
+
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:#5A616B;margin:14px 0 10px">Authorization</div>
+        <div class="form-field"><label>Authorized Signature (print name)</label><input id="fca_signedBy" placeholder="Print name of authorized signatory"></div>
+        <div style="font-size:11px;color:#AEB6BF;margin-top:-8px;margin-bottom:14px">By submitting, the applicant authorizes Universal Fire Protection to verify credit with the listed references.</div>
+
+        <div style="display:flex;gap:10px;margin-top:4px">
+          <button onclick="fsCloseCreditApp()" style="flex:1;background:#fff;border:1.5px solid #D7DBE0;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;cursor:pointer">Cancel</button>
+          <button onclick="fsSubmitCreditApp('submit')" style="flex:1;background:#1A1D21;color:#fff;border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;cursor:pointer">✅ Submit Application</button>
+          <button onclick="fsSubmitCreditApp('email')" style="flex:1.4;background:#1B5FA8;color:#fff;border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;cursor:pointer">✉ Email to AP Dept</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+
 function fsBuildPipeline() {
   const container = document.getElementById('fs_pipelineTracker');
   if (!container) return;
