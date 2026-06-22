@@ -608,6 +608,13 @@ function renderDaySchedule(date){
         html += '<div class="job-chip-info"><div class="job-chip-name">'+esc(job.accountName)+'</div><div class="job-chip-sub">'+esc(job.serviceType||'Inspection')+'</div></div>';
         html += '<div class="job-chip-dur">'+formatDur(job.duration)+'</div>';
         html += '<div class="job-chip-status '+statusCls+'" title="'+job.status+'"></div>';
+        var req = loadSchedulerRequisitions().find(function(r){return r.jobId===job.id;});
+        if(req){
+          var reqLabel = req.status==='kitted'?'✅ Kitted':req.status==='signed_out'?'🔑 Out':req.status==='returned'?'📦 Returned':'⏳ Pending';
+          html += '<button onclick="event.stopPropagation();openReqStatus(\''+job.id+'\')" style="background:#1E7B3C;color:#fff;border:none;border-radius:4px;font-size:9px;font-weight:700;padding:2px 6px;cursor:pointer;white-space:nowrap">'+reqLabel+'</button>';
+        } else {
+          html += '<button onclick="event.stopPropagation();generateJobRequisition(\''+job.id+'\')" style="background:#F2B705;color:#1A1D21;border:none;border-radius:4px;font-size:9px;font-weight:700;padding:2px 6px;cursor:pointer;white-space:nowrap">🏭 Parts</button>';
+        }
         html += '<button data-jobid="'+job.id+'" class="rm-job-btn" style="background:none;border:none;color:var(--soft);cursor:pointer;font-size:14px;padding:0 2px;margin-left:2px">×</button>';
         html += '</div>';
       });
@@ -1266,6 +1273,226 @@ function buildServiceLabel(a){
   return parts.join(' · ')||'Inspection';
 }
 function toggleChart(key){ /* expand detail chart — future */ }
+
+// ── PARTS REQUISITION ENGINE ──────────────────────────────────────────────
+var WH_REQ_KEY = 'wh_requisitions_v1';
+var AI_PROXY   = 'https://unipro-ai-proxy.tedscholl.workers.dev/';
+var R2_PUB     = 'https://pub-e45b28fb27e8444d9f2136c26374f280.r2.dev';
+
+function loadSchedulerRequisitions(){
+  try{ return JSON.parse(localStorage.getItem(WH_REQ_KEY)||'[]'); }catch(e){ return []; }
+}
+function saveSchedulerRequisitions(arr){
+  try{ localStorage.setItem(WH_REQ_KEY, JSON.stringify(arr)); }catch(e){}
+}
+
+function getAccountPhotos(accountId){
+  // Pull photos from the account CRM record — only R2 URLs (most recent visit, already enforced by R2 path overwrite)
+  try{
+    var accts = JSON.parse(localStorage.getItem('termac_crm_accounts')||'[]');
+    var acct  = accts.find(function(a){ return a.id===accountId; });
+    if(!acct || !acct.photos) return [];
+    return (acct.photos).filter(function(p){ return p.url && p.url.startsWith('http'); }).map(function(p){ return p.url; }).slice(0,5);
+  }catch(e){ return []; }
+}
+
+function generateJobRequisition(jobId){
+  var job = JOBS.find(function(j){ return j.id===jobId; });
+  if(!job){ alert('Job not found.'); return; }
+
+  // Show loading modal
+  showReqModal('<div style="text-align:center;padding:30px"><div style="font-size:32px;margin-bottom:12px">🤖</div><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:16px;color:#fff">Analyzing Job + Site Photos…</div><div style="font-size:12px;color:#9CA3AF;margin-top:6px">AI is reviewing the site conditions and predicting parts needed</div></div>', null);
+
+  var photos = getAccountPhotos(job.accountId);
+
+  // Build message content — text + images
+  var msgContent = [];
+
+  // Add site photos first if available
+  photos.forEach(function(url){
+    msgContent.push({ type:'image', source:{ type:'url', url:url } });
+  });
+
+  // Add job context
+  var acctInfo = '';
+  try{
+    var accts = JSON.parse(localStorage.getItem('termac_crm_accounts')||'[]');
+    var acct  = accts.find(function(a){ return a.id===job.accountId; });
+    if(acct){
+      acctInfo = 'Account type: '+(acct.type||'—')+'\n'+
+        'Extinguishers on site: '+(acct.extinguishers||0)+'\n'+
+        'Hood systems: '+(acct.hoods||0)+'\n'+
+        'Suppression systems: '+(acct.suppressionSystems||0)+'\n'+
+        'Last service: '+(acct.lastService||'Unknown')+'\n'+
+        'Open deficiencies: '+(acct.deficiencies||'None noted')+'\n'+
+        'Notes: '+(acct.notes||'None');
+    }
+  }catch(e){}
+
+  var prompt = 'You are a fire protection service expert. A tech is being dispatched to a job. '+
+    (photos.length ? 'The site photos above show the current condition of the equipment. Analyze them carefully. ' : 'No site photos are available. ') +
+    'Based on all information provided, generate a JSON parts requisition.\n\n'+
+    'JOB: '+job.serviceType+'\n'+
+    'ACCOUNT: '+job.accountName+'\n'+
+    'DATE: '+job.date+' at '+job.time+'\n'+
+    'DURATION: '+job.duration+' minutes\n'+
+    'NOTES: '+(job.notes||'None')+'\n'+
+    (acctInfo ? '\nACCOUNT DATA:\n'+acctInfo : '')+'\n\n'+
+    'Return ONLY a valid JSON object (no markdown, no explanation) with this exact structure:\n'+
+    '{\n'+
+    '  "required": [{"itemId":"UNIPRO_SKU","name":"Part name","qty":1,"reason":"Why this is required"}],\n'+
+    '  "predicted": [{"itemId":"UNIPRO_SKU","name":"Part name","qty":1,"reason":"Why the tech should carry this","photoRef":"what in the photos suggests this (or null)"}],\n'+
+    '  "riskFlags": ["Specific risk observed or inferred — be concrete"],\n'+
+    '  "estimatedTime": "X hours",\n'+
+    '  "notes": "Any critical information for the warehouse manager or tech"\n'+
+    '}\n\n'+
+    'Use these real SKUs where applicable: EXT_25ABC, EXT_5ABC, EXT_10ABC, EXT_20ABC, EXT_KCLASS, '+
+    'SWP_25ABC, SWP_5ABC, SWP_10ABC, SWP_20ABC, SWP_KCLS, FUS_LINK, CO2_CART, NOZZLE, ACTCORD, '+
+    'PULLSTAT, PULLPIN, TAMPEAL, HYDROCLR, HOSEBND, WALLHNG, CAPMTL, CAPRUB, GASORIG, SIPHONT, '+
+    'ELIGHT, EXITSGN, EBATT, CI_12STR, CI_34STR, CI_1STR, FUS_LINK.\n'+
+    'Only include items genuinely needed. Be specific about photo observations. Be concise in reasons.';
+
+  msgContent.push({ type:'text', text:prompt });
+
+  fetch(AI_PROXY,{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({
+      model:'claude-sonnet-4-6',
+      max_tokens:1200,
+      messages:[{ role:'user', content:msgContent }]
+    })
+  }).then(function(r){ return r.json(); })
+  .then(function(data){
+    var raw = (data.content&&data.content.find(function(b){return b.type==='text';})||{}).text||'{}';
+    var clean = raw.replace(/```json|```/g,'').trim();
+    var parsed;
+    try{ parsed = JSON.parse(clean); }catch(e){ parsed = {required:[],predicted:[],riskFlags:['AI parse error — review manually'],estimatedTime:'—',notes:raw.slice(0,200)}; }
+    renderReqModal(job, parsed, photos);
+  })
+  .catch(function(){
+    renderReqModal(job, {required:[],predicted:[],riskFlags:['AI unavailable — manual requisition required'],estimatedTime:'—',notes:''}, photos);
+  });
+}
+
+function renderReqModal(job, parsed, photos){
+  var req = parsed || {};
+  var required  = req.required  || [];
+  var predicted = req.predicted || [];
+  var risks     = req.riskFlags || [];
+
+  var partsHtml = '';
+  if(required.length){
+    partsHtml += '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#9CA3AF;margin:12px 0 6px">Required Parts</div>';
+    partsHtml += required.map(function(p){
+      return '<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 10px;background:rgba(255,255,255,.06);border-radius:6px;margin-bottom:4px">'+
+        '<div><div style="font-size:13px;font-weight:600;color:#fff">'+esc(p.name)+'</div><div style="font-size:11px;color:#9CA3AF">'+esc(p.reason||'')+'</div></div>'+
+        '<div style="font-size:14px;font-weight:800;color:#F2B705;flex-shrink:0;margin-left:10px">×'+p.qty+'</div></div>';
+    }).join('');
+  }
+  if(predicted.length){
+    partsHtml += '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#9CA3AF;margin:12px 0 6px">AI Predicted — Carry These Too</div>';
+    partsHtml += predicted.map(function(p){
+      return '<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 10px;background:rgba(242,183,5,.08);border:1px solid rgba(242,183,5,.2);border-radius:6px;margin-bottom:4px">'+
+        '<div><div style="font-size:13px;font-weight:600;color:#fff">'+esc(p.name)+'</div><div style="font-size:11px;color:#9CA3AF">'+esc(p.reason||'')+(p.photoRef?'<em style="color:#F2B705"> — '+esc(p.photoRef)+'</em>':'')+'</div></div>'+
+        '<div style="font-size:14px;font-weight:800;color:#F2B705;flex-shrink:0;margin-left:10px">×'+p.qty+'</div></div>';
+    }).join('');
+  }
+  if(risks.length){
+    partsHtml += '<div style="margin-top:12px;background:rgba(200,16,46,.12);border:1px solid rgba(200,16,46,.3);border-radius:8px;padding:10px 12px">';
+    partsHtml += '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#F87171;margin-bottom:6px">⚠ Risk Flags</div>';
+    partsHtml += risks.map(function(r){ return '<div style="font-size:12px;color:#FCA5A5;margin-bottom:3px">• '+esc(r)+'</div>'; }).join('');
+    partsHtml += '</div>';
+  }
+  if(req.notes){
+    partsHtml += '<div style="margin-top:10px;font-size:12px;color:#9CA3AF;font-style:italic">'+esc(req.notes)+'</div>';
+  }
+  if(photos.length){
+    partsHtml += '<div style="margin-top:12px;font-size:10px;color:#6B7280">📸 '+photos.length+' site photo'+(photos.length>1?'s':'')+' analyzed (most recent visit)</div>';
+  }
+
+  var footer = '<div style="display:flex;gap:8px;margin-top:16px">'+
+    '<button onclick="closeReqModal()" style="flex:1;padding:10px;background:none;border:1px solid rgba(255,255,255,.2);color:#9CA3AF;border-radius:8px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;cursor:pointer">Cancel</button>'+
+    '<button onclick="confirmRequisition()" style="flex:2;padding:10px;background:#1E7B3C;color:#fff;border:none;border-radius:8px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;cursor:pointer">✅ Send to Warehouse</button>'+
+    '</div>';
+
+  window._pendingReqJob    = job;
+  window._pendingReqParsed = parsed;
+  window._pendingReqPhotos = photos;
+
+  showReqModal(partsHtml + footer, job);
+}
+
+function confirmRequisition(){
+  var job     = window._pendingReqJob;
+  var parsed  = window._pendingReqParsed || {};
+  var photos  = window._pendingReqPhotos || [];
+  if(!job) return;
+
+  var allItems = (parsed.required||[]).map(function(p){ return Object.assign({},p,{source:'required'}); })
+    .concat((parsed.predicted||[]).map(function(p){ return Object.assign({},p,{source:'ai_predicted'}); }));
+
+  var requisition = {
+    id:             'REQ_'+Date.now(),
+    jobId:          job.id,
+    accountId:      job.accountId,
+    accountName:    job.accountName,
+    techId:         job.techId,
+    serviceType:    job.serviceType,
+    jobDate:        job.date,
+    jobTime:        job.time,
+    items:          allItems,
+    riskFlags:      parsed.riskFlags || [],
+    estimatedTime:  parsed.estimatedTime || '—',
+    aiNotes:        parsed.notes || '',
+    photosAnalyzed: photos,
+    status:         'pending',
+    createdAt:      Date.now(),
+    kittedBy:       null, kittedAt:     null,
+    signedOutBy:    null, signedOutAt:  null,
+    signedOutItems: [],   returnedItems:[],
+  };
+
+  var reqs = loadSchedulerRequisitions();
+  reqs = reqs.filter(function(r){ return r.jobId !== job.id; }); // replace if re-generated
+  reqs.push(requisition);
+  saveSchedulerRequisitions(reqs);
+
+  closeReqModal();
+  renderDaySchedule(new Date(job.date));
+  alert('✅ Parts requisition sent to warehouse for '+job.accountName+'.\n\nWarehouse manager will see it in the Warehouse Portal → Requisitions tab.');
+}
+
+function openReqStatus(jobId){
+  var reqs = loadSchedulerRequisitions();
+  var req  = reqs.find(function(r){ return r.jobId===jobId; });
+  if(!req){ alert('No requisition found for this job.'); return; }
+  var statusMap = {pending:'⏳ Pending — warehouse preparing',kitted:'✅ Kitted & Ready for pickup',signed_out:'🔑 Signed out — tech has the kit',returned:'📦 Items returned & restocked',closed:'✔ Closed'};
+  var msg = 'REQUISITION: '+req.accountName+'\n'+
+    'Status: '+(statusMap[req.status]||req.status)+'\n'+
+    'Items: '+req.items.length+'\n'+
+    (req.riskFlags.length ? 'Risk flags: '+req.riskFlags.join('; ') : '')+
+    (req.kittedBy ? '\nKitted by: '+req.kittedBy : '')+
+    (req.signedOutBy ? '\nSigned out by: '+req.signedOutBy : '');
+  alert(msg);
+}
+
+// Requisition modal UI
+function showReqModal(bodyHtml, job){
+  var existing = document.getElementById('reqModal');
+  if(existing) existing.remove();
+  var title = job ? '🏭 Parts Requisition — '+esc(job.accountName) : '🤖 Generating Requisition…';
+  var modal = document.createElement('div');
+  modal.id = 'reqModal';
+  modal.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(10,12,16,.85);z-index:2000;display:flex;align-items:center;justify-content:center;overflow-y:auto;padding:20px 0';
+  modal.innerHTML = '<div style="background:#1C2833;border-radius:14px;width:min(520px,96vw);max-height:90vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,.5)">'+
+    '<div style="padding:16px 20px;border-bottom:1px solid rgba(255,255,255,.1);display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;background:#1C2833;z-index:5">'+
+    '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:14px;color:#fff;letter-spacing:.06em">'+title+'</div>'+
+    '<button onclick="closeReqModal()" style="background:none;border:none;color:#9CA3AF;font-size:20px;cursor:pointer">✕</button>'+
+    '</div><div style="padding:16px 20px">'+bodyHtml+'</div></div>';
+  document.body.appendChild(modal);
+}
+function closeReqModal(){ var m=document.getElementById('reqModal'); if(m) m.remove(); }
 </script>
 </body>
 </html>

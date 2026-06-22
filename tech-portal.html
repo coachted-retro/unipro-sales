@@ -573,6 +573,9 @@ if (sessionStorage.getItem('openDispatcher') === '1') {
       <!-- PARTS CHECKLIST -->
       <div class="brief-card" id="bc-parts"></div>
 
+      <!-- KIT PICKUP — from warehouse requisition -->
+      <div class="brief-card" id="bc-kit" style="display:none"></div>
+
       <!-- FINDINGS -->
       <div class="brief-card" id="bc-findings" style="display:none;"></div>
 
@@ -2406,6 +2409,117 @@ function submitTagScan() {
 // so this works whether the tech opened it from the dashboard or mid-job.
 const LEAD_TAG_PROXY = 'https://unipro-ai-proxy.tedscholl.workers.dev/';
 
+// ── WAREHOUSE KIT PICKUP ──────────────────────────────────────────────────
+function renderKitPickupCard(jobId) {
+  var kitCard = document.getElementById('bc-kit');
+  if (!kitCard) return;
+  kitCard.style.display = 'none';
+  if (!jobId) return;
+  var reqs = [];
+  try { reqs = JSON.parse(localStorage.getItem('wh_requisitions_v1')||'[]'); } catch(e) {}
+  var req = reqs.find(function(r){ return r.jobId === jobId; });
+  if (!req) return; // no requisition for this job
+
+  var statusColors = {pending:'#D97706',kitted:'#1E7B3C',signed_out:'#1B5FA8',returned:'#6D28D9'};
+  var statusLabels = {pending:'⏳ Pending — warehouse preparing your kit',kitted:'✅ Kit Ready — pick up at warehouse',signed_out:'🔑 You have the kit',returned:'📦 Kit returned & restocked'};
+  var sc = statusColors[req.status] || '#9CA3AF';
+  var sl = statusLabels[req.status] || req.status;
+  var items = req.items || [];
+
+  var actionBtn = '';
+  if (req.status === 'kitted') {
+    actionBtn = '<button onclick="techSignOutKit(\''+req.id+'\')" style="width:100%;margin-top:12px;padding:12px;background:#1B5FA8;color:#fff;border:none;border-radius:8px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:14px;letter-spacing:.4px;cursor:pointer">🔑 Sign Out — I Have the Kit</button>';
+  } else if (req.status === 'signed_out') {
+    actionBtn = '<button onclick="techReturnKit(\''+req.id+'\')" style="width:100%;margin-top:12px;padding:12px;background:#1E7B3C;color:#fff;border:none;border-radius:8px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:14px;letter-spacing:.4px;cursor:pointer">📦 Return Unused Items</button>';
+  }
+
+  var itemsHtml = items.map(function(it){
+    return '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.08)">'
+      +'<span style="font-size:13px">'+it.name+'</span>'
+      +'<span style="font-weight:700;color:#F2B705">×'+it.qty+(it.source==='ai_predicted'?' <span style="font-size:10px;opacity:.7">AI</span>':'')+'</span>'
+      +'</div>';
+  }).join('');
+
+  kitCard.innerHTML = '<div class="brief-card-hdr" style="background:#0A1628">'
+    +'<div><div class="brief-card-title">🏭 Warehouse Kit</div>'
+    +'<div class="brief-card-sub" style="color:'+sc+'">'+sl+'</div></div></div>'
+    +'<div class="brief-card-body" style="background:#111827;color:#fff">'
+    + (req.riskFlags && req.riskFlags.length ? '<div style="background:rgba(200,16,46,.15);border:1px solid rgba(200,16,46,.3);border-radius:6px;padding:8px 12px;margin-bottom:12px">'
+      +'<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#F87171;margin-bottom:4px">⚠ AI Risk Flags</div>'
+      +req.riskFlags.map(function(r){return'<div style="font-size:12px;color:#FCA5A5">• '+r+'</div>';}).join('')
+      +'</div>' : '')
+    +'<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#6B7280;margin-bottom:8px">Items in Your Kit</div>'
+    + itemsHtml
+    + (req.photosAnalyzed && req.photosAnalyzed.length ? '<div style="font-size:10px;color:#6B7280;margin-top:10px">📸 Kit based on '+req.photosAnalyzed.length+' site photo'+(req.photosAnalyzed.length>1?'s':'')+' analyzed by AI</div>' : '')
+    + actionBtn
+    +'</div>';
+  kitCard.style.display = 'block';
+}
+
+function techSignOutKit(reqId) {
+  var reqs = [];
+  try { reqs = JSON.parse(localStorage.getItem('wh_requisitions_v1')||'[]'); } catch(e) {}
+  var req = reqs.find(function(r){ return r.id===reqId; });
+  if (!req) return;
+  var techName = (_briefData && (_briefData.tech || _briefData.contact)) || 'Tech';
+  req.status      = 'signed_out';
+  req.signedOutBy = techName;
+  req.signedOutAt = Date.now();
+  req.signedOutItems = req.items.map(function(it){ return Object.assign({},it,{qtyTaken:it.qty}); });
+  try { localStorage.setItem('wh_requisitions_v1', JSON.stringify(reqs)); } catch(e) {}
+  renderKitPickupCard(_briefData && _briefData.jobId);
+}
+
+function techReturnKit(reqId) {
+  var reqs = [];
+  try { reqs = JSON.parse(localStorage.getItem('wh_requisitions_v1')||'[]'); } catch(e) {}
+  var req = reqs.find(function(r){ return r.id===reqId; });
+  if (!req) return;
+  var items = req.signedOutItems || req.items || [];
+  var html = '<div style="padding:16px;background:#111827;border-radius:10px">'
+    +'<div style="font-size:13px;color:#9CA3AF;margin-bottom:12px">Enter how many of each item you are returning unused.</div>';
+  items.forEach(function(it, idx){
+    html += '<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.08)">'
+      +'<div style="flex:1;font-size:13px;color:#fff">'+it.name+' <span style="color:#6B7280">(took '+it.qty+')</span></div>'
+      +'<input type="number" id="techRet_'+idx+'" value="0" min="0" max="'+it.qty+'" style="width:60px;padding:5px 8px;border:1px solid rgba(255,255,255,.2);border-radius:6px;background:#1C2833;color:#fff;font-size:13px;text-align:center">'
+      +'</div>';
+  });
+  html += '<button onclick="confirmTechReturn(\''+reqId+'\')" style="width:100%;margin-top:14px;padding:12px;background:#1E7B3C;color:#fff;border:none;border-radius:8px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:14px;cursor:pointer">📦 Submit Returns</button></div>';
+  var kitCard = document.getElementById('bc-kit');
+  if (kitCard) {
+    var body = kitCard.querySelector('.brief-card-body');
+    if (body) body.innerHTML = html;
+  }
+}
+
+function confirmTechReturn(reqId) {
+  var reqs = [];
+  try { reqs = JSON.parse(localStorage.getItem('wh_requisitions_v1')||'[]'); } catch(e) {}
+  var req = reqs.find(function(r){ return r.id===reqId; });
+  if (!req) return;
+  var items = req.signedOutItems || req.items || [];
+  var stock = {};
+  try { stock = JSON.parse(localStorage.getItem('wh_unipro_v1')||'{}'); } catch(e) {}
+  var totalReturned = 0;
+  req.returnedItems = items.map(function(it, idx){
+    var retEl = document.getElementById('techRet_'+idx);
+    var qtyRet = parseInt(retEl&&retEl.value||0)||0;
+    if (qtyRet > 0 && stock[it.itemId]) {
+      stock[it.itemId].onHand = (stock[it.itemId].onHand||0) + qtyRet;
+      stock[it.itemId].txns = stock[it.itemId].txns || [];
+      stock[it.itemId].txns.push({type:'receive',qty:qtyRet,ts:Date.now(),reason:'tech_return',ref:req.accountName});
+      totalReturned += qtyRet;
+    }
+    return Object.assign({},it,{qtyReturned:qtyRet});
+  });
+  try { localStorage.setItem('wh_unipro_v1', JSON.stringify(stock)); } catch(e) {}
+  req.status     = 'returned';
+  req.returnedAt = Date.now();
+  try { localStorage.setItem('wh_requisitions_v1', JSON.stringify(reqs)); } catch(e) {}
+  renderKitPickupCard(_briefData && _briefData.jobId);
+  if (totalReturned > 0) alert('✅ '+totalReturned+' item'+(totalReturned!==1?'s':'')+' returned to UniPro warehouse stock.');
+}
+
 const LEAD_DIVISION_OPTIONS = [
   { key:'unipro',    label:'UniPro — Fire Protection (Extinguishers/Hood/Alarm)' },
   { key:'filterman', label:'Filter Man — Hood Filter Exchange' },
@@ -4113,6 +4227,9 @@ function renderBriefFromData(data) {
       +'<div class="parts-done-banner" id="ptDone">✅ Truck loaded — ready to roll</div></div>';
     bp.style.display = 'block';
   }
+
+  // Kit Pickup — from warehouse requisition (if one exists for this job)
+  renderKitPickupCard(data.jobId);
   // Findings
   var bf = document.getElementById('bc-findings');
   if (data.findings.imm||data.findings.rec||data.findings.adv) {
