@@ -1288,12 +1288,17 @@ renderAll();
       </div>
       <div class="wo-section">
         <div class="wo-section-title">Customer Signature</div>
-        <p style="font-size:12px;color:#5A616B;margin:0 0 12px">By signing below, the customer authorizes the work performed and agrees to payment of the invoice total shown above.</p>
+        <p style="font-size:12px;color:#5A616B;margin:0 0 12px">By signing below, the customer authorizes the work performed, any change orders noted, and agrees to payment of the invoice total shown above.</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+          <div class="form-field"><label>Authorized Signer Name *</label><input id="woSignerName" placeholder="Print full name" autocomplete="off"></div>
+          <div class="form-field"><label>Title / Role</label><input id="woSignerTitle" placeholder="Owner, GM, Manager..."></div>
+        </div>
         <canvas class="sig-canvas" id="woSigCanvas" width="600" height="150"></canvas>
         <div style="display:flex;gap:10px;margin-top:10px">
           <button onclick="woClearSig()" style="background:#fff;border:1.5px solid #D7DBE0;border-radius:7px;padding:7px 14px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;text-transform:uppercase;cursor:pointer">Clear</button>
           <span id="woSigStatus" style="font-size:12px;color:#5A616B;line-height:32px">Draw signature above</span>
         </div>
+        <div style="font-size:11px;color:#8A909A;margin-top:8px">Samsung S Pen and touch supported · Signature is saved to the account record and included on the invoice</div>
       </div>
       <div class="wo-section">
         <div class="wo-section-title">💳 Payment</div>
@@ -1946,9 +1951,54 @@ function woNext() {
     }
   }
   if (woState.step === 3) {
-    // Check signature
+    // Require signer name
+    const signerName = document.getElementById('woSignerName')?.value.trim();
+    if (!signerName) { alert('Please enter the authorized signer\'s name before proceeding.'); return; }
     if (!woState.sigDrawn) { alert('Customer signature is required before proceeding.'); return; }
     if (!woState.paymentConfirmed) { alert('Confirm payment collection before proceeding.'); return; }
+
+    // Capture signature image and signer details into woState so they
+    // survive to the complete step and get written to the account record
+    const canvas = document.getElementById('woSigCanvas');
+    woState.sigDataUrl     = canvas ? canvas.toDataURL('image/png') : null;
+    woState.signerName     = signerName;
+    woState.signerTitle    = document.getElementById('woSignerTitle')?.value.trim() || '';
+    woState.signerDate     = new Date().toLocaleDateString('en-US');
+
+    // ── DATA BRIDGE: write lastService to BOTH localStorage keys so the
+    // drip engine in termac-os.html (reads termac_crm_accounts) fires the
+    // post-service NPS email and renewal sequences correctly. Tech Portal
+    // writes to crm_accounts; Termac OS reads termac_crm_accounts.
+    const job = woState.job;
+    if (job) {
+      const now = Date.now();
+      const keys = ['crm_accounts', 'termac_crm_accounts'];
+      keys.forEach(key => {
+        try {
+          const accts = JSON.parse(localStorage.getItem(key) || '[]');
+          const idx = accts.findIndex(a =>
+            a.name === job.account ||
+            a.business === job.account ||
+            a.id === job.accountId
+          );
+          if (idx !== -1) {
+            accts[idx].lastService      = now;
+            accts[idx].lastServiceBy    = woState.signerName;
+            accts[idx].lastServiceDate  = new Date().toISOString().slice(0,10);
+            accts[idx].lastCheckin      = now;
+            // Save signature to account record on both keys
+            if (woState.sigDataUrl) {
+              accts[idx].lastInvoiceSig      = woState.sigDataUrl;
+              accts[idx].lastInvoiceSigner   = woState.signerName;
+              accts[idx].lastInvoiceSignerTitle = woState.signerTitle;
+              accts[idx].lastInvoiceDate     = woState.signerDate;
+            }
+            accts[idx].npsRequested = false; // reset so drip engine fires NPS
+            localStorage.setItem(key, JSON.stringify(accts));
+          }
+        } catch(e) {}
+      });
+    }
   }
   woGotoStep(woState.step + 1);
 }
@@ -2679,6 +2729,15 @@ function woPrintInvoice() {
   <div><strong>Bill To:</strong> ${job.account} · ${job.addr}</div>
   <div style="margin-top:12px"><strong class="total">Invoice Total: $${total.toLocaleString()}</strong></div>
   ${_mgrApproved ? `<div style="margin-top:8px;font-size:12px;color:#1E7B3C">✅ Change order approved by ${_mgrApproverName}</div>` : ''}
+  <div style="margin-top:24px;border-top:1px solid #D7DBE0;padding-top:16px">
+    <strong style="font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#5A616B">Customer Authorization</strong>
+    ${woState.sigDataUrl ? `<img src="${woState.sigDataUrl}" style="display:block;max-height:80px;border:1px solid #D7DBE0;border-radius:4px;margin:8px 0;background:#F9FAFB">` : ''}
+    <div style="font-size:12px;color:#1A1D21;margin-top:4px">
+      ${woState.signerName ? `<strong>${woState.signerName}</strong>${woState.signerTitle ? ' · ' + woState.signerTitle : ''}` : 'Signature on file'}
+      &nbsp;·&nbsp; ${woState.signerDate || new Date().toLocaleDateString()}
+    </div>
+    <div style="font-size:11px;color:#5A616B;margin-top:4px">By signing above, customer authorizes work performed and agrees to payment of invoice total.</div>
+  </div>
   <div class="footer">Ted Scholl · tscholl@termac.com · 267-421-6336 · UniPro / Termac Family of Companies</div>
   </body></html>`);
   w.document.close();
