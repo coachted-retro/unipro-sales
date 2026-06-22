@@ -17357,9 +17357,9 @@ window.uvCollectData = uvCollectData;
       <div style="max-width:1400px;margin:0 auto 16px;background:linear-gradient(135deg,#1B5FA8,#0F3E73);border-radius:12px;padding:20px 24px;color:#fff;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
         <div>
           <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:16px;letter-spacing:.02em;margin-bottom:4px">🧭 Plan My Day</div>
-          <div style="font-size:12.5px;color:rgba(255,255,255,.85);max-width:440px">New, or not sure where to start today? We'll find the area in your territory with the most hot/warm lead opportunity right now.</div>
+          <div style="font-size:12.5px;color:rgba(255,255,255,.85);max-width:440px">New, or not sure where to start? Pick one or more days ahead — we'll find the best opportunity area in your territory for each one.</div>
         </div>
-        <button onclick="planMyDay()" style="background:#fff;color:#1B5FA8;border:none;border-radius:8px;padding:11px 22px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;white-space:nowrap;flex-shrink:0">Find My Route →</button>
+        <button onclick="openPlanDayCalendar()" style="background:#fff;color:#1B5FA8;border:none;border-radius:8px;padding:11px 22px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;white-space:nowrap;flex-shrink:0">Find My Route →</button>
       </div>
 
       <!-- Single responsive grid for the whole dashboard -- cards size
@@ -19206,29 +19206,139 @@ function openTripStack(accountId) {
 }
 
 // "Plan My Day" -- for reps who are new or not sure where to start,
+// "Plan My Day" -- for reps who are new or not sure where to start,
 // rather than requiring an existing appointment to anchor off of.
-// Clusters this rep's own hot/warm leads (currentRepTerritory() +
-// zipMatchesTerritory(), same territory-scoping already used by the
-// Leads tab) by 3-digit ZIP prefix, scores each cluster by lead count
-// and hotness, and runs the same trip-opportunity lookup seeded from
-// the winning cluster's most common ZIP -- so the rep gets a ranked
-// stack for the single area in their territory with the most hot/warm
-// opportunity right now, same modal and scoring as a normal Trip Stack.
-function planMyDay() {
-  const territory = currentRepTerritory();
-  const leads = crmLoad('leads').filter(l => l.status === 'hot' || l.status === 'warm');
-  const inTerritory = territory ? leads.filter(l => zipMatchesTerritory(l.zip || extractZip(l.address), territory)) : leads;
+// Now supports planning multiple days at once via a calendar picker
+// (e.g. tomorrow + Tuesday + Wednesday) so a rep can see the week
+// ahead, not just right now.
+//
+// For each selected date: if the rep already has an appointment
+// booked that day (r.appointment.date, scoped to r.assignedRep ===
+// this rep), the day's plan anchors around it and pulls nearby
+// opportunities. If the day is open, falls back to clustering this
+// rep's own hot/warm leads by 3-digit ZIP prefix (same territory
+// scoping the Leads tab uses) and picks the best-scoring cluster.
+// Across multiple selected days, already-used ZIP-prefix clusters are
+// excluded from later days' fallback picks -- so a 3-day plan covers
+// 3 different areas instead of suggesting the same spot three times.
+// An existing real appointment always anchors its day regardless of
+// reuse, since a booked appointment isn't something to route around.
 
-  if (!inTerritory.length) {
-    alert('No hot or warm leads found in your territory right now. Check back as new leads come in, or browse the full Leads pool.');
-    return;
+let planDaySelectedDates = new Set();
+let planDayCalMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+
+function openPlanDayCalendar() {
+  const modal = document.getElementById('planDayCalModal');
+  if (!modal) return;
+  const tomorrow = new Date(Date.now() + 86400000);
+  planDaySelectedDates = new Set([toDateStr(tomorrow)]);
+  planDayCalMonth = new Date(tomorrow.getFullYear(), tomorrow.getMonth(), 1);
+  planDayCalRender();
+  modal.classList.add('open');
+}
+
+function toDateStr(d) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+function planDayCalNavigate(delta) {
+  planDayCalMonth = new Date(planDayCalMonth.getFullYear(), planDayCalMonth.getMonth() + delta, 1);
+  planDayCalRender();
+}
+
+function planDayCalToggleDate(dateStr) {
+  if (planDaySelectedDates.has(dateStr)) planDaySelectedDates.delete(dateStr);
+  else planDaySelectedDates.add(dateStr);
+  planDayCalRender();
+}
+
+function planDayCalQuickPick(type) {
+  const d = new Date();
+  if (type === 'tomorrow') d.setDate(d.getDate() + 1);
+  planDaySelectedDates.add(toDateStr(d));
+  planDayCalMonth = new Date(d.getFullYear(), d.getMonth(), 1);
+  planDayCalRender();
+}
+
+function planDayCalRender() {
+  const year = planDayCalMonth.getFullYear();
+  const month = planDayCalMonth.getMonth();
+  const todayStr = toDateStr(new Date());
+
+  const labelEl = document.getElementById('planDayCalLabel');
+  if (labelEl) labelEl.textContent = planDayCalMonth.toLocaleDateString('en-US', { month:'long', year:'numeric' });
+
+  const firstDow = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  let cells = '';
+  for (let i = 0; i < firstDow; i++) cells += '<div></div>';
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const isPast = dateStr < todayStr;
+    const isSelected = planDaySelectedDates.has(dateStr);
+    const isToday = dateStr === todayStr;
+    cells += `<div ${isPast ? '' : `onclick="planDayCalToggleDate('${dateStr}')"`} style="aspect-ratio:1;display:flex;align-items:center;justify-content:center;border-radius:8px;cursor:${isPast?'default':'pointer'};font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;background:${isSelected?'var(--red)':'transparent'};color:${isPast?'#D1D5DB':isSelected?'#fff':'var(--ink)'};border:${isToday&&!isSelected?'1.5px solid var(--red)':'1.5px solid transparent'}">${d}</div>`;
   }
+
+  const gridEl = document.getElementById('planDayCalGrid');
+  if (gridEl) gridEl.innerHTML = cells;
+
+  const countEl = document.getElementById('planDayCalCount');
+  const n = planDaySelectedDates.size;
+  if (countEl) countEl.textContent = n ? `${n} day${n > 1 ? 's' : ''} selected` : 'Tap dates to select';
+  const confirmBtn = document.getElementById('planDayCalConfirm');
+  if (confirmBtn) confirmBtn.disabled = n === 0;
+}
+
+function confirmPlanDays() {
+  if (!planDaySelectedDates.size) return;
+  const dates = [...planDaySelectedDates].sort();
+  closeModal('planDayCalModal');
+  setTimeout(() => planDaysForDates(dates), 150);
+}
+
+function formatPlanDate(dateStr) {
+  const d = new Date(dateStr + 'T12:00:00');
+  return d.toLocaleDateString('en-US', { weekday:'long', month:'short', day:'numeric' });
+}
+
+// Plans a single date, given the set of ZIP-prefix clusters already
+// used by earlier days in this batch (mutated in place as each day
+// claims a cluster).
+function planSingleDay(dateStr, usedPrefixes) {
+  const repName = _currentUser?.name;
+  const accounts = crmLoad('accounts');
+  const leads = crmLoad('leads');
+
+  // 1. Does the rep already have an appointment booked this date?
+  const myAppts = [...accounts, ...leads].filter(r =>
+    r.assignedRep === repName && r.appointment && r.appointment.date === dateStr
+  );
+  if (myAppts.length) {
+    const anchor = myAppts[0];
+    const address = anchor.address || anchor.appointment.location || '';
+    const zip = extractZip(address) || extractZip(anchor.appointment.location || '');
+    if (zip) usedPrefixes.add(zip.slice(0, 3));
+    const opps = getTripOpportunities(' ' + (zip || ''), anchor.id, 12);
+    return {
+      date: dateStr, hasAppointment: true,
+      anchorLabel: `📅 ${anchor.appointment.time || ''} — ${anchor.name || anchor.business} · ${address || 'No address on file'}`,
+      opportunities: opps
+    };
+  }
+
+  // 2. Open day -- fall back to the best unused opportunity cluster
+  const territory = currentRepTerritory();
+  const hotWarm = leads.filter(l => l.status === 'hot' || l.status === 'warm');
+  const inTerritory = territory ? hotWarm.filter(l => zipMatchesTerritory(l.zip || extractZip(l.address), territory)) : hotWarm;
 
   const clusters = {};
   inTerritory.forEach(l => {
     const zip = extractZip(l.address) || l.zip;
     if (!zip) return;
     const prefix = String(zip).slice(0, 3);
+    if (usedPrefixes.has(prefix)) return; // already covered by an earlier day in this batch
     if (!clusters[prefix]) clusters[prefix] = { prefix, leads: [], score: 0 };
     clusters[prefix].leads.push(l);
     clusters[prefix].score += (l.status === 'hot' ? 3 : 1.5) + ((l.aiScore || 5) / 5);
@@ -19236,27 +19346,53 @@ function planMyDay() {
 
   const clusterList = Object.values(clusters);
   if (!clusterList.length) {
-    alert('No hot or warm leads with a usable ZIP/address found in your territory yet.');
-    return;
+    return {
+      date: dateStr, hasAppointment: false,
+      anchorLabel: 'No open appointment, and every nearby opportunity area is already covered by another planned day.',
+      opportunities: []
+    };
   }
-  const best = clusterList.sort((a, b) => b.score - a.score)[0];
 
-  // Anchor on the single most common full ZIP within the winning cluster
+  const best = clusterList.sort((a, b) => b.score - a.score)[0];
+  usedPrefixes.add(best.prefix);
+
   const zipCounts = {};
   best.leads.forEach(l => {
     const z = extractZip(l.address) || l.zip;
     if (z) zipCounts[z] = (zipCounts[z] || 0) + 1;
   });
   const anchorZip = Object.entries(zipCounts).sort((a, b) => b[1] - a[1])[0][0];
+  const opps = getTripOpportunities(' ' + anchorZip, null, 12);
 
-  const opps = getTripOpportunities(' ' + anchorZip, null, 15);
-  const modal = document.getElementById('tripStackModal');
-  if (!modal) return;
-  document.getElementById('tripStackAnchor').textContent =
-    `📍 Best opportunity area today — ZIP ${best.prefix}xx · ${best.leads.length} hot/warm lead${best.leads.length > 1 ? 's' : ''} nearby`;
-  document.getElementById('tripStackList').innerHTML = renderTripStackRows(opps);
+  return {
+    date: dateStr, hasAppointment: false,
+    anchorLabel: `🧭 Suggested area — ZIP ${best.prefix}xx · ${best.leads.length} hot/warm lead${best.leads.length > 1 ? 's' : ''}`,
+    opportunities: opps
+  };
+}
+
+function planDaysForDates(dateList) {
+  const usedPrefixes = new Set();
+  const dayPlans = dateList.map(d => planSingleDay(d, usedPrefixes));
+  renderPlanDayResults(dayPlans);
+}
+
+function renderPlanDayResults(dayPlans) {
+  const modal = document.getElementById('planDayResultModal');
+  const body = document.getElementById('planDayResultBody');
+  if (!modal || !body) return;
+  body.innerHTML = dayPlans.map(dp => `
+    <div style="margin-bottom:22px;padding-bottom:18px;border-bottom:1px solid var(--line)">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:14px;color:var(--ink)">${formatPlanDate(dp.date)}</div>
+        ${dp.hasAppointment ? '<span style="background:#DBEAFE;color:#1E40AF;border-radius:4px;padding:1px 7px;font-size:10px;font-weight:700">BOOKED</span>' : '<span style="background:#F3F4F6;color:var(--soft);border-radius:4px;padding:1px 7px;font-size:10px;font-weight:700">OPEN DAY</span>'}
+      </div>
+      <div style="font-size:12px;color:var(--soft);margin-bottom:10px">${dp.anchorLabel}</div>
+      ${renderTripStackRows(dp.opportunities)}
+    </div>`).join('');
   modal.classList.add('open');
 }
+
 
 
 // ════════════════════════════════════════════════════════════
@@ -19833,6 +19969,53 @@ document.addEventListener('DOMContentLoaded', () => {
       </div>
       <div class="is-modal-foot">
         <button class="is-btn is-btn-ghost" onclick="closeModal('tripStackModal')">Close</button>
+      </div>
+    </div>
+  </div>`);
+
+  // ── Plan My Day — Calendar Picker ──
+  document.body.insertAdjacentHTML('beforeend', `
+  <div class="is-modal-bg" id="planDayCalModal">
+    <div class="is-modal" style="width:min(380px,96vw)">
+      <div class="is-modal-hdr">
+        <h3>🧭 Plan My Day</h3>
+        <button onclick="closeModal('planDayCalModal')" style="background:none;border:none;color:#BFC4CA;font-size:20px;cursor:pointer">✕</button>
+      </div>
+      <div class="is-modal-body">
+        <div style="font-size:12px;color:var(--soft);margin-bottom:14px">Pick one or more days to plan ahead. Days with an existing appointment get opportunities built around it; open days get our best suggested area — each selected day gets a different area where possible, so you're not sent back to the same spot twice.</div>
+        <div style="display:flex;gap:8px;margin-bottom:14px">
+          <button onclick="planDayCalQuickPick('today')" style="flex:1;background:var(--bg);border:1.5px solid var(--line);border-radius:7px;padding:8px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;cursor:pointer">Today</button>
+          <button onclick="planDayCalQuickPick('tomorrow')" style="flex:1;background:var(--bg);border:1.5px solid var(--line);border-radius:7px;padding:8px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;cursor:pointer">Tomorrow</button>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <button onclick="planDayCalNavigate(-1)" style="background:none;border:none;font-size:16px;cursor:pointer;padding:4px 10px">‹</button>
+          <div id="planDayCalLabel" style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:14px"></div>
+          <button onclick="planDayCalNavigate(1)" style="background:none;border:none;font-size:16px;cursor:pointer;padding:4px 10px">›</button>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:3px;font-size:10px;color:var(--soft);text-align:center;margin-bottom:4px;font-weight:700">
+          <div>S</div><div>M</div><div>T</div><div>W</div><div>T</div><div>F</div><div>S</div>
+        </div>
+        <div id="planDayCalGrid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:3px"></div>
+        <div id="planDayCalCount" style="text-align:center;font-size:11px;color:var(--soft);margin-top:12px;font-weight:700"></div>
+      </div>
+      <div class="is-modal-foot">
+        <button class="is-btn is-btn-ghost" onclick="closeModal('planDayCalModal')">Cancel</button>
+        <button class="is-btn" id="planDayCalConfirm" onclick="confirmPlanDays()" style="background:var(--red);color:#fff">Plan These Days →</button>
+      </div>
+    </div>
+  </div>`);
+
+  // ── Plan My Day — Multi-Day Results ──
+  document.body.insertAdjacentHTML('beforeend', `
+  <div class="is-modal-bg" id="planDayResultModal">
+    <div class="is-modal" style="width:min(640px,96vw)">
+      <div class="is-modal-hdr">
+        <h3>🧭 Your Planned Days</h3>
+        <button onclick="closeModal('planDayResultModal')" style="background:none;border:none;color:#BFC4CA;font-size:20px;cursor:pointer">✕</button>
+      </div>
+      <div class="is-modal-body" id="planDayResultBody" style="max-height:70vh;overflow-y:auto"></div>
+      <div class="is-modal-foot">
+        <button class="is-btn is-btn-ghost" onclick="closeModal('planDayResultModal')">Close</button>
       </div>
     </div>
   </div>`);
