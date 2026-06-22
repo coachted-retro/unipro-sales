@@ -17346,6 +17346,22 @@ window.uvCollectData = uvCollectData;
     <!-- ── MY DASHBOARD TAB ── -->
     <div id="goalsPanel_my" style="flex:1;overflow-y:auto;padding:24px 28px">
 
+      <!-- "Plan My Day" -- for reps who are new or not sure where to
+           start, rather than requiring an existing appointment to
+           anchor off of. Sits above the metrics grid, not inside it,
+           so it doesn't compete with the quota gauge for the "hero"
+           spot -- this is meant to be the first thing a rep who needs
+           it sees. planMyDay() clusters this rep's own hot/warm leads
+           by territory and finds the single area with the most
+           opportunity right now. -->
+      <div style="max-width:1400px;margin:0 auto 16px;background:linear-gradient(135deg,#1B5FA8,#0F3E73);border-radius:12px;padding:20px 24px;color:#fff;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
+        <div>
+          <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:16px;letter-spacing:.02em;margin-bottom:4px">🧭 Plan My Day</div>
+          <div style="font-size:12.5px;color:rgba(255,255,255,.85);max-width:440px">New, or not sure where to start today? We'll find the area in your territory with the most hot/warm lead opportunity right now.</div>
+        </div>
+        <button onclick="planMyDay()" style="background:#fff;color:#1B5FA8;border:none;border-radius:8px;padding:11px 22px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;white-space:nowrap;flex-shrink:0">Find My Route →</button>
+      </div>
+
       <!-- Single responsive grid for the whole dashboard -- cards size
            themselves to the available width and wrap onto new rows
            instead of being squeezed into one overflowing horizontal
@@ -19075,7 +19091,7 @@ function zipDistance(zip1, zip2) {
   return 20;
 }
 
-function getTripOpportunities(anchorAddress, currentAccountId, maxResults=10) {
+function getTripOpportunities(anchorAddress, currentAccountId, maxResults=15) {
   const zip = extractZip(anchorAddress);
   const accounts = crmLoad('accounts');
   const leads    = crmLoad('leads');
@@ -19083,7 +19099,7 @@ function getTripOpportunities(anchorAddress, currentAccountId, maxResults=10) {
 
   const opportunities = [];
 
-  // Active accounts — cross-sell / white-space
+  // Active accounts — cross-sell / white-space / regular check-in
   accounts.forEach(a => {
     if (a.id === currentAccountId) return;
     const dist = zipDistance(zip, extractZip(a.address));
@@ -19095,11 +19111,23 @@ function getTripOpportunities(anchorAddress, currentAccountId, maxResults=10) {
     if (svcs < 2) score += 2; // white space opportunity
     if (health <= 2) score += 1; // jeopardy — urgent
     if (churn >= 7) score += 1; // at risk — needs contact
+    // Stable, fully-serviced accounts don't get any other boost above --
+    // without this they'd rarely surface, since the whole list otherwise
+    // skews toward "something's wrong here." A healthy account the rep
+    // hasn't visited in a while is still worth a face-to-face check-in,
+    // not just the ones in jeopardy.
+    const daysSinceContact = a.lastCheckin ? Math.round((Date.now() - a.lastCheckin) / 86400000) : null;
+    const isStable = svcs >= 2 && health > 2 && churn < 7;
+    let checkinNote = null;
+    if (isStable && daysSinceContact !== null) {
+      if (daysSinceContact > 60) { score += 2; checkinNote = `${daysSinceContact}d since last check-in`; }
+      else if (daysSinceContact > 30) { score += 1; checkinNote = `${daysSinceContact}d since last check-in`; }
+    }
     opportunities.push({
       id: a.id, tab:'accounts', name: a.name || a.business,
       address: a.address, zip: extractZip(a.address),
-      type: svcs < 2 ? '💡 Cross-Sell' : health <= 2 ? '⚠️ At Risk' : '✅ Active',
-      detail: svcs < 2 ? `${svcs} service — add ${6-svcs} more` : `Health ${health}/5 · ${svcs} services`,
+      type: svcs < 2 ? '💡 Cross-Sell' : health <= 2 ? '⚠️ At Risk' : checkinNote ? '🤝 Check In' : '✅ Active',
+      detail: svcs < 2 ? `${svcs} service — add ${6-svcs} more` : health <= 2 ? `Health ${health}/5 · ${svcs} services` : (checkinNote || `Health ${health}/5 · ${svcs} services`),
       company: a.company, dist, score: Math.round(score)
     });
   });
@@ -19139,6 +19167,31 @@ function getTripOpportunities(anchorAddress, currentAccountId, maxResults=10) {
   return opportunities.sort((a,b) => b.score - a.score).slice(0, maxResults);
 }
 
+// Shared row renderer for the trip-stack modal -- used both when
+// anchored to a specific account/lead (openTripStack) and when seeded
+// from a territory-wide opportunity cluster with no single anchor
+// (planMyDay).
+function renderTripStackRows(opps) {
+  if (!opps.length) return '<div style="color:var(--soft);font-size:13px;text-align:center;padding:20px">No nearby opportunities found within 10 miles.</div>';
+  return opps.map((o, i) => `
+    <div style="display:flex;align-items:flex-start;gap:12px;padding:12px;border:1.5px solid var(--line);border-radius:10px;background:#fff;margin-bottom:8px">
+      <div style="width:28px;height:28px;border-radius:50%;background:var(--red);color:#fff;display:flex;align-items:center;justify-content:center;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;flex-shrink:0">${i+1}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${o.name}</div>
+        <div style="font-size:11px;color:var(--soft);margin:2px 0">${o.address || 'Address not on file'}</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
+          <span style="background:#F3F4F6;color:var(--ink);border-radius:4px;padding:1px 7px;font-size:10px;font-weight:700">${o.type}</span>
+          <span style="background:var(--bg);color:var(--soft);border-radius:4px;padding:1px 7px;font-size:10px">~${o.dist} mi · ${o.detail}</span>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:5px;flex-shrink:0">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:16px;color:var(--red);text-align:center">${o.score}</div>
+        <div style="font-size:9px;color:var(--soft);text-align:center;text-transform:uppercase;letter-spacing:.04em">Score</div>
+        <button onclick="closeModal('tripStackModal');setTimeout(()=>openAcctDetail('${o.id}','${o.tab}'),100)" style="background:var(--red);color:#fff;border:none;border-radius:5px;padding:4px 8px;font-size:10px;font-family:Barlow Condensed,sans-serif;font-weight:700;cursor:pointer;white-space:nowrap">View →</button>
+      </div>
+    </div>`).join('');
+}
+
 function openTripStack(accountId) {
   const data = crmLoad('accounts');
   const r = data.find(x => x.id === accountId) || crmLoad('leads').find(x => x.id === accountId);
@@ -19148,30 +19201,63 @@ function openTripStack(accountId) {
   const modal = document.getElementById('tripStackModal');
   if (!modal) return;
   document.getElementById('tripStackAnchor').textContent = (r.name || r.business) + (address ? ` · ${address}` : '');
-  const list = document.getElementById('tripStackList');
-  if (!opps.length) {
-    list.innerHTML = '<div style="color:var(--soft);font-size:13px;text-align:center;padding:20px">No nearby opportunities found within 10 miles.</div>';
-  } else {
-    list.innerHTML = opps.map((o, i) => `
-      <div style="display:flex;align-items:flex-start;gap:12px;padding:12px;border:1.5px solid var(--line);border-radius:10px;background:#fff;margin-bottom:8px">
-        <div style="width:28px;height:28px;border-radius:50%;background:var(--red);color:#fff;display:flex;align-items:center;justify-content:center;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;flex-shrink:0">${i+1}</div>
-        <div style="flex:1;min-width:0">
-          <div style="font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${o.name}</div>
-          <div style="font-size:11px;color:var(--soft);margin:2px 0">${o.address || 'Address not on file'}</div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
-            <span style="background:#F3F4F6;color:var(--ink);border-radius:4px;padding:1px 7px;font-size:10px;font-weight:700">${o.type}</span>
-            <span style="background:var(--bg);color:var(--soft);border-radius:4px;padding:1px 7px;font-size:10px">~${o.dist} mi · ${o.detail}</span>
-          </div>
-        </div>
-        <div style="display:flex;flex-direction:column;gap:5px;flex-shrink:0">
-          <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:16px;color:var(--red);text-align:center">${o.score}</div>
-          <div style="font-size:9px;color:var(--soft);text-align:center;text-transform:uppercase;letter-spacing:.04em">Score</div>
-          <button onclick="closeModal('tripStackModal');setTimeout(()=>openAcctDetail('${o.id}','${o.tab}'),100)" style="background:var(--red);color:#fff;border:none;border-radius:5px;padding:4px 8px;font-size:10px;font-family:Barlow Condensed,sans-serif;font-weight:700;cursor:pointer;white-space:nowrap">View →</button>
-        </div>
-      </div>`).join('');
-  }
+  document.getElementById('tripStackList').innerHTML = renderTripStackRows(opps);
   modal.classList.add('open');
 }
+
+// "Plan My Day" -- for reps who are new or not sure where to start,
+// rather than requiring an existing appointment to anchor off of.
+// Clusters this rep's own hot/warm leads (currentRepTerritory() +
+// zipMatchesTerritory(), same territory-scoping already used by the
+// Leads tab) by 3-digit ZIP prefix, scores each cluster by lead count
+// and hotness, and runs the same trip-opportunity lookup seeded from
+// the winning cluster's most common ZIP -- so the rep gets a ranked
+// stack for the single area in their territory with the most hot/warm
+// opportunity right now, same modal and scoring as a normal Trip Stack.
+function planMyDay() {
+  const territory = currentRepTerritory();
+  const leads = crmLoad('leads').filter(l => l.status === 'hot' || l.status === 'warm');
+  const inTerritory = territory ? leads.filter(l => zipMatchesTerritory(l.zip || extractZip(l.address), territory)) : leads;
+
+  if (!inTerritory.length) {
+    alert('No hot or warm leads found in your territory right now. Check back as new leads come in, or browse the full Leads pool.');
+    return;
+  }
+
+  const clusters = {};
+  inTerritory.forEach(l => {
+    const zip = extractZip(l.address) || l.zip;
+    if (!zip) return;
+    const prefix = String(zip).slice(0, 3);
+    if (!clusters[prefix]) clusters[prefix] = { prefix, leads: [], score: 0 };
+    clusters[prefix].leads.push(l);
+    clusters[prefix].score += (l.status === 'hot' ? 3 : 1.5) + ((l.aiScore || 5) / 5);
+  });
+
+  const clusterList = Object.values(clusters);
+  if (!clusterList.length) {
+    alert('No hot or warm leads with a usable ZIP/address found in your territory yet.');
+    return;
+  }
+  const best = clusterList.sort((a, b) => b.score - a.score)[0];
+
+  // Anchor on the single most common full ZIP within the winning cluster
+  const zipCounts = {};
+  best.leads.forEach(l => {
+    const z = extractZip(l.address) || l.zip;
+    if (z) zipCounts[z] = (zipCounts[z] || 0) + 1;
+  });
+  const anchorZip = Object.entries(zipCounts).sort((a, b) => b[1] - a[1])[0][0];
+
+  const opps = getTripOpportunities(' ' + anchorZip, null, 15);
+  const modal = document.getElementById('tripStackModal');
+  if (!modal) return;
+  document.getElementById('tripStackAnchor').textContent =
+    `📍 Best opportunity area today — ZIP ${best.prefix}xx · ${best.leads.length} hot/warm lead${best.leads.length > 1 ? 's' : ''} nearby`;
+  document.getElementById('tripStackList').innerHTML = renderTripStackRows(opps);
+  modal.classList.add('open');
+}
+
 
 // ════════════════════════════════════════════════════════════
 // TECH ROUTE OPTIMIZER (separate from Rep Trip Stack)
