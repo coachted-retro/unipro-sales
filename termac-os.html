@@ -13978,7 +13978,251 @@ function estPrint(){
     <p style="color:#6B7280;font-size:13px;margin:0 0 20px">Prepared by Ted Scholl · Termac Family of Companies · tscholl@termac.com · 267-421-6336</p>
     <div id="printBody"></div>
     <script>document.getElementById('printBody').innerHTML=\`${content.replace(/`/g,'\\`')}\`;<\/script>
-    </body></html>`);
+    
+<script>
+// ══════════════════════════════════════════════════════════════
+//  SERVICE SCHEDULING QUEUE
+// ══════════════════════════════════════════════════════════════
+function opsRenderSchedulingQueue() {
+  const body = document.getElementById('opsSchedulingBody');
+  if (!body) return;
+  const accounts = crmLoad('accounts').filter(a => a.status === 'active');
+  const events = (() => { try { return JSON.parse(localStorage.getItem('termac_scheduler_events')||'[]'); } catch(e) { return []; } })();
+  const scheduled = new Set(events.map(e => e.accountId).filter(Boolean));
+  const today = new Date(); today.setHours(0,0,0,0);
+  const rows = [];
+  accounts.forEach(a => {
+    const renewalDays = a.renewalDate ? Math.floor((new Date(a.renewalDate) - today) / 86400000) : null;
+    const lastService = a.lastCheckin ? Math.floor((Date.now() - a.lastCheckin) / 86400000) : null;
+    const isScheduled = scheduled.has(a.id);
+    let urgency=null, urgencyColor='', urgencyBg='';
+    if (renewalDays !== null && renewalDays <= 0)        { urgency='OVERDUE';            urgencyColor='#991B1B'; urgencyBg='#FEE2E2'; }
+    else if (renewalDays !== null && renewalDays <= 14)  { urgency=`DUE IN ${renewalDays}d`; urgencyColor='#C8102E'; urgencyBg='#FEE2E2'; }
+    else if (renewalDays !== null && renewalDays <= 45)  { urgency=`DUE IN ${renewalDays}d`; urgencyColor='#D97706'; urgencyBg='#FEF3C7'; }
+    else if (lastService !== null && lastService > 90 && !isScheduled) { urgency=`${lastService}d NO VISIT`; urgencyColor='#1E40AF'; urgencyBg='#DBEAFE'; }
+    if (!urgency) return;
+    rows.push({ a, urgency, urgencyColor, urgencyBg, isScheduled });
+  });
+  rows.sort((a,b) => { const o={'#991B1B':0,'#C8102E':1,'#D97706':2,'#1E40AF':3}; return (o[a.urgencyColor]||9)-(o[b.urgencyColor]||9); });
+  if (!rows.length) { body.innerHTML='<div style="text-align:center;padding:40px;color:var(--soft)">✅ No scheduling gaps — all active accounts are current.</div>'; return; }
+  body.innerHTML = rows.map(({a,urgency,urgencyColor,urgencyBg,isScheduled}) => `
+    <div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr 120px;align-items:center;gap:8px;padding:10px 12px;border:1.5px solid ${urgencyBg};border-left:3px solid ${urgencyColor};border-radius:8px;background:#fff;margin-bottom:6px">
+      <div><div style="font-weight:700;font-size:13px">${escH(a.name||a.business||'')}</div><div style="font-size:11px;color:var(--soft)">${escH(a.address||'')}</div></div>
+      <div><span style="background:${urgencyBg};color:${urgencyColor};border-radius:4px;padding:2px 7px;font-size:10px;font-weight:800;font-family:Barlow Condensed,sans-serif">${urgency}</span></div>
+      <div style="font-size:11px;color:var(--soft)">${(a.services||[]).join(', ')||'—'}</div>
+      <div style="font-size:11px;color:var(--soft)">${escH(a.assignedRep||a.rep||'Unassigned')}</div>
+      <div style="display:flex;gap:4px">
+        <button onclick="openAcctDetail('${a.id}','accounts')" style="background:var(--red);color:#fff;border:none;border-radius:5px;padding:5px 10px;font-size:10px;font-family:Barlow Condensed,sans-serif;font-weight:800;cursor:pointer">Book →</button>
+        ${isScheduled ? '<span style="font-size:10px;color:var(--green);font-weight:700">✓ Sched</span>' : ''}
+      </div>
+    </div>`).join('');
+}
+
+// ══════════════════════════════════════════════════════════════
+//  NEW ACCOUNT ONBOARDING QUEUE
+// ══════════════════════════════════════════════════════════════
+const OB_STEPS = [
+  { key:'agreementSigned',   label:'Agreement Signed',        icon:'📝' },
+  { key:'squareOnFile',      label:'Square / Payment on File', icon:'💳' },
+  { key:'firstJobScheduled', label:'First Job Scheduled',     icon:'📅' },
+  { key:'firstServiceDone',  label:'First Service Complete',  icon:'✅' },
+  { key:'certIssued',        label:'Cert Issued',             icon:'🏅' },
+  { key:'rep30dCheckin',     label:'Rep 30-Day Check-In',     icon:'🤝' },
+];
+function opsRenderOnboardingQueue() {
+  const body = document.getElementById('opsOnboardingBody');
+  if (!body) return;
+  const accounts = crmLoad('accounts').filter(a => a.status === 'active');
+  const queue = accounts.filter(a => {
+    const age = a.created ? (Date.now()-a.created)/86400000 : 999;
+    const ob = a.onboarding || {};
+    return age <= 90 || !OB_STEPS.every(s => ob[s.key]);
+  }).sort((a,b) => (b.created||0)-(a.created||0));
+  if (!queue.length) { body.innerHTML='<div style="text-align:center;padding:40px;color:var(--soft)">✅ All recent accounts are fully onboarded.</div>'; return; }
+  body.innerHTML = queue.map(a => {
+    const ob = a.onboarding||{}, done=OB_STEPS.filter(s=>ob[s.key]).length, pct=Math.round(done/OB_STEPS.length*100);
+    const barColor = pct===100?'#1E7B3C':pct>=50?'#D97706':'#C8102E';
+    const ageDays = a.created ? Math.floor((Date.now()-a.created)/86400000) : '?';
+    return `<div style="border:1.5px solid var(--line);border-radius:10px;padding:14px 16px;background:#fff;margin-bottom:10px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+        <div><div style="font-weight:700;font-size:14px">${escH(a.name||a.business||'')}</div>
+        <div style="font-size:11px;color:var(--soft)">${escH(a.address||'')} · Added ${ageDays}d ago · Rep: ${escH(a.assignedRep||a.rep||'Unassigned')}</div></div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="text-align:right"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:20px;color:${barColor}">${pct}%</div><div style="font-size:10px;color:var(--soft)">${done}/${OB_STEPS.length} steps</div></div>
+          <button onclick="openAcctDetail('${a.id}','accounts')" style="background:var(--red);color:#fff;border:none;border-radius:6px;padding:6px 12px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;cursor:pointer">Open →</button>
+        </div>
+      </div>
+      <div style="background:#F3F4F6;border-radius:6px;height:6px;margin-bottom:10px"><div style="background:${barColor};width:${pct}%;height:100%;border-radius:6px"></div></div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px">
+        ${OB_STEPS.map(s => {
+          const isDone=!!ob[s.key];
+          return '<button onclick="opsToggleOnboarding(\'' + a.id + '\',\'' + s.key + '\')" style="background:' + (isDone?'#DCFCE7':'#F3F4F6') + ';color:' + (isDone?'#166534':'#6B7280') + ';border:1.5px solid ' + (isDone?'#86EFAC':'#E5E7EB') + ';border-radius:6px;padding:5px 10px;font-size:11px;font-weight:700;cursor:pointer">' + s.icon + ' ' + s.label + (isDone?' ✓':'') + '</button>';
+        }).join('')}
+      </div>
+    </div>`;
+  }).join('');
+}
+function opsToggleOnboarding(accountId, stepKey) {
+  const data=crmLoad('accounts'), a=data.find(x=>x.id===accountId);
+  if(!a) return;
+  if(!a.onboarding) a.onboarding={};
+  a.onboarding[stepKey] = a.onboarding[stepKey] ? null : new Date().toISOString().slice(0,10);
+  crmSave('accounts',data); opsRenderOnboardingQueue();
+}
+
+// ══════════════════════════════════════════════════════════════
+//  COMPLIANCE CERTIFICATE TRACKER
+// ══════════════════════════════════════════════════════════════
+function opsRenderCertTracker() {
+  const body=document.getElementById('opsCertBody');
+  if(!body) return;
+  const today=new Date(); today.setHours(0,0,0,0);
+  const rows=crmLoad('accounts').filter(a=>a.status==='active' && (a.services||[]).some(s=>['unipro','quality3'].includes(s))).map(a => {
+    const cert=a.certStatus||{};
+    const expiry=cert.expiryDate?new Date(cert.expiryDate):null;
+    const daysToExpiry=expiry?Math.floor((expiry-today)/86400000):null;
+    return {a,cert,daysToExpiry};
+  });
+  rows.sort((x,y)=>(x.daysToExpiry??999)-(y.daysToExpiry??999));
+  if(!rows.length){body.innerHTML='<div style="text-align:center;padding:40px;color:var(--soft)">No active fire protection accounts found.</div>';return;}
+  body.innerHTML=rows.map(({a,cert,daysToExpiry})=>{
+    let statusLabel='No Cert',statusColor='#991B1B',statusBg='#FEE2E2';
+    if(cert.pendingAHJ){statusLabel='Pending AHJ';statusColor='#6B21A8';statusBg='#F3E8FF';}
+    else if(cert.issuedDate&&daysToExpiry===null){statusLabel='Issued';statusColor='#1E40AF';statusBg='#DBEAFE';}
+    else if(daysToExpiry!==null&&daysToExpiry<0){statusLabel='EXPIRED';statusColor='#991B1B';statusBg='#FEE2E2';}
+    else if(daysToExpiry!==null&&daysToExpiry<=30){statusLabel='Exp '+daysToExpiry+'d';statusColor='#C8102E';statusBg='#FEE2E2';}
+    else if(daysToExpiry!==null&&daysToExpiry<=90){statusLabel='Exp '+daysToExpiry+'d';statusColor='#D97706';statusBg='#FEF3C7';}
+    else if(daysToExpiry!==null){statusLabel='Valid '+daysToExpiry+'d';statusColor='#1E7B3C';statusBg='#DCFCE7';}
+    return '<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr 140px;align-items:center;gap:8px;padding:10px 12px;border:1.5px solid '+statusBg+';border-left:3px solid '+statusColor+';border-radius:8px;background:#fff;margin-bottom:6px">'
+      +'<div><div style="font-weight:700;font-size:13px">'+escH(a.name||a.business||'')+'</div><div style="font-size:11px;color:var(--soft)">'+escH(a.address||'')+' · '+escH(a.assignedRep||a.rep||'')+'</div></div>'
+      +'<div><span style="background:'+statusBg+';color:'+statusColor+';border-radius:4px;padding:2px 7px;font-size:10px;font-weight:800;font-family:Barlow Condensed,sans-serif">'+statusLabel+'</span></div>'
+      +'<div style="font-size:11px;color:var(--soft)">'+(cert.issuedDate||'—')+'</div>'
+      +'<div style="font-size:11px;color:var(--soft)">'+(cert.expiryDate||'—')+'</div>'
+      +'<div style="display:flex;gap:4px;flex-wrap:wrap">'
+      +'<button onclick="opsCertIssue(''+a.id+'')" style="background:#1E7B3C;color:#fff;border:none;border-radius:5px;padding:4px 8px;font-size:10px;font-family:Barlow Condensed,sans-serif;font-weight:800;cursor:pointer">Issue</button>'
+      +'<button onclick="opsCertAHJ(''+a.id+'')" style="background:#6B21A8;color:#fff;border:none;border-radius:5px;padding:4px 8px;font-size:10px;font-family:Barlow Condensed,sans-serif;font-weight:800;cursor:pointer">AHJ</button>'
+      +'<button onclick="openAcctDetail(''+a.id+'','accounts')" style="background:none;border:1.5px solid var(--line);color:var(--ink);border-radius:5px;padding:4px 8px;font-size:10px;font-family:Barlow Condensed,sans-serif;font-weight:800;cursor:pointer">View</button>'
+      +'</div></div>';
+  }).join('');
+}
+function opsCertIssue(accountId) {
+  const exp=prompt('Cert expiry (YYYY-MM-DD) or leave blank:');
+  const data=crmLoad('accounts'),a=data.find(x=>x.id===accountId);
+  if(!a) return;
+  a.certStatus={...(a.certStatus||{}),issuedDate:new Date().toISOString().slice(0,10),expiryDate:exp||null,pendingAHJ:false};
+  crmSave('accounts',data); opsRenderCertTracker();
+}
+function opsCertAHJ(accountId) {
+  const data=crmLoad('accounts'),a=data.find(x=>x.id===accountId);
+  if(!a) return;
+  a.certStatus={...(a.certStatus||{}),pendingAHJ:!(a.certStatus?.pendingAHJ)};
+  crmSave('accounts',data); opsRenderCertTracker();
+}
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════
+     RECEPTIONIST LANDING — Inbound Call Log
+═══════════════════════════════════════════════════════════════ -->
+<div class="full-overlay" id="ovReception" style="z-index:380">
+  <div class="ov-header">
+    <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:16px;letter-spacing:.1em;text-transform:uppercase;color:#fff">📞 Reception — Inbound Call Center</div>
+    <div class="ov-header-btns">
+      <button class="ov-btn" onclick="openCRM('leads')">📋 Lead Pool →</button>
+      <button class="ov-btn close" onclick="document.getElementById('ovReception').classList.remove('open');document.getElementById('ovReception').style.display='none'">✕</button>
+    </div>
+  </div>
+  <div style="flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:16px">
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
+      <div style="background:#fff;border:1.5px solid var(--line);border-radius:10px;padding:14px;text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:26px;color:var(--ink)" id="rcpKpiToday">0</div><div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.06em">Calls Today</div></div>
+      <div style="background:#fff;border:1.5px solid var(--line);border-radius:10px;padding:14px;text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:26px;color:#D97706" id="rcpKpiOpen">0</div><div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.06em">Open / Unresolved</div></div>
+      <div style="background:#fff;border:1.5px solid var(--line);border-radius:10px;padding:14px;text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:26px;color:#1E7B3C" id="rcpKpiRouted">0</div><div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.06em">Routed</div></div>
+      <div style="background:#fff;border:1.5px solid var(--line);border-radius:10px;padding:14px;text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:26px;color:#1B5FA8" id="rcpKpiNew">0</div><div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.06em">Leads Created</div></div>
+    </div>
+    <div style="background:#fff;border:1.5px solid var(--line);border-radius:12px;padding:18px">
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:14px">📞 Log Inbound Call</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px">
+        <div><label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em">Caller Name</label><input id="rcpCallerName" type="text" placeholder="First Last" style="width:100%;margin-top:4px;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;box-sizing:border-box"></div>
+        <div><label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em">Company</label><input id="rcpCallerCompany" type="text" placeholder="Business name" style="width:100%;margin-top:4px;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;box-sizing:border-box"></div>
+        <div><label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em">Phone</label><input id="rcpCallerPhone" type="tel" placeholder="(xxx) xxx-xxxx" style="width:100%;margin-top:4px;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;box-sizing:border-box"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px">
+        <div><label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em">Call Type</label><select id="rcpCallType" style="width:100%;margin-top:4px;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;box-sizing:border-box"><option value="">Select…</option><option>New Service Inquiry</option><option>Existing Customer — Service Question</option><option>Existing Customer — Deficiency / Issue</option><option>Schedule / Reschedule</option><option>Quote / Pricing</option><option>Emergency — Fire Safety</option><option>Complaint</option><option>Vendor / Supplier</option><option>Other</option></select></div>
+        <div><label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em">Route To</label><select id="rcpRouteTo" style="width:100%;margin-top:4px;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;box-sizing:border-box"><option value="">Route to…</option><optgroup label="Sales"><option>Ted Scholl</option><option>Brad Fickes</option><option>Chris Carzo</option><option>Dan Rini</option><option>Joe McDonnell</option><option>Matt Belz</option><option>Todd Grill</option><option>Tom Jordan</option><option>TJ O'Reilly</option></optgroup><optgroup label="Management"><option>Sean O'Reilly</option><option>Terence O'Reilly</option><option>Jim Kennedy</option><option>Tom Pittakas</option></optgroup><optgroup label="Operations"><option>Scheduler — Aine Curran</option><option>Scheduler — Jasmine Paez</option><option>Scheduler — Samuel Holmes</option><option>Dispatcher</option><option>Office — Lauren Canfield</option><option>Paul Brahan</option></optgroup><option>Voicemail</option><option>Call Back Required</option></select></div>
+        <div><label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em">Urgency</label><select id="rcpUrgency" style="width:100%;margin-top:4px;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;box-sizing:border-box"><option value="normal">Normal</option><option value="high">High — Follow Up Today</option><option value="emergency">🚨 Emergency</option></select></div>
+      </div>
+      <div style="margin-bottom:10px"><label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em">Notes / Message</label><textarea id="rcpNotes" rows="2" placeholder="Brief summary…" style="width:100%;margin-top:4px;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;resize:vertical;box-sizing:border-box"></textarea></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="rcpLogCall()" style="background:var(--red);color:#fff;border:none;border-radius:8px;padding:10px 20px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;cursor:pointer">Log Call</button>
+        <button onclick="rcpLogAndCreateLead()" style="background:#1B5FA8;color:#fff;border:none;border-radius:8px;padding:10px 20px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;cursor:pointer">Log + Create Lead →</button>
+      </div>
+    </div>
+    <div style="background:#fff;border:1.5px solid var(--line);border-radius:12px;padding:18px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;letter-spacing:.1em;text-transform:uppercase">Today's Call Log</div>
+        <select id="rcpFilterStatus" onchange="rcpRenderLog()" style="padding:5px 10px;border:1.5px solid var(--line);border-radius:6px;font-size:12px"><option value="">All</option><option value="open">Open</option><option value="routed">Routed</option><option value="resolved">Resolved</option></select>
+      </div>
+      <div id="rcpCallLog">No calls logged yet today.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+function rcpLoadCalls(){try{return JSON.parse(localStorage.getItem('termac_inbound_calls')||'[]');}catch(e){return[];}}
+function rcpSaveCalls(c){try{localStorage.setItem('termac_inbound_calls',JSON.stringify(c));}catch(e){}}
+function openReceptionLanding(){const el=document.getElementById('ovReception');if(!el)return;el.classList.add('open');el.style.display='flex';rcpRefresh();}
+function rcpRefresh(){rcpRenderKPIs();rcpRenderLog();}
+function rcpRenderKPIs(){
+  const today=new Date().toISOString().slice(0,10),all=rcpLoadCalls(),td=all.filter(c=>c.date===today);
+  const s=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
+  s('rcpKpiToday',td.length);s('rcpKpiOpen',td.filter(c=>c.status==='open').length);
+  s('rcpKpiRouted',td.filter(c=>c.status==='routed').length);s('rcpKpiNew',td.filter(c=>c.createdLead).length);
+}
+function rcpLogCall(){
+  const n=document.getElementById('rcpCallerName')?.value.trim();
+  const co=document.getElementById('rcpCallerCompany')?.value.trim();
+  const ph=document.getElementById('rcpCallerPhone')?.value.trim();
+  const ty=document.getElementById('rcpCallType')?.value;
+  const rt=document.getElementById('rcpRouteTo')?.value;
+  const ur=document.getElementById('rcpUrgency')?.value||'normal';
+  const no=document.getElementById('rcpNotes')?.value.trim();
+  if(!n&&!co){alert('Please enter a caller name or company.');return null;}
+  const call={id:'call_'+Date.now(),date:new Date().toISOString().slice(0,10),time:new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}),name:n||'Unknown',company:co||'',phone:ph||'',type:ty||'General',routeTo:rt||'',urgency:ur,notes:no||'',status:rt?'routed':'open',loggedBy:_currentUser?.name||'Reception',createdLead:false};
+  const calls=rcpLoadCalls();calls.unshift(call);rcpSaveCalls(calls);
+  ['rcpCallerName','rcpCallerCompany','rcpCallerPhone','rcpNotes'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
+  ['rcpCallType','rcpRouteTo'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
+  const eu=document.getElementById('rcpUrgency');if(eu)eu.value='normal';
+  rcpRefresh();return call;
+}
+function rcpLogAndCreateLead(){
+  const call=rcpLogCall();if(!call)return;
+  const lead={id:'lead_rcp_'+Date.now(),name:call.name,business:call.company,phone:call.phone,email:'',address:'',zip:'',company:'UniPro',status:'new',services:[],score:6,source:'Inbound Call',created:Date.now(),notes:'Inbound call '+call.date+' '+call.time+'. Type: '+call.type+'. '+call.notes,activityLog:[{ts:Date.now(),type:'call',icon:'📞',title:'Inbound Call — Reception',note:call.notes||'',who:call.loggedBy}]};
+  const leads=crmLoad('leads');leads.unshift(lead);crmSave('leads',leads);
+  const calls=rcpLoadCalls();const c=calls.find(x=>x.id===call.id);if(c){c.createdLead=true;c.leadId=lead.id;rcpSaveCalls(calls);}
+  rcpRefresh();alert('Call logged and lead created for '+(call.name||call.company)+'. Find it in the Lead Pool to assign to a rep.');
+}
+function rcpResolve(callId){const calls=rcpLoadCalls();const c=calls.find(x=>x.id===callId);if(c){c.status='resolved';rcpSaveCalls(calls);rcpRefresh();}}
+function rcpRenderLog(){
+  const body=document.getElementById('rcpCallLog');if(!body)return;
+  const filter=document.getElementById('rcpFilterStatus')?.value||'';
+  const today=new Date().toISOString().slice(0,10);
+  let calls=rcpLoadCalls().filter(c=>c.date===today);
+  if(filter)calls=calls.filter(c=>c.status===filter);
+  if(!calls.length){body.innerHTML='<div style="color:var(--soft);font-size:13px;text-align:center;padding:20px">No calls logged yet today.</div>';return;}
+  const uc={'emergency':'#C8102E','high':'#D97706','normal':'#1B5FA8'};
+  const ub={'emergency':'#FEE2E2','high':'#FEF3C7','normal':'#DBEAFE'};
+  const sc={'open':'#D97706','routed':'#1E7B3C','resolved':'#6B7280'};
+  body.innerHTML=calls.map(c=>`
+    <div style="display:grid;grid-template-columns:80px 1fr 1fr 1fr 120px;align-items:center;gap:10px;padding:10px 12px;border:1.5px solid var(--line);border-left:3px solid ${uc[c.urgency]||'#6B7280'};border-radius:8px;background:#fff;margin-bottom:6px">
+      <div style="text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px">${c.time}</div><span style="background:${ub[c.urgency]||'#F3F4F6'};color:${uc[c.urgency]||'#6B7280'};border-radius:4px;padding:1px 6px;font-size:9px;font-weight:800">${(c.urgency||'').toUpperCase()}</span></div>
+      <div><div style="font-weight:700;font-size:13px">${escH(c.name)}${c.company?' <span style="color:var(--soft);font-weight:400">· '+escH(c.company)+'</span>':''} ${c.createdLead?'<span style="background:#DBEAFE;color:#1E40AF;border-radius:4px;padding:1px 6px;font-size:9px;font-weight:800">LEAD ✓</span>':''}</div><div style="font-size:11px;color:var(--soft)">${escH(c.phone||'')}${c.type?' · '+escH(c.type):''}</div></div>
+      <div style="font-size:12px;color:var(--soft)">${escH(c.notes||'—')}</div>
+      <div style="font-size:12px">${c.routeTo?'→ '+escH(c.routeTo):'<span style="color:var(--soft)">Not routed</span>'}</div>
+      <div style="display:flex;gap:4px;flex-wrap:wrap"><span style="color:${sc[c.status]||'#6B7280'};font-size:10px;font-weight:800;font-family:Barlow Condensed,sans-serif">${(c.status||'open').toUpperCase()}</span>${c.status!=='resolved'?`<button onclick="rcpResolve('${c.id}')" style="background:none;border:1.5px solid var(--line);color:var(--ink);border-radius:5px;padding:3px 8px;font-size:10px;font-family:Barlow Condensed,sans-serif;font-weight:700;cursor:pointer">Resolve ✓</button>`:''}</div>
+    </div>`).join('');
+}
+</script>
+
+</body></html>`);
   w.document.close();
   setTimeout(()=>w.print(), 800);
 }
@@ -15522,9 +15766,9 @@ function applyRoleAccess(user) {
     setTimeout(() => { if (typeof openCRM === 'function') openCRM('leads'); }, 400);
   }
 
-  // Reception: open lead pool immediately, can assign leads to reps
+  // Reception: open dedicated landing panel with Inbound Call Log
   if (user.role === 'reception') {
-    setTimeout(() => { if (typeof openCRM === 'function') openCRM('leads'); }, 400);
+    setTimeout(() => { if (typeof openReceptionLanding === 'function') openReceptionLanding(); }, 400);
   }
 
   // Division roles: open leads filtered to their division, hide contacts tab
@@ -15699,6 +15943,15 @@ document.addEventListener('DOMContentLoaded', () => {
     } else if (openOnLoad === 'ops_compliance') {
       if(typeof openOverlay==='function') openOverlay('ops');
       setTimeout(()=>{ if(typeof opsShowTab==='function') opsShowTab('compliance', document.getElementById('opsTab_compliance')); _showPage(); }, 100);
+    } else if (openOnLoad === 'ops_scheduling') {
+      if(typeof openOverlay==='function') openOverlay('ops');
+      setTimeout(()=>{ if(typeof opsShowTab==='function') opsShowTab('scheduling', document.getElementById('opsTab_scheduling')); _showPage(); }, 100);
+    } else if (openOnLoad === 'ops_onboarding') {
+      if(typeof openOverlay==='function') openOverlay('ops');
+      setTimeout(()=>{ if(typeof opsShowTab==='function') opsShowTab('onboarding', document.getElementById('opsTab_onboarding')); _showPage(); }, 100);
+    } else if (openOnLoad === 'ops_certtracker') {
+      if(typeof openOverlay==='function') openOverlay('ops');
+      setTimeout(()=>{ if(typeof opsShowTab==='function') opsShowTab('certtracker', document.getElementById('opsTab_certtracker')); _showPage(); }, 100);
     } else if (openOnLoad === 'mgr_reports') {
       // Auto-unlock manager for reports — user already authenticated via office portal
       sessionStorage.setItem('termac_mgr_unlocked','1');
@@ -16214,7 +16467,10 @@ setInterval(buildActionQueue, 5 * 60 * 1000);
 
   <!-- Tab Nav -->
   <div style="background:#fff;border-bottom:1px solid var(--line);padding:0 22px;display:flex;gap:0;flex-shrink:0">
-    <button class="acct-tab active" id="opsTab_deficiency" onclick="opsShowTab('deficiency',this)">⚠️ Deficiency Queue</button>
+    <button class="acct-tab active" id="opsTab_deficiency"  onclick="opsShowTab('deficiency',this)">⚠️ Deficiency Queue</button>
+    <button class="acct-tab" id="opsTab_scheduling"  onclick="opsShowTab('scheduling',this)">📅 Scheduling Queue</button>
+    <button class="acct-tab" id="opsTab_onboarding"  onclick="opsShowTab('onboarding',this)">🚀 Onboarding Queue</button>
+    <button class="acct-tab" id="opsTab_certtracker" onclick="opsShowTab('certtracker',this)">🏅 Cert Tracker</button>
     <button class="acct-tab" id="opsTab_compliance"  onclick="opsShowTab('compliance',this)">📋 Compliance</button>
     <button class="acct-tab" id="opsTab_ahj"        onclick="opsShowTab('ahj',this)">🏛️ AHJ Reference</button>
     <button class="acct-tab" id="opsTab_crosssell"  onclick="opsShowTab('crosssell',this)">🎯 Cross-Sell Intel</button>
@@ -16337,6 +16593,42 @@ setInterval(buildActionQueue, 5 * 60 * 1000);
       <div id="contractPipelineList"></div>
     </div>
 
+  <!-- SCHEDULING QUEUE PANEL -->
+  <div id="opsPanel_scheduling" style="display:none;flex:1;overflow-y:auto;padding:22px;flex-direction:column">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px">
+      <div>
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:18px;letter-spacing:.06em">📅 Service Scheduling Queue</div>
+        <div style="font-size:12px;color:var(--soft);margin-top:2px">Accounts with services due, overdue, or unscheduled — act before the window closes</div>
+      </div>
+      <button onclick="opsRenderSchedulingQueue()" style="background:var(--red);color:#fff;border:none;border-radius:7px;padding:8px 16px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;cursor:pointer">🔄 Refresh</button>
+    </div>
+    <div id="opsSchedulingBody">Loading…</div>
+  </div>
+
+  <!-- ONBOARDING QUEUE PANEL -->
+  <div id="opsPanel_onboarding" style="display:none;flex:1;overflow-y:auto;padding:22px;flex-direction:column">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px">
+      <div>
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:18px;letter-spacing:.06em">🚀 New Account Onboarding Queue</div>
+        <div style="font-size:12px;color:var(--soft);margin-top:2px">Every new account tracked through 6 milestones — nothing falls through the cracks</div>
+      </div>
+      <button onclick="opsRenderOnboardingQueue()" style="background:var(--red);color:#fff;border:none;border-radius:7px;padding:8px 16px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;cursor:pointer">🔄 Refresh</button>
+    </div>
+    <div id="opsOnboardingBody">Loading…</div>
+  </div>
+
+  <!-- CERT TRACKER PANEL -->
+  <div id="opsPanel_certtracker" style="display:none;flex:1;overflow-y:auto;padding:22px;flex-direction:column">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px">
+      <div>
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:18px;letter-spacing:.06em">🏅 Compliance Certificate Tracker</div>
+        <div style="font-size:12px;color:var(--soft);margin-top:2px">Accounts with completed inspections — cert status, issued date, expiry, pending AHJ</div>
+      </div>
+      <button onclick="opsRenderCertTracker()" style="background:var(--red);color:#fff;border:none;border-radius:7px;padding:8px 16px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;cursor:pointer">🔄 Refresh</button>
+    </div>
+    <div id="opsCertBody">Loading…</div>
+  </div>
+
   </div>
 </div>
 
@@ -16450,7 +16742,7 @@ const AHJ_REFERENCE = [
    OPS HUB TAB SWITCHER
 ───────────────────────────────────────────── */
 function opsShowTab(tabId, btn) {
-  ['deficiency','compliance','ahj','crosssell','contracts'].forEach(t => {
+  ['deficiency','compliance','ahj','crosssell','contracts','scheduling','onboarding','certtracker'].forEach(t => {
     const panel = document.getElementById('opsPanel_' + t);
     const tab   = document.getElementById('opsTab_' + t);
     if (panel) panel.style.display = 'none';
@@ -16465,7 +16757,10 @@ function opsShowTab(tabId, btn) {
   if (tabId === 'compliance')  opsRenderCompliance();
   if (tabId === 'ahj')         opsRenderAHJ();
   if (tabId === 'crosssell')   opsRenderCrossSell();
-  if (tabId === 'contracts')   opsRenderContracts();
+  if (tabId === 'contracts')    opsRenderContracts();
+  if (tabId === 'scheduling')   opsRenderSchedulingQueue();
+  if (tabId === 'onboarding')   opsRenderOnboardingQueue();
+  if (tabId === 'certtracker')  opsRenderCertTracker();
 }
 
 // Wire openOverlay for 'ops' key
