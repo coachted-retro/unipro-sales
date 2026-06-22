@@ -2713,6 +2713,24 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
     </div>
   </div>
 
+  <!-- DELIVERY ORDERS — Office creates orders here; driver reads them in termac-delivery.html -->
+  <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;margin-bottom:16px">
+    <div onclick="mgrToggle('deliveryOrders')" style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none;padding-bottom:10px">
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft)">🚚 Termac Delivery Orders</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span id="deliveryOrdersBadge" style="background:var(--red);color:#fff;border-radius:10px;padding:1px 8px;font-size:10px;font-weight:700;display:none"></span>
+        <span id="cs-icon-deliveryOrders" style="color:var(--soft);font-size:14px">▾</span>
+      </div>
+    </div>
+    <div id="cs-body-deliveryOrders">
+      <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+        <button onclick="openCreateDeliveryOrder()" style="background:var(--navy);color:#fff;border:none;border-radius:7px;padding:7px 14px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">+ New Delivery Order</button>
+        <a href="termac-delivery.html" target="_blank" style="background:none;border:1.5px solid var(--line);border-radius:7px;padding:7px 14px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;color:var(--soft);text-decoration:none">🚚 Driver Portal ↗</a>
+      </div>
+      <div id="deliveryOrdersList"></div>
+    </div>
+  </div>
+
   <!-- ROW 1: TOP-LINE LIVE KPIs -->
   <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;margin-bottom:16px">
     <div onclick="mgrToggle('kpis')" style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none;padding-bottom:10px"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft)">📊 Live KPIs</div><div style="display:flex;align-items:center;gap:8px"><span id="cs-icon-kpis" style="color:var(--soft);font-size:14px;transition:transform .2s;display:inline-block">&#9660;</span></div></div>
@@ -16659,6 +16677,7 @@ function refreshManagerDashboard() {
   if (typeof mgrCalRender === 'function') mgrCalRender();
   if (typeof mgrCreditQueueRender === 'function') mgrCreditQueueRender();
   if (typeof renderPipelineVelocity === 'function') renderPipelineVelocity();
+  if (typeof renderDeliveryOrders === 'function') renderDeliveryOrders();
 
   // ── ACTIVE ACCOUNTS ──
   const activeAccts = accounts.filter(a => a.status === 'active');
@@ -25158,6 +25177,180 @@ window.addEventListener('load', () => {
   setTimeout(() => { _dripEngine.run(); }, 1500); // slight delay so CRM data is loaded
   setInterval(() => { _dripEngine.run(); }, 30 * 60 * 1000); // re-check every 30 minutes
 });
+
+// ── TERMAC DELIVERY ORDER MANAGEMENT ─────────────────────────────────────────
+// Office creates delivery orders here. Driver reads them in termac-delivery.html.
+// Both apps share the same origin localStorage — no sync needed.
+// Key: termac_delivery_orders
+
+const DELIVERY_KEY = 'termac_delivery_orders';
+const DELIVERY_DRIVERS = ['Ted Scholl','Chris Carzo','Brad Fickes','Dan Rini',
+  'Joe McDonnell','Matt Belz','Todd Grill','Tom Jordan','TJ O\'Reilly',
+  'Aine Curran','Samuel Holmes','Jasmine Paez'];
+
+function loadDeliveryOrders() {
+  try { return JSON.parse(localStorage.getItem(DELIVERY_KEY) || '[]'); } catch(e) { return []; }
+}
+function saveDeliveryOrders(orders) {
+  try { localStorage.setItem(DELIVERY_KEY, JSON.stringify(orders)); } catch(e) {}
+}
+
+function renderDeliveryOrders() {
+  const orders  = loadDeliveryOrders();
+  const el      = document.getElementById('deliveryOrdersList');
+  const badge   = document.getElementById('deliveryOrdersBadge');
+  if (!el) return;
+
+  // Show last 30 orders newest first
+  const sorted = [...orders].sort((a,b) => (b.createdAt||0) - (a.createdAt||0)).slice(0,30);
+  const pending = orders.filter(o => o.status === 'pending').length;
+
+  if (badge) { badge.style.display = pending ? 'inline' : 'none'; badge.textContent = pending + ' pending'; }
+
+  if (!sorted.length) {
+    el.innerHTML = '<div style="color:var(--soft);font-size:12px">No delivery orders yet. Create one above.</div>';
+    return;
+  }
+
+  const statusColor = { pending:'#D97706', on_truck:'#1B5FA8', delivered:'#059669', partial:'#7C3AED', cancelled:'#9CA3AF' };
+  const statusLabel = { pending:'⏳ Pending', on_truck:'🚚 On Truck', delivered:'✅ Delivered', partial:'⚠️ Partial', cancelled:'❌ Cancelled' };
+
+  el.innerHTML = sorted.map(o => `
+    <div style="background:var(--bg);border-radius:8px;padding:11px 14px;margin-bottom:7px;display:flex;align-items:flex-start;justify-content:space-between;gap:10px">
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${o.accountName||'—'}</div>
+        <div style="font-size:11px;color:var(--soft);margin-top:2px">${o.deliveryDate||'—'} · ${o.driverName||'Unassigned'} · ${(o.items||[]).length} item${(o.items||[]).length!==1?'s':''}</div>
+        <div style="font-size:11px;color:var(--soft);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${(o.items||[]).map(i=>`${i.qty} ${i.unit||''} ${i.product}`).join(', ')}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex-shrink:0">
+        <span style="background:${statusColor[o.status]||'#9CA3AF'}22;color:${statusColor[o.status]||'#9CA3AF'};border-radius:5px;padding:2px 8px;font-size:10px;font-weight:700">${statusLabel[o.status]||o.status}</span>
+        ${o.status === 'pending' ? `<button onclick="cancelDeliveryOrder('${o.id}')" style="background:none;border:none;font-size:10px;color:var(--soft);cursor:pointer;text-decoration:underline">Cancel</button>` : ''}
+      </div>
+    </div>`).join('');
+}
+
+function openCreateDeliveryOrder() {
+  if (!document.getElementById('createDeliveryModal')) {
+    document.body.insertAdjacentHTML('beforeend', buildCreateDeliveryModal());
+  }
+  // Reset form
+  document.getElementById('deliv_account').value  = '';
+  document.getElementById('deliv_address').value  = '';
+  document.getElementById('deliv_contact').value  = '';
+  document.getElementById('deliv_phone').value    = '';
+  document.getElementById('deliv_driver').value   = '';
+  document.getElementById('deliv_date').value     = new Date().toISOString().slice(0,10);
+  document.getElementById('deliv_notes').value    = '';
+  document.getElementById('delivItemRows').innerHTML = buildDelivItemRow(0);
+  document.getElementById('createDeliveryModal').style.display = 'flex';
+}
+
+function buildCreateDeliveryModal() {
+  const driverOptions = DELIVERY_DRIVERS.map(d => `<option value="${d}">${d}</option>`).join('');
+  return `<div id="createDeliveryModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(10,12,16,.75);z-index:1200;align-items:center;justify-content:center;overflow-y:auto;padding:20px 0">
+    <div style="background:#fff;border-radius:14px;width:min(560px,96vw);max-height:92vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,.25)">
+      <div style="background:var(--navy);padding:16px 20px;border-radius:14px 14px 0 0;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:5">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:14px;color:#fff;letter-spacing:.06em">🚚 New Delivery Order</div>
+        <button onclick="document.getElementById('createDeliveryModal').style.display='none'" style="background:none;border:none;color:#9CA3AF;font-size:20px;cursor:pointer">✕</button>
+      </div>
+      <div style="padding:18px 20px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+          <div class="form-field" style="grid-column:1/-1"><label>Account / Customer Name *</label><input id="deliv_account" placeholder="Business name"></div>
+          <div class="form-field" style="grid-column:1/-1"><label>Delivery Address *</label><input id="deliv_address" placeholder="Full delivery address"></div>
+          <div class="form-field"><label>Contact Name</label><input id="deliv_contact" placeholder="Who to see on arrival"></div>
+          <div class="form-field"><label>Contact Phone</label><input id="deliv_phone" type="tel"></div>
+          <div class="form-field"><label>Driver *</label>
+            <select id="deliv_driver"><option value="">— Assign driver —</option>${driverOptions}</select>
+          </div>
+          <div class="form-field"><label>Delivery Date *</label><input id="deliv_date" type="date"></div>
+        </div>
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin-bottom:8px">Products to Deliver</div>
+        <div id="delivItemRows"></div>
+        <button onclick="addDelivItemRow()" style="background:none;border:1.5px solid var(--line);border-radius:7px;padding:6px 14px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;text-transform:uppercase;cursor:pointer;color:var(--soft);margin-top:4px">+ Add Product</button>
+        <div class="form-field" style="margin-top:12px"><label>Office Notes for Driver</label><textarea id="deliv_notes" rows="2" placeholder="Special instructions, access notes, leave at back door..."></textarea></div>
+        <div style="display:flex;gap:10px;margin-top:14px">
+          <button onclick="document.getElementById('createDeliveryModal').style.display='none'" style="flex:1;background:none;border:1.5px solid var(--line);border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;cursor:pointer">Cancel</button>
+          <button onclick="saveDeliveryOrder()" style="flex:2;background:var(--navy);color:#fff;border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;cursor:pointer">✅ Create Delivery Order</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+let _delivRowCount = 1;
+function buildDelivItemRow(i) {
+  const products = ['Machine Detergent','Rinse Aid','Machine Sanitizer','Pot & Pan Detergent',
+    'Pot Sink Sanitizer','Hand Soap','Degreaser','Napkins','Toilet Paper','Paper Towels','Trash Liners','Gloves','Other'];
+  const prodOptions = products.map(p => `<option>${p}</option>`).join('');
+  return `<div style="display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;margin-bottom:6px" id="delivRow${i}">
+    <select id="delivProd${i}" style="padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;font-family:inherit">
+      <option value="">— Product —</option>${prodOptions}
+    </select>
+    <input type="number" id="delivQty${i}" placeholder="Qty" min="0" step="0.5"
+      style="width:60px;padding:8px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;text-align:center">
+    <select id="delivUnit${i}" style="width:80px;padding:8px 4px;border:1.5px solid var(--line);border-radius:7px;font-size:12px">
+      <option>gallon</option><option>quart</option><option>case</option><option>unit</option><option>bag</option>
+    </select>
+  </div>`;
+}
+
+function addDelivItemRow() {
+  const container = document.getElementById('delivItemRows');
+  container.insertAdjacentHTML('beforeend', buildDelivItemRow(_delivRowCount++));
+}
+
+function saveDeliveryOrder() {
+  const acct   = document.getElementById('deliv_account')?.value.trim();
+  const addr   = document.getElementById('deliv_address')?.value.trim();
+  const driver = document.getElementById('deliv_driver')?.value;
+  const date   = document.getElementById('deliv_date')?.value;
+  if (!acct || !addr) { alert('Account name and delivery address are required.'); return; }
+  if (!driver) { alert('Please assign a driver.'); return; }
+  if (!date)   { alert('Please set a delivery date.'); return; }
+
+  // Collect items
+  const items = [];
+  for (let i = 0; i < _delivRowCount; i++) {
+    const prod = document.getElementById(`delivProd${i}`)?.value;
+    const qty  = parseFloat(document.getElementById(`delivQty${i}`)?.value || 0);
+    const unit = document.getElementById(`delivUnit${i}`)?.value || 'unit';
+    if (prod && qty > 0) items.push({ product:prod, qty, unit, deliveredQty:0 });
+  }
+  if (!items.length) { alert('Add at least one product to deliver.'); return; }
+
+  const order = {
+    id:          'DEL_' + Date.now(),
+    accountName: acct,
+    address:     addr,
+    contactName: document.getElementById('deliv_contact')?.value.trim() || '',
+    contactPhone:document.getElementById('deliv_phone')?.value.trim() || '',
+    driverName:  driver,
+    deliveryDate:date,
+    notes:       document.getElementById('deliv_notes')?.value.trim() || '',
+    status:      'pending',
+    items,
+    createdBy:   _currentUser?.name || 'Office',
+    createdAt:   Date.now(),
+    deliveredAt: null,
+    signature:   null,
+    signerName:  null,
+  };
+
+  const orders = loadDeliveryOrders();
+  orders.push(order);
+  saveDeliveryOrders(orders);
+  document.getElementById('createDeliveryModal').style.display = 'none';
+  renderDeliveryOrders();
+  alert(`✅ Delivery order created for ${acct} — assigned to ${driver} on ${date}.\n\nDriver will see it in the Termac Delivery portal.`);
+}
+
+function cancelDeliveryOrder(id) {
+  if (!confirm('Cancel this delivery order?')) return;
+  const orders = loadDeliveryOrders();
+  const idx = orders.findIndex(o => o.id === id);
+  if (idx !== -1) { orders[idx].status = 'cancelled'; saveDeliveryOrders(orders); }
+  renderDeliveryOrders();
+}
 
 console.log('✅ Termac Drip Engine v1.0 — 20 automated sequences live. BREVO_API_KEY: ' + (BREVO_API_KEY ? 'ACTIVE' : 'Pending credentials — queuing all sequences'));
 
