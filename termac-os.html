@@ -19510,15 +19510,23 @@ function renderPlanDayResults(dayPlans) {
   const modal = document.getElementById('planDayResultModal');
   const body = document.getElementById('planDayResultBody');
   if (!modal || !body) return;
-  body.innerHTML = dayPlans.map(dp => `
+  body.innerHTML = dayPlans.map(dp => {
+    const anchorAddrMatch = dp.anchorLabel.match(/·\s*(.+)$/);
+    const anchorAddr  = anchorAddrMatch ? anchorAddrMatch[1].trim() : '';
+    const optimized   = optimizeRoute(anchorAddr, dp.opportunities);
+    const mapUrl      = buildRouteMapUrl(anchorAddr, optimized);
+    const routeSummary = buildRouteSummaryBar(anchorAddr, dp.opportunities, optimized, mapUrl);
+    return `
     <div style="margin-bottom:22px;padding-bottom:18px;border-bottom:1px solid var(--line)">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
         <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:14px;color:var(--ink)">${formatPlanDate(dp.date)}</div>
         ${dp.hasAppointment ? '<span style="background:#DBEAFE;color:#1E40AF;border-radius:4px;padding:1px 7px;font-size:10px;font-weight:700">BOOKED</span>' : '<span style="background:#F3F4F6;color:var(--soft);border-radius:4px;padding:1px 7px;font-size:10px;font-weight:700">OPEN DAY</span>'}
       </div>
       <div style="font-size:12px;color:var(--soft);margin-bottom:10px">${dp.anchorLabel}</div>
-      ${renderTripStackRows(dp.opportunities)}
-    </div>`).join('');
+      ${routeSummary}
+      ${renderTripStackRows(optimized)}
+    </div>`;
+  }).join('');
   modal.classList.add('open');
 }
 
@@ -22596,6 +22604,112 @@ function mgrCalRender() {
   gridEl.innerHTML = cells;
 }
 
+// ── ROUTE OPTIMIZATION & SAVINGS ─────────────────────────────────────────────
+// Nearest-neighbor greedy sort: start at the anchor, repeatedly pick
+// the closest unvisited stop. Not GPS-exact (we use ZIP-prefix distance
+// as a proxy) but produces a sensibly sequenced driving order and is
+// fast enough to run client-side without an API call.
+function optimizeRoute(anchorAddress, opps) {
+  if (!opps.length) return [];
+  const anchorZip = extractZip(anchorAddress) || '';
+  const remaining = opps.map((o, origIdx) => ({ ...o, origIdx }));
+  const route = [];
+  let currentZip = anchorZip;
+  while (remaining.length) {
+    let best = null, bestDist = Infinity;
+    remaining.forEach((o, i) => {
+      const d = zipDistance(currentZip, extractZip(o.address) || '');
+      if (d < bestDist) { bestDist = d; best = i; }
+    });
+    const chosen = remaining.splice(best, 1)[0];
+    currentZip = extractZip(chosen.address) || currentZip;
+    route.push(chosen);
+  }
+  return route;
+}
+
+// Total zip-distance along a sequence of stops, starting from anchor.
+function routeTotalDist(anchorAddress, opps) {
+  if (!opps.length) return 0;
+  const anchorZip = extractZip(anchorAddress) || '';
+  let total = 0, prev = anchorZip;
+  opps.forEach(o => {
+    const z = extractZip(o.address) || prev;
+    total += zipDistance(prev, z);
+    prev = z;
+  });
+  return total;
+}
+
+// Build a multi-stop Google Maps directions URL from an anchor address
+// and an ordered array of stops. Uses the /maps/dir/ path format which
+// works without an API key. Caps at 10 waypoints (Maps UI limit).
+function buildRouteMapUrl(anchorAddress, orderedOpps) {
+  const stops = [anchorAddress, ...orderedOpps.slice(0,9).map(o => o.address || o.name)].filter(Boolean);
+  return 'https://www.google.com/maps/dir/' + stops.map(s => encodeURIComponent(s)).join('/');
+}
+
+// Route summary bar shown above the stop list in both the manager
+// detail view and the rep's own Plan My Day results modal.
+// Shows: stop count · est. miles · est. drive time · savings vs.
+// unoptimized · "Open Full Route in Maps" button.
+function buildRouteSummaryBar(anchorAddress, originalOpps, optimizedOpps, mapUrl) {
+  const origDist  = routeTotalDist(anchorAddress, originalOpps);
+  const optDist   = routeTotalDist(anchorAddress, optimizedOpps);
+  const savedMi   = Math.max(0, origDist - optDist);
+  const savedMin  = Math.round(savedMi * 3.5); // ~3.5 min saved per mile (city/suburban)
+  const estMiles  = optDist;
+  const estTime   = Math.round(optDist * 6 + optimizedOpps.length * 20); // 6 min/mi + 20 min/stop
+  const savingsHtml = savedMi > 0
+    ? `<span style="background:#D1FAE5;color:#065F46;border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700">✂️ Saves ~${savedMi} mi · ~${savedMin} min vs. unoptimized</span>`
+    : `<span style="background:#F3F4F6;color:var(--soft);border-radius:4px;padding:2px 8px;font-size:10px">Route already near-optimal</span>`;
+  return `
+    <div style="background:#1A1D21;border-radius:10px;padding:12px 16px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center">
+        <div style="text-align:center">
+          <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:20px;color:#fff">${optimizedOpps.length}</div>
+          <div style="font-size:9px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.06em">Stops</div>
+        </div>
+        <div style="width:1px;height:30px;background:rgba(255,255,255,.1)"></div>
+        <div style="text-align:center">
+          <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:20px;color:#fff">~${estMiles}</div>
+          <div style="font-size:9px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.06em">Est. Miles</div>
+        </div>
+        <div style="width:1px;height:30px;background:rgba(255,255,255,.1)"></div>
+        <div style="text-align:center">
+          <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:20px;color:#fff">~${estTime}m</div>
+          <div style="font-size:9px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.06em">Est. Time</div>
+        </div>
+        <div>${savingsHtml}</div>
+      </div>
+      <a href="${mapUrl}" target="_blank" style="background:#1B5FA8;color:#fff;border-radius:8px;padding:9px 16px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;text-decoration:none;white-space:nowrap;flex-shrink:0">🗺 Open Full Route in Maps</a>
+    </div>`;
+}
+
+// Variant of renderTripStackRows for the manager detail modal --
+// identical markup but the "View →" button closes the right modal
+// (repPlanDetailModal, not tripStackModal).
+function renderMgrPlanRows(opps) {
+  if (!opps.length) return '<div style="color:var(--soft);font-size:13px;text-align:center;padding:20px">No stops on this plan.</div>';
+  return opps.map((o, i) => `
+    <div style="display:flex;align-items:flex-start;gap:12px;padding:12px;border:1.5px solid var(--line);border-radius:10px;background:#fff;margin-bottom:8px">
+      <div style="width:28px;height:28px;border-radius:50%;background:var(--red);color:#fff;display:flex;align-items:center;justify-content:center;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;flex-shrink:0">${i+1}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${o.name}</div>
+        <div style="font-size:11px;color:var(--soft);margin:2px 0">${o.address || 'Address not on file'}</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
+          <span style="background:#F3F4F6;color:var(--ink);border-radius:4px;padding:1px 7px;font-size:10px;font-weight:700">${o.type}</span>
+          <span style="background:var(--bg);color:var(--soft);border-radius:4px;padding:1px 7px;font-size:10px">~${o.dist} mi · ${o.detail}</span>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:5px;flex-shrink:0">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:16px;color:var(--red);text-align:center">${o.score}</div>
+        <div style="font-size:9px;color:var(--soft);text-align:center;text-transform:uppercase;letter-spacing:.04em">Score</div>
+        <a href="${o.address ? 'https://maps.google.com/?q='+encodeURIComponent(o.address) : '#'}" target="_blank" style="background:var(--ink);color:#fff;border:none;border-radius:5px;padding:4px 8px;font-size:10px;font-family:Barlow Condensed,sans-serif;font-weight:700;cursor:pointer;white-space:nowrap;text-decoration:none;text-align:center">🗺 Nav</a>
+      </div>
+    </div>`).join('');
+}
+
 function mgrCalShowRepPlan(repName, dateStr) {
   const saved = JSON.parse(localStorage.getItem('termac_rep_plans') || '{}');
   const key   = repName + '|' + dateStr;
@@ -22610,13 +22724,21 @@ function mgrCalShowRepPlan(repName, dateStr) {
   if (!plan) {
     bodyEl.innerHTML = '<div style="color:var(--soft);font-size:13px;padding:16px">No plan data found for this day.</div>';
   } else {
-    const anchor = plan.hasAppointment
-      ? `<div style="background:#DBEAFE;color:#1E40AF;border-radius:8px;padding:10px 14px;font-size:12px;margin-bottom:14px"><strong>📅 Appointment:</strong> ${plan.anchorLabel.replace('📅 ','')}</div>`
-      : `<div style="background:#F0FDF4;color:#166534;border-radius:8px;padding:10px 14px;font-size:12px;margin-bottom:14px"><strong>🧭 Suggested area:</strong> ${plan.anchorLabel.replace('🧭 Suggested area — ','')}</div>`;
-    const rows = (typeof renderTripStackRows === 'function')
-      ? renderTripStackRows(plan.opportunities || [])
-      : '<div style="color:var(--soft);font-size:12px">No nearby opportunities on record.</div>';
-    bodyEl.innerHTML = anchor + rows;
+    // Extract the anchor address from the anchor label for route math
+    const anchorAddrMatch = plan.anchorLabel.match(/·\s*(.+)$/);
+    const anchorAddr = anchorAddrMatch ? anchorAddrMatch[1].trim() : '';
+
+    const originalOpps  = plan.opportunities || [];
+    const optimizedOpps = optimizeRoute(anchorAddr, originalOpps);
+    const mapUrl        = buildRouteMapUrl(anchorAddr, optimizedOpps);
+
+    const anchorBanner = plan.hasAppointment
+      ? `<div style="background:#DBEAFE;color:#1E40AF;border-radius:8px;padding:10px 14px;font-size:12px;margin-bottom:12px"><strong>📅 Appointment anchor:</strong> ${plan.anchorLabel.replace('📅 ','')}</div>`
+      : `<div style="background:#F0FDF4;color:#166534;border-radius:8px;padding:10px 14px;font-size:12px;margin-bottom:12px"><strong>🧭 Suggested anchor:</strong> ${plan.anchorLabel.replace('🧭 Suggested area — ','')}</div>`;
+
+    const routeSummary = buildRouteSummaryBar(anchorAddr, originalOpps, optimizedOpps, mapUrl);
+    const rows         = renderMgrPlanRows(optimizedOpps);
+    bodyEl.innerHTML   = anchorBanner + routeSummary + rows;
   }
   const modal = document.getElementById('repPlanDetailModal');
   if (modal) modal.classList.add('open');
