@@ -840,6 +840,53 @@ function getReferralTarget() {
 }
 
 
+// ── COLLAPSIBLE SECTION UTILITY (shared with termac-os.html pattern) ──
+// Auto-wraps every .section-hdr + its following siblings so clicking
+// the header toggles visibility. Runs after renderAll() so dynamically
+// rendered sections are included. State persists in localStorage.
+function mgrToggle(id) {
+  var body = document.getElementById('cs-body-' + id);
+  var icon = document.getElementById('cs-icon-' + id);
+  if (!body) return;
+  var isOpen = body.style.display !== 'none';
+  body.style.display = isOpen ? 'none' : '';
+  if (icon) icon.style.transform = isOpen ? 'rotate(-90deg)' : 'rotate(0deg)';
+  try { localStorage.setItem('cs_state_' + id, isOpen ? '0' : '1'); } catch(e) {}
+}
+
+function autoCollapsify() {
+  document.querySelectorAll('.section-hdr').forEach(function(hdr, idx) {
+    if (hdr.dataset.collapsified) return;
+    hdr.dataset.collapsified = '1';
+    var id = 'tp_' + idx + '_' + (hdr.textContent.trim().replace(/\W+/g,'_').slice(0,20));
+    var siblings = [];
+    var el = hdr.nextElementSibling;
+    while (el && !el.classList.contains('section-hdr') && !el.classList.contains('full-overlay')) {
+      siblings.push(el);
+      el = el.nextElementSibling;
+    }
+    if (!siblings.length) return;
+    var wrapper = document.createElement('div');
+    wrapper.id = 'cs-body-' + id;
+    hdr.parentNode.insertBefore(wrapper, siblings[0]);
+    siblings.forEach(function(s) { wrapper.appendChild(s); });
+    var chevron = document.createElement('span');
+    chevron.id = 'cs-icon-' + id;
+    chevron.style.cssText = 'float:right;font-size:14px;transition:transform .2s;display:inline-block;margin-left:8px;color:#8A909A';
+    chevron.textContent = '▾';
+    hdr.appendChild(chevron);
+    hdr.style.cursor = 'pointer';
+    hdr.style.userSelect = 'none';
+    hdr.onclick = function() { mgrToggle(id); };
+    try {
+      if (localStorage.getItem('cs_state_' + id) === '0') {
+        wrapper.style.display = 'none';
+        chevron.style.transform = 'rotate(-90deg)';
+      }
+    } catch(e) {}
+  });
+}
+
 // ── SAMPLE JOBS FOR TODAY ──
 var JOBS = [
   { id:'j1', time:'7:30 AM', account:'Shore Medical Center', addr:'1 Medical Dr, Somers Point NJ', type:'Fire Inspection', typeKey:'fire', gc:'Dr. Patel — Facilities', phone:'609-653-3500', est:'3.5 hrs', status:'enroute', priority:'NFPA 25 Annual', notes:'Access via loading dock B. Ask for Facilities desk. Badge required — call ahead.', deficiencies:2, lastVisit:'Jan 2025' },
@@ -859,16 +906,11 @@ function renderAll() {
   renderMiniLb();
   renderScoreBreakdown();
   renderBadges();
-  // renderGoalsCard and renderReferralCard are both defined in a LATER
-  // <script> block (this one runs before that block loads on first page
-  // execution) -- guarding them here stops that from throwing and
-  // silently killing setDate() below, which used to never run on first
-  // load as a result. The window-load safety net further down re-runs
-  // renderAll() once everything's loaded so these always end up populated.
   if (typeof renderGoalsCard === 'function') renderGoalsCard();
   renderFeedback();
   if (typeof renderReferralCard === 'function') renderReferralCard();
   setDate();
+  setTimeout(autoCollapsify, 100); // after DOM settles
 }
 
 function setDate() {
