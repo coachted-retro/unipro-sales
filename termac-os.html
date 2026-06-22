@@ -2711,6 +2711,23 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
     <div style="margin-top:10px;font-size:11px;color:var(--soft)">⚠️ flagged = more than 15% behind pace · Click "Full Detail" to set quotas and view individual rep dashboards</div>
   </div>
 
+  <!-- ROW 7: REP PLANNING CALENDAR -->
+  <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;margin-top:14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft)">🗓 Rep Planning Calendar</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button onclick="mgrCalNavigate(-1)" style="background:none;border:1.5px solid var(--line);border-radius:6px;padding:3px 10px;font-size:14px;cursor:pointer">‹</button>
+        <div id="mgrCalLabel" style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;min-width:100px;text-align:center"></div>
+        <button onclick="mgrCalNavigate(1)" style="background:none;border:1.5px solid var(--line);border-radius:6px;padding:3px 10px;font-size:14px;cursor:pointer">›</button>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;font-size:10px;color:var(--soft);text-align:center;margin-bottom:4px;font-weight:700;text-transform:uppercase;letter-spacing:.04em">
+      <div>Sun</div><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div>
+    </div>
+    <div id="mgrCalGrid"></div>
+    <div style="margin-top:10px;font-size:11px;color:var(--soft)">Rep names appear on days they've planned using "Plan My Day" — click any name to see their full plan for that day.</div>
+  </div>
+
   </div><!-- /mgrPanel-dashboard -->
 
   <!-- REPORTS PANEL -->
@@ -15635,6 +15652,9 @@ function refreshManagerDashboard() {
   const set = (id, val) => { const el = document.getElementById(id); if(el) el.textContent = val; };
   const fmt$ = v => '$' + Number(v).toLocaleString();
 
+  // Refresh the rep planning calendar alongside every other metric
+  if (typeof mgrCalRender === 'function') mgrCalRender();
+
   // ── ACTIVE ACCOUNTS ──
   const activeAccts = accounts.filter(a => a.status === 'active');
   set('mgrActiveAccounts', activeAccts.length || '—');
@@ -19389,6 +19409,23 @@ function planSingleDay(dateStr, usedPrefixes) {
 function planDaysForDates(dateList) {
   const usedPrefixes = new Set();
   const dayPlans = dateList.map(d => planSingleDay(d, usedPrefixes));
+
+  // Persist each day's plan so the manager dashboard calendar can
+  // show which reps have planned their days and what they have on.
+  const repName = _currentUser?.name || 'Unknown Rep';
+  const saved = JSON.parse(localStorage.getItem('termac_rep_plans') || '{}');
+  dayPlans.forEach(dp => {
+    const key = repName + '|' + dp.date;
+    saved[key] = {
+      rep: repName, date: dp.date,
+      hasAppointment: dp.hasAppointment,
+      anchorLabel: dp.anchorLabel,
+      opportunities: dp.opportunities,
+      savedAt: Date.now()
+    };
+  });
+  localStorage.setItem('termac_rep_plans', JSON.stringify(saved));
+
   renderPlanDayResults(dayPlans);
 }
 
@@ -20031,6 +20068,21 @@ document.addEventListener('DOMContentLoaded', () => {
       <div class="is-modal-body" id="planDayResultBody" style="max-height:70vh;overflow-y:auto"></div>
       <div class="is-modal-foot">
         <button class="is-btn is-btn-ghost" onclick="closeModal('planDayResultModal')">Close</button>
+      </div>
+    </div>
+  </div>`);
+
+  // ── Rep Plan Detail (manager calendar click-through) ──
+  document.body.insertAdjacentHTML('beforeend', `
+  <div class="is-modal-bg" id="repPlanDetailModal">
+    <div class="is-modal" style="width:min(620px,96vw)">
+      <div class="is-modal-hdr">
+        <h3>🗓 <span id="repPlanDetailTitle">Rep Plan</span></h3>
+        <button onclick="closeModal('repPlanDetailModal')" style="background:none;border:none;color:#BFC4CA;font-size:20px;cursor:pointer">✕</button>
+      </div>
+      <div class="is-modal-body" id="repPlanDetailBody" style="max-height:70vh;overflow-y:auto"></div>
+      <div class="is-modal-foot">
+        <button class="is-btn is-btn-ghost" onclick="closeModal('repPlanDetailModal')">Close</button>
       </div>
     </div>
   </div>`);
@@ -22392,6 +22444,106 @@ setInterval(() => {
   processEstimateFollowUps();
   renderEstimateFollowUpPanel();
 }, 6 * 60 * 60 * 1000);
+
+// ── MANAGER REP PLANNING CALENDAR ────────────────────────────────────
+// Reads termac_rep_plans (saved by planDaysForDates() when a rep
+// confirms their plan) and renders a month grid showing each rep's
+// name on the days they've planned. Clicking a name opens a detail
+// modal showing that rep's full plan for that day -- same opportunity
+// rows renderTripStackRows() produces.
+
+let mgrCalMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+
+function mgrCalNavigate(delta) {
+  mgrCalMonth = new Date(mgrCalMonth.getFullYear(), mgrCalMonth.getMonth() + delta, 1);
+  mgrCalRender();
+}
+
+function mgrCalRender() {
+  const labelEl = document.getElementById('mgrCalLabel');
+  const gridEl  = document.getElementById('mgrCalGrid');
+  if (!labelEl || !gridEl) return;
+
+  const year  = mgrCalMonth.getFullYear();
+  const month = mgrCalMonth.getMonth();
+  const today = new Date(); today.setHours(0,0,0,0);
+  const todayStr = `${year}-${String(month+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+  labelEl.textContent = mgrCalMonth.toLocaleDateString('en-US', { month:'long', year:'numeric' });
+
+  const saved = JSON.parse(localStorage.getItem('termac_rep_plans') || '{}');
+  // Index by date -> array of rep names
+  const byDate = {};
+  Object.values(saved).forEach(plan => {
+    if (!plan.date.startsWith(`${year}-${String(month+1).padStart(2,'0')}`)) return;
+    if (!byDate[plan.date]) byDate[plan.date] = [];
+    byDate[plan.date].push(plan.rep);
+  });
+
+  const firstDow   = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  // Rep color palette -- cycles by index so each rep gets a distinct
+  // color pill across the calendar, making it easy to see at a glance
+  // who's where on any given day.
+  const repColors = ['#1B5FA8','#C8102E','#1E7B3C','#D8690B','#6B21A8','#0E7490','#7C3AED'];
+  const repColorMap = {};
+  let colorIdx = 0;
+  function repColor(name) {
+    if (!repColorMap[name]) repColorMap[name] = repColors[colorIdx++ % repColors.length];
+    return repColorMap[name];
+  }
+
+  const CELL_STYLE = 'min-height:72px;padding:4px;border:1px solid var(--line);border-radius:6px;vertical-align:top;font-size:11px;background:';
+
+  let cells = '';
+  for (let i = 0; i < firstDow; i++) {
+    cells += `<div style="${CELL_STYLE}#FAFAFA"></div>`;
+  }
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const isToday = dateStr === todayStr;
+    const isPast  = dateStr < todayStr;
+    const reps    = byDate[dateStr] || [];
+    const repPills = reps.map(name =>
+      `<div onclick="mgrCalShowRepPlan('${name}','${dateStr}')" style="background:${repColor(name)};color:#fff;border-radius:4px;padding:2px 5px;margin-top:3px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:10px;letter-spacing:.02em">${name.split(' ')[0]}</div>`
+    ).join('');
+    cells += `
+      <div style="${CELL_STYLE}${isToday?'#EFF6FF':isPast?'#FAFAFA':'#fff'};border:${isToday?'2px solid #1B5FA8':'1px solid var(--line)'}">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:${isToday?'800':'600'};font-size:11px;color:${isToday?'#1B5FA8':isPast?'#9CA3AF':'var(--ink)'};">${d}</div>
+        ${repPills}
+      </div>`;
+  }
+  gridEl.style.display = 'grid';
+  gridEl.style.gridTemplateColumns = 'repeat(7,1fr)';
+  gridEl.style.gap = '3px';
+  gridEl.innerHTML = cells;
+}
+
+function mgrCalShowRepPlan(repName, dateStr) {
+  const saved = JSON.parse(localStorage.getItem('termac_rep_plans') || '{}');
+  const key   = repName + '|' + dateStr;
+  const plan  = saved[key];
+  const titleEl = document.getElementById('repPlanDetailTitle');
+  const bodyEl  = document.getElementById('repPlanDetailBody');
+  if (!titleEl || !bodyEl) return;
+
+  const displayDate = new Date(dateStr + 'T12:00:00').toLocaleDateString('en-US', { weekday:'long', month:'short', day:'numeric' });
+  titleEl.textContent = `${repName} — ${displayDate}`;
+
+  if (!plan) {
+    bodyEl.innerHTML = '<div style="color:var(--soft);font-size:13px;padding:16px">No plan data found for this day.</div>';
+  } else {
+    const anchor = plan.hasAppointment
+      ? `<div style="background:#DBEAFE;color:#1E40AF;border-radius:8px;padding:10px 14px;font-size:12px;margin-bottom:14px"><strong>📅 Appointment:</strong> ${plan.anchorLabel.replace('📅 ','')}</div>`
+      : `<div style="background:#F0FDF4;color:#166534;border-radius:8px;padding:10px 14px;font-size:12px;margin-bottom:14px"><strong>🧭 Suggested area:</strong> ${plan.anchorLabel.replace('🧭 Suggested area — ','')}</div>`;
+    const rows = (typeof renderTripStackRows === 'function')
+      ? renderTripStackRows(plan.opportunities || [])
+      : '<div style="color:var(--soft);font-size:12px">No nearby opportunities on record.</div>';
+    bodyEl.innerHTML = anchor + rows;
+  }
+  const modal = document.getElementById('repPlanDetailModal');
+  if (modal) modal.classList.add('open');
+}
 
 console.log('✅ Termac Intelligence Engine v4.0 — Invoice Aging · Estimate Recovery · Agreement Gaps · Bundle Tracker · Price Reviews · Emergency Conversions · Drive Time · FTFR Analysis · Proposal Aging · Seasonal Distribution · AHJ Calendar · Cert Dispatch Block · Proof of Service');
 </script>
