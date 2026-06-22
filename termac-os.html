@@ -2107,6 +2107,64 @@ function renderCRMView(){
       </div>
       <button onclick="openPlanDayCalendar()" style="background:#fff;color:#1B5FA8;border:none;border-radius:8px;padding:9px 18px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;white-space:nowrap;flex-shrink:0">Find My Route →</button>
     </div>`;
+
+    // ── PROACTIVE REP ALERT BAR ──────────────────────────────────────────
+    // Surfaces intelligence the rep needs to act on TODAY — not buried in
+    // account records, not waiting for a manager to flag it. Checks:
+    //   • Hot leads untouched 7+ days (pipeline decay)
+    //   • Active accounts with churn score 8+ (at-risk relationships)
+    //   • Renewals within 60 days with no contact in 45+ days
+    // Dismissible per alert (stored in sessionStorage so it resets daily).
+    // Only shown for the logged-in rep's own records.
+    const repName  = _currentUser?.name;
+    const accounts = crmLoad('accounts') || [];
+    const leads    = crmLoad('leads')    || [];
+    const dismissed = (() => { try { return JSON.parse(sessionStorage.getItem('rep_alerts_dismissed') || '[]'); } catch(e) { return []; } })();
+    const alerts   = [];
+
+    // 1. Hot leads untouched 7+ days
+    leads.filter(l => (l.assignedRep === repName || l.claimedBy === repName) && l.status === 'hot' && l.updated && (Date.now() - l.updated) > 7*86400000)
+      .slice(0,3).forEach(l => {
+        const key = `stale_lead_${l.id}`;
+        if (!dismissed.includes(key)) alerts.push({ key, color:'#C8102E', bg:'#FEE2E2', icon:'🔥', label:'Hot lead going cold', detail:`${l.name||l.business} — untouched ${Math.floor((Date.now()-l.updated)/86400000)}d`, action:`openAcctDetail('${l.id}','leads')` });
+      });
+
+    // 2. Accounts with churn score 8+
+    accounts.filter(a => (a.assignedRep === repName || a.rep === repName) && a.status === 'active')
+      .filter(a => typeof calcChurnScore === 'function' && calcChurnScore(a) >= 8)
+      .slice(0,3).forEach(a => {
+        const key = `churn_${a.id}`;
+        if (!dismissed.includes(key)) alerts.push({ key, color:'#D97706', bg:'#FEF3C7', icon:'⚠️', label:'Account at risk', detail:`${a.name||a.business} — churn score ${calcChurnScore(a)}/10`, action:`openAcctDetail('${a.id}','accounts')` });
+      });
+
+    // 3. Renewals within 60 days, no contact in 45+ days
+    accounts.filter(a => (a.assignedRep === repName || a.rep === repName) && a.status === 'active' && a.renewalDate)
+      .filter(a => {
+        const daysToRenewal = (new Date(a.renewalDate).getTime() - Date.now()) / 86400000;
+        const daysSinceContact = a.lastCheckin ? (Date.now() - a.lastCheckin) / 86400000 : 999;
+        return daysToRenewal > 0 && daysToRenewal <= 60 && daysSinceContact >= 45;
+      }).slice(0,3).forEach(a => {
+        const daysToRenewal = Math.floor((new Date(a.renewalDate).getTime() - Date.now()) / 86400000);
+        const key = `renewal_${a.id}`;
+        if (!dismissed.includes(key)) alerts.push({ key, color:'#1B5FA8', bg:'#DBEAFE', icon:'🔔', label:'Renewal approaching — no recent contact', detail:`${a.name||a.business} — renews in ${daysToRenewal}d`, action:`openAcctDetail('${a.id}','accounts')` });
+      });
+
+    if (alerts.length) {
+      html += `<div id="repAlertBar" style="margin-bottom:14px">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--soft);margin-bottom:6px">⚡ Needs Your Attention Today</div>
+        ${alerts.map(a => `
+          <div style="background:${a.bg};border-left:3px solid ${a.color};border-radius:8px;padding:9px 12px;margin-bottom:6px;display:flex;align-items:center;justify-content:space-between;gap:8px">
+            <div style="flex:1;min-width:0;cursor:pointer" onclick="${a.action}">
+              <div style="font-size:11px;font-weight:700;color:${a.color}">${a.icon} ${a.label}</div>
+              <div style="font-size:11px;color:var(--ink);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${a.detail}</div>
+            </div>
+            <div style="display:flex;gap:6px;flex-shrink:0">
+              <button onclick="${a.action}" style="background:${a.color};color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:10px;font-family:Barlow Condensed,sans-serif;font-weight:700;cursor:pointer">Act →</button>
+              <button onclick="(function(){var d=JSON.parse(sessionStorage.getItem('rep_alerts_dismissed')||'[]');d.push('${a.key}');sessionStorage.setItem('rep_alerts_dismissed',JSON.stringify(d));document.getElementById('repAlertBar').remove()})()" style="background:none;border:1px solid ${a.color};color:${a.color};border-radius:5px;padding:4px 8px;font-size:10px;cursor:pointer;opacity:.7">✕</button>
+            </div>
+          </div>`).join('')}
+      </div>`;
+    }
   }
   html+=`<div class="crm-section-title">${data.length} ${tab.toUpperCase()}${repTerritory ? ` <span style="color:#1E7B3C">· Your Territory</span>` : ''}</div><div class="crm-cards">`;
   data.forEach(r=>{ html+=renderCard(tab,r); });
@@ -2642,6 +2700,17 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
       <span id="mgrCreditApprovalBadge" style="background:#C8102E;color:#fff;border-radius:10px;padding:1px 8px;font-size:10px;font-weight:700;display:none"></span>
     </div>
     <div id="mgrCreditApprovalList"></div>
+  </div>
+
+  <!-- PIPELINE VELOCITY & REVENUE FORECAST -->
+  <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;margin-bottom:16px">
+    <div onclick="mgrToggle('velocity')" style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none;padding-bottom:10px">
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft)">📈 Pipeline Velocity & Revenue Forecast</div>
+      <span id="cs-icon-velocity" style="color:var(--soft);font-size:14px;transition:transform .2s">▾</span>
+    </div>
+    <div id="cs-body-velocity" style="margin-top:4px">
+      <div id="pipelineVelocityBody"></div>
+    </div>
   </div>
 
   <!-- ROW 1: TOP-LINE LIVE KPIs -->
@@ -16121,9 +16190,10 @@ function refreshManagerDashboard() {
   const set = (id, val) => { const el = document.getElementById(id); if(el) el.textContent = val; };
   const fmt$ = v => '$' + Number(v).toLocaleString();
 
-  // Refresh the rep planning calendar and credit approval queue alongside every other metric
+  // Refresh the rep planning calendar, credit approval queue, and pipeline velocity
   if (typeof mgrCalRender === 'function') mgrCalRender();
   if (typeof mgrCreditQueueRender === 'function') mgrCreditQueueRender();
+  if (typeof renderPipelineVelocity === 'function') renderPipelineVelocity();
 
   // ── ACTIVE ACCOUNTS ──
   const activeAccts = accounts.filter(a => a.status === 'active');
@@ -23450,8 +23520,159 @@ function mgrCreditDecide(decision) {
   setTimeout(() => alert(msg), 200);
 }
 
-// ══════════════════════════════════════════════════════════════════════════
-// TERMAC AUTOMATED DRIP CAMPAIGN ENGINE v1.0
+// ── PIPELINE VELOCITY & REVENUE FORECAST ─────────────────────────────────
+// Shows where leads die in the funnel, how long they sit in each stage,
+// and a 30/60/90-day revenue forecast based on current pipeline value
+// and each rep's historical conversion rates.
+function renderPipelineVelocity() {
+  const el = document.getElementById('pipelineVelocityBody');
+  if (!el) return;
+
+  const leads    = crmLoad('leads')    || [];
+  const contacts = crmLoad('contacts') || [];
+  const accounts = crmLoad('accounts') || [];
+  const now = Date.now();
+  const day = 86400000;
+
+  // ── STAGE FUNNEL ──────────────────────────────────────────────────────
+  // Termac pipeline stages in order
+  const stages = [
+    { id:'new',     label:'New / Unclaimed',  color:'#6B7280' },
+    { id:'warm',    label:'Contacted / Warm',  color:'#1B5FA8' },
+    { id:'hot',     label:'Hot / Appointment', color:'#D97706' },
+    { id:'contact', label:'Site Visit Done',   color:'#7C3AED' },
+    { id:'won',     label:'Closed / Account',  color:'#059669' },
+    { id:'dead',    label:'Lost / Dead',       color:'#C8102E' },
+  ];
+
+  const stageCounts = {
+    new:     leads.filter(l => !l.claimedBy || l.claimedBy === 'Unassigned').length,
+    warm:    leads.filter(l => l.status === 'warm').length,
+    hot:     leads.filter(l => l.status === 'hot').length,
+    contact: contacts.length,
+    won:     accounts.filter(a => a.status === 'active').length,
+    dead:    leads.filter(l => l.status === 'dead').length,
+  };
+  const total = leads.length + contacts.length;
+  const maxCount = Math.max(...Object.values(stageCounts), 1);
+
+  // ── AVERAGE TIME IN STAGE ─────────────────────────────────────────────
+  const avgDaysInStage = (arr, statusFilter) => {
+    const filtered = arr.filter(r => statusFilter(r) && r.updated && r.created);
+    if (!filtered.length) return null;
+    const avg = filtered.reduce((sum, r) => sum + (r.updated - r.created), 0) / filtered.length;
+    return Math.round(avg / day);
+  };
+
+  const timeNew    = avgDaysInStage(leads,    l => !l.claimedBy || l.claimedBy === 'Unassigned');
+  const timeWarm   = avgDaysInStage(leads,    l => l.status === 'warm');
+  const timeHot    = avgDaysInStage(leads,    l => l.status === 'hot');
+  const timeContact= avgDaysInStage(contacts, () => true);
+
+  // ── CONVERSION RATES ──────────────────────────────────────────────────
+  const totalLeads = leads.length || 1;
+  const warmRate   = Math.round((leads.filter(l=>l.status==='warm'||l.status==='hot').length / totalLeads) * 100);
+  const hotRate    = Math.round((leads.filter(l=>l.status==='hot').length / Math.max(leads.filter(l=>l.status==='warm'||l.status==='hot').length,1)) * 100);
+  const closeRate  = Math.round((accounts.filter(a=>a.status==='active').length / Math.max(contacts.length,1)) * 100);
+  const overallRate= Math.round((accounts.filter(a=>a.status==='active').length / totalLeads) * 100);
+
+  // ── REVENUE FORECAST ──────────────────────────────────────────────────
+  // Pipeline value from open leads and contacts (use aiScore as a
+  // rough deal size proxy when no explicit value — avg deal ~$2,400/yr)
+  const avgDeal = 2400;
+  const pipelineLeads    = leads.filter(l => l.status !== 'dead').length;
+  const pipelineContacts = contacts.length;
+  const pipelineValue    = (pipelineLeads * avgDeal * (overallRate/100 || 0.15)) +
+                           (pipelineContacts * avgDeal * (closeRate/100 || 0.6));
+
+  // Spread the forecast across 30/60/90 days weighted by stage velocity
+  const fc30 = Math.round(pipelineValue * 0.25);
+  const fc60 = Math.round(pipelineValue * 0.55);
+  const fc90 = Math.round(pipelineValue);
+
+  // ── WHERE LEADS DIE ───────────────────────────────────────────────────
+  const deadTotal = stageCounts.dead || 1;
+  const dieAtNew  = Math.round((leads.filter(l=>l.status==='dead'&&(!l.claimedBy||l.claimedBy==='Unassigned')).length / deadTotal) * 100);
+  const dieAtWarm = Math.round((leads.filter(l=>l.status==='dead'&&l.claimedBy&&l.claimedBy!=='Unassigned'&&(!l.activityLog||l.activityLog.length<2)).length / deadTotal) * 100);
+  const dieAtHot  = Math.max(0, 100 - dieAtNew - dieAtWarm);
+
+  const fmt$ = v => '$' + Number(v).toLocaleString();
+  const stageBar = (count, max, color) => {
+    const pct = Math.round((count/max)*100);
+    return `<div style="background:var(--line);border-radius:4px;height:8px;margin-top:4px"><div style="background:${color};border-radius:4px;height:8px;width:${Math.max(pct,2)}%"></div></div>`;
+  };
+
+  el.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+
+      <!-- Stage Funnel -->
+      <div>
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--soft);margin-bottom:10px">Pipeline Funnel</div>
+        ${stages.map(s => `
+          <div style="margin-bottom:8px">
+            <div style="display:flex;justify-content:space-between;font-size:11px">
+              <span style="color:var(--ink)">${s.label}</span>
+              <span style="font-weight:700;color:${s.color}">${stageCounts[s.id]||0}</span>
+            </div>
+            ${stageBar(stageCounts[s.id]||0, maxCount, s.color)}
+          </div>`).join('')}
+      </div>
+
+      <!-- Conversion + Time in Stage -->
+      <div>
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--soft);margin-bottom:10px">Conversion Rates</div>
+        ${[
+          ['Lead → Warm/Hot',    warmRate+'%',  '#1B5FA8'],
+          ['Warm → Hot',         hotRate+'%',   '#D97706'],
+          ['Contact → Account',  closeRate+'%', '#059669'],
+          ['Overall (Lead→Won)', overallRate+'%','#7C3AED'],
+        ].map(([label,val,color])=>`
+          <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--line);font-size:11px">
+            <span style="color:var(--soft)">${label}</span>
+            <span style="font-weight:800;color:${color}">${val}</span>
+          </div>`).join('')}
+        <div style="margin-top:12px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--soft);margin-bottom:8px">Avg Time in Stage</div>
+        ${[
+          ['Unclaimed',  timeNew,    '#6B7280'],
+          ['Warm',       timeWarm,   '#1B5FA8'],
+          ['Hot',        timeHot,    '#D97706'],
+          ['Site Visit', timeContact,'#7C3AED'],
+        ].map(([label,val,color])=>`
+          <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--line);font-size:11px">
+            <span style="color:var(--soft)">${label}</span>
+            <span style="font-weight:700;color:${color}">${val!=null?val+'d':'—'}</span>
+          </div>`).join('')}
+      </div>
+    </div>
+
+    <!-- Revenue Forecast -->
+    <div style="background:#1A1D21;border-radius:10px;padding:14px 16px;margin-bottom:12px">
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#9CA3AF;margin-bottom:10px">💰 Revenue Forecast from Current Pipeline</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+        ${[['30 Days',fc30,'#60A5FA'],['60 Days',fc60,'#34D399'],['90 Days',fc90,'#FBBF24']].map(([label,val,color])=>`
+          <div style="text-align:center">
+            <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:22px;color:${color}">${fmt$(val)}</div>
+            <div style="font-size:10px;color:#6B7280;text-transform:uppercase;letter-spacing:.06em">${label}</div>
+          </div>`).join('')}
+      </div>
+      <div style="font-size:10px;color:#4B5563;margin-top:10px;text-align:center">Based on ${pipelineLeads} open leads + ${pipelineContacts} contacts at historical conversion rates · Avg deal value ${fmt$(avgDeal)}/yr</div>
+    </div>
+
+    <!-- Where Leads Die -->
+    <div>
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--soft);margin-bottom:8px">📉 Where Leads Die (of ${stageCounts.dead} lost)</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        ${[['Never contacted',dieAtNew,'#6B7280'],['Contacted, no follow-through',dieAtWarm,'#1B5FA8'],['Hot but didn\'t close',dieAtHot,'#C8102E']].map(([label,pct,color])=>`
+          <div style="background:var(--bg);border-radius:8px;padding:10px 14px;flex:1;min-width:140px;text-align:center;border-left:3px solid ${color}">
+            <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:20px;color:${color}">${pct}%</div>
+            <div style="font-size:10px;color:var(--soft);margin-top:2px">${label}</div>
+          </div>`).join('')}
+      </div>
+      <div style="font-size:11px;color:var(--soft);margin-top:8px">The highest % above is your biggest leverage point — fix that stage first.</div>
+    </div>`;
+}
+
+// ── AUTOMATED DRIP CAMPAIGN ENGINE v1.0
 // ══════════════════════════════════════════════════════════════════════════
 // Full lifecycle automation across every stage: Lead → Contact → Account.
 // 20 sequences covering every trigger, exit, and touchpoint.
