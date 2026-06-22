@@ -2713,6 +2713,22 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
     </div>
   </div>
 
+  <!-- TERMAC P&L CARD ── live revenue, margin, profit leaks, chart -->
+  <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;margin-bottom:16px">
+    <div onclick="mgrToggle('termacPnl')" style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none;padding-bottom:10px">
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft)">💰 Termac Division P&amp;L</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <button onclick="event.stopPropagation();openPricingManager()" style="background:var(--gold);color:var(--ink);border:none;border-radius:6px;padding:4px 10px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:10px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">💲 Pricing Manager</button>
+        <span id="cs-icon-termacPnl" style="color:var(--soft);font-size:14px">▾</span>
+      </div>
+    </div>
+    <div id="cs-body-termacPnl">
+      <div id="termacPnlCard">
+        <div id="termacPnlCardBody" style="color:var(--soft);font-size:12px">Loading…</div>
+      </div>
+    </div>
+  </div>
+
   <!-- DELIVERY ORDERS — Office creates orders here; driver reads them in termac-delivery.html -->
   <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;margin-bottom:16px">
     <div onclick="mgrToggle('deliveryOrders')" style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none;padding-bottom:10px">
@@ -16592,6 +16608,9 @@ function mgrToggle(id) {
   body.style.display = isOpen ? 'none' : '';
   if (icon) icon.style.transform = isOpen ? 'rotate(-90deg)' : 'rotate(0deg)';
   try { localStorage.setItem('cs_state_' + id, isOpen ? '0' : '1'); } catch(e) {}
+  if (!isOpen && id === 'termacPnl' && typeof renderTermacPnlCard === 'function') {
+    renderTermacPnlCard();
+  }
 }
 
 // Auto-collapsify: wraps every .section-hdr + its following sibling(s)
@@ -16683,6 +16702,7 @@ function refreshManagerDashboard() {
   if (typeof mgrCreditQueueRender === 'function') mgrCreditQueueRender();
   if (typeof renderPipelineVelocity === 'function') renderPipelineVelocity();
   if (typeof renderDeliveryOrders === 'function') renderDeliveryOrders();
+  if (typeof renderTermacPnlCard === 'function') renderTermacPnlCard();
 
   // ── ACTIVE ACCOUNTS ──
   const activeAccts = accounts.filter(a => a.status === 'active');
@@ -25188,10 +25208,368 @@ window.addEventListener('load', () => {
 // Both apps share the same origin localStorage — no sync needed.
 // Key: termac_delivery_orders
 
-const DELIVERY_KEY = 'termac_delivery_orders';
+const DELIVERY_KEY     = 'termac_delivery_orders';
+const TERMAC_COGS_KEY  = 'termac_product_cogs';
 const DELIVERY_DRIVERS = ['Ted Scholl','Chris Carzo','Brad Fickes','Dan Rini',
   'Joe McDonnell','Matt Belz','Todd Grill','Tom Jordan','TJ O\'Reilly',
   'Aine Curran','Samuel Holmes','Jasmine Paez'];
+
+// ── TERMAC CATALOG PARSER ────────────────────────────────────────────────────
+// Parses TERMAC_CHEM_CATALOG string into a structured array at runtime.
+// Each entry: { sku, name, price, unit }
+let _termacCatalogParsed = null;
+function getTermacCatalog() {
+  if (_termacCatalogParsed) return _termacCatalogParsed;
+  _termacCatalogParsed = [];
+  const lines = TERMAC_CHEM_CATALOG.trim().split('\n');
+  for (const line of lines) {
+    const m = line.match(/^([A-Z0-9]+):\s+(.+?)\s+—\s+\$([0-9.]+)\/([A-Z]+)/);
+    if (!m) continue;
+    _termacCatalogParsed.push({
+      sku:   m[1],
+      name:  m[2],
+      price: parseFloat(m[3]),
+      unit:  m[4].toLowerCase(),
+    });
+  }
+  return _termacCatalogParsed;
+}
+
+// Look up a catalog entry by SKU or by partial name match
+function findCatalogEntry(skuOrName) {
+  const cat = getTermacCatalog();
+  if (!skuOrName) return null;
+  const q = skuOrName.toUpperCase();
+  return cat.find(e => e.sku === q) ||
+         cat.find(e => e.name.toUpperCase().includes(q)) || null;
+}
+
+// ── COGS STORAGE ─────────────────────────────────────────────────────────────
+function loadTermacCOGS() {
+  try { return JSON.parse(localStorage.getItem(TERMAC_COGS_KEY) || '{}'); } catch(e) { return {}; }
+}
+function saveTermacCOGS(obj) {
+  try { localStorage.setItem(TERMAC_COGS_KEY, JSON.stringify(obj)); } catch(e) {}
+}
+function getProductCOGS(sku) {
+  const cogs = loadTermacCOGS();
+  return (cogs[sku] != null) ? parseFloat(cogs[sku]) : null;
+}
+function setProductCOGS(sku, value) {
+  const cogs = loadTermacCOGS();
+  cogs[sku] = parseFloat(value) || 0;
+  saveTermacCOGS(cogs);
+}
+
+// ── DELIVERY REVENUE / MARGIN HELPERS ────────────────────────────────────────
+function calcOrderRevenue(order) {
+  // Revenue = sum of (qty_delivered or qty_ordered if delivered) × unit_price
+  let rev = 0;
+  for (const it of (order.items || [])) {
+    const qtyUsed = (order.status === 'delivered') ? it.qty
+                  : (order.status === 'partial')   ? (it.deliveredQty || 0)
+                  : 0;
+    const price = it.unitPrice || (findCatalogEntry(it.sku || it.product)?.price) || 0;
+    rev += qtyUsed * price;
+  }
+  return rev;
+}
+
+function calcOrderCOGS(order) {
+  let cost = 0;
+  for (const it of (order.items || [])) {
+    const qtyUsed = (order.status === 'delivered') ? it.qty
+                  : (order.status === 'partial')   ? (it.deliveredQty || 0)
+                  : 0;
+    const cogs = it.unitCOGS || (it.sku ? getProductCOGS(it.sku) : null) || 0;
+    cost += qtyUsed * cogs;
+  }
+  return cost;
+}
+
+function calcOrderMargin(order) {
+  const rev  = calcOrderRevenue(order);
+  const cogs = calcOrderCOGS(order);
+  return { rev, cogs, margin: rev - cogs, pct: rev > 0 ? ((rev - cogs) / rev * 100) : 0 };
+}
+
+// Aggregate P&L across all delivery orders, optionally filtered to a date range
+function calcTermacPnL(orders, monthsBack) {
+  const now = Date.now();
+  const cutoff = monthsBack ? (now - monthsBack * 30 * 24 * 3600 * 1000) : 0;
+  const completed = orders.filter(o =>
+    (o.status === 'delivered' || o.status === 'partial') &&
+    (o.deliveredAt || o.createdAt || 0) >= cutoff
+  );
+
+  let totalRev = 0, totalCOGS = 0;
+  const byCustomer = {}, byMonth = {};
+
+  for (const o of completed) {
+    const m = calcOrderMargin(o);
+    totalRev  += m.rev;
+    totalCOGS += m.cogs;
+    // By customer
+    const cname = o.accountName || 'Unknown';
+    if (!byCustomer[cname]) byCustomer[cname] = { rev:0, cogs:0 };
+    byCustomer[cname].rev  += m.rev;
+    byCustomer[cname].cogs += m.cogs;
+    // By month (YYYY-MM)
+    const d = new Date(o.deliveredAt || o.createdAt || now);
+    const mk = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+    if (!byMonth[mk]) byMonth[mk] = { rev:0, cogs:0 };
+    byMonth[mk].rev  += m.rev;
+    byMonth[mk].cogs += m.cogs;
+  }
+
+  // Profit leaks: partial deliveries where qty ordered > qty delivered
+  const leaks = orders.filter(o => o.status === 'partial').map(o => {
+    let lostRev = 0;
+    for (const it of (o.items || [])) {
+      const missed = it.qty - (it.deliveredQty || 0);
+      if (missed > 0) {
+        const price = it.unitPrice || (findCatalogEntry(it.sku || it.product)?.price) || 0;
+        lostRev += missed * price;
+      }
+    }
+    return { accountName: o.accountName, deliveryDate: o.deliveryDate, lostRev, id: o.id };
+  }).filter(l => l.lostRev > 0);
+
+  const cancelled = orders.filter(o => o.status === 'cancelled' &&
+    (o.cancelledAt || o.createdAt || 0) >= cutoff);
+
+  return {
+    totalRev, totalCOGS,
+    margin:    totalRev - totalCOGS,
+    marginPct: totalRev > 0 ? ((totalRev - totalCOGS) / totalRev * 100) : 0,
+    byCustomer, byMonth,
+    leaks, cancelled,
+    completedCount: completed.length,
+  };
+}
+
+// ── TERMAC PRICING MANAGER ───────────────────────────────────────────────────
+function openPricingManager() {
+  const cat  = getTermacCatalog();
+  const cogs = loadTermacCOGS();
+
+  const rows = cat.map(e => {
+    const c = cogs[e.sku] != null ? cogs[e.sku] : '';
+    const marginPct = (c !== '' && e.price > 0) ? (((e.price - parseFloat(c)) / e.price) * 100).toFixed(1) : '—';
+    const marginColor = (c !== '') ? (parseFloat(marginPct) >= 40 ? 'var(--green)' : parseFloat(marginPct) >= 20 ? '#D97706' : 'var(--red)') : 'var(--soft)';
+    return `<tr style="border-bottom:1px solid var(--line)">
+      <td style="padding:5px 8px;font-size:11px;color:var(--soft)">${e.sku}</td>
+      <td style="padding:5px 8px;font-size:12px;font-weight:600">${e.name}</td>
+      <td style="padding:5px 8px;font-size:12px;text-align:right">$${e.price.toFixed(2)}</td>
+      <td style="padding:5px 8px;text-align:center">
+        <input type="number" min="0" step="0.01" value="${c}" placeholder="—"
+          onchange="setProductCOGS('${e.sku}',this.value);rerenderPricingRow(this,'${e.sku}',${e.price})"
+          style="width:72px;padding:4px 6px;border:1.5px solid var(--line);border-radius:5px;font-size:12px;text-align:right">
+      </td>
+      <td id="pmMargin_${e.sku}" style="padding:5px 8px;font-size:12px;font-weight:700;text-align:right;color:${marginColor}">${marginPct !== '—' ? marginPct+'%' : '—'}</td>
+    </tr>`;
+  }).join('');
+
+  const html = `<div id="pricingManagerModal" style="display:flex;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(10,12,16,.75);z-index:1300;align-items:center;justify-content:center;overflow-y:auto;padding:20px 0">
+    <div style="background:#fff;border-radius:14px;width:min(700px,96vw);max-height:92vh;overflow:hidden;box-shadow:0 8px 40px rgba(0,0,0,.25);display:flex;flex-direction:column">
+      <div style="background:var(--navy);padding:16px 20px;border-radius:14px 14px 0 0;display:flex;justify-content:space-between;align-items:center;flex-shrink:0">
+        <div>
+          <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:15px;color:#fff;letter-spacing:.06em">💲 Product Pricing Manager</div>
+          <div style="font-size:11px;color:#9CA3AF;margin-top:2px">Enter COGS to unlock gross margin tracking on every delivery</div>
+        </div>
+        <button onclick="document.getElementById('pricingManagerModal').remove()" style="background:none;border:none;color:#9CA3AF;font-size:20px;cursor:pointer">✕</button>
+      </div>
+      <div style="padding:12px 16px;background:var(--bg);border-bottom:1px solid var(--line);font-size:11px;color:var(--soft);flex-shrink:0">
+        Sale prices are from the Termac product catalog. Enter your cost (COGS) per unit to see margin %.
+        <span style="margin-left:12px;font-weight:700;color:var(--green)">■ ≥40%</span>
+        <span style="margin-left:8px;font-weight:700;color:#D97706">■ 20–39%</span>
+        <span style="margin-left:8px;font-weight:700;color:var(--red)">■ &lt;20%</span>
+      </div>
+      <div style="overflow-y:auto;flex:1">
+        <table style="width:100%;border-collapse:collapse">
+          <thead style="position:sticky;top:0;background:#fff;z-index:2">
+            <tr style="border-bottom:2px solid var(--line)">
+              <th style="padding:8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--soft);text-align:left">SKU</th>
+              <th style="padding:8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--soft);text-align:left">Product</th>
+              <th style="padding:8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--soft);text-align:right">Sale Price</th>
+              <th style="padding:8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--soft);text-align:center">Your Cost (COGS)</th>
+              <th style="padding:8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--soft);text-align:right">Margin %</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <div style="padding:14px 20px;border-top:1px solid var(--line);background:#fff;flex-shrink:0;display:flex;justify-content:flex-end">
+        <button onclick="document.getElementById('pricingManagerModal').remove()" style="background:var(--navy);color:#fff;border:none;border-radius:8px;padding:9px 24px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;cursor:pointer">Done</button>
+      </div>
+    </div>
+  </div>`;
+  if (document.getElementById('pricingManagerModal')) document.getElementById('pricingManagerModal').remove();
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+function rerenderPricingRow(input, sku, salePrice) {
+  const c = parseFloat(input.value);
+  const marginPct = (!isNaN(c) && salePrice > 0) ? (((salePrice - c) / salePrice) * 100).toFixed(1) : null;
+  const el = document.getElementById('pmMargin_' + sku);
+  if (!el) return;
+  const color = marginPct !== null ? (parseFloat(marginPct) >= 40 ? 'var(--green)' : parseFloat(marginPct) >= 20 ? '#D97706' : 'var(--red)') : 'var(--soft)';
+  el.textContent = marginPct !== null ? marginPct + '%' : '—';
+  el.style.color = color;
+  // Refresh the P&L card if visible
+  if (document.getElementById('termacPnlCard')) renderTermacPnlCard();
+}
+
+// ── TERMAC P&L CARD RENDERER ─────────────────────────────────────────────────
+function renderTermacPnlCard() {
+  const el = document.getElementById('termacPnlCardBody');
+  if (!el) return;
+
+  const orders = loadDeliveryOrders();
+  const pnl    = calcTermacPnL(orders, 12); // last 12 months
+
+  // MTD filter
+  const now = new Date();
+  const mtdCutoff = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  const pnlMTD = calcTermacPnL(orders.filter(o => (o.deliveredAt || o.createdAt || 0) >= mtdCutoff), null);
+
+  const fmt = v => '$' + Math.abs(v).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+  const pct  = v => v.toFixed(1) + '%';
+  const hasCOGS = Object.keys(loadTermacCOGS()).length > 0;
+
+  // Top/bottom 5 customers
+  const custArr = Object.entries(pnl.byCustomer)
+    .map(([name, d]) => ({ name, rev: d.rev, margin: d.rev - d.cogs, marginPct: d.rev > 0 ? (d.rev - d.cogs) / d.rev * 100 : 0 }))
+    .sort((a,b) => b.rev - a.rev);
+  const top5 = custArr.slice(0,5);
+  const bot5 = custArr.slice(-5).reverse();
+
+  // Monthly chart data — last 6 months
+  const months6 = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const mk = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+    const label = d.toLocaleString('default', {month:'short', year:'2-digit'});
+    const m = pnl.byMonth[mk] || { rev:0, cogs:0 };
+    months6.push({ label, rev: m.rev, cogs: m.cogs, margin: m.rev - m.cogs });
+  }
+
+  el.innerHTML = `
+    <!-- MTD KPIs -->
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">
+      <div style="background:var(--bg);border-radius:8px;padding:12px;text-align:center">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:20px;color:var(--green)">${fmt(pnlMTD.totalRev)}</div>
+        <div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.06em">MTD Revenue</div>
+      </div>
+      <div style="background:var(--bg);border-radius:8px;padding:12px;text-align:center">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:20px;color:var(--ink)">${hasCOGS ? fmt(pnlMTD.totalCOGS) : '—'}</div>
+        <div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.06em">MTD COGS</div>
+      </div>
+      <div style="background:var(--bg);border-radius:8px;padding:12px;text-align:center">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:20px;color:${pnlMTD.margin>=0?'var(--green)':'var(--red)'}">${hasCOGS ? fmt(pnlMTD.margin) : '—'}</div>
+        <div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.06em">MTD Gross Margin</div>
+      </div>
+      <div style="background:var(--bg);border-radius:8px;padding:12px;text-align:center">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:20px;color:${pnlMTD.marginPct>=40?'var(--green)':pnlMTD.marginPct>=20?'#D97706':'var(--red)'}">${hasCOGS ? pct(pnlMTD.marginPct) : '—'}</div>
+        <div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.06em">Margin %</div>
+      </div>
+    </div>
+
+    <!-- Revenue vs Margin Chart -->
+    <div style="background:var(--bg);border-radius:8px;padding:14px;margin-bottom:14px">
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin-bottom:10px">📈 Monthly Revenue & Margin — Last 6 Months</div>
+      <canvas id="termacPnlChart" height="160"></canvas>
+    </div>
+
+    <!-- Two-column: top customers + profit leaks -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+      <div style="background:var(--bg);border-radius:8px;padding:12px">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin-bottom:8px">🏆 Top 5 Customers (12mo)</div>
+        ${top5.length ? top5.map(c => `
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--line)">
+            <div style="font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px">${c.name}</div>
+            <div style="text-align:right;flex-shrink:0">
+              <div style="font-size:12px;font-weight:700;color:var(--green)">${fmt(c.rev)}</div>
+              ${hasCOGS ? `<div style="font-size:10px;color:var(--soft)">${pct(c.marginPct)} margin</div>` : ''}
+            </div>
+          </div>`).join('') : '<div style="font-size:12px;color:var(--soft)">No completed deliveries yet</div>'}
+      </div>
+      <div style="background:var(--bg);border-radius:8px;padding:12px">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin-bottom:8px">⚠️ Profit Leaks — Partial Deliveries</div>
+        ${pnl.leaks.length ? pnl.leaks.map(l => `
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--line)">
+            <div>
+              <div style="font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:130px">${l.accountName}</div>
+              <div style="font-size:10px;color:var(--soft)">${l.deliveryDate}</div>
+            </div>
+            <div style="font-size:12px;font-weight:700;color:var(--red)">−${fmt(l.lostRev)}</div>
+          </div>`).join('') : '<div style="font-size:12px;color:var(--soft)">No partial deliveries — clean run ✅</div>'}
+        ${pnl.cancelled.length ? `<div style="font-size:11px;color:var(--soft);margin-top:8px">+ ${pnl.cancelled.length} cancelled order${pnl.cancelled.length!==1?'s':''} (revenue not captured)</div>` : ''}
+      </div>
+    </div>
+
+    ${!hasCOGS ? `<div style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;padding:10px 14px;font-size:12px;color:#92400E">
+      💡 <strong>COGS not set yet.</strong> Open Pricing Manager above and enter your cost per product to unlock margin %, profit leak amounts, and the margin trend line on the chart.
+    </div>` : ''}
+  `;
+
+  // Render Chart.js bar + line chart
+  setTimeout(() => {
+    const canvas = document.getElementById('termacPnlChart');
+    if (!canvas) return;
+    if (canvas._chartInstance) { canvas._chartInstance.destroy(); }
+    canvas._chartInstance = new Chart(canvas.getContext('2d'), {
+      type: 'bar',
+      data: {
+        labels: months6.map(m => m.label),
+        datasets: [
+          {
+            label: 'Revenue',
+            data: months6.map(m => m.rev),
+            backgroundColor: 'rgba(27,95,168,.75)',
+            borderRadius: 4,
+            order: 2,
+          },
+          ...(hasCOGS ? [{
+            label: 'Gross Margin',
+            data: months6.map(m => m.margin),
+            type: 'line',
+            borderColor: '#1E7B3C',
+            backgroundColor: 'rgba(30,123,60,.12)',
+            borderWidth: 2.5,
+            pointRadius: 4,
+            fill: true,
+            tension: 0.3,
+            order: 1,
+          }] : []),
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { position: 'bottom', labels: { font: { size: 11 }, boxWidth: 12 } },
+          tooltip: {
+            callbacks: {
+              label: ctx => ' ' + ctx.dataset.label + ': $' + ctx.parsed.y.toLocaleString(undefined, {minimumFractionDigits:2}),
+            },
+          },
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            ticks: {
+              callback: v => '$' + (v >= 1000 ? (v/1000).toFixed(0)+'k' : v),
+              font: { size: 10 },
+            },
+            grid: { color: 'rgba(0,0,0,.06)' },
+          },
+          x: { ticks: { font: { size: 10 } }, grid: { display: false } },
+        },
+      },
+    });
+  }, 50);
+}
 
 function loadDeliveryOrders() {
   try { return JSON.parse(localStorage.getItem(DELIVERY_KEY) || '[]'); } catch(e) { return []; }
@@ -25284,19 +25662,27 @@ function buildCreateDeliveryModal() {
 
 let _delivRowCount = 1;
 function buildDelivItemRow(i) {
-  const products = ['Machine Detergent','Rinse Aid','Machine Sanitizer','Pot & Pan Detergent',
-    'Pot Sink Sanitizer','Hand Soap','Degreaser','Napkins','Toilet Paper','Paper Towels','Trash Liners','Gloves','Other'];
-  const prodOptions = products.map(p => `<option>${p}</option>`).join('');
-  return `<div style="display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;margin-bottom:6px" id="delivRow${i}">
-    <select id="delivProd${i}" style="padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;font-family:inherit">
+  const cat = getTermacCatalog();
+  const prodOptions = cat.map(e =>
+    `<option value="${e.sku}" data-price="${e.price}" data-unit="${e.unit}">${e.name} — $${e.price.toFixed(2)}/${e.unit}</option>`
+  ).join('');
+  return `<div style="display:grid;grid-template-columns:1fr 60px 80px;gap:8px;align-items:center;margin-bottom:6px" id="delivRow${i}">
+    <select id="delivProd${i}" onchange="onDelivProdChange(${i})"
+      style="padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;font-family:inherit">
       <option value="">— Product —</option>${prodOptions}
     </select>
     <input type="number" id="delivQty${i}" placeholder="Qty" min="0" step="0.5"
       style="width:60px;padding:8px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;text-align:center">
-    <select id="delivUnit${i}" style="width:80px;padding:8px 4px;border:1.5px solid var(--line);border-radius:7px;font-size:12px">
-      <option>gallon</option><option>quart</option><option>case</option><option>unit</option><option>bag</option>
-    </select>
+    <div id="delivUnitLabel${i}" style="font-size:11px;color:var(--soft);text-align:center;padding:4px">—</div>
   </div>`;
+}
+
+function onDelivProdChange(i) {
+  const sel = document.getElementById('delivProd' + i);
+  const opt = sel.selectedOptions[0];
+  const unit = opt ? opt.dataset.unit : '';
+  const lbl = document.getElementById('delivUnitLabel' + i);
+  if (lbl) lbl.textContent = unit ? '/ ' + unit : '—';
 }
 
 function addDelivItemRow() {
@@ -25316,10 +25702,14 @@ function saveDeliveryOrder() {
   // Collect items
   const items = [];
   for (let i = 0; i < _delivRowCount; i++) {
-    const prod = document.getElementById(`delivProd${i}`)?.value;
+    const sku  = document.getElementById(`delivProd${i}`)?.value;
     const qty  = parseFloat(document.getElementById(`delivQty${i}`)?.value || 0);
-    const unit = document.getElementById(`delivUnit${i}`)?.value || 'unit';
-    if (prod && qty > 0) items.push({ product:prod, qty, unit, deliveredQty:0 });
+    if (!sku || qty <= 0) continue;
+    const entry = findCatalogEntry(sku);
+    const unitPrice = entry ? entry.price : 0;
+    const unitCOGS  = getProductCOGS(sku) || 0;
+    const unit      = entry ? entry.unit : 'unit';
+    items.push({ sku, product: entry ? entry.name : sku, qty, unit, unitPrice, unitCOGS, deliveredQty: 0 });
   }
   if (!items.length) { alert('Add at least one product to deliver.'); return; }
 
