@@ -2633,6 +2633,17 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
     <div style="margin-top:10px;font-size:11px;color:var(--soft)">Rep names appear on days they've planned using "Plan My Day" — click any name to see their full plan for that day.</div>
   </div>
 
+  <!-- CREDIT APPROVAL QUEUE — only meaningful when a manager is logged in.
+       Tom Pittakas is the designated approver for Net 30 credit applications
+       submitted by reps during the site survey / estimate flow. -->
+  <div id="mgrCreditApprovalPanel" style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;margin-bottom:20px;display:none">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft)">📄 Net 30 Credit Approval Queue</div>
+      <span id="mgrCreditApprovalBadge" style="background:#C8102E;color:#fff;border-radius:10px;padding:1px 8px;font-size:10px;font-weight:700;display:none"></span>
+    </div>
+    <div id="mgrCreditApprovalList"></div>
+  </div>
+
   <!-- ROW 1: TOP-LINE LIVE KPIs -->
   <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;margin-bottom:16px">
     <div onclick="mgrToggle('kpis')" style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none;padding-bottom:10px"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft)">📊 Live KPIs</div><div style="display:flex;align-items:center;gap:8px"><span id="cs-icon-kpis" style="color:var(--soft);font-size:14px;transition:transform .2s;display:inline-block">&#9660;</span></div></div>
@@ -7614,18 +7625,43 @@ function fsSubmitCreditApp(action) {
   if (!ein)   { alert('Federal Tax ID / EIN is required.'); return; }
   if (!apEmail && action === 'email') { alert('AP department email is required to send the application.'); return; }
 
-  // Persist terms selection with pending credit status
-  const termsEl = document.getElementById('fs_acctPayTerms');
-  if (termsEl) termsEl.value = `Corporate — Net 30 Terms Applied (Pending Credit Review). EIN: ${ein}`;
+  // Save credit application to localStorage — routes to Tom Pittakas for manager approval
+  const appId = 'CA_' + Date.now();
+  const app = {
+    id: appId,
+    status: 'pending_manager',       // pending_manager | approved | declined
+    assignedTo: 'tpittakas@termac.com',
+    assignedName: 'Tom Pittakas',
+    submittedBy: _currentUser?.name || 'Rep',
+    submittedAt: Date.now(),
+    reviewedAt: null,
+    declineReason: null,
+    business: biz, ein,
+    years: years || '—',
+    revenue: revenue || '—',
+    bankName: bankName || '—',
+    bankAcct: bankAcct || '—',
+    bankContact: bankContact || '—',
+    ref1: `${ref1Name||'—'} · ${ref1Phone||'—'}`,
+    ref2: `${ref2Name||'—'} · ${ref2Phone||'—'}`,
+    apName: apName || '—', apTitle: apTitle || '—',
+    apEmail: apEmail || '—', apPhone: apPhone || '—',
+    signedBy: signedBy || '—',
+    emailedToAP: action === 'email'
+  };
+  try {
+    const existing = JSON.parse(localStorage.getItem('termac_credit_apps') || '[]');
+    existing.push(app);
+    localStorage.setItem('termac_credit_apps', JSON.stringify(existing));
+  } catch(e) {}
 
-  // Update status badge in the form
-  const statusEl = document.getElementById('fs_creditAppStatus');
-  if (statusEl) {
-    statusEl.innerHTML = `<div style="background:#FEF9C3;border:1.5px solid #CA8A04;border-radius:8px;padding:10px 14px;font-size:12px;font-weight:700;color:#78350F">⏳ Credit Application Submitted — Pending Review<br><span style="font-weight:400;color:#92400E">EIN ${ein} · ${biz}</span></div>`;
-  }
+  // Update the payment terms field and status badge
+  const termsEl = document.getElementById('fs_acctPayTerms');
+  if (termsEl) termsEl.value = `Corporate — Net 30 Terms Applied (Pending Manager Approval). EIN: ${ein}. App ID: ${appId}`;
+
+  fsCreditAppStatusRefresh(appId);
 
   if (action === 'email') {
-    // Email the application to the customer's AP department for signature/return
     const subject = encodeURIComponent(`Net 30 Credit Application — ${biz}`);
     const body = [
       `NET 30 CREDIT APPLICATION`,``,
@@ -7655,13 +7691,35 @@ function fsSubmitCreditApp(action) {
       `Questions? Call Ted Scholl: 267-421-6336`,
     ].map(l => encodeURIComponent(l)).join('%0A');
     window.open(`mailto:${apEmail}?cc=tscholl@termac.com&subject=${subject}&body=${body}`);
-    fsCloseCreditApp();
-    alert(`✅ Credit application emailed to ${apEmail}. Once returned and approved, update the account's payment terms status.`);
-  } else {
-    // Filled out on the spot — mark as submitted and close
-    fsCloseCreditApp();
-    alert(`✅ Credit application recorded for ${biz} (EIN: ${ein}). Submit to tscholl@termac.com for credit review. Account will be set up as Net 30 pending approval.`);
   }
+
+  fsCloseCreditApp();
+  alert(`✅ Credit application submitted for ${biz}.\n\nRouted to Tom Pittakas for manager approval. He will review and approve or decline before the account proceeds to Net 30 terms.\n\nApplication ID: ${appId}`);
+}
+
+// Refresh the credit app status badge shown in the survey form.
+// Called on submit and whenever the form opens for an account that
+// already has a pending/decided application.
+function fsCreditAppStatusRefresh(appId) {
+  const statusEl = document.getElementById('fs_creditAppStatus');
+  if (!statusEl) return;
+  if (!appId) { statusEl.innerHTML = ''; return; }
+  try {
+    const apps = JSON.parse(localStorage.getItem('termac_credit_apps') || '[]');
+    const app = apps.find(a => a.id === appId);
+    if (!app) { statusEl.innerHTML = ''; return; }
+    const styles = {
+      pending_manager: 'background:#FEF9C3;border-color:#CA8A04;color:#78350F',
+      approved:        'background:#D1FAE5;border-color:#059669;color:#065F46',
+      declined:        'background:#FEE2E2;border-color:#DC2626;color:#991B1B'
+    };
+    const icons = { pending_manager:'⏳', approved:'✅', declined:'❌' };
+    const labels = { pending_manager:'Pending Manager Approval', approved:'Approved — Net 30 Terms Active', declined:'Declined' };
+    statusEl.innerHTML = `<div style="${styles[app.status]};border:1.5px solid;border-radius:8px;padding:10px 14px;font-size:12px;margin-bottom:10px">
+      <strong>${icons[app.status]} ${labels[app.status]}</strong><br>
+      <span style="font-weight:400">${app.business} · EIN ${app.ein}${app.status==='declined'&&app.declineReason?'<br>Reason: '+app.declineReason:''}</span>
+    </div>`;
+  } catch(e) {}
 }
 
 function fsBuildCreditAppModal() {
@@ -16059,8 +16117,9 @@ function refreshManagerDashboard() {
   const set = (id, val) => { const el = document.getElementById(id); if(el) el.textContent = val; };
   const fmt$ = v => '$' + Number(v).toLocaleString();
 
-  // Refresh the rep planning calendar alongside every other metric
+  // Refresh the rep planning calendar and credit approval queue alongside every other metric
   if (typeof mgrCalRender === 'function') mgrCalRender();
+  if (typeof mgrCreditQueueRender === 'function') mgrCreditQueueRender();
 
   // ── ACTIVE ACCOUNTS ──
   const activeAccts = accounts.filter(a => a.status === 'active');
@@ -20471,6 +20530,23 @@ document.addEventListener('DOMContentLoaded', () => {
     </div>
   </div>`);
 
+  // ── Credit Application Approve / Decline Modal ──
+  document.body.insertAdjacentHTML('beforeend', `
+  <div class="is-modal-bg" id="mgrCreditReviewModal">
+    <div class="is-modal" style="width:min(580px,96vw)">
+      <div class="is-modal-hdr">
+        <h3>📄 Credit Application Review</h3>
+        <button onclick="closeModal('mgrCreditReviewModal')" style="background:none;border:none;color:#BFC4CA;font-size:20px;cursor:pointer">✕</button>
+      </div>
+      <div class="is-modal-body" id="mgrCreditReviewBody" style="max-height:68vh;overflow-y:auto"></div>
+      <div class="is-modal-foot" style="gap:10px">
+        <button class="is-btn is-btn-ghost" onclick="closeModal('mgrCreditReviewModal')">Close</button>
+        <button class="is-btn" id="mgrCreditDeclineBtn" onclick="mgrCreditDecide('declined')" style="background:#C8102E;color:#fff">❌ Decline</button>
+        <button class="is-btn" id="mgrCreditApproveBtn" onclick="mgrCreditDecide('approved')" style="background:#059669;color:#fff">✅ Approve Net 30</button>
+      </div>
+    </div>
+  </div>`);
+
   // ── Rep Plan Detail (manager calendar click-through) ──
   document.body.insertAdjacentHTML('beforeend', `
   <div class="is-modal-bg" id="repPlanDetailModal">
@@ -23071,6 +23147,144 @@ function mgrCalShowRepPlan(repName, dateStr) {
   }
   const modal = document.getElementById('repPlanDetailModal');
   if (modal) modal.classList.add('open');
+}
+
+// ── MANAGER CREDIT APPROVAL QUEUE ────────────────────────────────────────────
+// Shows pending Net 30 credit applications in the manager dashboard.
+// Tom Pittakas is the designated approver — his email is tpittakas@termac.com.
+// Any logged-in manager can see all pending applications; only managers can
+// approve or decline. The panel is hidden entirely when no manager is logged in.
+
+let mgrCreditCurrentAppId = null; // tracks which app is open in the review modal
+
+function mgrCreditQueueRender() {
+  const panel  = document.getElementById('mgrCreditApprovalPanel');
+  const list   = document.getElementById('mgrCreditApprovalList');
+  const badge  = document.getElementById('mgrCreditApprovalBadge');
+  if (!panel || !list) return;
+
+  // Only show the panel when a manager is logged in
+  const isManager = _currentUser?.role === 'manager';
+  panel.style.display = isManager ? 'block' : 'none';
+  if (!isManager) return;
+
+  let apps = [];
+  try { apps = JSON.parse(localStorage.getItem('termac_credit_apps') || '[]'); } catch(e) {}
+
+  const pending = apps.filter(a => a.status === 'pending_manager');
+  const decided = apps.filter(a => a.status !== 'pending_manager').slice(-5); // last 5 decided
+
+  if (badge) {
+    badge.style.display = pending.length ? 'inline' : 'none';
+    badge.textContent   = pending.length + ' pending';
+  }
+
+  if (!apps.length) {
+    list.innerHTML = '<div style="color:var(--soft);font-size:12px">No credit applications on file.</div>';
+    return;
+  }
+
+  const renderRow = (app) => {
+    const statusColors = {
+      pending_manager: { bg:'#FEF9C3', color:'#78350F', label:'⏳ Pending Your Approval' },
+      approved:        { bg:'#D1FAE5', color:'#065F46', label:'✅ Approved' },
+      declined:        { bg:'#FEE2E2', color:'#991B1B', label:'❌ Declined' }
+    };
+    const sc = statusColors[app.status] || statusColors.pending_manager;
+    const dt = app.reviewedAt ? new Date(app.reviewedAt).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : new Date(app.submittedAt).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+    return `
+    <div style="background:var(--bg);border-radius:8px;padding:12px 14px;margin-bottom:8px;border-left:3px solid ${app.status==='pending_manager'?'#CA8A04':app.status==='approved'?'#059669':'#C8102E'}">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px">
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${app.business}</div>
+          <div style="font-size:11px;color:var(--soft);margin-top:2px">EIN ${app.ein} · Submitted by ${app.submittedBy} · ${dt}</div>
+          ${app.status==='declined'&&app.declineReason?`<div style="font-size:11px;color:#991B1B;margin-top:2px">Reason: ${app.declineReason}</div>`:''}
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+          <span style="background:${sc.bg};color:${sc.color};border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700;white-space:nowrap">${sc.label}</span>
+          ${app.status==='pending_manager' ? `<button onclick="mgrCreditOpenReview('${app.id}')" style="background:var(--red);color:#fff;border:none;border-radius:5px;padding:5px 10px;font-size:10px;font-family:Barlow Condensed,sans-serif;font-weight:700;cursor:pointer">Review →</button>` : `<button onclick="mgrCreditOpenReview('${app.id}')" style="background:none;border:1px solid var(--line);border-radius:5px;padding:5px 10px;font-size:10px;font-family:Barlow Condensed,sans-serif;font-weight:700;cursor:pointer;color:var(--soft)">View</button>`}
+        </div>
+      </div>
+    </div>`;
+  };
+
+  let html = '';
+  if (pending.length) {
+    html += `<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--red);margin-bottom:6px">Pending Approval (${pending.length})</div>`;
+    html += pending.map(renderRow).join('');
+  }
+  if (decided.length) {
+    html += `<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--soft);margin:${pending.length?'14px':0} 0 6px">Recent Decisions</div>`;
+    html += decided.reverse().map(renderRow).join('');
+  }
+  list.innerHTML = html;
+}
+
+function mgrCreditOpenReview(appId) {
+  let apps = [];
+  try { apps = JSON.parse(localStorage.getItem('termac_credit_apps') || '[]'); } catch(e) {}
+  const app = apps.find(a => a.id === appId);
+  const bodyEl = document.getElementById('mgrCreditReviewBody');
+  const approveBtn = document.getElementById('mgrCreditApproveBtn');
+  const declineBtn = document.getElementById('mgrCreditDeclineBtn');
+  if (!app || !bodyEl) return;
+  mgrCreditCurrentAppId = appId;
+
+  const isPending = app.status === 'pending_manager';
+  if (approveBtn) approveBtn.style.display = isPending ? '' : 'none';
+  if (declineBtn) declineBtn.style.display = isPending ? '' : 'none';
+
+  const row = (label, val) => `<div style="display:flex;gap:8px;padding:5px 0;border-bottom:1px solid var(--line);font-size:12px"><span style="color:var(--soft);min-width:150px;flex-shrink:0">${label}</span><span style="font-weight:600">${val||'—'}</span></div>`;
+  bodyEl.innerHTML = `
+    ${!isPending ? `<div style="background:${app.status==='approved'?'#D1FAE5':'#FEE2E2'};border-radius:8px;padding:10px 14px;font-size:12px;font-weight:700;color:${app.status==='approved'?'#065F46':'#991B1B'};margin-bottom:14px">
+      ${app.status==='approved'?'✅ Approved':'❌ Declined'}${app.declineReason?' — '+app.declineReason:''}
+    </div>`:''}
+    <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--soft);margin-bottom:6px">Business Information</div>
+    ${row('Legal Business Name', app.business)}
+    ${row('Federal Tax ID / EIN', app.ein)}
+    ${row('Years in Business', app.years)}
+    ${row('Annual Revenue', app.revenue)}
+    ${row('Submitted By', app.submittedBy)}
+    ${row('Submitted', new Date(app.submittedAt).toLocaleString())}
+    ${row('Application Emailed to AP', app.emailedToAP ? 'Yes' : 'No — filled on site')}
+    <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--soft);margin:12px 0 6px">Bank Reference</div>
+    ${row('Bank Name', app.bankName)}
+    ${row('Account Type', app.bankAcct)}
+    ${row('Bank Contact', app.bankContact)}
+    <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--soft);margin:12px 0 6px">Trade References</div>
+    ${row('Reference 1', app.ref1)}
+    ${row('Reference 2', app.ref2)}
+    <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--soft);margin:12px 0 6px">AP Department</div>
+    ${row('AP Contact', app.apName + (app.apTitle?' · '+app.apTitle:''))}
+    ${row('AP Email', app.apEmail)}
+    ${row('AP Phone', app.apPhone)}
+    ${row('Authorized By', app.signedBy)}
+  `;
+  document.getElementById('mgrCreditReviewModal').classList.add('open');
+}
+
+function mgrCreditDecide(decision) {
+  let reason = '';
+  if (decision === 'declined') {
+    reason = prompt('Optional: Enter a reason for declining (shown to the rep):') || '';
+    if (reason === null) return; // user cancelled the prompt
+  }
+  let apps = [];
+  try { apps = JSON.parse(localStorage.getItem('termac_credit_apps') || '[]'); } catch(e) {}
+  const idx = apps.findIndex(a => a.id === mgrCreditCurrentAppId);
+  if (idx === -1) return;
+  apps[idx].status        = decision;
+  apps[idx].reviewedAt    = Date.now();
+  apps[idx].reviewedBy    = _currentUser?.name || 'Manager';
+  apps[idx].declineReason = reason || null;
+  try { localStorage.setItem('termac_credit_apps', JSON.stringify(apps)); } catch(e) {}
+
+  closeModal('mgrCreditReviewModal');
+  mgrCreditQueueRender();
+  const msg = decision === 'approved'
+    ? `✅ Net 30 terms approved for ${apps[idx].business}. The rep will see the updated status on the account.`
+    : `❌ Application declined for ${apps[idx].business}.${reason?' Reason recorded: '+reason:''}`;
+  setTimeout(() => alert(msg), 200);
 }
 
 console.log('✅ Termac Intelligence Engine v4.0 — Invoice Aging · Estimate Recovery · Agreement Gaps · Bundle Tracker · Price Reviews · Emergency Conversions · Drive Time · FTFR Analysis · Proposal Aging · Seasonal Distribution · AHJ Calendar · Cert Dispatch Block · Proof of Service');
