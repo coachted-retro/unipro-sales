@@ -7713,11 +7713,15 @@ function fsCreditAppStatusRefresh(appId) {
       approved:        'background:#D1FAE5;border-color:#059669;color:#065F46',
       declined:        'background:#FEE2E2;border-color:#DC2626;color:#991B1B'
     };
-    const icons = { pending_manager:'⏳', approved:'✅', declined:'❌' };
-    const labels = { pending_manager:'Pending Manager Approval', approved:'Approved — Net 30 Terms Active', declined:'Declined' };
+    const icons  = { pending_manager:'⏳', approved:'✅', declined:'❌' };
+    const labels = { pending_manager:'Pending Manager Approval (Tom Pittakas)', approved:'Approved — Net 30 Terms Active', declined:'Declined' };
+    const extras = app.status === 'approved' ? [
+      app.evaluation?.creditLimit ? `Credit limit: <strong>${app.evaluation.creditLimit}</strong>` : '',
+      app.evaluation?.cardOnFile  ? `<strong>🔒 Square card on file required before dispatching</strong>` : '',
+    ].filter(Boolean).join(' · ') : (app.status === 'declined' && app.declineReason ? `Reason: ${app.declineReason}` : '');
     statusEl.innerHTML = `<div style="${styles[app.status]};border:1.5px solid;border-radius:8px;padding:10px 14px;font-size:12px;margin-bottom:10px">
       <strong>${icons[app.status]} ${labels[app.status]}</strong><br>
-      <span style="font-weight:400">${app.business} · EIN ${app.ein}${app.status==='declined'&&app.declineReason?'<br>Reason: '+app.declineReason:''}</span>
+      <span style="font-weight:400">${app.business} · EIN ${app.ein}${extras?'<br>'+extras:''}</span>
     </div>`;
   } catch(e) {}
 }
@@ -23234,10 +23238,136 @@ function mgrCreditOpenReview(appId) {
   if (approveBtn) approveBtn.style.display = isPending ? '' : 'none';
   if (declineBtn) declineBtn.style.display = isPending ? '' : 'none';
 
-  const row = (label, val) => `<div style="display:flex;gap:8px;padding:5px 0;border-bottom:1px solid var(--line);font-size:12px"><span style="color:var(--soft);min-width:150px;flex-shrink:0">${label}</span><span style="font-weight:600">${val||'—'}</span></div>`;
+  const row = (label, val) =>
+    `<div style="display:flex;gap:8px;padding:5px 0;border-bottom:1px solid var(--line);font-size:12px">
+       <span style="color:var(--soft);min-width:150px;flex-shrink:0">${label}</span>
+       <span style="font-weight:600">${val||'—'}</span>
+     </div>`;
+
+  // Restore previously saved evaluation if manager saved progress
+  const ev = app.evaluation || {};
+
+  const checklist = isPending ? `
+    <div style="background:#1A1D21;border-radius:10px;padding:16px;margin:16px 0">
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#9CA3AF;margin-bottom:12px">📋 Manager Evaluation Checklist</div>
+      <div style="font-size:11px;color:#6B7280;margin-bottom:12px">Complete each item before approving or declining. This record is saved with the application as documentation of due diligence.</div>
+
+      <!-- Credit Score -->
+      <div style="margin-bottom:12px">
+        <label style="font-size:11px;font-weight:700;color:#D1D5DB;display:block;margin-bottom:4px">1. Business Credit Score (Nav / D&B / Experian Business)</label>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <select id="ev_creditSource" style="background:#2D3139;color:#fff;border:1px solid #3F4451;border-radius:6px;padding:6px 10px;font-size:12px">
+            <option value="" ${!ev.creditSource?'selected':''}>— Source —</option>
+            <option value="Nav" ${ev.creditSource==='Nav'?'selected':''}>Nav.com</option>
+            <option value="D&B PAYDEX" ${ev.creditSource==='D&B PAYDEX'?'selected':''}>D&B PAYDEX</option>
+            <option value="Experian BusinessIQ" ${ev.creditSource==='Experian BusinessIQ'?'selected':''}>Experian BusinessIQ</option>
+            <option value="Not pulled" ${ev.creditSource==='Not pulled'?'selected':''}>Not pulled / N/A</option>
+          </select>
+          <input id="ev_creditScore" type="text" placeholder="Score (e.g. 72 PAYDEX)" value="${ev.creditScore||''}"
+            style="background:#2D3139;color:#fff;border:1px solid #3F4451;border-radius:6px;padding:6px 10px;font-size:12px;width:180px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#D1D5DB;cursor:pointer">
+            <input type="checkbox" id="ev_creditPass" ${ev.creditPass?'checked':''}>
+            <span>Meets threshold</span>
+          </label>
+        </div>
+        <div style="font-size:10px;color:#6B7280;margin-top:4px">Target: PAYDEX ≥ 70 · Experian Intelliscore ≥ 50 · Nav Business score ≥ 60. Pull free at nav.com using EIN.</div>
+      </div>
+
+      <!-- Years in business -->
+      <div style="margin-bottom:12px">
+        <label style="font-size:11px;font-weight:700;color:#D1D5DB;display:block;margin-bottom:4px">2. Years in Business ≥ 2 Years</label>
+        <div style="display:flex;gap:10px;align-items:center">
+          <span style="font-size:13px;color:#fff">Stated: <strong>${app.years||'—'}</strong></span>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#D1D5DB;cursor:pointer">
+            <input type="checkbox" id="ev_yearsPass" ${ev.yearsPass?'checked':''}>
+            <span>Confirmed — meets 2-year minimum</span>
+          </label>
+        </div>
+        <div style="font-size:10px;color:#6B7280;margin-top:4px">Under 2 years: require card on file as condition of approval (see below).</div>
+      </div>
+
+      <!-- Trade references -->
+      <div style="margin-bottom:12px">
+        <label style="font-size:11px;font-weight:700;color:#D1D5DB;display:block;margin-bottom:6px">3. Trade Reference Verification (call each vendor)</label>
+        <div style="background:#2D3139;border-radius:6px;padding:10px 12px;margin-bottom:6px">
+          <div style="font-size:11px;color:#9CA3AF;margin-bottom:4px">Reference 1: <strong style="color:#fff">${app.ref1||'—'}</strong></div>
+          <div style="display:flex;gap:16px;flex-wrap:wrap">
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#D1D5DB;cursor:pointer"><input type="radio" name="ev_ref1" value="yes" ${ev.ref1==='yes'?'checked':''}> Pays on time ✅</label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#D1D5DB;cursor:pointer"><input type="radio" name="ev_ref1" value="no"  ${ev.ref1==='no'?'checked':''}> Slow/late ⚠️</label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#D1D5DB;cursor:pointer"><input type="radio" name="ev_ref1" value="na"  ${ev.ref1==='na'?'checked':''}> Not reached</label>
+          </div>
+        </div>
+        <div style="background:#2D3139;border-radius:6px;padding:10px 12px">
+          <div style="font-size:11px;color:#9CA3AF;margin-bottom:4px">Reference 2: <strong style="color:#fff">${app.ref2||'—'}</strong></div>
+          <div style="display:flex;gap:16px;flex-wrap:wrap">
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#D1D5DB;cursor:pointer"><input type="radio" name="ev_ref2" value="yes" ${ev.ref2==='yes'?'checked':''}> Pays on time ✅</label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#D1D5DB;cursor:pointer"><input type="radio" name="ev_ref2" value="no"  ${ev.ref2==='no'?'checked':''}> Slow/late ⚠️</label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#D1D5DB;cursor:pointer"><input type="radio" name="ev_ref2" value="na"  ${ev.ref2==='na'?'checked':''}> Not reached</label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Public records -->
+      <div style="margin-bottom:12px">
+        <label style="font-size:11px;font-weight:700;color:#D1D5DB;display:block;margin-bottom:4px">4. Public Records Check (Google + D&B)</label>
+        <div style="display:flex;gap:16px;flex-wrap:wrap">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#D1D5DB;cursor:pointer"><input type="radio" name="ev_publicRec" value="clear" ${ev.publicRec==='clear'?'checked':''}> Clear — no liens, judgments, or bankruptcy ✅</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#D1D5DB;cursor:pointer"><input type="radio" name="ev_publicRec" value="issues" ${ev.publicRec==='issues'?'checked':''}> Issues found ⚠️</label>
+        </div>
+      </div>
+
+      <!-- Approved credit limit -->
+      <div style="margin-bottom:12px">
+        <label style="font-size:11px;font-weight:700;color:#D1D5DB;display:block;margin-bottom:4px">5. Approved Credit Limit</label>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <select id="ev_creditLimit" style="background:#2D3139;color:#fff;border:1px solid #3F4451;border-radius:6px;padding:6px 10px;font-size:12px">
+            <option value="" ${!ev.creditLimit?'selected':''}>— Select limit —</option>
+            <option value="$1,000" ${ev.creditLimit==='$1,000'?'selected':''}>$1,000</option>
+            <option value="$2,500" ${ev.creditLimit==='$2,500'?'selected':''}>$2,500</option>
+            <option value="$5,000" ${ev.creditLimit==='$5,000'?'selected':''}>$5,000</option>
+            <option value="$10,000" ${ev.creditLimit==='$10,000'?'selected':''}>$10,000</option>
+            <option value="$25,000" ${ev.creditLimit==='$25,000'?'selected':''}>$25,000</option>
+            <option value="No limit set" ${ev.creditLimit==='No limit set'?'selected':''}>No limit set</option>
+          </select>
+          <span style="font-size:11px;color:#6B7280">per billing cycle · overdue auto-reverts to card on day 35</span>
+        </div>
+      </div>
+
+      <!-- Card on file condition -->
+      <div style="background:#0F3E73;border-radius:8px;padding:12px 14px;margin-bottom:4px">
+        <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+          <input type="checkbox" id="ev_cardOnFile" ${ev.cardOnFile?'checked':''} style="margin-top:2px;flex-shrink:0">
+          <div>
+            <div style="font-size:12px;font-weight:700;color:#fff">🔒 Require Square card on file as condition of approval</div>
+            <div style="font-size:11px;color:#93C5FD;margin-top:2px">Recommended for: businesses under 3 years, borderline scores, unverified references, or credit limits over $5K. If invoice is unpaid at day 35, Square card is charged automatically. This eliminates collection risk entirely.</div>
+          </div>
+        </label>
+      </div>
+    </div>
+
+    <!-- Save checklist progress button -->
+    <div style="text-align:right;margin-bottom:4px">
+      <button onclick="mgrCreditSaveEvaluation()" style="background:none;border:1px solid var(--line);border-radius:6px;padding:5px 14px;font-size:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;cursor:pointer;color:var(--soft)">💾 Save Progress</button>
+    </div>
+  ` : `
+    <!-- Read-only evaluation summary for already-decided apps -->
+    ${app.evaluation ? `<div style="background:var(--bg);border-radius:8px;padding:12px 14px;margin:12px 0;font-size:12px">
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--soft);margin-bottom:8px">Evaluation on File</div>
+      ${app.evaluation.creditSource?`<div style="padding:4px 0;border-bottom:1px solid var(--line)"><span style="color:var(--soft)">Credit Score: </span><strong>${app.evaluation.creditSource} — ${app.evaluation.creditScore||'N/A'}</strong> ${app.evaluation.creditPass?'✅':''}</div>`:''}
+      ${app.evaluation.creditLimit?`<div style="padding:4px 0;border-bottom:1px solid var(--line)"><span style="color:var(--soft)">Approved Limit: </span><strong>${app.evaluation.creditLimit}</strong></div>`:''}
+      ${app.evaluation.cardOnFile?`<div style="padding:4px 0;color:#1E40AF;font-weight:700">🔒 Square card on file required as condition of approval</div>`:''}
+      ${app.evaluation.ref1?`<div style="padding:4px 0;border-bottom:1px solid var(--line)"><span style="color:var(--soft)">Ref 1: </span>${app.evaluation.ref1==='yes'?'✅ Pays on time':app.evaluation.ref1==='no'?'⚠️ Slow/late':'Not reached'}</div>`:''}
+      ${app.evaluation.ref2?`<div style="padding:4px 0;border-bottom:1px solid var(--line)"><span style="color:var(--soft)">Ref 2: </span>${app.evaluation.ref2==='yes'?'✅ Pays on time':app.evaluation.ref2==='no'?'⚠️ Slow/late':'Not reached'}</div>`:''}
+      ${app.evaluation.publicRec?`<div style="padding:4px 0"><span style="color:var(--soft)">Public records: </span>${app.evaluation.publicRec==='clear'?'✅ Clear':'⚠️ Issues found'}</div>`:''}
+      <div style="padding:4px 0;border-top:1px solid var(--line);margin-top:4px"><span style="color:var(--soft)">Reviewed by: </span><strong>${app.reviewedBy||'—'}</strong> · ${app.reviewedAt?new Date(app.reviewedAt).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'—'}</div>
+    </div>` : ''}
+  `;
+
   bodyEl.innerHTML = `
     ${!isPending ? `<div style="background:${app.status==='approved'?'#D1FAE5':'#FEE2E2'};border-radius:8px;padding:10px 14px;font-size:12px;font-weight:700;color:${app.status==='approved'?'#065F46':'#991B1B'};margin-bottom:14px">
       ${app.status==='approved'?'✅ Approved':'❌ Declined'}${app.declineReason?' — '+app.declineReason:''}
+      ${app.evaluation?.cardOnFile?'<br><span style="font-size:11px">🔒 Square card on file required</span>':''}
+      ${app.evaluation?.creditLimit?'<br><span style="font-size:11px;font-weight:400">Credit limit: '+app.evaluation.creditLimit+'</span>':''}
     </div>`:''}
     <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--soft);margin-bottom:6px">Business Information</div>
     ${row('Legal Business Name', app.business)}
@@ -23259,16 +23389,46 @@ function mgrCreditOpenReview(appId) {
     ${row('AP Email', app.apEmail)}
     ${row('AP Phone', app.apPhone)}
     ${row('Authorized By', app.signedBy)}
+    ${checklist}
   `;
   document.getElementById('mgrCreditReviewModal').classList.add('open');
 }
 
+// Save evaluation checklist progress without making a final decision yet
+function mgrCreditSaveEvaluation() {
+  let apps = [];
+  try { apps = JSON.parse(localStorage.getItem('termac_credit_apps') || '[]'); } catch(e) {}
+  const idx = apps.findIndex(a => a.id === mgrCreditCurrentAppId);
+  if (idx === -1) return;
+  apps[idx].evaluation = {
+    creditSource: document.getElementById('ev_creditSource')?.value || '',
+    creditScore:  document.getElementById('ev_creditScore')?.value  || '',
+    creditPass:   document.getElementById('ev_creditPass')?.checked || false,
+    yearsPass:    document.getElementById('ev_yearsPass')?.checked  || false,
+    ref1: document.querySelector('input[name="ev_ref1"]:checked')?.value || '',
+    ref2: document.querySelector('input[name="ev_ref2"]:checked')?.value || '',
+    publicRec:    document.querySelector('input[name="ev_publicRec"]:checked')?.value || '',
+    creditLimit:  document.getElementById('ev_creditLimit')?.value  || '',
+    cardOnFile:   document.getElementById('ev_cardOnFile')?.checked || false,
+  };
+  try { localStorage.setItem('termac_credit_apps', JSON.stringify(apps)); } catch(e) {}
+  // Brief visual confirmation
+  const btn = event.target;
+  const orig = btn.textContent;
+  btn.textContent = '✓ Saved';
+  setTimeout(() => btn.textContent = orig, 1500);
+}
+
 function mgrCreditDecide(decision) {
+  // Save evaluation first so it's captured regardless of outcome
+  mgrCreditSaveEvaluation();
+
   let reason = '';
   if (decision === 'declined') {
     reason = prompt('Optional: Enter a reason for declining (shown to the rep):') || '';
-    if (reason === null) return; // user cancelled the prompt
+    if (reason === null) return;
   }
+
   let apps = [];
   try { apps = JSON.parse(localStorage.getItem('termac_credit_apps') || '[]'); } catch(e) {}
   const idx = apps.findIndex(a => a.id === mgrCreditCurrentAppId);
@@ -23281,9 +23441,12 @@ function mgrCreditDecide(decision) {
 
   closeModal('mgrCreditReviewModal');
   mgrCreditQueueRender();
+
+  const cardOnFile = apps[idx].evaluation?.cardOnFile;
+  const limit      = apps[idx].evaluation?.creditLimit;
   const msg = decision === 'approved'
-    ? `✅ Net 30 terms approved for ${apps[idx].business}. The rep will see the updated status on the account.`
-    : `❌ Application declined for ${apps[idx].business}.${reason?' Reason recorded: '+reason:''}`;
+    ? `✅ Net 30 terms approved for ${apps[idx].business}.\n\n${cardOnFile?'🔒 CONDITION: Square card on file required before Net 30 is activated. Rep must collect card before dispatching.\n\n':''}${limit?'Approved credit limit: '+limit+'\n\n':''}The rep will see the updated status and conditions on the account.`
+    : `❌ Application declined for ${apps[idx].business}.${reason?'\nReason: '+reason:''}`;
   setTimeout(() => alert(msg), 200);
 }
 
