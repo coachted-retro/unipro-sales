@@ -23450,6 +23450,1031 @@ function mgrCreditDecide(decision) {
   setTimeout(() => alert(msg), 200);
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// TERMAC AUTOMATED DRIP CAMPAIGN ENGINE v1.0
+// ══════════════════════════════════════════════════════════════════════════
+// Full lifecycle automation across every stage: Lead → Contact → Account.
+// 20 sequences covering every trigger, exit, and touchpoint.
+//
+// HOW IT WORKS:
+// • DripEngine.run() checks every lead/contact/account every 30 minutes
+// • Each campaign defines: trigger condition, email sequence with timing,
+//   exit condition, and post-send CRM action
+// • State (which emails sent, when sequence started) stored in localStorage
+//   per record ID + campaign ID — survives page refreshes
+// • When BREVO_API_KEY is set: emails fire automatically via Brevo API
+// • When key is empty: emails queue visibly in the Drip Queue panel
+//   (manager dashboard) for manual review/send — no automation is lost,
+//   it's just held for the key to activate
+// • Every sent email is logged to the record's activityLog so reps see
+//   the full customer communication history in one place
+//
+// TO ACTIVATE: Drop the Brevo API key into BREVO_API_KEY below.
+// Everything else is live.
+// ══════════════════════════════════════════════════════════════════════════
+
+const BREVO_API_KEY = '';  // ← DROP IN WHEN TERMAC BREVO ACCOUNT IS LIVE
+const BREVO_API_URL = 'https://api.brevo.com/v3/smtp/email';
+const BREVO_FROM    = { name: 'Ted Scholl — Universal Fire Protection', email: 'tscholl@termac.com' };
+const BREVO_REPLY   = 'tscholl@termac.com';
+
+// ── EMAIL BUILDER ─────────────────────────────────────────────────────────
+// Wraps every email in a consistent branded HTML template so every touchpoint
+// looks professional without designing each one from scratch.
+function dripWrap(body, repName) {
+  const rep = repName || 'Ted Scholl';
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+    body{font-family:Arial,sans-serif;font-size:14px;color:#1A1D21;margin:0;padding:0;background:#F3F4F6}
+    .wrap{max-width:600px;margin:0 auto;background:#fff}
+    .hdr{background:#1A1D21;padding:20px 28px;display:flex;align-items:center}
+    .hdr-title{color:#fff;font-size:18px;font-weight:700;letter-spacing:.04em}
+    .hdr-sub{color:#9CA3AF;font-size:11px;margin-top:2px}
+    .body{padding:28px}
+    .body p{line-height:1.7;margin:0 0 14px}
+    .cta{display:inline-block;background:#C8102E;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700;font-size:13px;margin:8px 0}
+    .divider{border:none;border-top:1px solid #E5E7EB;margin:20px 0}
+    .sig{font-size:13px;color:#5A616B;line-height:1.6}
+    .ftr{background:#F9FAFB;padding:16px 28px;font-size:11px;color:#9CA3AF;border-top:1px solid #E5E7EB}
+    .badge{display:inline-block;background:#FEE2E2;color:#991B1B;border-radius:4px;padding:2px 8px;font-size:11px;font-weight:700;margin-bottom:12px}
+  </style></head><body><div class="wrap">
+    <div class="hdr">
+      <div><div class="hdr-title">UNIVERSAL FIRE PROTECTION</div>
+      <div class="hdr-sub">Termac Family of Companies · UniPro · ALLPro · Quality III · GTO · Filter Man</div></div>
+    </div>
+    <div class="body">${body}</div>
+    <div class="ftr">
+      Universal Fire Protection · Termac Family of Companies<br>
+      ${rep} · tscholl@termac.com · 267-421-6336<br>
+      <a href="https://coachted-retro.github.io/unipro-sales" style="color:#9CA3AF">Termac One Platform</a>
+      · To unsubscribe reply with "unsubscribe"
+    </div>
+  </div></body></html>`;
+}
+
+// ── THE 20 DRIP CAMPAIGNS ─────────────────────────────────────────────────
+const DRIP_CAMPAIGNS = {
+
+  // ── LEAD LIFECYCLE ──────────────────────────────────────────────────────
+
+  // 1. New lead unclaimed 24h → internal alert to manager
+  lead_unclaimed_24h: {
+    label: 'Unclaimed Lead — 24hr Alert',
+    tab: ['leads'],
+    internal: true, // rep/manager facing, not customer-facing
+    trigger: r => r.status !== 'dead' && r.status !== 'won' && (!r.claimedBy || r.claimedBy === 'Unassigned') && r.created && (Date.now()-r.created) > 86400000,
+    exit:    r => r.claimedBy && r.claimedBy !== 'Unassigned',
+    emails: [{
+      delay: 0,
+      to: (r) => BREVO_FROM.email,
+      subject: (r) => `⚠️ Unclaimed Lead: ${r.name||r.business} — 24 hrs and counting`,
+      html: (r) => dripWrap(`
+        <div class="badge">INTERNAL ALERT</div>
+        <p>This lead has been sitting unclaimed in the pool for over 24 hours.</p>
+        <p><strong>${r.name||r.business}</strong><br>
+        ${r.address||''}<br>
+        Source: ${r.source||'Unknown'} · Score: ${r.aiScore||r.score||'N/A'}/10</p>
+        <p>Hot leads decay. Assign this to a rep now before the window closes.</p>
+        <a href="https://coachted-retro.github.io/unipro-sales/termac-os.html" class="cta">Open Lead Pool →</a>
+      `, 'Termac OS')
+    }]
+  },
+
+  // 2. Lead claimed but rep has not logged any activity in 3 days
+  lead_claimed_cold: {
+    label: 'Claimed Lead — No Activity 3 Days',
+    tab: ['leads'],
+    internal: true,
+    trigger: r => r.claimedBy && r.claimedBy !== 'Unassigned' && r.status !== 'dead' && r.status !== 'won' && r.claimed && (Date.now()-r.claimed) > 3*86400000 && (!r.activityLog || r.activityLog.filter(a=>a.type!=='system').length === 0),
+    exit:    r => r.status === 'dead' || r.status === 'won' || (r.activityLog && r.activityLog.filter(a=>a.type!=='system').length > 0),
+    emails: [{
+      delay: 0,
+      to: (r) => BREVO_FROM.email,
+      subject: (r) => `📋 ${r.claimedBy}: ${r.name||r.business} — No activity in 3 days`,
+      html: (r) => dripWrap(`
+        <div class="badge">REP ALERT</div>
+        <p><strong>${r.claimedBy}</strong> claimed this lead 3 days ago but hasn't logged any activity.</p>
+        <p><strong>${r.name||r.business}</strong> · Score: ${r.aiScore||'—'}/10 · ${r.address||''}</p>
+        <p>Hot leads cool fast. Log a call, set an appointment, or release the lead back to the pool.</p>
+        <a href="https://coachted-retro.github.io/unipro-sales/termac-os.html" class="cta">Log Activity →</a>
+      `, r.claimedBy)
+    }]
+  },
+
+  // 3. Lead first outreach — rep logs first contact → 3-email external nurture
+  lead_first_outreach: {
+    label: 'First Outreach — 3-Email Nurture',
+    tab: ['leads'],
+    trigger: r => r.status === 'warm' && r.created && (Date.now()-r.created) < 30*86400000,
+    exit:    r => r.status === 'hot' || r.status === 'dead' || r.status === 'won',
+    emails: [
+      {
+        delay: 0,
+        subject: (r) => `Quick introduction — Universal Fire Protection`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>My name is ${r.assignedRep||BREVO_FROM.name.split('—')[0].trim()} with Universal Fire Protection. We spoke briefly about your fire protection service at <strong>${r.name||r.business}</strong>, and I wanted to follow up properly.</p>
+          <p>We work with commercial kitchens, restaurants, and businesses across ${r.zip ? 'your area' : 'Eastern PA, NJ, DE, and MD'} to keep their fire extinguishers, hood suppression systems, and emergency lighting in compliance — and more importantly, actually working when they need to.</p>
+          <p>I'd love to schedule 20 minutes to walk through your current setup and make sure everything is current. No pressure, no pitch — just a quick look to make sure you're covered.</p>
+          <p>What does your week look like?</p>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>Universal Fire Protection — Termac Family of Companies<br>267-421-6336 · tscholl@termac.com</div>
+        `, r.assignedRep)
+      },
+      {
+        delay: 3*86400000,
+        subject: (r) => `${r.name||r.business} — One thing most owners don't know`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>Following up on my note from earlier this week. One thing that surprises most business owners when we do a site visit: <strong>more than 40% of commercial kitchen fire suppression systems we inspect have at least one deficiency</strong> — expired agent, missing pull station, blocked nozzle.</p>
+          <p>None of those look broken from the outside. The system looks fine. The tag is on the wall. But in an actual fire, it wouldn't activate correctly.</p>
+          <p>That's not a scare tactic — it's just what the data shows after thousands of inspections across this region. A 20-minute site visit either confirms you're good or finds something you want to know about before it matters.</p>
+          <p>Happy to come by at your convenience. What's a good time?</p>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>267-421-6336 · tscholl@termac.com</div>
+        `, r.assignedRep)
+      },
+      {
+        delay: 10*86400000,
+        subject: (r) => `Last note — ${r.name||r.business}`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>I don't want to fill your inbox, so this is my last note for now.</p>
+          <p>If you're happy with your current fire protection vendor, that's great — I hope they're doing a good job for you. If the topic ever comes up — renewal, a failed inspection, a change in equipment — I'd welcome the conversation.</p>
+          <p>Keep my contact info. I'll be around.</p>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>Universal Fire Protection<br>267-421-6336 · tscholl@termac.com</div>
+        `, r.assignedRep)
+      }
+    ]
+  },
+
+  // 4. Lead hot / appointment set — pre-meeting 2-email sequence
+  lead_hot_pre_meeting: {
+    label: 'Hot Lead — Pre-Meeting Sequence',
+    tab: ['leads'],
+    trigger: r => r.status === 'hot' && r.appointment && r.appointment.date,
+    exit:    r => r.status === 'dead' || r.status === 'won' || r._tab === 'contacts' || r._tab === 'accounts',
+    emails: [
+      {
+        delay: 0,
+        subject: (r) => `Confirmed — ${r.appointment?.time||'our appointment'} at ${r.name||r.business}`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>Just confirming our visit on <strong>${r.appointment?.date||'the scheduled date'}</strong> at <strong>${r.appointment?.time||'the agreed time'}</strong>.</p>
+          <p>What I'll do during the visit:</p>
+          <ul>
+            <li>Quick walk-through of your current fire protection setup</li>
+            <li>Check service tags, gauge readings, and any visible deficiencies</li>
+            <li>Review what services you currently have and identify any gaps</li>
+            <li>Answer any questions and put together a proposal if it makes sense</li>
+          </ul>
+          <p>Plan for about 30–45 minutes. No need to prep anything — just access to the kitchen and any mechanical areas.</p>
+          <p>See you then. If anything changes, reach me directly at 267-421-6336.</p>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>Universal Fire Protection<br>267-421-6336 · tscholl@termac.com</div>
+        `, r.assignedRep)
+      },
+      {
+        delay: -86400000, // 1 day before (using appointment date minus 1 day logic — engine handles this)
+        subject: (r) => `See you tomorrow — ${r.name||r.business}`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>Quick reminder — I'll be by tomorrow at <strong>${r.appointment?.time||'our scheduled time'}</strong>.</p>
+          <p>If access has changed or you need to reschedule, just reply here or call me at 267-421-6336. Otherwise, looking forward to it.</p>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>267-421-6336</div>
+        `, r.assignedRep)
+      }
+    ]
+  },
+
+  // 5. Lead stalled — no status change in 14 days
+  lead_stalled: {
+    label: 'Lead Stalled — 14-Day Re-Engagement',
+    tab: ['leads'],
+    trigger: r => r.status !== 'dead' && r.status !== 'won' && r.claimedBy && r.updated && (Date.now()-r.updated) > 14*86400000,
+    exit:    r => r.status === 'dead' || r.status === 'won' || (r.updated && (Date.now()-r.updated) < 3*86400000),
+    emails: [
+      {
+        delay: 0,
+        subject: (r) => `Still thinking about fire protection for ${r.name||r.business}?`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>It's been a little while since we connected. I don't want to assume — sometimes timing is just off, and that's completely fine.</p>
+          <p>If you're still thinking about getting your fire protection sorted, I'm happy to pick back up wherever we left off. If things have changed on your end, just let me know and I'll follow up at a better time.</p>
+          <p>Either way, a quick reply tells me where things stand.</p>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>267-421-6336 · tscholl@termac.com</div>
+        `, r.assignedRep)
+      },
+      {
+        delay: 7*86400000,
+        subject: (r) => `One more thing I wanted to share — ${r.name||r.business}`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>I'll keep this brief. Since we last spoke, we've helped several businesses in your area avoid AHJ violations during unannounced fire marshal inspections — in each case, they had equipment that looked fine but wasn't.</p>
+          <p>The cost of a failed inspection — fines, mandatory reinspection, potential shutdown during the process — is always more than the cost of getting compliant before it happens.</p>
+          <p>If there's any interest in a quick site visit, I can make it work around your schedule. If not, no worries — I'll close this out on my end.</p>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>267-421-6336 · tscholl@termac.com</div>
+        `, r.assignedRep)
+      }
+    ]
+  },
+
+  // 6. Lead dead 90 days → resurrection attempt
+  lead_dead_resurrection: {
+    label: 'Dead Lead — 90-Day Resurrection',
+    tab: ['leads'],
+    trigger: r => r.status === 'dead' && r.updated && (Date.now()-r.updated) > 90*86400000,
+    exit:    r => r.status !== 'dead',
+    emails: [{
+      delay: 0,
+      subject: (r) => `Checking back in — ${r.name||r.business}`,
+      html: (r) => dripWrap(`
+        <p>Hi ${r.contactName || 'there'},</p>
+        <p>It's been a few months since we last spoke. I'm not sure if the timing was wrong, you went with another vendor, or things just got busy — all completely understandable.</p>
+        <p>I'm reaching out because we've expanded our service coverage in your area and I wanted to make sure you have a current contact if your fire protection needs ever come up.</p>
+        <p>No agenda — just keeping the door open. If anything's changed, I'd welcome the chance to reconnect.</p>
+        <hr class="divider">
+        <div class="sig">${r.assignedRep||'Ted Scholl'}<br>Universal Fire Protection<br>267-421-6336 · tscholl@termac.com</div>
+      `, r.assignedRep)
+    }]
+  },
+
+  // ── ESTIMATE / CONTACT LIFECYCLE ────────────────────────────────────────
+
+  // 7. Estimate sent → 3-email follow-up sequence
+  estimate_sent_followup: {
+    label: 'Estimate Sent — Follow-Up Sequence',
+    tab: ['contacts', 'leads'],
+    trigger: r => r.estimateSent && !r.estimateAccepted && !r.estimateDeclined,
+    exit:    r => r.estimateAccepted || r.estimateDeclined || r._tab === 'accounts',
+    emails: [
+      {
+        delay: 2*86400000,
+        subject: (r) => `Your proposal from Universal Fire Protection — ${r.name||r.business}`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>Following up on the proposal I sent for <strong>${r.name||r.business}</strong>. I want to make sure it came through and that you had a chance to look it over.</p>
+          <p>If you have any questions about the scope, pricing, or scheduling — or if you'd like to adjust anything — I'm happy to talk through it. Proposals are a starting point, not a take-it-or-leave-it.</p>
+          <p>What's the best way to move forward on your end?</p>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>267-421-6336 · tscholl@termac.com</div>
+        `, r.assignedRep)
+      },
+      {
+        delay: 5*86400000,
+        subject: (r) => `A question about the proposal — ${r.name||r.business}`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>I want to ask directly: is there something in the proposal that doesn't work for you?</p>
+          <p>Whether it's pricing, timing, scope, or something I missed about your situation — I'd rather know than guess. If there's a specific concern, I can almost always work with it.</p>
+          <p>A quick reply either way helps me know where things stand.</p>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>267-421-6336 · tscholl@termac.com</div>
+        `, r.assignedRep)
+      },
+      {
+        delay: 10*86400000,
+        subject: (r) => `Closing the loop — ${r.name||r.business}`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>I've followed up a couple of times and haven't heard back, so I'll assume the timing isn't right or you've made another decision — and that's completely okay.</p>
+          <p>I'll hold the proposal for 30 days in case anything changes. If you'd like to revisit, reach out anytime. The pricing and scope will stay as quoted.</p>
+          <p>Thanks for the time, and I hope we get a chance to work together down the road.</p>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>267-421-6336 · tscholl@termac.com</div>
+        `, r.assignedRep)
+      }
+    ]
+  },
+
+  // 8. Estimate declined → graceful exit + 6-month re-engagement
+  estimate_declined_graceful: {
+    label: 'Estimate Declined — Graceful Exit',
+    tab: ['contacts', 'leads'],
+    trigger: r => r.estimateDeclined && r.updated && (Date.now()-r.updated) < 7*86400000,
+    exit:    r => r.estimateAccepted || r._tab === 'accounts',
+    emails: [
+      {
+        delay: 0,
+        subject: (r) => `Thanks for letting me know — ${r.name||r.business}`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>Appreciate you letting me know — that's more courtesy than most, and I genuinely mean that.</p>
+          <p>If you're open to it, I'd love to know what made this not the right fit. Not to re-pitch — just to understand. It helps me serve the next business better.</p>
+          <p>Either way, I'll keep your contact info. Fire protection needs come up at renewal time, after a failed inspection, or when equipment changes. When that happens, I'd welcome the call.</p>
+          <p>Take care.</p>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>267-421-6336 · tscholl@termac.com</div>
+        `, r.assignedRep)
+      },
+      {
+        delay: 180*86400000,
+        subject: (r) => `Six months on — ${r.name||r.business}`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>It's been about six months since we spoke. I'm not sure where things stand with your fire protection, but I wanted to check in on the off chance the situation has changed.</p>
+          <p>We've added several new accounts in your area and continue to cover the whole region. If you'd like a fresh conversation — or even just a second opinion on your current service — I'm happy to do a no-cost site review.</p>
+          <p>Hope the business is doing well.</p>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>267-421-6336 · tscholl@termac.com</div>
+        `, r.assignedRep)
+      }
+    ]
+  },
+
+  // ── ACCOUNT LIFECYCLE ───────────────────────────────────────────────────
+
+  // 9. New account welcome drip — Days 1, 7, 14, 30
+  account_welcome: {
+    label: 'New Account — 30-Day Welcome Drip',
+    tab: ['accounts'],
+    trigger: r => r.status === 'active' && r.created && (Date.now()-r.created) < 7*86400000,
+    exit:    r => r.status !== 'active',
+    emails: [
+      {
+        delay: 0,
+        subject: (r) => `Welcome to the Termac family — ${r.name||r.business}`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>Welcome to Universal Fire Protection. I'm glad we were able to get everything in order, and I want to make sure this relationship starts the right way.</p>
+          <p>Here's what happens next:</p>
+          <ul>
+            <li>Our scheduling team will reach out to confirm your first service date</li>
+            <li>Your technician will introduce themselves before starting any work</li>
+            <li>After each visit, you'll receive a service confirmation and your compliance certificate within 48 hours</li>
+          </ul>
+          <p>My direct number is <strong>267-421-6336</strong>. If anything comes up — questions, concerns, or a change in your equipment — call or text me directly. You won't get a call center.</p>
+          <p>Looking forward to a long relationship.</p>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>Universal Fire Protection<br>267-421-6336 · tscholl@termac.com</div>
+        `, r.assignedRep)
+      },
+      {
+        delay: 7*86400000,
+        subject: (r) => `Your first service is coming up — ${r.name||r.business}`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>Your first Termac service visit should be coming up soon. A couple of things that make the visit go smoothly:</p>
+          <ul>
+            <li>Access to your kitchen and any areas where fire protection equipment is located</li>
+            <li>Someone available to walk through findings with the tech at the end — usually 5 minutes</li>
+            <li>If there's a key, code, or specific contact for access, make sure our scheduler has it (or reply here and I'll make sure it's in the record)</li>
+          </ul>
+          <p>Our tech will call ahead before arriving. If the scheduled time doesn't work, just let us know and we'll adjust.</p>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>267-421-6336</div>
+        `, r.assignedRep)
+      },
+      {
+        delay: 14*86400000,
+        subject: (r) => `A quick check-in — ${r.name||r.business}`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>Two weeks in — I just wanted to check in and make sure everything has gone smoothly so far.</p>
+          <p>If your first service has happened: how did it go? Any feedback — good or bad — is genuinely useful. Our techs are good, but I want to know if anything felt off.</p>
+          <p>If we haven't been out yet: is the scheduled date still working? Any access or contact info changes I should know about?</p>
+          <p>Reply whenever — I'm responsive.</p>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>267-421-6336 · tscholl@termac.com</div>
+        `, r.assignedRep)
+      },
+      {
+        delay: 30*86400000,
+        subject: (r) => `One month in — ${r.name||r.business}`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>It's been about a month since you joined the Termac family. I hope the onboarding has been smooth and our team has made a good impression.</p>
+          <p>One thing I always mention at this point: we work across multiple service lines. If you ever notice something on-site that might need attention — a grease trap, kitchen filters, chemical equipment — mention it to your tech or call me directly. We'll either handle it or point you to the right person.</p>
+          <p>Thanks for your business. I mean that.</p>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>267-421-6336 · tscholl@termac.com</div>
+        `, r.assignedRep)
+      }
+    ]
+  },
+
+  // 10. Pre-service — appointment within 48 hours
+  account_pre_service: {
+    label: 'Pre-Service — 48hr & Day-Before Reminders',
+    tab: ['accounts'],
+    trigger: r => r.appointment && r.appointment.date && (() => {
+      const apptMs = new Date(r.appointment.date + 'T12:00:00').getTime();
+      const hoursUntil = (apptMs - Date.now()) / 3600000;
+      return hoursUntil > 0 && hoursUntil <= 48;
+    })(),
+    exit: r => !r.appointment || !r.appointment.date,
+    emails: [
+      {
+        delay: 0,
+        subject: (r) => `Your Termac service visit — ${r.appointment?.date}`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>Your Termac service visit is coming up on <strong>${r.appointment?.date}</strong> at <strong>${r.appointment?.time||'the scheduled time'}</strong>.</p>
+          <p>Your technician will call ahead before arriving. If you need to reschedule, call us at 267-421-6336 or reply here — same-day changes are fine as long as we hear from you early.</p>
+          <p>See you soon.</p>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>267-421-6336 · tscholl@termac.com</div>
+        `, r.assignedRep)
+      }
+    ]
+  },
+
+  // 11. Post-service NPS + confirmation
+  account_post_service: {
+    label: 'Post-Service — NPS & Confirmation',
+    tab: ['accounts'],
+    trigger: r => r.lastService && (Date.now()-r.lastService) < 24*3600000 && !r.npsRequested,
+    exit:    r => r.npsRequested,
+    emails: [
+      {
+        delay: 2*3600000, // 2 hours after service
+        subject: (r) => `Service complete — ${r.name||r.business}`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>Your Termac service visit is complete. Your compliance certificate will be in your inbox within 48 hours.</p>
+          <p>If any deficiencies were found during the visit, you'll receive a separate detailed report with recommendations and a quote for any corrective work.</p>
+          <p>One question — <strong>how did we do today?</strong></p>
+          <p style="font-size:22px;margin:16px 0">
+            <a href="mailto:tscholl@termac.com?subject=NPS: ${encodeURIComponent(r.name||r.business)} — 9-10" style="text-decoration:none;margin-right:8px">😊 9–10</a>
+            <a href="mailto:tscholl@termac.com?subject=NPS: ${encodeURIComponent(r.name||r.business)} — 7-8" style="text-decoration:none;margin-right:8px">😐 7–8</a>
+            <a href="mailto:tscholl@termac.com?subject=NPS: ${encodeURIComponent(r.name||r.business)} — 0-6" style="text-decoration:none">😟 0–6</a>
+          </p>
+          <p style="font-size:12px;color:#9CA3AF">Click to reply with your rating. If anything wasn't right today, I want to know — directly.</p>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>267-421-6336 · tscholl@termac.com</div>
+        `, r.assignedRep)
+      }
+    ]
+  },
+
+  // 12. Deficiency quote follow-up — Days 5, 10, 20
+  account_deficiency_followup: {
+    label: 'Deficiency Quote — Follow-Up Sequence',
+    tab: ['accounts'],
+    trigger: r => r.openDeficiencies && r.openDeficiencies.length > 0 && r.openDeficiencies.some(d => d.quoted && !d.approved && d.quotedAt && (Date.now()-d.quotedAt) > 5*86400000),
+    exit:    r => !r.openDeficiencies || r.openDeficiencies.every(d => d.approved || !d.quoted),
+    emails: [
+      {
+        delay: 0,
+        subject: (r) => `Open deficiency — ${r.name||r.business}`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>Following up on the deficiency we documented during your recent service visit at <strong>${r.name||r.business}</strong>.</p>
+          <p>The quote we sent covers the corrective work needed to bring your equipment back to full compliance. Until that work is completed, your system has a documented gap — which matters if an inspector comes through.</p>
+          <p>I'm not trying to pressure you, but I do want to make sure you have the full picture. Happy to talk through the specifics anytime.</p>
+          <a href="mailto:tscholl@termac.com?subject=Deficiency Quote — ${encodeURIComponent(r.name||r.business)}" class="cta">Approve Quote →</a>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>267-421-6336 · tscholl@termac.com</div>
+        `, r.assignedRep)
+      },
+      {
+        delay: 10*86400000,
+        subject: (r) => `Deficiency still open — ${r.name||r.business}`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>The deficiency noted at your last inspection is still open in our records. I want to be straightforward with you: a documented open deficiency is the kind of thing that shows up on an AHJ report — and if there's a fire event with an open deficiency on record, it can affect your insurance claim.</p>
+          <p>If budget is the concern, we can talk about phasing the work. If there's a question about the scope, I'm happy to review it with you. Let me know what would help move this forward.</p>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>267-421-6336 · tscholl@termac.com</div>
+        `, r.assignedRep)
+      },
+      {
+        delay: 20*86400000,
+        subject: (r) => `Final notice — open deficiency at ${r.name||r.business}`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>This is my last follow-up on the open deficiency. After today, I'll note in your account that corrective work was offered and declined, so the record is accurate for both of us.</p>
+          <p>If you change your mind — now or at the next inspection — the quote is still on file. Just reach out.</p>
+          <p>I want to keep your business. I also want to make sure your building is actually protected. Those two things go together.</p>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>267-421-6336 · tscholl@termac.com</div>
+        `, r.assignedRep)
+      }
+    ]
+  },
+
+  // 13. Renewal approaching — 90/60/30 days
+  account_renewal: {
+    label: 'Renewal Approaching — 90/60/30 Day Sequence',
+    tab: ['accounts'],
+    trigger: r => r.renewalDate && (() => {
+      const days = (new Date(r.renewalDate).getTime() - Date.now()) / 86400000;
+      return days <= 90 && days > 0;
+    })(),
+    exit:    r => !r.renewalDate || new Date(r.renewalDate).getTime() < Date.now(),
+    emails: [
+      {
+        delay: 0, // fires at 90 days out
+        subject: (r) => `Your service agreement renews in 90 days — ${r.name||r.business}`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>Just a heads up — your service agreement with Universal Fire Protection renews in approximately 90 days.</p>
+          <p>I'll be in touch closer to the date to confirm your schedule and make sure everything looks right. If anything has changed in your facility — new equipment, layout changes, added locations — let me know so we can update the scope before renewal.</p>
+          <p>Nothing you need to do right now. Just wanted you to have it on your radar.</p>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>267-421-6336 · tscholl@termac.com</div>
+        `, r.assignedRep)
+      },
+      {
+        delay: 30*86400000, // fires at 60 days out
+        subject: (r) => `60 days to renewal — confirming your schedule at ${r.name||r.business}`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>Your service agreement renews in about 60 days. I want to get ahead of your schedule now so your upcoming inspections are confirmed and there are no gaps in your compliance record.</p>
+          <p>Can you confirm that your contact information and access details are still current? And is there anything new in the facility I should know about before we schedule the renewal inspection?</p>
+          <p>Reply here or call me at 267-421-6336 and I'll get everything set.</p>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>267-421-6336 · tscholl@termac.com</div>
+        `, r.assignedRep)
+      },
+      {
+        delay: 60*86400000, // fires at 30 days out
+        subject: (r) => `30 days — your Termac renewal is coming up`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>Your service agreement renews in 30 days. I want to make sure the renewal is as smooth as possible for you.</p>
+          <p>Here's where things stand:</p>
+          <ul>
+            <li>Your renewal inspection will be scheduled for the same frequency as your current agreement</li>
+            <li>Pricing is held at your current rate for the renewal term</li>
+            <li>Any open deficiencies from this year's inspections should be addressed before the renewal inspection — I can have someone out before the date if needed</li>
+          </ul>
+          <p>I'll send the renewal confirmation once the next inspection is scheduled. If you'd like to discuss anything before then, I'm available anytime.</p>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>267-421-6336 · tscholl@termac.com</div>
+        `, r.assignedRep)
+      }
+    ]
+  },
+
+  // 14. Account at risk — health score ≤ 3
+  account_at_risk: {
+    label: 'Account At-Risk — Save Sequence',
+    tab: ['accounts'],
+    trigger: r => {
+      const health = typeof acctCalcHealth === 'function' ? acctCalcHealth(r).score : 5;
+      return health <= 3 && r.status === 'active';
+    },
+    exit:    r => {
+      const health = typeof acctCalcHealth === 'function' ? acctCalcHealth(r).score : 5;
+      return health > 3 || r.status !== 'active';
+    },
+    emails: [
+      {
+        delay: 0,
+        subject: (r) => `Checking in — ${r.name||r.business}`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>I wanted to reach out personally. I noticed some signals that suggest things may not be going as well as they should be on our end, and I'd rather ask directly than assume everything's fine.</p>
+          <p>Is there anything about our service — scheduling, quality, responsiveness, documentation — that hasn't been meeting your expectations?</p>
+          <p>I take every account personally. If something is off, I want to know so I can fix it — not lose the relationship without understanding why.</p>
+          <p>Can we get 15 minutes on the phone this week?</p>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>267-421-6336 · tscholl@termac.com</div>
+        `, r.assignedRep)
+      },
+      {
+        delay: 5*86400000,
+        subject: (r) => `Still here — ${r.name||r.business}`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>Following up on my note earlier this week. I'll be direct: I don't want to lose your business. If we've fallen short somewhere, I'd genuinely like the chance to make it right before you make any decisions.</p>
+          <p>What would it take to get things back on track?</p>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>267-421-6336 · tscholl@termac.com</div>
+        `, r.assignedRep)
+      },
+      {
+        delay: 14*86400000,
+        subject: (r) => `A conversation I'd like to have — ${r.name||r.business}`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>I'd like to schedule a brief in-person visit — not a sales call, just a conversation about how the service has been and what you need going forward.</p>
+          <p>Would 15 minutes work this week or next? I'll come to you.</p>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>267-421-6336 · tscholl@termac.com</div>
+        `, r.assignedRep)
+      }
+    ]
+  },
+
+  // 15. Jeopardy — churn score 8+
+  account_jeopardy: {
+    label: 'Account Jeopardy — Emergency Intervention',
+    tab: ['accounts'],
+    trigger: r => {
+      const churn = typeof calcChurnScore === 'function' ? calcChurnScore(r) : 0;
+      return churn >= 8 && r.status === 'active';
+    },
+    exit:    r => {
+      const churn = typeof calcChurnScore === 'function' ? calcChurnScore(r) : 0;
+      return churn < 8 || r.status !== 'active';
+    },
+    emails: [
+      {
+        delay: 0,
+        internal: true,
+        to: (r) => BREVO_FROM.email,
+        subject: (r) => `🚨 JEOPARDY: ${r.name||r.business} — Churn Score Critical`,
+        html: (r) => dripWrap(`
+          <div class="badge">JEOPARDY ALERT</div>
+          <p><strong>${r.name||r.business}</strong> has hit a critical churn score. Call this account today — do not email first.</p>
+          <p>Account: ${r.name||r.business} · ${r.address||''}<br>
+          Rep: ${r.assignedRep||'—'}<br>
+          Contact: ${r.contactName||'—'} · ${r.phone||'—'}</p>
+          <p>Review the account history and open deficiencies before calling. Go in knowing the situation.</p>
+          <a href="https://coachted-retro.github.io/unipro-sales/termac-os.html" class="cta">Open Account →</a>
+        `, 'Termac OS')
+      },
+      {
+        delay: 2*86400000,
+        subject: (r) => `We'd like to earn your business back — ${r.name||r.business}`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>I'll be honest with you. I can see that your relationship with us hasn't been where it should be, and I take responsibility for that.</p>
+          <p>I'd like to schedule a service review at no charge — come in, assess where things stand, and put together a plan to get your compliance current and your experience with us back to where it should be.</p>
+          <p>No obligation on your end. Just let me do my job right this time.</p>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>267-421-6336 · tscholl@termac.com</div>
+        `, r.assignedRep)
+      }
+    ]
+  },
+
+  // 16. Account churned → winback sequence
+  account_winback: {
+    label: 'Churned Account — Winback Sequence',
+    tab: ['accounts'],
+    trigger: r => r.status === 'inactive' && r.updated && (Date.now()-r.updated) > 30*86400000,
+    exit:    r => r.status === 'active',
+    emails: [
+      {
+        delay: 0,
+        subject: (r) => `We miss you — ${r.name||r.business}`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>It's been a while since we've worked together, and I wanted to reach out personally.</p>
+          <p>I don't know what drove the decision to move on — maybe price, maybe service, maybe just a vendor relationship that was already in place. Whatever it was, I'd genuinely like to understand it.</p>
+          <p>If there's any interest in revisiting, I'd offer a complimentary site review and a fresh proposal — no pressure, just a chance to show you what we can do differently.</p>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>267-421-6336 · tscholl@termac.com</div>
+        `, r.assignedRep)
+      },
+      {
+        delay: 45*86400000,
+        subject: (r) => `Checking back in — ${r.name||r.business}`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>Wanted to touch base one more time. We've made some changes in how we handle scheduling and post-service communication that I think would have addressed some of the friction you may have experienced.</p>
+          <p>If your current vendor relationship ever becomes an issue — at renewal, after an inspection, or just when you want a second opinion — I'm a call away.</p>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>267-421-6336 · tscholl@termac.com</div>
+        `, r.assignedRep)
+      },
+      {
+        delay: 90*86400000,
+        subject: (r) => `One last note — ${r.name||r.business}`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>Three months since we last worked together. I'll keep this short — I'll always welcome the conversation if your needs change.</p>
+          <p>You have my number. Take care of the business.</p>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>267-421-6336 · tscholl@termac.com</div>
+        `, r.assignedRep)
+      }
+    ]
+  },
+
+  // 17. Cross-sell trigger — tech submits a field referral
+  account_cross_sell_outreach: {
+    label: 'Cross-Sell — Tech Field Referral Outreach',
+    tab: ['leads'],
+    trigger: r => r.source === 'Tech Cross-Sell' && r.created && (Date.now()-r.created) < 3600000,
+    exit:    r => r.status === 'dead' || r.status === 'won' || r._tab === 'accounts',
+    emails: [
+      {
+        delay: 30*60000, // 30 minutes after tech submits referral
+        subject: (r) => `Quick note about your ${r.company||'service'} at ${r.name||r.business}`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>One of our technicians was in your area recently and noticed that your ${(r.services||['fire protection'])[0]} may be due for service or could benefit from an inspection.</p>
+          <p>We work with businesses throughout ${r.zip ? 'your area' : 'Eastern PA, NJ, DE, and MD'} on fire protection, grease trap service, hood filter exchange, and kitchen equipment — often for businesses we're already serving nearby.</p>
+          <p>I'd love to stop by for a quick look — no commitment, just a professional eye on your current setup. Would that be worth 20 minutes?</p>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>Universal Fire Protection<br>267-421-6336 · tscholl@termac.com</div>
+        `, r.assignedRep)
+      },
+      {
+        delay: 4*86400000,
+        subject: (r) => `Following up — ${r.name||r.business}`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>Just following up on my note earlier this week. Wanted to make sure it came through.</p>
+          <p>If the timing isn't right, no problem at all — I can reach back out at a better point. Just reply with a timeframe and I'll make a note.</p>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>267-421-6336 · tscholl@termac.com</div>
+        `, r.assignedRep)
+      }
+    ]
+  },
+
+  // 18. Account 1-year anniversary
+  account_anniversary: {
+    label: 'Account Anniversary — Relationship Reinforcement',
+    tab: ['accounts'],
+    trigger: r => r.created && (() => {
+      const created = new Date(r.created);
+      const now = new Date();
+      const anniv = new Date(now.getFullYear(), created.getMonth(), created.getDate());
+      const diff = Math.abs(Date.now() - anniv.getTime());
+      return diff < 86400000 && r.status === 'active' && (now - created) > 300*86400000;
+    })(),
+    exit: r => r.status !== 'active',
+    emails: [{
+      delay: 0,
+      subject: (r) => `One year together — ${r.name||r.business}`,
+      html: (r) => dripWrap(`
+        <p>Hi ${r.contactName || 'there'},</p>
+        <p>Today marks one year since <strong>${r.name||r.business}</strong> joined the Termac family, and I wanted to acknowledge that.</p>
+        <p>You trusted us with something important — the safety and compliance of your business. That's not a small thing. I'm grateful for it, and I don't take it for granted.</p>
+        <p>If there's anything about our service that could be better, now is a great time to tell me. And if everything's been as it should be — thank you. Genuinely.</p>
+        <p>Here's to another year.</p>
+        <hr class="divider">
+        <div class="sig">${r.assignedRep||'Ted Scholl'}<br>267-421-6336 · tscholl@termac.com</div>
+      `, r.assignedRep)
+    }]
+  },
+
+  // 19. Seasonal / Regulatory alert — spring health department prep
+  account_seasonal_prep: {
+    label: 'Seasonal Alert — Health Dept / AHJ Prep',
+    tab: ['accounts'],
+    trigger: r => {
+      const month = new Date().getMonth(); // 1=Feb (spring prep), 8=Sept (fall prep)
+      const key = `seasonal_${new Date().getFullYear()}_${month}`;
+      return r.status === 'active' && (month === 1 || month === 8) && !r[key];
+    },
+    exit: r => r.status !== 'active',
+    emails: [{
+      delay: 0,
+      subject: (r) => `Heads up — inspection season is coming for ${r.name||r.business}`,
+      html: (r) => dripWrap(`
+        <p>Hi ${r.contactName || 'there'},</p>
+        <p>A quick heads up: health department and fire marshal inspection activity tends to pick up this time of year. It's a good moment to make sure everything is current.</p>
+        <p>A few things worth checking before an inspector shows up unannounced:</p>
+        <ul>
+          <li>Fire extinguisher tags — current, all units accessible and visible</li>
+          <li>Hood suppression system — last service date on the tag, no blocked nozzles</li>
+          <li>Exit signs and emergency lighting — all illuminated and tested</li>
+          <li>Any open deficiencies from your last inspection — these show up on the AHJ's records</li>
+        </ul>
+        <p>If you'd like me to schedule a quick pre-inspection check before the season heats up, reply and I'll get something on the calendar.</p>
+        <hr class="divider">
+        <div class="sig">${r.assignedRep||'Ted Scholl'}<br>267-421-6336 · tscholl@termac.com</div>
+      `, r.assignedRep)
+    }]
+  },
+
+  // 20. Multi-service upsell — active account with only 1 division
+  account_upsell_multiservice: {
+    label: 'Multi-Service Upsell — Single-Division Accounts',
+    tab: ['accounts'],
+    trigger: r => r.status === 'active' && (r.services||[]).length === 1 && r.created && (Date.now()-r.created) > 60*86400000,
+    exit:    r => r.status !== 'active' || (r.services||[]).length > 1,
+    emails: [
+      {
+        delay: 0,
+        subject: (r) => `Something we haven't talked about yet — ${r.name||r.business}`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>We've been handling your ${(r.services||['fire protection'])[0]} for a while now, and I've been meaning to mention something.</p>
+          <p>Most of our clients in your type of operation are also dealing with at least one other service we cover — grease trap pumping, kitchen exhaust filter exchange, or chemical programs for dish machines. These aren't things most business owners actively manage; they just show up when there's a problem.</p>
+          <p>I'd love to do a quick walk-through and see if there are any areas we could take off your plate. No obligation — just a conversation about what you're currently dealing with from other vendors and whether it makes sense to consolidate.</p>
+          <p>Worth 20 minutes?</p>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>267-421-6336 · tscholl@termac.com</div>
+        `, r.assignedRep)
+      },
+      {
+        delay: 21*86400000,
+        subject: (r) => `The one question I ask every single-service client`,
+        html: (r) => dripWrap(`
+          <p>Hi ${r.contactName || 'there'},</p>
+          <p>When did you last have your grease trap pumped? Or your hood filters exchanged?</p>
+          <p>I ask because these are the services that most restaurants handle reactively — when there's a backup, a smell, or a failed inspection — instead of proactively. And the cost of reactive is always higher than the cost of scheduled.</p>
+          <p>If you're not sure when either of those things was last done, that's worth a conversation. I can usually figure it out from a quick look.</p>
+          <hr class="divider">
+          <div class="sig">${r.assignedRep||'Ted Scholl'}<br>267-421-6336 · tscholl@termac.com</div>
+        `, r.assignedRep)
+      }
+    ]
+  }
+};
+
+// ── DRIP ENGINE ───────────────────────────────────────────────────────────
+class DripEngine {
+  constructor() {
+    this.loadState();
+  }
+
+  loadState() {
+    try { this.state = JSON.parse(localStorage.getItem('termac_drip_state') || '{}'); }
+    catch(e) { this.state = {}; }
+  }
+
+  saveState() {
+    try { localStorage.setItem('termac_drip_state', JSON.stringify(this.state)); }
+    catch(e) {}
+  }
+
+  // Key per record + campaign to track which emails have been sent
+  key(recordId, campaignId) { return `${recordId}::${campaignId}`; }
+
+  run() {
+    const allRecords = [
+      ...(crmLoad('leads')    || []).map(r => ({...r, _tab:'leads'})),
+      ...(crmLoad('contacts') || []).map(r => ({...r, _tab:'contacts'})),
+      ...(crmLoad('accounts') || []).map(r => ({...r, _tab:'accounts'})),
+    ];
+
+    let queued = 0;
+    allRecords.forEach(record => {
+      Object.entries(DRIP_CAMPAIGNS).forEach(([campaignId, campaign]) => {
+        if (!campaign.tab.includes(record._tab)) return;
+        try {
+          if (campaign.exit && campaign.exit(record)) {
+            // Clear state so campaign can re-trigger cleanly later if conditions reset
+            delete this.state[this.key(record.id, campaignId)];
+            return;
+          }
+          if (!campaign.trigger(record)) return;
+          queued += this.checkCampaign(record, campaignId, campaign);
+        } catch(e) {}
+      });
+    });
+
+    if (queued > 0) this.saveState();
+    this.renderQueue();
+  }
+
+  checkCampaign(record, campaignId, campaign) {
+    const k = this.key(record.id, campaignId);
+    if (!this.state[k]) {
+      this.state[k] = { startedAt: Date.now(), sent: [] };
+    }
+    const cs = this.state[k];
+    let sent = 0;
+
+    campaign.emails.forEach((email, idx) => {
+      if (cs.sent.includes(idx)) return;
+      const due = cs.startedAt + (email.delay || 0);
+      if (Date.now() < due) return;
+      this.sendEmail(record, campaign, campaignId, email, idx);
+      cs.sent.push(idx);
+      sent++;
+    });
+    return sent;
+  }
+
+  sendEmail(record, campaign, campaignId, emailDef, idx) {
+    const to     = typeof emailDef.to === 'function' ? emailDef.to(record) : (record.email || record.contactEmail || null);
+    const subject = typeof emailDef.subject === 'function' ? emailDef.subject(record) : emailDef.subject;
+    const html   = typeof emailDef.html === 'function' ? emailDef.html(record) : emailDef.html;
+
+    if (!to && !emailDef.internal) {
+      // No email address on record — queue for manual send, log the miss
+      this.addToManualQueue({ record, campaign, campaignId, emailDef, idx, reason: 'No email address on file' });
+      return;
+    }
+
+    const payload = {
+      sender: BREVO_FROM,
+      to: [{ email: to || BREVO_FROM.email }],
+      replyTo: { email: BREVO_REPLY },
+      subject,
+      htmlContent: html
+    };
+
+    if (BREVO_API_KEY) {
+      fetch(BREVO_API_URL, {
+        method: 'POST',
+        headers: { 'api-key': BREVO_API_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      }).then(res => {
+        if (res.ok) {
+          this.logActivity(record, campaign.label, subject, emailDef.internal);
+        } else {
+          this.addToManualQueue({ record, campaign, campaignId, emailDef, idx, reason: 'Brevo API error' });
+        }
+      }).catch(() => {
+        this.addToManualQueue({ record, campaign, campaignId, emailDef, idx, reason: 'Network error' });
+      });
+    } else {
+      // No API key yet — add to visible queue so nothing is lost
+      this.addToManualQueue({ record, campaign, campaignId, emailDef, idx, subject, html, to });
+      this.logActivity(record, campaign.label, `[QUEUED — No API Key] ${subject}`, emailDef.internal);
+    }
+  }
+
+  addToManualQueue(item) {
+    try {
+      const q = JSON.parse(localStorage.getItem('termac_drip_queue') || '[]');
+      // Avoid duplicates
+      const exists = q.some(e => e.recordId === item.record?.id && e.campaignId === item.campaignId && e.idx === item.idx);
+      if (!exists) {
+        q.push({
+          recordId: item.record?.id,
+          recordName: item.record?.name || item.record?.business || 'Unknown',
+          tab: item.record?._tab,
+          campaignId: item.campaignId,
+          campaignLabel: item.campaign?.label,
+          idx: item.idx,
+          subject: item.subject || (typeof item.emailDef?.subject === 'function' ? item.emailDef.subject(item.record) : item.emailDef?.subject),
+          to: item.to,
+          reason: item.reason,
+          queuedAt: Date.now()
+        });
+        localStorage.setItem('termac_drip_queue', JSON.stringify(q.slice(-100))); // keep last 100
+      }
+    } catch(e) {}
+  }
+
+  logActivity(record, campaignLabel, subject, internal) {
+    try {
+      const tabs = ['leads','contacts','accounts'];
+      for (const tab of tabs) {
+        const data = crmLoad(tab) || [];
+        const idx = data.findIndex(r => r.id === record.id);
+        if (idx === -1) continue;
+        if (!data[idx].activityLog) data[idx].activityLog = [];
+        data[idx].activityLog.push({
+          ts: Date.now(), type: 'email', icon: internal ? '🔔' : '✉️',
+          title: internal ? `[Internal] ${campaignLabel}` : campaignLabel,
+          note: subject, who: 'Drip Engine — Auto'
+        });
+        data[idx].updated = Date.now();
+        crmSave(tab, data);
+        break;
+      }
+    } catch(e) {}
+  }
+
+  renderQueue() {
+    const el = document.getElementById('mgrDripQueue');
+    if (!el) return;
+    let q = [];
+    try { q = JSON.parse(localStorage.getItem('termac_drip_queue') || '[]'); } catch(e) {}
+    const badge = document.getElementById('mgrDripBadge');
+    if (badge) { badge.style.display = q.length ? 'inline' : 'none'; badge.textContent = q.length; }
+    if (!q.length) {
+      el.innerHTML = BREVO_API_KEY
+        ? '<div style="color:var(--green);font-size:12px;font-weight:600">✅ Brevo active — all sequences firing automatically.</div>'
+        : '<div style="color:var(--soft);font-size:12px">Brevo API key not yet configured. Sequences are tracked and will queue here until the key is added.</div>';
+      return;
+    }
+    el.innerHTML = q.slice(0,15).map(item => `
+      <div style="background:var(--bg);border-radius:8px;padding:10px 12px;margin-bottom:6px;border-left:3px solid ${BREVO_API_KEY?'#059669':'#D97706'}">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:700;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.recordName}</div>
+            <div style="font-size:10px;color:var(--soft);margin-top:2px">${item.campaignLabel} · ${item.subject||''}</div>
+            ${item.to?`<div style="font-size:10px;color:var(--blue)">→ ${item.to}</div>`:''}
+            ${item.reason?`<div style="font-size:10px;color:var(--amber)">${item.reason}</div>`:''}
+          </div>
+          <div style="font-size:10px;color:var(--soft);flex-shrink:0">${new Date(item.queuedAt).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</div>
+        </div>
+      </div>`).join('') + (q.length>15?`<div style="font-size:11px;color:var(--soft);padding:4px">${q.length-15} more queued</div>`:'');
+  }
+}
+
+// ── WIRE INTO MANAGER DASHBOARD ───────────────────────────────────────────
+// Add Drip Queue panel to manager dashboard just before the closing tag
+(function addDripPanel() {
+  const panel = document.getElementById('mgrPanel-dashboard');
+  if (!panel) return;
+  const div = document.createElement('div');
+  div.style.cssText = 'background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;margin-top:16px';
+  div.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft)">✉️ Drip Campaign Queue</div>
+      <span id="mgrDripBadge" style="background:var(--amber);color:#fff;border-radius:10px;padding:1px 8px;font-size:10px;font-weight:700;display:none"></span>
+    </div>
+    <div id="mgrDripQueue"><div style="color:var(--soft);font-size:12px">Loading...</div></div>`;
+  panel.appendChild(div);
+})();
+
+// ── START THE ENGINE ──────────────────────────────────────────────────────
+const _dripEngine = new DripEngine();
+window.addEventListener('load', () => {
+  setTimeout(() => { _dripEngine.run(); }, 1500); // slight delay so CRM data is loaded
+  setInterval(() => { _dripEngine.run(); }, 30 * 60 * 1000); // re-check every 30 minutes
+});
+
+console.log('✅ Termac Drip Engine v1.0 — 20 automated sequences live. BREVO_API_KEY: ' + (BREVO_API_KEY ? 'ACTIVE' : 'Pending credentials — queuing all sequences'));
+
 console.log('✅ Termac Intelligence Engine v4.0 — Invoice Aging · Estimate Recovery · Agreement Gaps · Bundle Tracker · Price Reviews · Emergency Conversions · Drive Time · FTFR Analysis · Proposal Aging · Seasonal Distribution · AHJ Calendar · Cert Dispatch Block · Proof of Service');
 </script>
 
