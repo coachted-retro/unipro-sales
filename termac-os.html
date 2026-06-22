@@ -20535,6 +20535,115 @@ function openTripStack(accountId) {
 // An existing real appointment always anchors its day regardless of
 // reuse, since a booked appointment isn't something to route around.
 
+// ══════════════════════════════════════════════════════════════
+//  OUTLOOK GRAPH API STUB
+//  Set OUTLOOK_GRAPH_TOKEN once Azure/Entra SSO is live.
+//  Until then, Plan My Day falls back to in-platform appointments.
+//  When token is present, fetchOutlookEvents() pulls the rep's full
+//  calendar (service calls, personal blocks, meetings) so the planner
+//  sees the complete picture before filling gaps.
+// ══════════════════════════════════════════════════════════════
+const OUTLOOK_GRAPH_TOKEN = ''; // ← paste Graph API token here post-Azure
+
+async function fetchOutlookEvents(dateStr) {
+  if (!OUTLOOK_GRAPH_TOKEN) return []; // not yet wired — use in-platform data
+  try {
+    const start = dateStr + 'T00:00:00';
+    const end   = dateStr + 'T23:59:59';
+    const url = `https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=${start}&endDateTime=${end}&$select=subject,start,end,location,body&$top=20`;
+    const res = await fetch(url, { headers: { 'Authorization': 'Bearer ' + OUTLOOK_GRAPH_TOKEN } });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.value || []).map(ev => ({
+      id: ev.id || ('outlook_' + Math.random()),
+      source: 'outlook',
+      subject: ev.subject || 'Blocked',
+      startTime: ev.start?.dateTime?.slice(11,16) || '',
+      endTime:   ev.end?.dateTime?.slice(11,16) || '',
+      location:  ev.location?.displayName || '',
+      isPersonal: /personal|lunch|gym|family|dr\.|doctor|dentist|appt/i.test(ev.subject || '')
+    }));
+  } catch(e) { return []; }
+}
+
+// ── Work/life balance check ────────────────────────────────────
+// Returns a nudge string if the rep has a heavy or long-streak week.
+function checkWorkLifeBalance(repName, selectedDates) {
+  const saved = JSON.parse(localStorage.getItem('termac_rep_plans') || '{}');
+  const today = new Date();
+  let streak = 0;
+  for (let i = 1; i <= 10; i++) {
+    const d = new Date(today); d.setDate(today.getDate() - i);
+    const key = repName + '|' + d.toISOString().slice(0,10);
+    if (saved[key]) streak++; else break;
+  }
+  const daysPlanned = selectedDates.length;
+  const nudges = [];
+  if (streak >= 6) nudges.push(`⚡ You've planned ${streak} days in a row — consider protecting one afternoon this week for admin, training, or rest.`);
+  if (daysPlanned >= 5) nudges.push(`📅 Planning a full 5-day week. Make sure you've left time for proposal follow-up and admin — field days without desk time can let pipeline fall behind.`);
+  return nudges.join(' ');
+}
+
+// ── AI Day Brief ───────────────────────────────────────────────
+// Calls Claude proxy for a personalized coaching note for each
+// planned day. Non-blocking — renders after the plan is already shown.
+async function getAIDayBrief(dayPlan, repName) {
+  try {
+    const apptSummary = dayPlan.appointments.length
+      ? dayPlan.appointments.map(a => `${a.time || 'TBD'} — ${a.name || a.business} (${a.address || 'address TBD'})`).join('; ')
+      : 'No confirmed appointments';
+    const oppSummary = dayPlan.opportunities.slice(0,5).map(o =>
+      `${o.name} (${o.type}, score ${o.score}, ~${o.dist}mi, ${o.detail})`
+    ).join('; ') || 'No nearby opportunities surfaced';
+
+    const prompt = `You are an expert field sales coach for ${repName}, a fire protection and commercial kitchen services sales rep at Termac (divisions: UniPro fire suppression, Quality III extinguishers, Filter Man hood filters, GTO grease traps).
+
+Today's date: ${dayPlan.date} (${formatPlanDate(dayPlan.date)})
+Confirmed appointments: ${apptSummary}
+Nearby opportunities queued: ${oppSummary}
+
+Write a SHORT, practical day brief (3-5 sentences max). Include:
+1. One sentence framing the day's focus area or theme
+2. One specific tip for the highest-score opportunity
+3. One coaching reminder relevant to their schedule density
+4. If the day looks heavy, one work-life balance note
+
+Tone: direct, confident, like a seasoned field sales manager. No bullet points. No preamble. Plain paragraphs only.`;
+
+    const res = await fetch('https://unipro-ai-proxy.tedscholl.workers.dev/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 300,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+    const data = await res.json();
+    return data?.content?.[0]?.text?.trim() || '';
+  } catch(e) { return ''; }
+}
+
+// ── Pre-visit context per stop ─────────────────────────────────
+function buildStopContext(opp) {
+  const lines = [];
+  if (opp.lastActivity) {
+    const d = new Date(opp.lastActivity.ts);
+    const ago = Math.round((Date.now() - opp.lastActivity.ts) / 86400000);
+    lines.push(`Last contact ${ago}d ago: ${opp.lastActivity.note || opp.lastActivity.title || ''}`);
+  }
+  if (opp.services && opp.services.length) {
+    lines.push(`Services: ${opp.services.join(', ')}`);
+  }
+  if (opp.status === 'hot') lines.push('🔥 HOT — follow up urgently');
+  else if (opp.followupDate) {
+    const overdue = new Date(opp.followupDate) < new Date();
+    lines.push(overdue ? `⚠️ Follow-up overdue since ${opp.followupDate}` : `Follow-up due ${opp.followupDate}`);
+  }
+  if (opp.churnScore >= 7) lines.push(`⚡ Churn risk ${opp.churnScore}/10 — prioritize`);
+  return lines.join(' · ') || 'New opportunity — intro visit';
+}
+
 let planDaySelectedDates = new Set();
 let planDayCalMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
 
@@ -20602,7 +20711,7 @@ function planDayCalRender() {
   if (confirmBtn) confirmBtn.disabled = n === 0;
 }
 
-function confirmPlanDays() {
+async function confirmPlanDays() {
   if (!planDaySelectedDates.size) return;
   const dates = [...planDaySelectedDates].sort();
   closeModal('planDayCalModal');
@@ -20617,39 +20726,65 @@ function formatPlanDate(dateStr) {
 // Plans a single date, given the set of ZIP-prefix clusters already
 // used by earlier days in this batch (mutated in place as each day
 // claims a cluster).
-function planSingleDay(dateStr, usedPrefixes) {
+async function planSingleDay(dateStr, usedPrefixes) {
   const repName = _currentUser?.name;
   const accounts = crmLoad('accounts');
-  const leads = crmLoad('leads');
+  const leads    = crmLoad('leads');
 
-  // 1. Does the rep already have an appointment booked this date?
-  const myAppts = [...accounts, ...leads].filter(r =>
+  // 1. Pull confirmed appointments (in-platform + Outlook when live)
+  const inPlatformAppts = [...accounts, ...leads].filter(r =>
     r.assignedRep === repName && r.appointment && r.appointment.date === dateStr
-  );
-  if (myAppts.length) {
-    const anchor = myAppts[0];
-    const address = anchor.address || anchor.appointment.location || '';
-    const zip = extractZip(address) || extractZip(anchor.appointment.location || '');
-    if (zip) usedPrefixes.add(zip.slice(0, 3));
-    const opps = getTripOpportunities(' ' + (zip || ''), anchor.id, 12);
+  ).map(r => ({
+    id: r.id, tab: r.status ? 'leads' : 'accounts',
+    name: r.name || r.business || '',
+    address: r.address || r.appointment?.location || '',
+    time: r.appointment?.time || '',
+    source: 'platform'
+  }));
+
+  const outlookAppts = await fetchOutlookEvents(dateStr); // [] until Azure live
+  const outlookSalesAppts = outlookAppts
+    .filter(e => !e.isPersonal)
+    .map(e => ({ id: e.id, name: e.subject, address: e.location, time: e.startTime, source: 'outlook' }));
+  const outlookBlocks = outlookAppts.filter(e => e.isPersonal);
+
+  const allAppts = [...inPlatformAppts, ...outlookSalesAppts]
+    .sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+
+  // 2. Multiple appointments: fill gaps around every confirmed stop
+  if (allAppts.length) {
+    const seenOppIds = new Set();
+    let opportunities = [];
+    allAppts.forEach(appt => {
+      const zip = extractZip(appt.address);
+      if (zip) usedPrefixes.add(zip.slice(0, 3));
+      getTripOpportunities(' ' + (zip || appt.address || ''), appt.id, 8).forEach(o => {
+        if (!seenOppIds.has(o.id)) { seenOppIds.add(o.id); opportunities.push(o); }
+      });
+    });
+    opportunities = opportunities.slice(0, 15);
     return {
-      date: dateStr, hasAppointment: true,
-      anchorLabel: `📅 ${anchor.appointment.time || ''} — ${anchor.name || anchor.business} · ${address || 'No address on file'}`,
-      opportunities: opps
+      date: dateStr, hasAppointment: true, appointments: allAppts, outlookBlocks,
+      anchorLabel: allAppts.length === 1
+        ? `📅 ${allAppts[0].time || 'Scheduled'} — ${allAppts[0].name} · ${allAppts[0].address || 'address TBD'}`
+        : `📅 ${allAppts.length} confirmed stops — gaps filled with nearby opportunities`,
+      opportunities
     };
   }
 
-  // 2. Open day -- fall back to the best unused opportunity cluster
+  // 3. Open day — find best unused cluster
   const territory = currentRepTerritory();
-  const hotWarm = leads.filter(l => l.status === 'hot' || l.status === 'warm');
-  const inTerritory = territory ? hotWarm.filter(l => zipMatchesTerritory(l.zip || extractZip(l.address), territory)) : hotWarm;
+  const hotWarm   = leads.filter(l => l.status === 'hot' || l.status === 'warm');
+  const inTerritory = territory
+    ? hotWarm.filter(l => zipMatchesTerritory(l.zip || extractZip(l.address), territory))
+    : hotWarm;
 
   const clusters = {};
   inTerritory.forEach(l => {
     const zip = extractZip(l.address) || l.zip;
     if (!zip) return;
     const prefix = String(zip).slice(0, 3);
-    if (usedPrefixes.has(prefix)) return; // already covered by an earlier day in this batch
+    if (usedPrefixes.has(prefix)) return;
     if (!clusters[prefix]) clusters[prefix] = { prefix, leads: [], score: 0 };
     clusters[prefix].leads.push(l);
     clusters[prefix].score += (l.status === 'hot' ? 3 : 1.5) + ((l.aiScore || 5) / 5);
@@ -20658,15 +20793,14 @@ function planSingleDay(dateStr, usedPrefixes) {
   const clusterList = Object.values(clusters);
   if (!clusterList.length) {
     return {
-      date: dateStr, hasAppointment: false,
-      anchorLabel: 'No open appointment, and every nearby opportunity area is already covered by another planned day.',
+      date: dateStr, hasAppointment: false, appointments: [], outlookBlocks: [],
+      anchorLabel: 'No open appointment — every opportunity cluster is already covered by another planned day.',
       opportunities: []
     };
   }
 
   const best = clusterList.sort((a, b) => b.score - a.score)[0];
   usedPrefixes.add(best.prefix);
-
   const zipCounts = {};
   best.leads.forEach(l => {
     const z = extractZip(l.address) || l.zip;
@@ -20674,21 +20808,23 @@ function planSingleDay(dateStr, usedPrefixes) {
   });
   const anchorZip = Object.entries(zipCounts).sort((a, b) => b[1] - a[1])[0][0];
   const opps = getTripOpportunities(' ' + anchorZip, null, 12);
-
   return {
-    date: dateStr, hasAppointment: false,
-    anchorLabel: `🧭 Suggested area — ZIP ${best.prefix}xx · ${best.leads.length} hot/warm lead${best.leads.length > 1 ? 's' : ''}`,
+    date: dateStr, hasAppointment: false, appointments: [], outlookBlocks: [],
+    anchorLabel: `🧭 Suggested focus area — ZIP ${best.prefix}xx · ${best.leads.length} hot/warm lead${best.leads.length > 1 ? 's' : ''}`,
     opportunities: opps
   };
 }
 
-function planDaysForDates(dateList) {
+async function planDaysForDates(dateList) {
   const usedPrefixes = new Set();
-  const dayPlans = dateList.map(d => planSingleDay(d, usedPrefixes));
+  const dayPlans = await Promise.all(dateList.map(d => planSingleDay(d, usedPrefixes)));
 
-  // Persist each day's plan so the manager dashboard calendar can
-  // show which reps have planned their days and what they have on.
   const repName = _currentUser?.name || 'Unknown Rep';
+
+  // Work/life balance nudge
+  const wlbNudge = checkWorkLifeBalance(repName, dateList);
+
+  // Persist for manager dashboard calendar
   const saved = JSON.parse(localStorage.getItem('termac_rep_plans') || '{}');
   dayPlans.forEach(dp => {
     const key = repName + '|' + dp.date;
@@ -20696,37 +20832,82 @@ function planDaysForDates(dateList) {
       rep: repName, date: dp.date,
       hasAppointment: dp.hasAppointment,
       anchorLabel: dp.anchorLabel,
+      appointments: dp.appointments || [],
       opportunities: dp.opportunities,
       savedAt: Date.now()
     };
   });
   localStorage.setItem('termac_rep_plans', JSON.stringify(saved));
 
-  renderPlanDayResults(dayPlans);
+  renderPlanDayResults(dayPlans, wlbNudge, repName);
 }
 
-function renderPlanDayResults(dayPlans) {
+function renderPlanDayResults(dayPlans, wlbNudge, repName) {
   const modal = document.getElementById('planDayResultModal');
   const body = document.getElementById('planDayResultBody');
   if (!modal || !body) return;
-  body.innerHTML = dayPlans.map(dp => {
+
+  // Render the plan immediately, then inject AI briefs async
+  body.innerHTML = (wlbNudge ? `<div style="background:#FEF3C7;border:1.5px solid #F59E0B;border-radius:10px;padding:12px 14px;margin-bottom:18px;font-size:12px;color:#92400E">${wlbNudge}</div>` : '') +
+  dayPlans.map((dp, idx) => {
     const anchorAddrMatch = dp.anchorLabel.match(/·\s*(.+)$/);
     const anchorAddr  = anchorAddrMatch ? anchorAddrMatch[1].trim() : '';
     const optimized   = optimizeRoute(anchorAddr, dp.opportunities);
     const mapUrl      = buildRouteMapUrl(anchorAddr, optimized);
     const routeSummary = buildRouteSummaryBar(anchorAddr, dp.opportunities, optimized, mapUrl);
+    const apptBar = dp.appointments && dp.appointments.length > 1
+      ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">${dp.appointments.map(a =>
+          `<span style="background:#DBEAFE;color:#1E40AF;border-radius:5px;padding:2px 8px;font-size:10px;font-weight:700">📅 ${a.time || 'TBD'} ${a.name}${a.source==='outlook'?' (Outlook)':''}</span>`
+        ).join('')}</div>` : '';
+    const blocksBar = dp.outlookBlocks && dp.outlookBlocks.length
+      ? `<div style="font-size:11px;color:#6B7280;margin-bottom:6px">🔒 Personal blocks: ${dp.outlookBlocks.map(b=>b.subject).join(', ')}</div>` : '';
+    const stopsHtml = optimized.map((o, i) => {
+      const ctx = buildStopContext(o);
+      return `<div style="display:flex;align-items:flex-start;gap:12px;padding:12px;border:1.5px solid var(--line);border-radius:10px;background:#fff;margin-bottom:8px">
+        <div style="width:28px;height:28px;border-radius:50%;background:var(--red);color:#fff;display:flex;align-items:center;justify-content:center;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;flex-shrink:0">${i+1}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${o.name}</div>
+          <div style="font-size:11px;color:var(--soft);margin:2px 0">${o.address || 'Address not on file'}</div>
+          <div style="font-size:11px;color:#4B5563;margin-top:3px;font-style:italic">${ctx}</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
+            <span style="background:#F3F4F6;color:var(--ink);border-radius:4px;padding:1px 7px;font-size:10px;font-weight:700">${o.type}</span>
+            <span style="background:var(--bg);color:var(--soft);border-radius:4px;padding:1px 7px;font-size:10px">~${o.dist} mi · ${o.detail}</span>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:5px;flex-shrink:0">
+          <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:16px;color:var(--red);text-align:center">${o.score}</div>
+          <div style="font-size:9px;color:var(--soft);text-align:center;text-transform:uppercase;letter-spacing:.04em">Score</div>
+          <button onclick="closeModal('planDayResultModal');setTimeout(()=>openAcctDetail('${o.id}','${o.tab}'),100)" style="background:var(--red);color:#fff;border:none;border-radius:5px;padding:4px 8px;font-size:10px;font-family:Barlow Condensed,sans-serif;font-weight:700;cursor:pointer;white-space:nowrap">View →</button>
+        </div>
+      </div>`;
+    }).join('');
+
     return `
     <div style="margin-bottom:22px;padding-bottom:18px;border-bottom:1px solid var(--line)">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
         <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:14px;color:var(--ink)">${formatPlanDate(dp.date)}</div>
         ${dp.hasAppointment ? '<span style="background:#DBEAFE;color:#1E40AF;border-radius:4px;padding:1px 7px;font-size:10px;font-weight:700">BOOKED</span>' : '<span style="background:#F3F4F6;color:var(--soft);border-radius:4px;padding:1px 7px;font-size:10px;font-weight:700">OPEN DAY</span>'}
       </div>
-      <div style="font-size:12px;color:var(--soft);margin-bottom:10px">${dp.anchorLabel}</div>
+      <div style="font-size:12px;color:var(--soft);margin-bottom:6px">${dp.anchorLabel}</div>
+      ${blocksBar}${apptBar}
+      <div id="aiDayBrief_${idx}" style="background:#F0FDF4;border:1.5px solid #86EFAC;border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:12px;color:#166534;font-style:italic">🤖 Generating your day brief…</div>
       ${routeSummary}
-      ${renderTripStackRows(optimized)}
+      ${stopsHtml || '<div style="color:var(--soft);font-size:13px;text-align:center;padding:20px">No nearby opportunities found within 10 miles.</div>'}
     </div>`;
   }).join('');
+
   modal.classList.add('open');
+
+  // Non-blocking: inject AI brief per day after render
+  dayPlans.forEach((dp, idx) => {
+    getAIDayBrief(dp, repName).then(brief => {
+      const el = document.getElementById('aiDayBrief_' + idx);
+      if (el) el.innerHTML = brief
+        ? `🤖 <strong>Coach:</strong> ${brief}`
+        : '';
+      if (el && !brief) el.style.display = 'none';
+    });
+  });
 }
 
 
