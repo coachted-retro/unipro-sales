@@ -605,7 +605,7 @@ footer{text-align:center;margin-top:40px;color:#9AA0A8;font-size:11px;letter-spa
 
 
 /* ══ ESTIMATE OVERLAY ══ */
-.est-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:var(--bg);z-index:450;flex-direction:column;overflow:hidden}
+.est-overlay{display:none;position:fixed;top:0;left:var(--rail-w);width:calc(100% - var(--rail-w));height:100%;background:var(--bg);z-index:500;flex-direction:column;overflow:hidden;transition:left .2s ease,width .2s ease}
 .est-overlay.open{display:flex}
 .est-header{background:#1A1D21;border-bottom:3px solid var(--red);padding:0 20px;height:52px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
 .est-header h2{font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:15px;letter-spacing:.12em;text-transform:uppercase;color:#fff;margin:0}
@@ -7325,7 +7325,7 @@ function fsPrefillClientInfo() {
     }
   }
 
-  setIfEmpty('fs_bizName',    r.name || r.business || '');
+  setIfEmpty('fs_bizName',    r.business || r.name || '');
   setIfEmpty('fs_bizAddress', r.address || address);
   setIfEmpty('fs_bizCity',    r.city || city);
   setIfEmpty('fs_bizZip',     r.zip || zip);
@@ -7339,7 +7339,7 @@ function fsPrefillClientInfo() {
   if (typeof fsCalcProposal === 'function') fsCalcProposal();
   setIfEmpty('fs_visitDate',  new Date().toISOString().slice(0,10));
 
-  setIfEmpty('fs_contactName',  r.contactName || '');
+  setIfEmpty('fs_contactName',  r.contactName || r.name || '');
   setIfEmpty('fs_contactTitle', r.contactTitle || '');
   setIfEmpty('fs_contactPhone', r.contactPhone || '');
   setIfEmpty('fs_contactMobile', r.contactMobile || '');
@@ -7358,6 +7358,9 @@ function fsGo(from, to) {
   if (to === 0) fsPrefillClientInfo();
   if (to === 2) fsBuildFindingsAuto();
   if (to === 3) fsPrefillProposal();
+  // Trigger pricing calcs when navigating to FM or GTO steps
+  if (to === 1 && typeof svFMCalcRate === 'function') setTimeout(svFMCalcRate, 100);
+  if (to === 2 && typeof svGTOCalcRate === 'function') setTimeout(svGTOCalcRate, 100);
   if (to === 4) fsBuildSigSummary(); fsInitSigCanvas();
   if (to === 5) { fsAutoFillAcctFromClientInfo(); }
   if (to === 6) { fsBuildPipeline(); fsBuildOnboarding(); }
@@ -12559,6 +12562,7 @@ Usage Note: [1 sentence at this volume]` : ''}
 
     if (loadEl) loadEl.style.display = 'none';
     svTMRenderAIResult(text);
+    svTMAutoFillFromAI(text);
 
   } catch(e) {
     if (loadEl) loadEl.style.display = 'none';
@@ -12566,6 +12570,53 @@ Usage Note: [1 sentence at this volume]` : ''}
       resultEl.innerHTML = `<div style="background:#FEE2E2;border-radius:8px;padding:12px 14px;color:#991B1B;font-size:13px">
         ⚠️ AI analysis failed — check your connection and try again. You can continue with manual equipment selection below.
       </div>`;
+    }
+  }
+}
+
+function svTMAutoFillFromAI(text) {
+  // Parse AI recommendation and auto-fill form fields
+  // Machine type → mode and model
+  const machineTypeMatch = text.match(/Type:\s*([^\n]+)/i);
+  const tempMatch        = text.match(/Temperature Type:\s*([^\n]+)/i);
+  const dirMatch         = text.match(/Direction:\s*([^\n]+)/i);
+
+  // Map AI machine type to rental machine model
+  const typeText = (machineTypeMatch?.[1]||'').toLowerCase();
+  const isHighTemp = (tempMatch?.[1]||'').toLowerCase().includes('high');
+
+  // Set mode to Rental by default (most common)
+  const modeEl = document.getElementById('sv_tm_machine_mode');
+  if (modeEl && !modeEl.value) modeEl.value = 'rental';
+
+  // Try to match model
+  const rentalModels = document.getElementById('sv_tm_rental_model');
+  if (rentalModels && rentalModels.options.length > 1) {
+    let bestIdx = 0;
+    if (typeText.includes('undercounter')) bestIdx = 0;
+    else if (typeText.includes('low-profile') || typeText.includes('low profile')) bestIdx = 2;
+    else if (typeText.includes('door')) bestIdx = 3;
+    if (rentalModels.value === '' || rentalModels.value === '0') {
+      rentalModels.selectedIndex = bestIdx + 1;
+      rentalModels.dispatchEvent(new Event('change'));
+    }
+  }
+
+  // Water softener — suggest Small by default if not set
+  const softener = document.getElementById('sv_tm_softener_size');
+  if (softener && !softener.value) { softener.selectedIndex = 1; softener.dispatchEvent(new Event('change')); }
+
+  // Booster — default to Yes for Low-Temp machines
+  const boosterEl = document.getElementById('sv_tm_booster_needed');
+  if (boosterEl && !boosterEl.value && !isHighTemp) { boosterEl.value = 'Yes'; boosterEl.dispatchEvent(new Event('change')); }
+
+  // Auto-populate supplies description with chemicals from AI
+  const descEl = document.getElementById('sv_tm_supply_description');
+  if (descEl && !descEl.value) {
+    const chemSection = text.match(/DISH MACHINE CHEMICAL PROGRAM(.*?)(?:\*\*|$)/si);
+    if (chemSection) {
+      const chems = chemSection[1].trim().split('\n').filter(l=>l.trim()).slice(0,4).map(l=>l.replace(/^\s*[-•]/,'').trim()).join(', ');
+      descEl.value = chems;
     }
   }
 }
@@ -13079,8 +13130,11 @@ Return ONLY valid JSON:
       <span style="font-size:12px">${data.notes||''}</span></div>`;
     document.getElementById('svTMResult').style.display = 'block';
 
-    window._svTMLineItems = data.line_items || [];
+    window._svTMLineItems = [...(window._svTMLineItems||[]), ...(data.line_items||[])];
     svTMRenderLineItems();
+    // Clear description so rep can add another item
+    const descEl = document.getElementById('sv_tm_supply_description');
+    if (descEl) descEl.value = '';
   } catch(e) {
     document.getElementById('svTMResult').innerHTML = `<div style="background:#FEE2E2;border-radius:8px;padding:12px;font-size:13px;color:#991B1B">⚠ Could not parse response. Try rephrasing the description.</div>`;
     document.getElementById('svTMResult').style.display = 'block';
@@ -13099,7 +13153,11 @@ function svTMRenderLineItems() {
     total += (li.unit_price||0) * (li.qty||1);
     return `<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13px">
       <span style="flex:1">${li.description} <span style="color:var(--soft);font-size:11px">(${li.part_number||''})</span></span>
-      <span style="color:var(--soft);width:60px;text-align:center">×${li.qty} ${li.uom||''}</span>
+      <div style="display:flex;align-items:center;gap:4px">
+        <button onclick="svTMAdjustQty(${idx},-1)" style="background:var(--line);border:none;border-radius:4px;width:22px;height:22px;cursor:pointer;font-size:14px;line-height:1">−</button>
+        <span style="color:var(--soft);width:50px;text-align:center">×${li.qty} ${li.uom||''}</span>
+        <button onclick="svTMAdjustQty(${idx},1)" style="background:var(--line);border:none;border-radius:4px;width:22px;height:22px;cursor:pointer;font-size:14px;line-height:1">+</button>
+      </div>
       <span style="font-family:'Barlow Condensed',sans-serif;font-weight:700;width:80px;text-align:right">$${((li.unit_price||0)*(li.qty||1)).toLocaleString()}</span>
       <span onclick="svTMRemoveLineItem(${idx})" style="cursor:pointer;color:var(--soft);font-size:15px;padding:0 4px" title="Remove">✕</span>
     </div>`;
@@ -13110,6 +13168,13 @@ function svTMRenderLineItems() {
 function svTMRemoveLineItem(idx) {
   if (!Array.isArray(window._svTMLineItems)) return;
   window._svTMLineItems.splice(idx, 1);
+  svTMRenderLineItems();
+}
+function svTMAdjustQty(idx, delta) {
+  if (!Array.isArray(window._svTMLineItems)) return;
+  const item = window._svTMLineItems[idx];
+  if (!item) return;
+  item.qty = Math.max(1, (item.qty||1) + delta);
   svTMRenderLineItems();
 }
 
