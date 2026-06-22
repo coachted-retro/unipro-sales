@@ -2131,7 +2131,7 @@ function openCRM(tab, viaDmsDashboard){
   // Everyone else gets the tab button hidden entirely, not just
   // access-restricted, since the goal is zero clutter for sales.
   const dmsTabBtn = document.getElementById('crmTabDmsCalls');
-  if (dmsTabBtn) dmsTabBtn.style.display = (role === 'dms' || (role === 'manager' && viaDmsDashboard)) ? '' : 'none';
+  if (dmsTabBtn) dmsTabBtn.style.display = (role === 'dms' || role === 'reception' || (role === 'manager' && viaDmsDashboard)) ? '' : 'none';
 
   // Reception gets her own simplified "Reception" tab — same underlying
   // lead pool as Leads, just relabeled and grouped with the DMS dashboard
@@ -2168,7 +2168,7 @@ function openCRM(tab, viaDmsDashboard){
 // team per Ted) lands on her Reception tab instead since she can't see
 // the cold-call pool.
 function openDmsDashboard(){
-  openCRM(_currentUser?.role === 'reception' ? 'leads' : 'dms_coldcall', true);
+  openCRM('dms_coldcall', true);
 }
 // Keeps the "📋 Call List" nav badge in sync with the actual pool size --
 // called on every CRM open, plus right after a CSV import adds new records,
@@ -2380,6 +2380,12 @@ function renderCRMView(){
         const key = `renewal_${a.id}`;
         if (!dismissed.includes(key)) alerts.push({ key, color:'#1B5FA8', bg:'#DBEAFE', icon:'🔔', label:'Renewal approaching — no recent contact', detail:`${a.name||a.business} — renews in ${daysToRenewal}d`, action:`openAcctDetail('${a.id}','accounts')` });
       });
+
+    // Routing notifications from reception
+    const routingHtml = (typeof rcpCheckRoutingNotifications === 'function') ? rcpCheckRoutingNotifications() : '';
+    if (routingHtml) {
+      html += `<div id="repRoutingBar" style="margin-bottom:14px"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--soft);margin-bottom:6px">📞 Routed to You Today</div>${routingHtml}</div>`;
+    }
 
     if (alerts.length) {
       html += `<div id="repAlertBar" style="margin-bottom:14px">
@@ -14128,6 +14134,7 @@ function opsCertAHJ(accountId) {
     <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:16px;letter-spacing:.1em;text-transform:uppercase;color:#fff">📞 Reception — Inbound Call Center</div>
     <div class="ov-header-btns">
       <button class="ov-btn" onclick="openCRM('leads')">📋 Lead Pool →</button>
+      <button class="ov-btn" onclick="openDmsDashboard()" style="background:#0D7490;border-color:#0D7490">📞 Outbound Calls →</button>
       <button class="ov-btn close" onclick="document.getElementById('ovReception').classList.remove('open');document.getElementById('ovReception').style.display='none'">✕</button>
     </div>
   </div>
@@ -14142,7 +14149,7 @@ function opsCertAHJ(accountId) {
       <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:14px">📞 Log Inbound Call</div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px">
         <div><label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em">Caller Name</label><input id="rcpCallerName" type="text" placeholder="First Last" style="width:100%;margin-top:4px;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;box-sizing:border-box"></div>
-        <div><label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em">Company</label><input id="rcpCallerCompany" type="text" placeholder="Business name" style="width:100%;margin-top:4px;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;box-sizing:border-box"></div>
+        <div><label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em">Company</label><input id="rcpCallerCompany" type="text" placeholder="Business name" autocomplete="off" oninput="rcpAccountLookup(this.value)" style="width:100%;margin-top:4px;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;box-sizing:border-box"><div id="rcpAccountDropdown" style="display:none;position:absolute;z-index:999;background:#fff;border:1.5px solid var(--line);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);max-height:220px;overflow-y:auto;width:280px;margin-top:2px"></div></div>
         <div><label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em">Phone</label><input id="rcpCallerPhone" type="tel" placeholder="(xxx) xxx-xxxx" style="width:100%;margin-top:4px;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;box-sizing:border-box"></div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px">
@@ -14219,6 +14226,186 @@ function rcpRenderLog(){
       <div style="font-size:12px">${c.routeTo?'→ '+escH(c.routeTo):'<span style="color:var(--soft)">Not routed</span>'}</div>
       <div style="display:flex;gap:4px;flex-wrap:wrap"><span style="color:${sc[c.status]||'#6B7280'};font-size:10px;font-weight:800;font-family:Barlow Condensed,sans-serif">${(c.status||'open').toUpperCase()}</span>${c.status!=='resolved'?`<button onclick="rcpResolve('${c.id}')" style="background:none;border:1.5px solid var(--line);color:var(--ink);border-radius:5px;padding:3px 8px;font-size:10px;font-family:Barlow Condensed,sans-serif;font-weight:700;cursor:pointer">Resolve ✓</button>`:''}</div>
     </div>`).join('');
+}
+</script>
+
+
+<script>
+// ══════════════════════════════════════════════════════════════
+//  RECEPTION — ACCOUNT LOOKUP & ROUTING NOTIFICATIONS
+// ══════════════════════════════════════════════════════════════
+
+// Real-time account lookup as receptionist types company name
+let _rcpLookupTimer = null;
+function rcpAccountLookup(q) {
+  const dd = document.getElementById('rcpAccountDropdown');
+  if (!dd) return;
+  clearTimeout(_rcpLookupTimer);
+  if (!q || q.length < 2) { dd.style.display = 'none'; return; }
+  _rcpLookupTimer = setTimeout(() => {
+    const term = q.toLowerCase();
+    const accounts = crmLoad('accounts').filter(a =>
+      (a.name||'').toLowerCase().includes(term) ||
+      (a.business||'').toLowerCase().includes(term)
+    ).slice(0, 6);
+    const leads = crmLoad('leads').filter(l =>
+      (l.business||'').toLowerCase().includes(term) ||
+      (l.name||'').toLowerCase().includes(term)
+    ).slice(0, 4);
+
+    if (!accounts.length && !leads.length) { dd.style.display = 'none'; return; }
+
+    const items = [
+      ...accounts.map(a => ({ id:a.id, tab:'accounts', label:a.name||a.business||'', sub:`Active Account · Rep: ${a.assignedRep||a.rep||'Unassigned'} · Health: ${a.healthScore||'—'}/10`, data:a })),
+      ...leads.map(l => ({ id:l.id, tab:'leads', label:l.business||l.name||'', sub:`Lead · ${l.status||'new'} · Source: ${(l.source||'').replace('Live Harvester — ','')}`, data:l }))
+    ];
+
+    dd.style.display = 'block';
+    dd.innerHTML = items.map(item => `
+      <div onclick="rcpSelectAccount('${item.id}','${item.tab}')" style="padding:10px 12px;cursor:pointer;border-bottom:1px solid var(--line)" onmouseover="this.style.background='#F9FAFB'" onmouseout="this.style.background=''">
+        <div style="font-weight:700;font-size:13px">${escH(item.label)}</div>
+        <div style="font-size:11px;color:var(--soft);margin-top:1px">${escH(item.sub)}</div>
+      </div>`).join('');
+  }, 200);
+}
+
+function rcpSelectAccount(id, tab) {
+  const data = crmLoad(tab);
+  const r = data.find(x => x.id === id);
+  const dd = document.getElementById('rcpAccountDropdown');
+  if (dd) dd.style.display = 'none';
+  if (!r) return;
+
+  // Fill form fields
+  const name = document.getElementById('rcpCallerName');
+  const company = document.getElementById('rcpCallerCompany');
+  const phone = document.getElementById('rcpCallerPhone');
+  if (company) company.value = r.name || r.business || '';
+  if (phone && !phone.value) phone.value = r.phone || '';
+
+  // Show account context panel
+  let ctxDiv = document.getElementById('rcpAccountContext');
+  if (!ctxDiv) {
+    ctxDiv = document.createElement('div');
+    ctxDiv.id = 'rcpAccountContext';
+    const form = document.querySelector('#ovReception .act-modal-body, #ovReception [style*="border-radius:12px"]');
+    const notesEl = document.getElementById('rcpNotes');
+    if (notesEl) notesEl.closest('div').after(ctxDiv);
+  }
+  const health = typeof calcChurnScore === 'function' ? calcChurnScore(r) : null;
+  const lastSvc = r.lastCheckin ? Math.floor((Date.now()-r.lastCheckin)/86400000) : null;
+  const rep = r.assignedRep || r.rep || 'Unassigned';
+  const isAcct = tab === 'accounts';
+  ctxDiv.innerHTML = `
+    <div style="background:#EBF2FD;border:1.5px solid #93C5FD;border-radius:8px;padding:12px 14px;margin-top:8px;display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start">
+      <div style="font-size:20px">${isAcct ? '🏢' : '🎯'}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:700;font-size:13px">${escH(r.name||r.business||'')} <span style="font-size:10px;font-weight:400;color:#1E40AF">${isAcct?'EXISTING ACCOUNT':'LEAD'}</span></div>
+        <div style="font-size:11px;color:#1E40AF;margin-top:3px">${escH(r.address||'')} · Rep: <strong>${escH(rep)}</strong>${lastSvc!==null?' · Last visit: '+lastSvc+'d ago':''}</div>
+        ${isAcct && health !== null ? `<div style="font-size:11px;color:${health>=7?'#C8102E':'#1E7B3C'};margin-top:2px;font-weight:700">Churn risk: ${health}/10${health>=7?' ⚠️ Needs attention':''}</div>` : ''}
+        ${isAcct && r.renewalDate ? `<div style="font-size:11px;color:#1E40AF;margin-top:2px">Renewal: ${r.renewalDate}</div>` : ''}
+      </div>
+      <div style="display:flex;gap:6px;flex-shrink:0">
+        <button onclick="if(typeof openAcctDetail==='function')openAcctDetail('${id}','${tab}')" style="background:#1B5FA8;color:#fff;border:none;border-radius:6px;padding:5px 12px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;cursor:pointer">View Record →</button>
+        <button onclick="document.getElementById('rcpAccountContext').remove()" style="background:none;border:1.5px solid #93C5FD;color:#1E40AF;border-radius:6px;padding:5px 8px;font-size:11px;cursor:pointer">✕</button>
+      </div>
+    </div>`;
+
+  // Pre-fill call type if we can infer
+  const typeEl = document.getElementById('rcpCallType');
+  if (typeEl && !typeEl.value) {
+    typeEl.value = isAcct ? 'Existing Customer — Service Question' : 'New Service Inquiry';
+  }
+  // Pre-suggest routing to assigned rep
+  const routeEl = document.getElementById('rcpRouteTo');
+  if (routeEl && !routeEl.value && rep && rep !== 'Unassigned') {
+    // Try to match rep name to dropdown option
+    Array.from(routeEl.options).forEach(o => {
+      if (o.text === rep || o.text.includes(rep.split(' ')[1]||rep)) routeEl.value = o.value || o.text;
+    });
+  }
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click', e => {
+  const dd = document.getElementById('rcpAccountDropdown');
+  if (dd && !e.target.closest('#rcpAccountDropdown') && e.target.id !== 'rcpCallerCompany') {
+    dd.style.display = 'none';
+  }
+});
+
+// ── Routing Notifications ─────────────────────────────────────
+// When reception routes a call, push a notification for the recipient.
+// The rep sees it in their "Needs Your Attention" bar on next load.
+function rcpPushRoutingNotification(call) {
+  if (!call.routeTo) return;
+  try {
+    const notes = JSON.parse(localStorage.getItem('termac_routing_notifications')||'[]');
+    notes.unshift({
+      id: 'rn_' + call.id,
+      routedTo: call.routeTo,
+      callerName: call.name,
+      callerCompany: call.company,
+      callerPhone: call.phone,
+      type: call.type,
+      urgency: call.urgency,
+      notes: call.notes,
+      time: call.time,
+      date: call.date,
+      loggedBy: call.loggedBy,
+      read: false,
+      ts: Date.now()
+    });
+    // Keep last 100
+    localStorage.setItem('termac_routing_notifications', JSON.stringify(notes.slice(0,100)));
+  } catch(e) {}
+}
+
+// Override rcpLogCall to also fire routing notification
+const _origRcpLogCall = window.rcpLogCall;
+window.rcpLogCall = function() {
+  const call = _origRcpLogCall ? _origRcpLogCall.call(this) : null;
+  if (call && call.routeTo) rcpPushRoutingNotification(call);
+  return call;
+};
+
+// Check for routing notifications for the logged-in user
+// Called from renderCRMView on the leads tab
+function rcpCheckRoutingNotifications() {
+  const repName = _currentUser?.name;
+  if (!repName) return '';
+  try {
+    const notes = JSON.parse(localStorage.getItem('termac_routing_notifications')||'[]');
+    const today = new Date().toISOString().slice(0,10);
+    const mine = notes.filter(n =>
+      !n.read &&
+      n.date === today &&
+      (n.routedTo === repName || n.routedTo.includes(repName.split(' ')[1]||repName))
+    );
+    if (!mine.length) return '';
+    return mine.map(n => {
+      const urgColors = { emergency:'#C8102E', high:'#D97706', normal:'#1B5FA8' };
+      const urgBgs   = { emergency:'#FEE2E2', high:'#FEF3C7', normal:'#DBEAFE' };
+      const c = n.urgency || 'normal';
+      return `<div style="background:${urgBgs[c]||'#DBEAFE'};border-left:3px solid ${urgColors[c]||'#1B5FA8'};border-radius:8px;padding:9px 12px;margin-bottom:6px;display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:11px;font-weight:700;color:${urgColors[c]||'#1B5FA8'}">📞 Routed call — ${n.time} ${n.urgency==='emergency'?'🚨 EMERGENCY':''}</div>
+          <div style="font-size:11px;color:var(--ink);margin-top:1px"><strong>${escH(n.callerName||'Unknown')}</strong>${n.callerCompany?' · '+escH(n.callerCompany):''} ${n.callerPhone?'· '+escH(n.callerPhone):''}</div>
+          <div style="font-size:11px;color:var(--soft);margin-top:1px">${escH(n.type||'')}${n.notes?' — '+escH(n.notes):''} · From: ${escH(n.loggedBy||'Reception')}</div>
+        </div>
+        <button onclick="rcpMarkNotificationRead('${n.id}')" style="background:none;border:1.5px solid ${urgColors[c]||'#1B5FA8'};color:${urgColors[c]||'#1B5FA8'};border-radius:5px;padding:4px 10px;font-size:10px;font-family:Barlow Condensed,sans-serif;font-weight:700;cursor:pointer;flex-shrink:0">Got it ✓</button>
+      </div>`;
+    }).join('');
+  } catch(e) { return ''; }
+}
+
+function rcpMarkNotificationRead(id) {
+  try {
+    const notes = JSON.parse(localStorage.getItem('termac_routing_notifications')||'[]');
+    const n = notes.find(x => x.id === id);
+    if (n) { n.read = true; localStorage.setItem('termac_routing_notifications', JSON.stringify(notes)); }
+    renderCRMView();
+  } catch(e) {}
 }
 </script>
 
