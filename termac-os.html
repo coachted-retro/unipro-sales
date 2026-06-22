@@ -14094,147 +14094,6 @@ function estPrint(){
     <script>document.getElementById('printBody').innerHTML=\`${content.replace(/`/g,'\\`')}\`;<\/script>
     
 <script>
-// ══════════════════════════════════════════════════════════════
-//  SERVICE SCHEDULING QUEUE
-// ══════════════════════════════════════════════════════════════
-function opsRenderSchedulingQueue() {
-  const body = document.getElementById('opsSchedulingBody');
-  if (!body) return;
-  const accounts = crmLoad('accounts').filter(a => a.status === 'active');
-  const events = (() => { try { return JSON.parse(localStorage.getItem('termac_scheduler_events')||'[]'); } catch(e) { return []; } })();
-  const scheduled = new Set(events.map(e => e.accountId).filter(Boolean));
-  const today = new Date(); today.setHours(0,0,0,0);
-  const rows = [];
-  accounts.forEach(a => {
-    const _dueDate = a.renewalDate || a.nextDue || null;
-    const renewalDays = _dueDate ? Math.floor((new Date(_dueDate) - today) / 86400000) : null;
-    const lastService = a.lastCheckin ? Math.floor((Date.now() - a.lastCheckin) / 86400000) : null;
-    const isScheduled = scheduled.has(a.id);
-    let urgency=null, urgencyColor='', urgencyBg='';
-    if (renewalDays !== null && renewalDays <= 0)        { urgency='OVERDUE';            urgencyColor='#991B1B'; urgencyBg='#FEE2E2'; }
-    else if (renewalDays !== null && renewalDays <= 14)  { urgency=`DUE IN ${renewalDays}d`; urgencyColor='#C8102E'; urgencyBg='#FEE2E2'; }
-    else if (renewalDays !== null && renewalDays <= 45)  { urgency=`DUE IN ${renewalDays}d`; urgencyColor='#D97706'; urgencyBg='#FEF3C7'; }
-    else if (lastService !== null && lastService > 90 && !isScheduled) { urgency=`${lastService}d NO VISIT`; urgencyColor='#1E40AF'; urgencyBg='#DBEAFE'; }
-    if (!urgency) return;
-    rows.push({ a, urgency, urgencyColor, urgencyBg, isScheduled });
-  });
-  rows.sort((a,b) => { const o={'#991B1B':0,'#C8102E':1,'#D97706':2,'#1E40AF':3}; return (o[a.urgencyColor]||9)-(o[b.urgencyColor]||9); });
-  if (!rows.length) { body.innerHTML='<div style="text-align:center;padding:40px;color:var(--soft)">✅ No scheduling gaps — all active accounts are current.</div>'; return; }
-  body.innerHTML = rows.map(({a,urgency,urgencyColor,urgencyBg,isScheduled}) => `
-    <div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr 120px;align-items:center;gap:8px;padding:10px 12px;border:1.5px solid ${urgencyBg};border-left:3px solid ${urgencyColor};border-radius:8px;background:#fff;margin-bottom:6px">
-      <div><div style="font-weight:700;font-size:13px">${escH(a.name||a.business||'')}</div><div style="font-size:11px;color:var(--soft)">${escH(a.address||'')}</div></div>
-      <div><span style="background:${urgencyBg};color:${urgencyColor};border-radius:4px;padding:2px 7px;font-size:10px;font-weight:800;font-family:Barlow Condensed,sans-serif">${urgency}</span></div>
-      <div style="font-size:11px;color:var(--soft)">${(a.services||[]).join(', ')||'—'}</div>
-      <div style="font-size:11px;color:var(--soft)">${escH(a.assignedRep||a.rep||'Unassigned')}</div>
-      <div style="display:flex;gap:4px">
-        <button onclick="openAcctDetail('${a.id}','accounts')" style="background:var(--red);color:#fff;border:none;border-radius:5px;padding:5px 10px;font-size:10px;font-family:Barlow Condensed,sans-serif;font-weight:800;cursor:pointer">Book →</button>
-        ${isScheduled ? '<span style="font-size:10px;color:var(--green);font-weight:700">✓ Sched</span>' : ''}
-      </div>
-    </div>`).join('');
-}
-
-// ══════════════════════════════════════════════════════════════
-//  NEW ACCOUNT ONBOARDING QUEUE
-// ══════════════════════════════════════════════════════════════
-const OB_STEPS = [
-  { key:'agreementSigned',   label:'Agreement Signed',        icon:'📝' },
-  { key:'squareOnFile',      label:'Square / Payment on File', icon:'💳' },
-  { key:'firstJobScheduled', label:'First Job Scheduled',     icon:'📅' },
-  { key:'firstServiceDone',  label:'First Service Complete',  icon:'✅' },
-  { key:'certIssued',        label:'Cert Issued',             icon:'🏅' },
-  { key:'rep30dCheckin',     label:'Rep 30-Day Check-In',     icon:'🤝' },
-];
-function opsRenderOnboardingQueue() {
-  const body = document.getElementById('opsOnboardingBody');
-  if (!body) return;
-  const accounts = crmLoad('accounts').filter(a => a.status === 'active');
-  const queue = accounts.filter(a => {
-    const _created = a.created || a.createdAt || 0;
-    const age = _created ? (Date.now()-_created)/86400000 : 999;
-    const ob = a.onboarding || {};
-    return age <= 90 || !OB_STEPS.every(s => ob[s.key]);
-  }).sort((a,b) => (b.created||0)-(a.created||0));
-  if (!queue.length) { body.innerHTML='<div style="text-align:center;padding:40px;color:var(--soft)">✅ All recent accounts are fully onboarded.</div>'; return; }
-  body.innerHTML = queue.map(a => {
-    const ob = a.onboarding||{}, done=OB_STEPS.filter(s=>ob[s.key]).length, pct=Math.round(done/OB_STEPS.length*100);
-    const barColor = pct===100?'#1E7B3C':pct>=50?'#D97706':'#C8102E';
-    const ageDays = (a.created||a.createdAt) ? Math.floor((Date.now()-(a.created||a.createdAt))/86400000) : '?';
-    return `<div style="border:1.5px solid var(--line);border-radius:10px;padding:14px 16px;background:#fff;margin-bottom:10px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">
-        <div><div style="font-weight:700;font-size:14px">${escH(a.name||a.business||'')}</div>
-        <div style="font-size:11px;color:var(--soft)">${escH(a.address||'')} · Added ${ageDays}d ago · Rep: ${escH(a.assignedRep||a.rep||'Unassigned')}</div></div>
-        <div style="display:flex;align-items:center;gap:10px">
-          <div style="text-align:right"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:20px;color:${barColor}">${pct}%</div><div style="font-size:10px;color:var(--soft)">${done}/${OB_STEPS.length} steps</div></div>
-          <button onclick="openAcctDetail('${a.id}','accounts')" style="background:var(--red);color:#fff;border:none;border-radius:6px;padding:6px 12px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;cursor:pointer">Open →</button>
-        </div>
-      </div>
-      <div style="background:#F3F4F6;border-radius:6px;height:6px;margin-bottom:10px"><div style="background:${barColor};width:${pct}%;height:100%;border-radius:6px"></div></div>
-      <div style="display:flex;flex-wrap:wrap;gap:6px">
-        ${OB_STEPS.map(s => {
-          const isDone=!!ob[s.key];
-          return '<button onclick="opsToggleOnboarding(\'' + a.id + '\',\'' + s.key + '\')" style="background:' + (isDone?'#DCFCE7':'#F3F4F6') + ';color:' + (isDone?'#166534':'#6B7280') + ';border:1.5px solid ' + (isDone?'#86EFAC':'#E5E7EB') + ';border-radius:6px;padding:5px 10px;font-size:11px;font-weight:700;cursor:pointer">' + s.icon + ' ' + s.label + (isDone?' ✓':'') + '</button>';
-        }).join('')}
-      </div>
-    </div>`;
-  }).join('');
-}
-function opsToggleOnboarding(accountId, stepKey) {
-  const data=crmLoad('accounts'), a=data.find(x=>x.id===accountId);
-  if(!a) return;
-  if(!a.onboarding) a.onboarding={};
-  a.onboarding[stepKey] = a.onboarding[stepKey] ? null : new Date().toISOString().slice(0,10);
-  crmSave('accounts',data); opsRenderOnboardingQueue();
-}
-
-// ══════════════════════════════════════════════════════════════
-//  COMPLIANCE CERTIFICATE TRACKER
-// ══════════════════════════════════════════════════════════════
-function opsRenderCertTracker() {
-  const body=document.getElementById('opsCertBody');
-  if(!body) return;
-  const today=new Date(); today.setHours(0,0,0,0);
-  const rows=crmLoad('accounts').filter(a=>a.status==='active' && (a.services||[]).some(s=>['unipro','quality3','UniPro','Quality III','Quality3'].includes(s))).map(a => {
-    const cert=a.certStatus||{};
-    const expiry=cert.expiryDate?new Date(cert.expiryDate):null;
-    const daysToExpiry=expiry?Math.floor((expiry-today)/86400000):null;
-    return {a,cert,daysToExpiry};
-  });
-  rows.sort((x,y)=>(x.daysToExpiry??999)-(y.daysToExpiry??999));
-  if(!rows.length){body.innerHTML='<div style="text-align:center;padding:40px;color:var(--soft)">No active fire protection accounts found.</div>';return;}
-  body.innerHTML=rows.map(({a,cert,daysToExpiry})=>{
-    let statusLabel='No Cert',statusColor='#991B1B',statusBg='#FEE2E2';
-    if(cert.pendingAHJ){statusLabel='Pending AHJ';statusColor='#6B21A8';statusBg='#F3E8FF';}
-    else if(cert.issuedDate&&daysToExpiry===null){statusLabel='Issued';statusColor='#1E40AF';statusBg='#DBEAFE';}
-    else if(daysToExpiry!==null&&daysToExpiry<0){statusLabel='EXPIRED';statusColor='#991B1B';statusBg='#FEE2E2';}
-    else if(daysToExpiry!==null&&daysToExpiry<=30){statusLabel='Exp '+daysToExpiry+'d';statusColor='#C8102E';statusBg='#FEE2E2';}
-    else if(daysToExpiry!==null&&daysToExpiry<=90){statusLabel='Exp '+daysToExpiry+'d';statusColor='#D97706';statusBg='#FEF3C7';}
-    else if(daysToExpiry!==null){statusLabel='Valid '+daysToExpiry+'d';statusColor='#1E7B3C';statusBg='#DCFCE7';}
-    return '<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr 140px;align-items:center;gap:8px;padding:10px 12px;border:1.5px solid '+statusBg+';border-left:3px solid '+statusColor+';border-radius:8px;background:#fff;margin-bottom:6px">'
-      +'<div><div style="font-weight:700;font-size:13px">'+escH(a.name||a.business||'')+'</div><div style="font-size:11px;color:var(--soft)">'+escH(a.address||'')+' · '+escH(a.assignedRep||a.rep||'')+'</div></div>'
-      +'<div><span style="background:'+statusBg+';color:'+statusColor+';border-radius:4px;padding:2px 7px;font-size:10px;font-weight:800;font-family:Barlow Condensed,sans-serif">'+statusLabel+'</span></div>'
-      +'<div style="font-size:11px;color:var(--soft)">'+(cert.issuedDate||'—')+'</div>'
-      +'<div style="font-size:11px;color:var(--soft)">'+(cert.expiryDate||'—')+'</div>'
-      +'<div style="display:flex;gap:4px;flex-wrap:wrap">'
-      +'<button onclick="opsCertIssue(''+a.id+'')" style="background:#1E7B3C;color:#fff;border:none;border-radius:5px;padding:4px 8px;font-size:10px;font-family:Barlow Condensed,sans-serif;font-weight:800;cursor:pointer">Issue</button>'
-      +'<button onclick="opsCertAHJ(''+a.id+'')" style="background:#6B21A8;color:#fff;border:none;border-radius:5px;padding:4px 8px;font-size:10px;font-family:Barlow Condensed,sans-serif;font-weight:800;cursor:pointer">AHJ</button>'
-      +'<button onclick="openAcctDetail(''+a.id+'','accounts')" style="background:none;border:1.5px solid var(--line);color:var(--ink);border-radius:5px;padding:4px 8px;font-size:10px;font-family:Barlow Condensed,sans-serif;font-weight:800;cursor:pointer">View</button>'
-      +'</div></div>';
-  }).join('');
-}
-function opsCertIssue(accountId) {
-  const exp=prompt('Cert expiry (YYYY-MM-DD) or leave blank:');
-  const data=crmLoad('accounts'),a=data.find(x=>x.id===accountId);
-  if(!a) return;
-  a.certStatus={...(a.certStatus||{}),issuedDate:new Date().toISOString().slice(0,10),expiryDate:exp||null,pendingAHJ:false};
-  crmSave('accounts',data); opsRenderCertTracker();
-}
-function opsCertAHJ(accountId) {
-  const data=crmLoad('accounts'),a=data.find(x=>x.id===accountId);
-  if(!a) return;
-  a.certStatus={...(a.certStatus||{}),pendingAHJ:!(a.certStatus?.pendingAHJ)};
-  crmSave('accounts',data); opsRenderCertTracker();
-}
-</script>
 
 <!-- ═══════════════════════════════════════════════════════════
      RECEPTIONIST LANDING — Inbound Call Log
@@ -14612,6 +14471,149 @@ function rcpMarkNotificationRead(id) {
   w.document.close();
   setTimeout(()=>w.print(), 800);
 }
+
+// ══════════════════════════════════════════════════════════════
+//  SERVICE SCHEDULING QUEUE
+// ══════════════════════════════════════════════════════════════
+function opsRenderSchedulingQueue() {
+  const body = document.getElementById('opsSchedulingBody');
+  if (!body) return;
+  const accounts = crmLoad('accounts').filter(a => a.status === 'active');
+  const events = (() => { try { return JSON.parse(localStorage.getItem('termac_scheduler_events')||'[]'); } catch(e) { return []; } })();
+  const scheduled = new Set(events.map(e => e.accountId).filter(Boolean));
+  const today = new Date(); today.setHours(0,0,0,0);
+  const rows = [];
+  accounts.forEach(a => {
+    const _dueDate = a.renewalDate || a.nextDue || null;
+    const renewalDays = _dueDate ? Math.floor((new Date(_dueDate) - today) / 86400000) : null;
+    const lastService = a.lastCheckin ? Math.floor((Date.now() - a.lastCheckin) / 86400000) : null;
+    const isScheduled = scheduled.has(a.id);
+    let urgency=null, urgencyColor='', urgencyBg='';
+    if (renewalDays !== null && renewalDays <= 0)        { urgency='OVERDUE';            urgencyColor='#991B1B'; urgencyBg='#FEE2E2'; }
+    else if (renewalDays !== null && renewalDays <= 14)  { urgency=`DUE IN ${renewalDays}d`; urgencyColor='#C8102E'; urgencyBg='#FEE2E2'; }
+    else if (renewalDays !== null && renewalDays <= 45)  { urgency=`DUE IN ${renewalDays}d`; urgencyColor='#D97706'; urgencyBg='#FEF3C7'; }
+    else if (lastService !== null && lastService > 90 && !isScheduled) { urgency=`${lastService}d NO VISIT`; urgencyColor='#1E40AF'; urgencyBg='#DBEAFE'; }
+    if (!urgency) return;
+    rows.push({ a, urgency, urgencyColor, urgencyBg, isScheduled });
+  });
+  rows.sort((a,b) => { const o={'#991B1B':0,'#C8102E':1,'#D97706':2,'#1E40AF':3}; return (o[a.urgencyColor]||9)-(o[b.urgencyColor]||9); });
+  if (!rows.length) { body.innerHTML='<div style="text-align:center;padding:40px;color:var(--soft)">✅ No scheduling gaps — all active accounts are current.</div>'; return; }
+  body.innerHTML = rows.map(({a,urgency,urgencyColor,urgencyBg,isScheduled}) => `
+    <div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr 120px;align-items:center;gap:8px;padding:10px 12px;border:1.5px solid ${urgencyBg};border-left:3px solid ${urgencyColor};border-radius:8px;background:#fff;margin-bottom:6px">
+      <div><div style="font-weight:700;font-size:13px">${escH(a.name||a.business||'')}</div><div style="font-size:11px;color:var(--soft)">${escH(a.address||'')}</div></div>
+      <div><span style="background:${urgencyBg};color:${urgencyColor};border-radius:4px;padding:2px 7px;font-size:10px;font-weight:800;font-family:Barlow Condensed,sans-serif">${urgency}</span></div>
+      <div style="font-size:11px;color:var(--soft)">${(a.services||[]).join(', ')||'—'}</div>
+      <div style="font-size:11px;color:var(--soft)">${escH(a.assignedRep||a.rep||'Unassigned')}</div>
+      <div style="display:flex;gap:4px">
+        <button onclick="openAcctDetail('${a.id}','accounts')" style="background:var(--red);color:#fff;border:none;border-radius:5px;padding:5px 10px;font-size:10px;font-family:Barlow Condensed,sans-serif;font-weight:800;cursor:pointer">Book →</button>
+        ${isScheduled ? '<span style="font-size:10px;color:var(--green);font-weight:700">✓ Sched</span>' : ''}
+      </div>
+    </div>`).join('');
+}
+
+// ══════════════════════════════════════════════════════════════
+//  NEW ACCOUNT ONBOARDING QUEUE
+// ══════════════════════════════════════════════════════════════
+const OB_STEPS = [
+  { key:'agreementSigned',   label:'Agreement Signed',        icon:'📝' },
+  { key:'squareOnFile',      label:'Square / Payment on File', icon:'💳' },
+  { key:'firstJobScheduled', label:'First Job Scheduled',     icon:'📅' },
+  { key:'firstServiceDone',  label:'First Service Complete',  icon:'✅' },
+  { key:'certIssued',        label:'Cert Issued',             icon:'🏅' },
+  { key:'rep30dCheckin',     label:'Rep 30-Day Check-In',     icon:'🤝' },
+];
+function opsRenderOnboardingQueue() {
+  const body = document.getElementById('opsOnboardingBody');
+  if (!body) return;
+  const accounts = crmLoad('accounts').filter(a => a.status === 'active');
+  const queue = accounts.filter(a => {
+    const _created = a.created || a.createdAt || 0;
+    const age = _created ? (Date.now()-_created)/86400000 : 999;
+    const ob = a.onboarding || {};
+    return age <= 90 || !OB_STEPS.every(s => ob[s.key]);
+  }).sort((a,b) => (b.created||0)-(a.created||0));
+  if (!queue.length) { body.innerHTML='<div style="text-align:center;padding:40px;color:var(--soft)">✅ All recent accounts are fully onboarded.</div>'; return; }
+  body.innerHTML = queue.map(a => {
+    const ob = a.onboarding||{}, done=OB_STEPS.filter(s=>ob[s.key]).length, pct=Math.round(done/OB_STEPS.length*100);
+    const barColor = pct===100?'#1E7B3C':pct>=50?'#D97706':'#C8102E';
+    const ageDays = (a.created||a.createdAt) ? Math.floor((Date.now()-(a.created||a.createdAt))/86400000) : '?';
+    return `<div style="border:1.5px solid var(--line);border-radius:10px;padding:14px 16px;background:#fff;margin-bottom:10px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+        <div><div style="font-weight:700;font-size:14px">${escH(a.name||a.business||'')}</div>
+        <div style="font-size:11px;color:var(--soft)">${escH(a.address||'')} · Added ${ageDays}d ago · Rep: ${escH(a.assignedRep||a.rep||'Unassigned')}</div></div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="text-align:right"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:20px;color:${barColor}">${pct}%</div><div style="font-size:10px;color:var(--soft)">${done}/${OB_STEPS.length} steps</div></div>
+          <button onclick="openAcctDetail('${a.id}','accounts')" style="background:var(--red);color:#fff;border:none;border-radius:6px;padding:6px 12px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;cursor:pointer">Open →</button>
+        </div>
+      </div>
+      <div style="background:#F3F4F6;border-radius:6px;height:6px;margin-bottom:10px"><div style="background:${barColor};width:${pct}%;height:100%;border-radius:6px"></div></div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px">
+        ${OB_STEPS.map(s => {
+          const isDone=!!ob[s.key];
+          return '<button onclick="opsToggleOnboarding(\'' + a.id + '\',\'' + s.key + '\')" style="background:' + (isDone?'#DCFCE7':'#F3F4F6') + ';color:' + (isDone?'#166534':'#6B7280') + ';border:1.5px solid ' + (isDone?'#86EFAC':'#E5E7EB') + ';border-radius:6px;padding:5px 10px;font-size:11px;font-weight:700;cursor:pointer">' + s.icon + ' ' + s.label + (isDone?' ✓':'') + '</button>';
+        }).join('')}
+      </div>
+    </div>`;
+  }).join('');
+}
+function opsToggleOnboarding(accountId, stepKey) {
+  const data=crmLoad('accounts'), a=data.find(x=>x.id===accountId);
+  if(!a) return;
+  if(!a.onboarding) a.onboarding={};
+  a.onboarding[stepKey] = a.onboarding[stepKey] ? null : new Date().toISOString().slice(0,10);
+  crmSave('accounts',data); opsRenderOnboardingQueue();
+}
+
+// ══════════════════════════════════════════════════════════════
+//  COMPLIANCE CERTIFICATE TRACKER
+// ══════════════════════════════════════════════════════════════
+function opsRenderCertTracker() {
+  const body=document.getElementById('opsCertBody');
+  if(!body) return;
+  const today=new Date(); today.setHours(0,0,0,0);
+  const rows=crmLoad('accounts').filter(a=>a.status==='active' && (a.services||[]).some(s=>['unipro','quality3','UniPro','Quality III','Quality3'].includes(s))).map(a => {
+    const cert=a.certStatus||{};
+    const expiry=cert.expiryDate?new Date(cert.expiryDate):null;
+    const daysToExpiry=expiry?Math.floor((expiry-today)/86400000):null;
+    return {a,cert,daysToExpiry};
+  });
+  rows.sort((x,y)=>(x.daysToExpiry??999)-(y.daysToExpiry??999));
+  if(!rows.length){body.innerHTML='<div style="text-align:center;padding:40px;color:var(--soft)">No active fire protection accounts found.</div>';return;}
+  body.innerHTML=rows.map(({a,cert,daysToExpiry})=>{
+    let statusLabel='No Cert',statusColor='#991B1B',statusBg='#FEE2E2';
+    if(cert.pendingAHJ){statusLabel='Pending AHJ';statusColor='#6B21A8';statusBg='#F3E8FF';}
+    else if(cert.issuedDate&&daysToExpiry===null){statusLabel='Issued';statusColor='#1E40AF';statusBg='#DBEAFE';}
+    else if(daysToExpiry!==null&&daysToExpiry<0){statusLabel='EXPIRED';statusColor='#991B1B';statusBg='#FEE2E2';}
+    else if(daysToExpiry!==null&&daysToExpiry<=30){statusLabel='Exp '+daysToExpiry+'d';statusColor='#C8102E';statusBg='#FEE2E2';}
+    else if(daysToExpiry!==null&&daysToExpiry<=90){statusLabel='Exp '+daysToExpiry+'d';statusColor='#D97706';statusBg='#FEF3C7';}
+    else if(daysToExpiry!==null){statusLabel='Valid '+daysToExpiry+'d';statusColor='#1E7B3C';statusBg='#DCFCE7';}
+    return '<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr 140px;align-items:center;gap:8px;padding:10px 12px;border:1.5px solid '+statusBg+';border-left:3px solid '+statusColor+';border-radius:8px;background:#fff;margin-bottom:6px">'
+      +'<div><div style="font-weight:700;font-size:13px">'+escH(a.name||a.business||'')+'</div><div style="font-size:11px;color:var(--soft)">'+escH(a.address||'')+' · '+escH(a.assignedRep||a.rep||'')+'</div></div>'
+      +'<div><span style="background:'+statusBg+';color:'+statusColor+';border-radius:4px;padding:2px 7px;font-size:10px;font-weight:800;font-family:Barlow Condensed,sans-serif">'+statusLabel+'</span></div>'
+      +'<div style="font-size:11px;color:var(--soft)">'+(cert.issuedDate||'—')+'</div>'
+      +'<div style="font-size:11px;color:var(--soft)">'+(cert.expiryDate||'—')+'</div>'
+      +'<div style="display:flex;gap:4px;flex-wrap:wrap">'
+      +'<button onclick="opsCertIssue(''+a.id+'')" style="background:#1E7B3C;color:#fff;border:none;border-radius:5px;padding:4px 8px;font-size:10px;font-family:Barlow Condensed,sans-serif;font-weight:800;cursor:pointer">Issue</button>'
+      +'<button onclick="opsCertAHJ(''+a.id+'')" style="background:#6B21A8;color:#fff;border:none;border-radius:5px;padding:4px 8px;font-size:10px;font-family:Barlow Condensed,sans-serif;font-weight:800;cursor:pointer">AHJ</button>'
+      +'<button onclick="openAcctDetail(''+a.id+'','accounts')" style="background:none;border:1.5px solid var(--line);color:var(--ink);border-radius:5px;padding:4px 8px;font-size:10px;font-family:Barlow Condensed,sans-serif;font-weight:800;cursor:pointer">View</button>'
+      +'</div></div>';
+  }).join('');
+}
+function opsCertIssue(accountId) {
+  const exp=prompt('Cert expiry (YYYY-MM-DD) or leave blank:');
+  const data=crmLoad('accounts'),a=data.find(x=>x.id===accountId);
+  if(!a) return;
+  a.certStatus={...(a.certStatus||{}),issuedDate:new Date().toISOString().slice(0,10),expiryDate:exp||null,pendingAHJ:false};
+  crmSave('accounts',data); opsRenderCertTracker();
+}
+function opsCertAHJ(accountId) {
+  const data=crmLoad('accounts'),a=data.find(x=>x.id===accountId);
+  if(!a) return;
+  a.certStatus={...(a.certStatus||{}),pendingAHJ:!(a.certStatus?.pendingAHJ)};
+  crmSave('accounts',data); opsRenderCertTracker();
+}
+</script>
+
 
 /* ── ACCEPT / DECLINE ── */
 function estAccept(){
