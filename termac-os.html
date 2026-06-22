@@ -11156,18 +11156,101 @@ function bidsSeedIfEmpty(){
   bidsSave(bids);
 }
 
+// Paste your deployed Worker URL here after deploying bid-scraper-worker.js:
+const BID_SCRAPER_URL = 'https://bid-scraper.tedscholl.workers.dev/';
+
 async function bidsHarvest(){
   const banner = document.getElementById('bidsHarvestBanner');
+  const btn    = document.getElementById('bidsCheckBtn');
   if (!banner) return;
+
+  if (!BID_SCRAPER_URL) {
+    banner.style.display = 'block';
+    banner.innerHTML = '⚠️ Deploy bid-scraper-worker.js to Cloudflare first, then paste the Worker URL into BID_SCRAPER_URL in this file.';
+    return;
+  }
+
   banner.style.display = 'block';
-  banner.innerHTML = '🔄 Checking PA eMarketplace and NJSTART public listings for new postings matching our service categories…';
+  banner.innerHTML = '🔄 Checking PA eMarketplace, NJSTART, DC OCP, and Maryland eMMA for open bids matching Termac service categories…';
+  if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; }
 
-  await new Promise(r => setTimeout(r, 1400));
+  try {
+    const res = await fetch(BID_SCRAPER_URL);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
 
-  banner.innerHTML = `✅ Checked 2 of 5 sources just now (PA eMarketplace, NJSTART — both publicly browsable, no new matches in the last check).<br>
-    ⚠️ Philadelphia PHLContracts and BidNet Direct require free supplier registration; ConstructConnect requires a paid subscription. Once registered, all 5 sources harvest on the same schedule. <a href="#" onclick="event.preventDefault();bidsShowTab('sources', document.getElementById('bidsTab_sources'))" style="color:#1A1D21;font-weight:700">See Sources →</a>`;
+    const incoming = data.bids || [];
+    if (!incoming.length && !data.errors?.length) {
+      banner.innerHTML = `✅ All sources checked — no new keyword matches found right now. Counts: PA ${data.counts?.pa||0} · NJ ${data.counts?.nj||0} · DC ${data.counts?.dc||0} · MD ${data.counts?.md||0}`;
+      if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
+      setTimeout(() => { if(banner) banner.style.display='none'; }, 10000);
+      return;
+    }
 
-  setTimeout(() => { if(banner) banner.style.display = 'none'; }, 9000);
+    // Dedupe against existing bids pipeline
+    const existing = bidsLoad();
+    const existingTitles = new Set(existing.map(b => (b.title||'').toLowerCase().slice(0,60)));
+    const now = Date.now();
+    let added = 0;
+
+    incoming.forEach(b => {
+      const titleKey = (b.title||'').toLowerCase().slice(0,60);
+      if (existingTitles.has(titleKey)) return;
+      existingTitles.add(titleKey);
+      existing.unshift({
+        id: 'harvest_bid_' + now + '_' + Math.random().toString(36).slice(2,7),
+        source: b.source,
+        refNo: b.refNo || '',
+        title: b.title,
+        agency: b.agency || '',
+        category: inferBidCategory(b.title),
+        postedDate: new Date().toISOString().slice(0,10),
+        dueDate: b.dueDate || '',
+        estValue: b.estValue || estimateBidValue(b.title),
+        status: 'open',
+        scopeRaw: b.title,
+        url: b.url || '',
+        scrapedAt: b.scrapedAt || now
+      });
+      added++;
+    });
+
+    bidsSave(existing);
+
+    const errNote = data.errors?.length
+      ? ` <span style="color:#C8102E">(${data.errors.length} source${data.errors.length>1?'s':''} had errors — check console)</span>`
+      : '';
+    banner.innerHTML = `✅ Checked ${incoming.length + (existing.length - added)} listings across PA · NJ · DC · MD — added <b>${added} new bid${added===1?'':'s'}</b> to the pipeline.${errNote} <a href="#" onclick="event.preventDefault();bidsShowTab('pipeline',document.getElementById('bidsTab_pipeline'))" style="color:#1A1D21;font-weight:700">View Pipeline →</a>`;
+    if (added) bidsRender();
+    if (data.errors?.length) console.warn('Bid scraper errors:', data.errors);
+
+  } catch(e) {
+    banner.innerHTML = `⚠️ Bid scraper error: ${e.message}. Check that bid-scraper-worker.js is deployed and the Worker URL is correct.`;
+    console.error('bidsHarvest error:', e);
+  }
+
+  if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
+  setTimeout(() => { if(banner) banner.style.display='none'; }, 15000);
+}
+
+function inferBidCategory(title) {
+  const t = (title||'').toLowerCase();
+  if (t.includes('suppression') || t.includes('ansul') || t.includes('nfpa')) return 'Suppression';
+  if (t.includes('extinguisher')) return 'Extinguisher';
+  if (t.includes('hood') || t.includes('grease') || t.includes('kitchen')) return 'Hood/Kitchen';
+  if (t.includes('dishwash') || t.includes('dish machine') || t.includes('warewash')) return 'Dishwasher';
+  if (t.includes('filter')) return 'Filter';
+  if (t.includes('sprinkler') || t.includes('fire alarm') || t.includes('fire safety')) return 'Fire Safety';
+  return 'General';
+}
+
+function estimateBidValue(title) {
+  const t = (title||'').toLowerCase();
+  if (t.includes('system') || t.includes('installation') || t.includes('inspection') && t.includes('multi')) return 45000;
+  if (t.includes('maintenance') || t.includes('service')) return 18000;
+  if (t.includes('inspection')) return 8000;
+  if (t.includes('supply') || t.includes('supplies') || t.includes('chemical')) return 12000;
+  return 15000;
 }
 
 function bidsShowTab(tabId, btn){
