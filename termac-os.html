@@ -11402,6 +11402,11 @@ async function bidsHarvest(){
       ? ` <span style="color:#C8102E">(${data.errors.length} source${data.errors.length>1?'s':''} had errors — check console)</span>`
       : '';
     banner.innerHTML = `✅ Checked ${incoming.length + (existing.length - added)} listings across PA · NJ · DC · MD — added <b>${added} new bid${added===1?'':'s'}</b> to the pipeline.${errNote} <a href="#" onclick="event.preventDefault();bidsShowTab('pipeline',document.getElementById('bidsTab_pipeline'))" style="color:#1A1D21;font-weight:700">View Pipeline →</a>`;
+    // Save run diagnostics for Sources panel
+    localStorage.setItem('termac_bid_scraper_last', JSON.stringify({
+      ts: Date.now(), counts: data.counts, total: incoming.length,
+      added, errors: data.errors || []
+    }));
     if (added) bidsRender();
     if (data.errors?.length) console.warn('Bid scraper errors:', data.errors);
 
@@ -11510,7 +11515,25 @@ function bidsRenderSources(){
   if (!list) return;
   const statusLabel = {connected:'✓ Browsable', needs_registration:'Needs Registration', paid:'Paid Subscription'};
   const statusColor = {connected:['#E8F5E9','#3FA34D'], needs_registration:['#FFF3E0','#D8690B'], paid:['#FCE4EC','#C2185B']};
-  list.innerHTML = BID_SOURCES.map(s => {
+
+  // Last scraper run diagnostics
+  const lastRun = (() => { try { return JSON.parse(localStorage.getItem('termac_bid_scraper_last')||'null'); } catch(e) { return null; } })();
+  const diagHtml = lastRun ? `
+    <div style="background:#F9FAFB;border:1.5px solid var(--line);border-radius:10px;padding:14px;margin-bottom:16px">
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--soft);margin-bottom:10px">Last Scraper Run — ${new Date(lastRun.ts).toLocaleString()}</div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px">
+        ${['pa','nj','dc','md'].map(src => `
+          <div style="text-align:center;background:#fff;border-radius:7px;padding:8px;border:1.5px solid var(--line)">
+            <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:20px;color:${(lastRun.counts?.[src]||0)>0?'var(--green)':'var(--soft)'}">${lastRun.counts?.[src]||0}</div>
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--soft)">${src.toUpperCase()}</div>
+          </div>`).join('')}
+      </div>
+      <div style="font-size:12px;color:var(--ink);margin-bottom:6px"><strong>${lastRun.added||0} new bids added</strong> to pipeline · ${lastRun.total||0} total matched keywords</div>
+      ${lastRun.errors?.length ? `<div style="background:#FEE2E2;border-radius:6px;padding:8px 10px;font-size:11px;color:#991B1B;margin-top:6px"><strong>Errors (${lastRun.errors.length}):</strong> ${lastRun.errors.join(' · ')}</div>` : '<div style="font-size:11px;color:var(--green)">✅ No errors on last run</div>'}
+      ${lastRun.total===0 && !lastRun.errors?.length ? `<div style="background:#FEF3C7;border-radius:6px;padding:8px 10px;font-size:11px;color:#92400E;margin-top:6px">⚠️ 0 results — these government portals often use JavaScript-rendered tables that a simple fetch can't read. Use the Manual Paste button below to add bids directly from any portal.</div>` : ''}
+    </div>` : `<div style="background:#F9FAFB;border:1.5px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:16px;font-size:12px;color:var(--soft)">No scraper runs yet — click "Check for New Bids" to run the first check.</div>`;
+
+  list.innerHTML = diagHtml + BID_SOURCES.map(s => {
     const [bg, fg] = statusColor[s.status];
     return `
     <div style="display:flex;justify-content:space-between;align-items:center;padding:12px;background:var(--bg);border-radius:8px">
