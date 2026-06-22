@@ -14346,8 +14346,8 @@ function opsCertAHJ(accountId) {
       <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:14px">📞 Log Inbound Call</div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px">
         <div><label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em">Caller Name</label><input id="rcpCallerName" type="text" placeholder="First Last" style="width:100%;margin-top:4px;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;box-sizing:border-box"></div>
-        <div><label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em">Company</label><input id="rcpCallerCompany" type="text" placeholder="Business name" autocomplete="off" oninput="rcpAccountLookup(this.value)" style="width:100%;margin-top:4px;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;box-sizing:border-box"><div id="rcpAccountDropdown" style="display:none;position:absolute;z-index:999;background:#fff;border:1.5px solid var(--line);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);max-height:220px;overflow-y:auto;width:280px;margin-top:2px"></div></div>
-        <div><label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em">Phone</label><input id="rcpCallerPhone" type="tel" placeholder="(xxx) xxx-xxxx" style="width:100%;margin-top:4px;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;box-sizing:border-box"></div>
+        <div style="position:relative"><label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em">Company</label><input id="rcpCallerCompany" type="text" placeholder="Business name" autocomplete="off" oninput="rcpAccountLookup(this.value)" style="width:100%;margin-top:4px;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;box-sizing:border-box"><div id="rcpAccountDropdown" style="display:none;position:absolute;z-index:999;background:#fff;border:1.5px solid var(--line);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);max-height:220px;overflow-y:auto;width:280px;margin-top:2px"></div></div>
+        <div style="position:relative"><label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em">Phone <span style="font-size:10px;color:#1B5FA8;font-weight:600;text-transform:none;letter-spacing:0">— enter to search accounts</span></label><input id="rcpCallerPhone" type="tel" placeholder="(xxx) xxx-xxxx" autocomplete="off" oninput="rcpPhoneLookup(this.value)" style="width:100%;margin-top:4px;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;box-sizing:border-box"><div id="rcpPhoneDropdown" style="display:none;position:absolute;z-index:999;background:#fff;border:1.5px solid var(--line);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);max-height:220px;overflow-y:auto;width:100%;margin-top:2px"></div></div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px">
         <div><label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em">Call Type</label><select id="rcpCallType" style="width:100%;margin-top:4px;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;box-sizing:border-box"><option value="">Select…</option><option>New Service Inquiry</option><option>Existing Customer — Service Question</option><option>Existing Customer — Deficiency / Issue</option><option>Schedule / Reschedule</option><option>Quote / Pricing</option><option>Emergency — Fire Safety</option><option>Complaint</option><option>Vendor / Supplier</option><option>Other</option></select></div>
@@ -14479,6 +14479,8 @@ function rcpSelectAccount(id, tab) {
   const r = data.find(x => x.id === id);
   const dd = document.getElementById('rcpAccountDropdown');
   if (dd) dd.style.display = 'none';
+  const pd = document.getElementById('rcpPhoneDropdown');
+  if (pd) pd.style.display = 'none';
   if (!r) return;
 
   // Fill form fields
@@ -14531,11 +14533,57 @@ function rcpSelectAccount(id, tab) {
   }
 }
 
-// Close dropdown when clicking outside
+// Phone number lookup — strips formatting for comparison
+let _rcpPhoneTimer = null;
+function rcpPhoneLookup(q) {
+  const dd = document.getElementById('rcpPhoneDropdown');
+  if (!dd) return;
+  clearTimeout(_rcpPhoneTimer);
+  const digits = q.replace(/\D/g,'');
+  if (!digits || digits.length < 4) { dd.style.display='none'; return; }
+  _rcpPhoneTimer = setTimeout(() => {
+    const accounts = crmLoad('accounts').filter(a => {
+      const aDigits = (a.phone||'').replace(/\D/g,'');
+      return aDigits && aDigits.includes(digits);
+    }).slice(0,5);
+    const leads = crmLoad('leads').filter(l => {
+      const lDigits = (l.phone||'').replace(/\D/g,'');
+      return lDigits && lDigits.includes(digits);
+    }).slice(0,5);
+    const contacts = crmLoad('contacts').filter(c => {
+      const cDigits = (c.phone||'').replace(/\D/g,'');
+      return cDigits && cDigits.includes(digits);
+    }).slice(0,3);
+
+    const items = [
+      ...accounts.map(a => ({ id:a.id, tab:'accounts', label:a.name||a.business||'', phone:a.phone||'', sub:`Active Account · Rep: ${a.assignedRep||a.rep||'Unassigned'} · Health: ${a.healthScore||'—'}/10` })),
+      ...leads.map(l => ({ id:l.id, tab:'leads', label:l.business||l.name||'', phone:l.phone||'', sub:`Lead · ${l.status||'new'} · ${(l.source||'').replace('Live Harvester — ','')}` })),
+      ...contacts.map(c => ({ id:c.id, tab:'contacts', label:c.name||'', phone:c.phone||'', sub:`Contact · ${c.business||c.company||''}` })),
+    ];
+
+    if (!items.length) {
+      dd.style.display='block';
+      dd.innerHTML='<div style="padding:12px;font-size:12px;color:var(--soft);text-align:center">No account found for this number</div>';
+      return;
+    }
+    dd.style.display='block';
+    dd.innerHTML = items.map(item => `
+      <div onclick="rcpSelectAccount('${item.id}','${item.tab}')" style="padding:10px 12px;cursor:pointer;border-bottom:1px solid var(--line)" onmouseover="this.style.background='#F9FAFB'" onmouseout="this.style.background=''">
+        <div style="font-weight:700;font-size:13px">${escH(item.label)} <span style="font-size:11px;color:var(--soft);font-weight:400">${escH(item.phone)}</span></div>
+        <div style="font-size:11px;color:var(--soft);margin-top:1px">${escH(item.sub)}</div>
+      </div>`).join('');
+  }, 200);
+}
+
+// Close dropdowns when clicking outside
 document.addEventListener('click', e => {
   const dd = document.getElementById('rcpAccountDropdown');
   if (dd && !e.target.closest('#rcpAccountDropdown') && e.target.id !== 'rcpCallerCompany') {
     dd.style.display = 'none';
+  }
+  const pd = document.getElementById('rcpPhoneDropdown');
+  if (pd && !e.target.closest('#rcpPhoneDropdown') && e.target.id !== 'rcpCallerPhone') {
+    pd.style.display = 'none';
   }
 });
 
