@@ -1,33 +1,36 @@
 /**
- * CMS CORS Proxy — Cloudflare Worker
+ * Termac Government Data Proxy — Cloudflare Worker
  * ────────────────────────────────────────────────────────────────────────────
- * data.cms.gov blocks direct browser requests (no CORS headers).
- * This Worker sits in the middle: the browser calls THIS Worker, which
- * fetches data.cms.gov server-side (no CORS restriction server-to-server),
- * then returns the response to the browser with permissive CORS headers added.
+ * Routes all Termac One harvester requests server-side so CORS never blocks
+ * them. Works for CMS, Socrata (PA/DE/NJ), and ArcGIS (DC/MD) sources.
  *
- * DEPLOY INSTRUCTIONS (2 minutes):
- *   1. Go to dash.cloudflare.com → Workers & Pages → Create Worker
- *   2. Name it: unipro-cms-proxy
- *   3. Click "Edit code" → paste this entire file → Deploy
- *   4. Your worker URL will be: https://unipro-cms-proxy.tedscholl.workers.dev
- *   5. That URL is already set as HARVEST_CMS_PROXY_URL in termac-os.html
- *      so nothing else needs to change — the harvester activates immediately.
+ * DEPLOYED AS: cms-cors-proxy (tedscholl.workers.dev)
+ * URL already set in termac-os.html as HARVEST_CMS_PROXY_URL.
  *
  * HOW IT WORKS:
- *   Browser calls:  https://unipro-cms-proxy.tedscholl.workers.dev?url=<encoded-cms-url>
- *   Worker fetches: <decoded-cms-url>  (server-to-server, no CORS block)
- *   Worker returns: the CMS response + Access-Control-Allow-Origin: *
+ *   Browser calls:  https://cms-cors-proxy.tedscholl.workers.dev?url=<encoded-url>
+ *   Worker fetches: <decoded-url>  (server-to-server, no CORS block)
+ *   Worker returns: the API response + Access-Control-Allow-Origin: *
  *
- * SECURITY:
- *   Only proxies requests to data.cms.gov. Any other target URL returns 403.
- *   This prevents the Worker from being abused as an open proxy.
+ * SECURITY: Only proxies to domains in ALLOWED_ORIGINS below. Any other
+ * target returns 403. Prevents open-proxy abuse.
  * ────────────────────────────────────────────────────────────────────────────
  */
 
 const ALLOWED_ORIGINS = [
+  // CMS / Medicaid
   'https://data.cms.gov',
   'https://data.medicaid.gov',
+  // PA — Philadelphia ArcGIS Business Licenses
+  'https://services.arcgis.com',
+  // DC — DCGIS ArcGIS Business Licenses
+  'https://maps2.dcgis.dc.gov',
+  // DE — Delaware Socrata business registry
+  'https://data.delaware.gov',
+  // NJ — NJ open data (Socrata) construction permits
+  'https://data.nj.gov',
+  // MD — Baltimore County ArcGIS development permits
+  'https://bcgis.baltimorecountymd.gov',
 ];
 
 export default {
@@ -77,26 +80,24 @@ export default {
       });
     }
 
-    // Fetch from CMS server-to-server
+    // Fetch from upstream server-to-server (no CORS restriction)
     try {
       const upstream = await fetch(targetUrl, {
         headers: {
           'Accept': 'application/json',
-          'User-Agent': 'Termac-CMS-Proxy/1.0',
+          'User-Agent': 'Termac-GovData-Proxy/2.0',
         },
       });
 
-      // Read the response body
       const body = await upstream.text();
 
-      // Return with CORS headers so the browser accepts it
       return new Response(body, {
         status: upstream.status,
         headers: {
           ...corsHeaders(),
           'Content-Type': upstream.headers.get('Content-Type') || 'application/json',
           'X-Proxy-Status': 'ok',
-          'X-Target-URL': targetUrl.substring(0, 120), // truncated for debugging
+          'X-Target-URL': targetUrl.substring(0, 200),
         },
       });
 
