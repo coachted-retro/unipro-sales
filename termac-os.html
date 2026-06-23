@@ -12595,88 +12595,137 @@ function svBuildFindingsPhotos(){
 //    acknowledgment is on record even if the customer declines the price
 //    afterward), then opens the Estimate overlay straight to pricing.
 function svBuildEstimateFromScope(){
-  const initials = document.getElementById('sv_disclaimerInitials')?.value || '';
-  if (!initials.trim()) {
-    // Highlight the initials field so rep knows what's missing
-    const initialsEl = document.getElementById('sv_disclaimerInitials');
-    const block = document.getElementById('svDisclaimerBlock');
+  // ── Step 1: Check initials ───────────────────────────────────────────
+  const initialsEl = document.getElementById('sv_disclaimerInitials');
+  const initials = initialsEl?.value?.trim() || '';
+  if (!initials) {
     if (initialsEl) {
       initialsEl.style.borderColor = '#C8102E';
       initialsEl.style.boxShadow = '0 0 0 3px rgba(200,16,46,.2)';
       initialsEl.focus();
       setTimeout(() => { initialsEl.style.borderColor = ''; initialsEl.style.boxShadow = ''; }, 3000);
     }
+    const block = document.getElementById('svDisclaimerBlock');
     if (block) {
       block.style.border = '2px solid #C8102E';
-      block.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      block.scrollIntoView({ behavior:'smooth', block:'center' });
       setTimeout(() => { block.style.border = '2px solid #E67E22'; }, 3000);
     }
     return;
   }
 
-  if (svState.accountId) {
-    const data = crmLoad('accounts');
-    const r = data.find(x => x.id === svState.accountId);
-    if (r) {
-      r.finalDisclaimerInitials = initials.trim().toUpperCase();
-      r.finalDisclaimerInitialedAt = Date.now();
-      crmSave('accounts', data);
-    }
-  }
+  // ── Step 2: Open estimate overlay IMMEDIATELY ────────────────────────
+  // Do this before ANYTHING else. This is the only guarantee against bounce.
+  const estOv = document.getElementById('estOverlay');
+  if (!estOv) { alert('Estimate overlay not found — please refresh the page.'); return; }
+  estOv.classList.add('open');
 
-  // Save survey data for every service before building estimate
-  // (Build Estimate bypasses the normal svGoNext save path)
-  // Only save the service whose panel is currently active — others were
-  // already saved on Continue. Saving all of them risks reading empty
-  // DOM fields from inactive panels and overwriting good saved data.
-  const currentStep = (_svSteps||[])[svState.currentStep];
-  svState.selectedServices.forEach(svc => {
-    try {
-      if (typeof svSaveSurveyData === 'function') {
-        // For the active service panel, collect from DOM.
-        // For others, only save if we already have data (don't overwrite with empty).
-        const hasData = svState.surveyData[svc] && Object.keys(svState.surveyData[svc]).length > 0;
-        if (currentStep?.id === svc || !hasData) {
-          svSaveSurveyData(svc);
-        }
-      }
-    } catch(e) { console.warn('svSaveSurveyData skip for', svc, e.message); }
-  });
-
-  // Clear in-progress flag — survey is complete
-  try { if (typeof svClearProgress === 'function') svClearProgress(); } catch(e) {}
-
-  // Open estimate FIRST (before closing survey) so there is never a gap
-  // where neither overlay is open — that gap lets renderCRMView fire and
-  // bounce the rep back to the accounts page
-  try {
-    svOpenEstimate();
-  } catch(e) {
-    console.error('svOpenEstimate threw:', e);
-  }
-
-  // NOW close the survey overlay — estimate is already visible
+  // ── Step 3: Hide survey overlay ──────────────────────────────────────
   const svOv = document.getElementById('svOverlay');
   if (svOv) svOv.classList.remove('open');
 
-  // (kept for catch fallback below)
-  if (false) try {
-    svOpenEstimate();
-  } catch(e) {
-    console.error('svOpenEstimate error:', e);
-    // Open overlay manually so rep sees something
-    const estOv = document.getElementById('estOverlay');
-    if (estOv) estOv.classList.add('open');
-    // Show error inline
-    setTimeout(() => {
-      const decEl = document.getElementById('estDecision');
-      if (decEl) {
-        decEl.classList.add('open');
-        decEl.innerHTML += `<div style="background:#FEF2F2;border:1.5px solid #C8102E;border-radius:8px;padding:14px;margin-top:16px;font-size:13px;color:#C8102E">⚠ Estimate error: ${e.message}. Your survey data is saved — tap ✕ Close and try Resume Estimate from the account card.</div>`;
+  // ── Step 4: Everything else in a timeout so overlay paints first ─────
+  setTimeout(() => {
+    try {
+      // Save initials
+      if (svState.accountId) {
+        try {
+          const _accts = crmLoad('accounts');
+          const _acct = _accts.find(x => x.id === svState.accountId);
+          if (_acct) {
+            _acct.finalDisclaimerInitials = initials.toUpperCase();
+            _acct.finalDisclaimerInitialedAt = Date.now();
+            crmSave('accounts', _accts);
+          }
+        } catch(e) {}
       }
-    }, 100);
-  }
+
+      // Save current survey data
+      try {
+        const currentStep = (_svSteps||[])[svState.currentStep];
+        svState.selectedServices.forEach(svc => {
+          try {
+            const hasData = svState.surveyData[svc] && Object.keys(svState.surveyData[svc]).length > 0;
+            if (currentStep?.id === svc || !hasData) {
+              if (typeof svSaveSurveyData === 'function') svSaveSurveyData(svc);
+            }
+          } catch(e) {}
+        });
+      } catch(e) {}
+
+      // Clear progress
+      try { if (typeof svClearProgress === 'function') svClearProgress(); } catch(e) {}
+
+      // Build estimate state
+      estBundleState = { selectedBundle:null, selectedTerm:'3yr', dismissed:false };
+      estState.bizName    = svState.bizName || '';
+      estState.accountId  = svState.accountId || null;
+      estState.sections   = {};
+      estState.customLines= [];
+      estState.decision   = null;
+
+      // Set biz name
+      const bizNameEl = document.getElementById('estBizName');
+      if (bizNameEl) bizNameEl.textContent = estState.bizName;
+
+      // Build line items per service
+      svState.selectedServices.forEach(svc => {
+        try {
+          estState.sections[svc] = estBuildLines(svc, svState.surveyData[svc] || {});
+        } catch(e) {
+          console.warn('estBuildLines', svc, e.message);
+          estState.sections[svc] = [{
+            desc: (SVC_LABEL[svc]||svc) + ' — pricing TBD',
+            detail: 'Edit manually', qty:1, unitPrice:0, editable:true
+          }];
+        }
+      });
+
+      // Render
+      try { estRender(); } catch(e) {
+        console.warn('estRender', e.message);
+        const ctr = document.getElementById('estLineItemsContainer');
+        if (ctr) ctr.innerHTML = '<div style="padding:16px;color:var(--soft)">Line items loaded — edit as needed.</div>';
+      }
+
+      // Show decision panel, hide others
+      const decEl = document.getElementById('estDecision');
+      if (decEl) decEl.classList.add('open');
+      ['estSquarePanel','estSigPanel','estThinkingPanel','estNotInterestedPanel'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = 'none';
+      });
+      const onbEl = document.getElementById('estOnboard');
+      if (onbEl) onbEl.classList.remove('open');
+
+      // Mark estimate built on account
+      if (estState.accountId) {
+        try {
+          const _d2 = crmLoad('accounts');
+          const _r2 = _d2.find(x => x.id === estState.accountId);
+          if (_r2) {
+            _r2.estimateBuilt = true;
+            _r2.estimateBuiltAt = Date.now();
+            crmSave('accounts', _d2);
+          }
+        } catch(e) {}
+        try {
+          if (typeof window.estMarkBuilt === 'function') window.estMarkBuilt(estState.accountId);
+        } catch(e) {}
+      }
+
+    } catch(e) {
+      console.error('Build Estimate error:', e);
+      // Overlay is already open — show error inside it
+      const decEl2 = document.getElementById('estDecision');
+      if (decEl2) {
+        decEl2.classList.add('open');
+        decEl2.innerHTML += '<div style="background:#FEF2F2;border:1.5px solid #C8102E;border-radius:8px;padding:14px;margin-top:16px;font-size:13px;color:#C8102E">⚠ ' + e.message + ' — survey data is saved. Edit items manually above.</div>';
+      }
+    }
+  }, 50); // 50ms lets the overlay paint before heavy work runs
 }
+
 
 /* ── SAVE SURVEY DATA (called on Next from each survey step) ── */
 function svSaveSurveyData(svc){
