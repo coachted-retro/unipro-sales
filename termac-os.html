@@ -7226,6 +7226,9 @@ function svSaveProgress() {
     const data = crmLoad('accounts');
     const r = data.find(x => x.id === svState.accountId);
     if (r) {
+      // Safety: check localStorage space before writing
+      try { localStorage.setItem('_quota_test', '1'); localStorage.removeItem('_quota_test'); }
+      catch(qe) { console.warn('svSaveProgress: localStorage full, skipping progress save'); return; }
       // Strip photos from progress snapshot too
       const _sdProgress = {};
       Object.keys(svState.surveyData||{}).forEach(svc => {
@@ -14547,6 +14550,11 @@ let estState = {
 
 /* ── OPEN ESTIMATE ── */
 function svOpenEstimate(){
+  // Open the overlay FIRST — this way even if something below throws,
+  // the rep sees the estimate screen rather than the accounts page
+  const _estOvEl = document.getElementById('estOverlay');
+  if (_estOvEl) _estOvEl.classList.add('open');
+
   // Pull data from svState
   estState.bizName = svState.bizName;
   estState.accountId = svState.accountId;
@@ -14558,13 +14566,25 @@ function svOpenEstimate(){
 
   // Build line items from survey data for each selected service
   svState.selectedServices.forEach(svc => {
-    const d = svState.surveyData[svc] || {};
-    estState.sections[svc] = estBuildLines(svc, d);
+    try {
+      const d = svState.surveyData[svc] || {};
+      estState.sections[svc] = estBuildLines(svc, d);
+    } catch(e) {
+      console.warn('estBuildLines error for', svc, ':', e.message);
+      estState.sections[svc] = [{
+        desc: SVC_LABEL[svc] + ' — pricing TBD',
+        detail: 'Error building line items — edit manually',
+        qty: 1, unitPrice: 0, editable: true
+      }];
+    }
   });
 
-  // Render pricing — disclaimer was already initialed on the Scope panel
-  // (svBuildEstimateFromScope), so pricing shows immediately here
-  estRender();
+  // Render pricing
+  try { estRender(); } catch(e) {
+    console.warn('estRender error:', e.message);
+    const ctr = document.getElementById('estLineItemsContainer');
+    if (ctr) ctr.innerHTML = '<div style="color:var(--soft);font-size:13px;padding:16px">Estimate items loaded — edit prices below.</div>';
+  }
 
   // Show decision panel
   document.getElementById('estDecision').classList.add('open');
@@ -28860,15 +28880,16 @@ function tmAutoSelectBooster(zip) {
 // Called inside svBuildEstimateFromScope after data is saved
 const _origEstMarkBuilt = window.estMarkBuilt;
 window.estMarkBuilt = function(accountId) {
-  // Save chemical program
-  const tmData = svState?.surveyData?.termac;
-  if (tmData && accountId) {
-    const zip      = svState?.surveyData?.account?.zip || '';
-    const covers   = tmData.dishMachineCovers || document.getElementById('sv_tm_covers')?.value || 100;
-    const restType = tmData.dishMachineRestType || document.getElementById('sv_tm_rest_type')?.value || 'default';
-    tmSaveChemProgramToAccount(accountId, svState.surveyData, covers, restType, zip);
-  }
-  if (_origEstMarkBuilt) _origEstMarkBuilt(accountId);
+  try {
+    const tmData = svState?.surveyData?.termac;
+    if (tmData && accountId) {
+      const zip      = svState?.surveyData?.account?.zip || '';
+      const covers   = tmData.dishMachineCovers || document.getElementById('sv_tm_covers')?.value || 100;
+      const restType = tmData.dishMachineRestType || document.getElementById('sv_tm_rest_type')?.value || 'default';
+      tmSaveChemProgramToAccount(accountId, svState.surveyData, covers, restType, zip);
+    }
+  } catch(e) { console.warn('estMarkBuilt chem save failed (non-fatal):', e.message); }
+  try { if (_origEstMarkBuilt) _origEstMarkBuilt(accountId); } catch(e) {}
 };
 
 // ── WIRE: auto-select booster when machine model changes ──────────────────
