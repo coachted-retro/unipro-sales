@@ -2302,6 +2302,48 @@ function renderCRMView(){
     html+=`<div class="crm-empty"><div class="crm-empty-icon">🔍</div><div class="crm-empty-msg">${emptyMsg}</div></div>`;
     body.innerHTML=html; return;
   }
+  // ── Rep Appointments Calendar -- mini monthly calendar showing appointments ──
+  const _today = new Date();
+  const _appts = crmLoad('appointments') || [];
+  const _cYear = _today.getFullYear();
+  const _cMonth = _today.getMonth();
+  const _monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const _firstDay = new Date(_cYear, _cMonth, 1).getDay();
+  const _daysInMonth = new Date(_cYear, _cMonth+1, 0).getDate();
+  // Build day→appts map
+  const _dayMap = {};
+  _appts.forEach(a => {
+    if (!a.date) return;
+    const d = new Date(a.date);
+    if (d.getFullYear() === _cYear && d.getMonth() === _cMonth) {
+      const k = d.getDate();
+      if (!_dayMap[k]) _dayMap[k] = [];
+      _dayMap[k].push(a);
+    }
+  });
+  // Build calendar grid HTML
+  let _calCells = '';
+  for (let i = 0; i < _firstDay; i++) _calCells += '<div></div>';
+  for (let d = 1; d <= _daysInMonth; d++) {
+    const isToday = d === _today.getDate();
+    const hasAppts = _dayMap[d]?.length > 0;
+    _calCells += `<div onclick="showDayAppts(${d},${_cYear},${_cMonth})" style="cursor:pointer;min-height:38px;border-radius:6px;padding:4px 5px;background:${isToday?'#C8102E':hasAppts?'#EFF6FF':'#F9FAFB'};border:1px solid ${isToday?'#C8102E':hasAppts?'#BFDBFE':'#E5E7EB'};position:relative">
+      <div style="font-size:11px;font-weight:${isToday||hasAppts?'800':'400'};color:${isToday?'#fff':hasAppts?'#1B5FA8':'#6B7280'}">${d}</div>
+      ${hasAppts?`<div style="font-size:9px;font-weight:700;color:${isToday?'#fff':'#1B5FA8'};margin-top:1px">${_dayMap[d].length} appt${_dayMap[d].length>1?'s':''}</div>`:''}
+    </div>`;
+  }
+  html += `<div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;margin-bottom:16px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft)">🗓 My Appointments — ${_monthNames[_cMonth]} ${_cYear}</div>
+      <button onclick="openApptModal(null,'accounts')" style="background:var(--red);color:#fff;border:none;border-radius:6px;padding:4px 12px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:10px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">+ Add</button>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;font-size:9px;color:var(--soft);text-align:center;margin-bottom:4px;font-weight:700;text-transform:uppercase">
+      <div>Sun</div><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px">${_calCells}</div>
+    <div id="_repDayApptDetail" style="margin-top:12px;display:none"></div>
+  </div>`;
+
   // ── Plan My Day banner -- shown between filters and the first lead
   // card on the Leads tab, for reps and territory-carrying managers
   // only. This is where their head already is when they open the app,
@@ -6731,6 +6773,7 @@ document.addEventListener('keydown', e=>{
             <button onclick="svTMShowCat('cleaning')" id="svTMCat_cleaning" class="svtm-cat-btn">🧹 Cleaning</button>
             <button onclick="svTMShowCat('paper')" id="svTMCat_paper" class="svtm-cat-btn">🧻 Paper &amp; Towels</button>
             <button onclick="svTMShowCat('aircare')" id="svTMCat_aircare" class="svtm-cat-btn">🌸 Air Care</button>
+            <button onclick="svTMShowCat('trash')" id="svTMCat_trash" class="svtm-cat-btn">🗑 Trash &amp; Misc</button>
             <button onclick="svTMShowCat('dispensers')" id="svTMCat_dispensers" class="svtm-cat-btn">🔧 Dispensers</button>
           </div>
           <!-- Product list -->
@@ -6739,6 +6782,18 @@ document.addEventListener('keydown', e=>{
           <div id="svTMLineItems" style="margin-top:14px">
             <div style="color:var(--soft);font-size:13px;font-style:italic">No products added yet.</div>
           </div>
+
+          <!-- Misc free-form line -->
+          <div style="margin-top:12px;padding:10px 12px;background:#F8F9FA;border-radius:8px;border:1.5px dashed var(--line)">
+            <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--soft);margin-bottom:8px">+ Add Misc / Custom Item</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+              <input id="svTMMiscDesc" placeholder="Description (e.g. Custom rack, special order)" style="flex:2;min-width:160px;padding:7px 10px;border:1.5px solid var(--line);border-radius:6px;font-size:12px;font-family:Barlow,sans-serif;outline:none">
+              <input id="svTMMiscQty" type="number" min="1" value="1" style="width:60px;padding:7px 10px;border:1.5px solid var(--line);border-radius:6px;font-size:12px;font-family:Barlow,sans-serif;outline:none">
+              <input id="svTMMiscPrice" type="number" min="0" placeholder="Price" style="width:80px;padding:7px 10px;border:1.5px solid var(--line);border-radius:6px;font-size:12px;font-family:Barlow,sans-serif;outline:none">
+              <button onclick="svTMAddMisc()" style="background:#1A1D21;color:#fff;border:none;border-radius:6px;padding:7px 14px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;cursor:pointer;white-space:nowrap">+ Add</button>
+            </div>
+          </div>
+
           <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line);display:flex;justify-content:space-between;align-items:center">
             <strong style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:15px">Supplies Total (per order)</strong>
             <strong style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:18px;color:var(--red)" id="svTMSupplyTotal">$0</strong>
@@ -7045,24 +7100,29 @@ function openSiteSurvey(id){
   if (isUsable) {
     // Show resume banner inside the overlay (already open) instead of a blocking alert
     svGotoStep(0); // go to step 0 first so overlay is visible
+    // Store progress for resume function BEFORE rendering banner
+    window._svPendingResume = savedProgress;
+    const stepLabel = savedProgress.selectedServices.join(', ').toUpperCase();
+    // Insert banner as the first child of .sv-body (scrollable content area, not fixed header)
+    const svBody = document.querySelector('#svOverlay .sv-body') || document.querySelector('#svOverlay .sv-panel.active') || document.getElementById('svOverlay');
     const banner = document.createElement('div');
     banner.id = '_svResumeBanner';
-    banner.style.cssText = 'position:absolute;top:60px;left:0;right:0;z-index:50;background:#1A1D21;color:#fff;padding:18px 24px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;box-shadow:0 4px 16px rgba(0,0,0,.3)';
-    const stepLabel = savedProgress.selectedServices.join(', ').toUpperCase();
+    banner.style.cssText = 'background:#1A1D21;color:#fff;padding:16px 20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:-20px -20px 20px -20px;border-radius:0';
     banner.innerHTML = `
       <div style="flex:1;min-width:180px">
         <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px;letter-spacing:.10em;text-transform:uppercase;margin-bottom:2px">📋 Resume Previous Survey?</div>
-        <div style="font-size:12px;color:#9CA3AF">Saved progress: ${stepLabel} · Step ${savedProgress.currentStep + 1}</div>
+        <div style="font-size:12px;color:#9CA3AF">Saved: ${stepLabel} · Step ${savedProgress.currentStep + 1}</div>
       </div>
       <button onclick="svResumeProgress()" style="background:#16a34a;color:#fff;border:none;border-radius:8px;padding:9px 20px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;white-space:nowrap">↩ Resume</button>
       <button onclick="svDismissResume()" style="background:transparent;color:#9CA3AF;border:1.5px solid #3A3E45;border-radius:8px;padding:9px 16px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;cursor:pointer;white-space:nowrap">Start Fresh</button>
     `;
-    const overlay = document.getElementById('svOverlay');
-    if (overlay) overlay.style.position = 'relative'; // ensure absolute child works
-    const body = overlay?.querySelector('.sv-body') || overlay;
-    if (overlay) overlay.insertBefore(banner, overlay.firstChild);
-    // Store progress for resume function
-    window._svPendingResume = savedProgress;
+    // Insert at top of active panel body
+    const activePanel = document.querySelector('#svOverlay .sv-panel.active');
+    if (activePanel) {
+      activePanel.insertBefore(banner, activePanel.firstChild);
+    } else if (svBody) {
+      svBody.insertBefore(banner, svBody.firstChild);
+    }
   } else {
     svGotoStep(0);
   }
@@ -7070,7 +7130,18 @@ function openSiteSurvey(id){
 
 function svResumeProgress() {
   const p = window._svPendingResume;
-  if (!p) return;
+  if (!p) {
+    // Try to reload from the current account
+    if (svState.accountId) {
+      const data = crmLoad('accounts');
+      const r = data.find(x => x.id === svState.accountId);
+      if (r?._surveyInProgress) {
+        window._svPendingResume = r._surveyInProgress;
+        svResumeProgress();
+      }
+    }
+    return;
+  }
   const banner = document.getElementById('_svResumeBanner');
   if (banner) banner.remove();
   // Restore state
@@ -12244,7 +12315,20 @@ function svBuildScope(){
     const d = svState.surveyData[svc]||{};
     let details = '';
     if(svc==='unipro' || svc==='quality3'){
-      details = `Extinguishers: ${d.ext_qty||'—'} · Hood systems: ${d.hood_qty||'—'} · Monitoring: ${d.monitoring_status||'—'}`;
+      // Build violations list from survey data
+      const hoods = Array.isArray(d.hoods) ? d.hoods : [];
+      const exts  = Array.isArray(d.exts)  ? d.exts  : [];
+      const lights= Array.isArray(d.lights) ? d.lights: [];
+      const hoodFindings = hoods.filter(h=>h.cond&&h.cond!=='good'&&h.cond!=='').map(h=>`Hood ${h.idx}: ${h.cond}${h.loc?' ('+h.loc+')':''}`);
+      const extFindings  = exts.filter(e=>e.condition&&e.condition!=='good'&&e.condition!=='').map(e=>`Ext ${e.idx}: ${e.condition}`);
+      const lightFindings= lights.filter(l=>l.status&&l.status!=='pass'&&l.status!=='').map(l=>`${l.type||'Light'} ${l.idx}: ${l.status}`);
+      const allFindings  = [...hoodFindings, ...extFindings, ...lightFindings];
+      const findingsHtml = allFindings.length
+        ? `<div style="margin-top:8px;padding:8px 12px;background:#FEF2F2;border-left:3px solid #C8102E;border-radius:0 6px 6px 0;font-size:12px;color:#7F1D1D">
+            <strong style="font-size:10px;letter-spacing:.08em;text-transform:uppercase">⚠ Violations Found (${allFindings.length})</strong><br>
+            ${allFindings.map(f=>`• ${f}`).join('<br>')}
+           </div>` : '';
+      details = `Extinguishers: ${d.ext_qty||'—'} · Hood systems: ${d.hood_qty||'—'} · Monitoring: ${d.monitoring_status||'—'}${findingsHtml}`;
     } else if(svc==='filterman'){
       details = `Filters: ${d.fm_count||'—'} × ${d.fm_size||'—'} · Frequency: ${d.fm_frequency||'—'} · Term: ${d.fm_term||'—'}`;
     } else if(svc==='gto'){
@@ -12356,34 +12440,56 @@ function svBuildEstimateFromScope(){
     }
   }
 
+  // Save survey data for every service before building estimate
+  // (Build Estimate bypasses the normal svGoNext save path)
+  svState.selectedServices.forEach(svc => {
+    try { if (typeof svSaveSurveyData === 'function') svSaveSurveyData(svc); } catch(e) { console.warn('svSaveSurveyData error for', svc, e); }
+  });
+
+  // Clear in-progress flag — survey is complete
+  try { if (typeof svClearProgress === 'function') svClearProgress(); } catch(e) {}
+
+  // Close survey overlay
+  const svOv = document.getElementById('svOverlay');
+  if (svOv) svOv.classList.remove('open');
+
+  // Open estimate overlay — open the overlay FIRST so it's visible even if render throws
+  const estOv = document.getElementById('estOverlay');
+  if (estOv) estOv.classList.add('open');
+
   try {
-    // Save survey data for every service before building estimate
-    // (Build Estimate bypasses the normal svGoNext save path)
+    // Reset estimate panels
+    document.getElementById('estDecision').classList.add('open');
+    document.getElementById('estSquarePanel').style.display = 'none';
+    const _sp = document.getElementById('estSigPanel'); if (_sp) _sp.style.display = 'none';
+    document.getElementById('estOnboard').classList.remove('open');
+    document.getElementById('estThinkingPanel').style.display = 'none';
+    document.getElementById('estNotInterestedPanel').style.display = 'none';
+    // Populate estimate state
+    estState.bizName = svState.bizName;
+    estState.accountId = svState.accountId;
+    estState.sections = {};
+    estState.customLines = [];
+    estState.decision = null;
+    document.getElementById('estBizName').textContent = estState.bizName || '';
     svState.selectedServices.forEach(svc => {
-      if (typeof svSaveSurveyData === 'function') svSaveSurveyData(svc);
+      try { estState.sections[svc] = estBuildLines(svc, svState.surveyData[svc] || {}); }
+      catch(e) { console.warn('estBuildLines error for', svc, e); estState.sections[svc] = []; }
     });
-    // Clear in-progress flag — survey is complete
-    if (typeof svClearProgress === 'function') svClearProgress();
-    // Close survey overlay first so estimate renders on top cleanly
-    const svOv = document.getElementById('svOverlay');
-    if (svOv) svOv.classList.remove('open');
-    svOpenEstimate();
-  } catch(e) {
-    console.error('svOpenEstimate error:', e);
-    // Re-open survey so it's not just blank screen
-    const svOv2 = document.getElementById('svOverlay');
-    if (svOv2) svOv2.classList.add('open');
-    // Show error on-screen (alert can be blocked on mobile)
-    let errDiv = document.getElementById('_estErrBanner');
-    if (!errDiv) {
-      errDiv = document.createElement('div');
-      errDiv.id = '_estErrBanner';
-      errDiv.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#C8102E;color:#fff;padding:14px 20px;border-radius:10px;font-size:13px;font-family:Barlow,sans-serif;z-index:9999;max-width:90vw;box-shadow:0 4px 20px rgba(0,0,0,.3)';
-      document.body.appendChild(errDiv);
+    estRender();
+    // Mark estimate as built
+    if (estState.accountId) {
+      try {
+        const _d = crmLoad('accounts');
+        const _r = _d.find(x => x.id === estState.accountId);
+        if (_r) { _r.estimateBuilt = true; _r.estimateBuiltAt = Date.now(); crmSave('accounts', _d); }
+      } catch(e) {}
     }
-    errDiv.textContent = '⚠ Estimate error: ' + e.message + ' — tap to dismiss';
-    errDiv.onclick = () => errDiv.remove();
-    setTimeout(() => errDiv && errDiv.remove(), 8000);
+  } catch(e) {
+    console.error('Estimate render error:', e);
+    // Overlay is already open — show error inside it
+    const decEl = document.getElementById('estDecision');
+    if (decEl) decEl.innerHTML += `<div style="background:#FEF2F2;border:1.5px solid #C8102E;border-radius:8px;padding:14px;margin-top:16px;font-size:13px;color:#C8102E">⚠ Estimate build error: ${e.message}. Survey data saved — tap <strong>✕ Close</strong> to go back and try again.</div>`;
   }
 }
 
@@ -12803,6 +12909,28 @@ const TM_PROD_CATALOG = {
     {p:'TTIS105',d:'2-Ply Velvet Soft Premium Toilet Tissue',price:68.65,uom:'CASE'},
     {p:'TTIS115',d:'2-Ply 9in JRT Jr Toilet Tissue 1000ft',price:46.40,uom:'CASE'},
   ],
+  trash: [
+    {p:'TRBAG33',d:'33-Gallon Can Liner (Black, .9mil)',price:28.40,uom:'CASE'},
+    {p:'TRBAG44',d:'44-Gallon Can Liner (Black, 1.2mil)',price:34.75,uom:'CASE'},
+    {p:'TRBAG55',d:'55-Gallon Can Liner (Black, 1.5mil)',price:42.10,uom:'CASE'},
+    {p:'TRBAG23',d:'23-Gallon Clear Liner (Kitchen)',price:22.80,uom:'CASE'},
+    {p:'TRBAG16',d:'16-Gallon Blue Recycle Liner',price:26.50,uom:'CASE'},
+    {p:'TRBAG60',d:'60-Gallon Heavy Duty Can Liner',price:58.90,uom:'CASE'},
+    {p:'WAXLNR',d:'Wax-Coated Produce Liner',price:19.75,uom:'CASE'},
+    {p:'ZIPL100',d:'Zip-Lock Bags Gallon (100ct)',price:14.20,uom:'BOX'},
+    {p:'ZIPL200',d:'Zip-Lock Bags Quart (200ct)',price:12.40,uom:'BOX'},
+    {p:'GLOVES100',d:'Vinyl Gloves Powder-Free (M/L/XL)',price:9.80,uom:'BOX'},
+    {p:'NITGL100',d:'Nitrile Gloves Food-Safe (M/L)',price:14.50,uom:'BOX'},
+    {p:'SCRUBBR',d:'Non-Scratch Scrubber Pads (20ct)',price:8.95,uom:'PACK'},
+    {p:'STEELWL',d:'Steel Wool Pads (12ct)',price:7.40,uom:'PACK'},
+    {p:'TOOTHBRUSH',d:'Detail Cleaning Brushes (12ct)',price:11.20,uom:'PACK'},
+    {p:'SQUEEGEE',d:'Rubber Squeegee 18"',price:16.80,uom:'EACH'},
+    {p:'MOPHEAD',d:'Cotton Mop Head #20',price:9.40,uom:'EACH'},
+    {p:'MOPHEAD32',d:'Cotton Mop Head #32',price:12.60,uom:'EACH'},
+    {p:'BROOM100',d:'Lobby Broom w/ Dustpan',price:22.50,uom:'EACH'},
+    {p:'DUSTPAN',d:'Commercial Dustpan',price:8.75,uom:'EACH'},
+    {p:'APRON100',d:'Poly Apron 28x46" (100ct)',price:18.30,uom:'CASE'},
+  ],
   aircare: [
     {p:'CLRC100',d:'Metered Aerosol Air Fresh Dispenser',price:31.20,uom:'EACH'},
     {p:'CLRC106',d:'Claire Mulberry Breeze Metered Air Fresh',price:66.44,uom:'CASE'},
@@ -12838,7 +12966,7 @@ let _svTMActiveCat = 'dish';
 function svTMShowCat(cat) {
   _svTMActiveCat = cat;
   // Update tab styles
-  ['dish','hand','cleaning','paper','aircare','dispensers'].forEach(c => {
+  ['dish','hand','cleaning','paper','trash','aircare','dispensers'].forEach(c => {
     const btn = document.getElementById('svTMCat_' + c);
     if (btn) {
       if (c === cat) { btn.classList.add('svtm-cat-active'); }
@@ -12865,6 +12993,20 @@ function svTMRenderProductList() {
       }
     </div>`;
   }).join('') || '<div style="color:var(--soft);font-size:13px;padding:12px 0">No products in this category.</div>';
+}
+
+function svTMAddMisc() {
+  const desc  = document.getElementById('svTMMiscDesc')?.value?.trim();
+  const qty   = parseInt(document.getElementById('svTMMiscQty')?.value) || 1;
+  const price = parseFloat(document.getElementById('svTMMiscPrice')?.value) || 0;
+  if (!desc) { alert('Enter a description for the misc item.'); return; }
+  if (!Array.isArray(window._svTMLineItems)) window._svTMLineItems = [];
+  window._svTMLineItems.push({ part_number: 'MISC-' + Date.now(), description: desc, qty, unit_price: price, uom: 'EACH' });
+  svTMRenderLineItems();
+  // Clear fields
+  document.getElementById('svTMMiscDesc').value = '';
+  document.getElementById('svTMMiscQty').value = '1';
+  document.getElementById('svTMMiscPrice').value = '';
 }
 
 function svTMAddProduct(partNum, desc, price, uom) {
@@ -12901,9 +13043,33 @@ async function svTMAIAnalyze() {
   const spaceLen = `${lengthFt} ft ${lengthIn} in`;
   const spaceWid = widthFt ? `${widthFt} ft` : 'not measured';
 
-  const prompt = `You are an expert commercial kitchen equipment consultant for Termac, specializing in commercial dish machines and chemical programs.
+  // Build model catalog string for the prompt
+  const _rentalCatalog = TERMAC_RENTAL_MACHINES.map((m,i)=>
+    `  [${i}] ${m.model} — $${m.leaseService}/mo lease${m.usageCharge ? `, +$${m.usageCharge}/rack over ${m.cycleExcess} cycles` : m.usageNote ? ` (${m.usageNote})` : ''}`
+  ).join('\n');
+  const _sellCatalog = TERMAC_SELL_MACHINES.map((m,i)=>
+    `  [${i}] ${m.model} — ${m.desc} — $${m.price.toLocaleString()}`
+  ).join('\n');
 
-Based on the information below, provide a complete dish machine installation recommendation.
+  const prompt = `You are a commercial kitchen equipment specialist for Termac. Select the EXACT model from the catalogs below based on restaurant volume, machine specs, and kitchen dimensions.
+
+VOLUME-BASED SELECTION RULES (STRICT — follow these first):
+- 0–50 covers/day: UC-180 (undercounter) — low-volume, space-saving
+- 51–150 covers/day: ET/ETPD/ET3 or Single Tank Straight/Corner — medium volume door-type
+- 151–300 covers/day: AFB/AFBC or HT-25 — high-temp option for busy operations
+- 301–500 covers/day: ADC-44 conveyor — high volume, continuous washing
+- 500+ covers/day: ADC-66 conveyor — very high volume
+- Fine dining or hotel banquet at 150+ covers: always consider HT-25 (prestige, glassware quality)
+- Bar/lounge heavy glassware: ASQ glasswasher preferred under 200 covers; ADC-44 above
+- If space length < 6 ft: must be UC-180 regardless of volume
+- If space length 6–10 ft: door-type only (no conveyors)
+- If space length > 10 ft: conveyors eligible if volume justifies
+
+TERMAC RENTAL CATALOG (recommend rental by default):
+${_rentalCatalog}
+
+TERMAC SELL CATALOG (only recommend sell if customer prefers ownership):
+${_sellCatalog}
 
 RESTAURANT: ${TM_REST_LABELS[restType] || restType}
 COVERS PER DAY: ${covers}
@@ -12912,15 +13078,17 @@ SPACE WIDTH: ${spaceWid}
 DRAIN LOCATION: ${drain ? drain + ' side' : 'unknown'}
 SPACE NOTES: ${notes || 'none'}
 POT SINK: ${potSink === 'yes' ? `Yes — ${potComp}-compartment` : 'No'}
-${svState.surveyData?.termac?.areaPhotoData ? 'PHOTO: Provided — analyze the space layout, constraints, and flow direction visible in the image.' : 'PHOTO: Not provided — base on measurements and restaurant type.'}
+${svState.surveyData?.termac?.areaPhotoData ? 'PHOTO: Provided — analyze space layout, constraints, and flow direction.' : 'PHOTO: Not provided — base on measurements and restaurant type.'}
 
 Respond in EXACTLY this format:
 
 **MACHINE RECOMMENDATION**
-Type: [Undercounter / Low-Profile Door / Standard Door / High-Temp Door / Conveyor / Flight]
-Capacity Needed: [X racks/hour]
+Model: [EXACT model name from catalog above — must match exactly]
+Rental Index: [catalog index number 0-8]
+Type: [Undercounter / Door-Type / Conveyor]
+Capacity Needed: [X racks/hour based on ${covers} covers/day]
 Temperature Type: [High-Temp — no liquid sanitizer needed / Low-Temp — liquid sanitizer required]
-Why This Machine: [2 sentences]
+Why This Machine: [2 sentences referencing covers/day and space constraints]
 
 **INSTALLATION CONFIGURATION**
 Direction: [Left-to-Right / Right-to-Left]
@@ -12930,17 +13098,19 @@ Why This Configuration: [1-2 sentences based on drain location and kitchen flow]
 Soil Table Length: [X ft Y in]
 Clean Table Length: [X ft Y in]
 Table Width: [24 in standard / 30 in high-volume]
-Installation Notes: [critical notes from photo or space constraints]
+
+**BOOSTER HEATER**
+Required: [Yes / No]
+Why: [1 sentence — required for high-temp machines or cold water supply areas]
 
 **DISH MACHINE CHEMICAL PROGRAM**
-Detergent: [type] — [X oz/rack] — est. [Y] gal/month at ${covers} covers/day
-Rinse Aid: [type] — [X oz/rack] — est. [Y] oz/month
-${potSink === 'no' ? 'Sanitizer: [Required / Not Required based on machine temp type — if required: type, dose, monthly estimate]' : 'Sanitizer: [Required / Not Required — details]'}
+Detergent: [product name] — [X oz/rack] — est. [Y] gal/month at ${covers} covers/day
+Rinse Aid: [product name] — [X oz/rack] — est. [Y] oz/month
+Sanitizer: [Required at [X oz/rack] / Not Required — high-temp machine]
 
 ${potSink === 'yes' ? `**POT SINK CHEMICAL PROGRAM**
-Pot & Pan Detergent: [type] — dilution [X oz per gallon] — est. [Y] gal/month
-Pot Sink Sanitizer: [quaternary ammonium] — dilution [X oz per gallon] — est. [Y] gal/month
-Usage Note: [1 sentence at this volume]` : ''}
+Pot & Pan Detergent: [type] — [X oz/gal dilution] — est. [Y] gal/month
+Pot Sink Sanitizer: quaternary ammonium — [X oz/gal] — est. [Y] gal/month` : ''}
 
 **PROPOSAL SUMMARY**
 [2-3 sentences suitable for a customer-facing proposal]`;
@@ -12989,34 +13159,33 @@ Usage Note: [1 sentence at this volume]` : ''}
 
 function svTMAutoFillFromAI(text) {
   // Parse AI recommendation and auto-fill form fields
-  // Machine type → mode and model
-  const machineTypeMatch = text.match(/Type:\s*([^\n]+)/i);
-  const tempMatch        = text.match(/Temperature Type:\s*([^\n]+)/i);
-  const dirMatch         = text.match(/Direction:\s*([^\n]+)/i);
+  const rentalIdxMatch = text.match(/Rental Index:\s*(\d+)/i);
+  const boosterMatch   = text.match(/Required:\s*(Yes|No)/i);
 
-  // Map AI machine type to rental machine model
-  const typeText = (machineTypeMatch?.[1]||'').toLowerCase();
-  const isHighTemp = (tempMatch?.[1]||'').toLowerCase().includes('high');
-
-  // Set mode to Rental by default (most common)
+  // Set mode to Rental
   const modeEl = document.getElementById('sv_tm_machine_mode');
-  if (modeEl && !modeEl.value) modeEl.value = 'rental';
+  if (modeEl) { modeEl.value = 'rental'; }
+  svTMRenderMachineOptions();
 
-  // Try to match model
-  // Auto-select rental mode and best-fit model
-  const modeSelectEl = document.getElementById('sv_tm_machine_mode');
-  if (modeSelectEl && !modeSelectEl.value) {
-    modeSelectEl.value = 'rental';
-    svTMRenderMachineOptions();
-  }
+  // Select model by Rental Index returned from AI
   const modelSelectEl = document.getElementById('sv_tm_machine_model');
-  if (modelSelectEl && modelSelectEl.options.length > 1 && !modelSelectEl.value) {
-    let bestIdx = 1; // default: first rental option
-    if (typeText.includes('undercounter') || typeText.includes('under counter')) bestIdx = 9; // UC-180
-    else if (typeText.includes('conveyor')) bestIdx = 1; // ADC-44
-    else if (typeText.includes('door') || typeText.includes('single')) bestIdx = 8; // Single Tank
-    modelSelectEl.selectedIndex = bestIdx;
-    modelSelectEl.dispatchEvent(new Event('change'));
+  if (modelSelectEl && rentalIdxMatch) {
+    const targetIdx = parseInt(rentalIdxMatch[1]);
+    // Options: [0]=placeholder, [1..n]=rental models matching TERMAC_RENTAL_MACHINES order
+    const optIdx = targetIdx + 1; // +1 for placeholder
+    if (optIdx < modelSelectEl.options.length) {
+      modelSelectEl.selectedIndex = optIdx;
+      modelSelectEl.dispatchEvent(new Event('change'));
+    }
+  }
+
+  // Auto-check booster if AI says required
+  if (boosterMatch && boosterMatch[1].toLowerCase() === 'yes') {
+    const boosterEl = document.getElementById('sv_tm_booster_needed');
+    if (boosterEl) {
+      boosterEl.value = 'yes';
+      boosterEl.dispatchEvent(new Event('change'));
+    }
   }
 
   // Water softener — suggest Small by default if not set
@@ -22247,6 +22416,30 @@ function buildStopContext(opp) {
 
 let planDaySelectedDates = new Set();
 let planDayCalMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+
+function showDayAppts(day, year, month) {
+  const el = document.getElementById('_repDayApptDetail');
+  if (!el) return;
+  const appts = crmLoad('appointments') || [];
+  const dayAppts = appts.filter(a => {
+    if (!a.date) return false;
+    const d = new Date(a.date);
+    return d.getFullYear() === year && d.getMonth() === month && d.getDate() === day;
+  });
+  const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  if (!dayAppts.length) {
+    el.innerHTML = `<div style="font-size:12px;color:var(--soft);padding:8px 0;border-top:1px solid var(--line)">No appointments on ${monthNames[month]} ${day}.</div>`;
+  } else {
+    el.innerHTML = `<div style="border-top:1px solid var(--line);padding-top:10px">
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--soft);margin-bottom:8px">${monthNames[month]} ${day} — ${dayAppts.length} Appointment${dayAppts.length>1?'s':''}</div>
+      ${dayAppts.map(a => `<div style="background:#F8F9FA;border-radius:8px;padding:10px 12px;margin-bottom:6px;border-left:3px solid var(--red)">
+        <div style="font-weight:700;font-size:13px">${a.time||'All day'} — ${a.account||a.contact||'(No account)'}</div>
+        <div style="font-size:12px;color:var(--soft);margin-top:2px">${a.note||a.type||''}</div>
+      </div>`).join('')}
+    </div>`;
+  }
+  el.style.display = 'block';
+}
 
 function openPlanDayCalendar() {
   const modal = document.getElementById('planDayCalModal');
