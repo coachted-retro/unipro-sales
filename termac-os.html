@@ -1298,7 +1298,8 @@ body.rail-open .rail-overlay{display:block}
 <script>
 // ─── HEALTH SPIDER / RADAR CHART ───
 const healthCtx = document.getElementById('healthChart').getContext('2d');
-new Chart(healthCtx, {
+// Health chart — click a bar to see accounts in that tier
+const _healthChart = new Chart(healthCtx, {
   type: 'radar',
   data: {
     labels: ['Revenue','Accounts','Renewals','Service Vol','Referrals','Satisfaction'],
@@ -6471,7 +6472,7 @@ document.addEventListener('keydown', e=>{
               </select>
             </div>
             <div class="sv-field"><label>Agreement Term</label>
-              <select id="sv_fm_term">
+              <select id="sv_fm_term" onchange="svFMCalcRate()">
                 <option value="">— Select —</option>
                 <option value="1yr">1 Year</option><option value="3yr">3 Years (best rate)</option>
               </select>
@@ -7601,6 +7602,8 @@ function fsGo(from, to) {
   if (to === 3) fsPrefillProposal();
   // Trigger pricing calcs when navigating to FM or GTO steps
   if (to === 1 && typeof svFMCalcRate === 'function') setTimeout(svFMCalcRate, 100);
+  // Also recalc when any filter panel becomes active
+  if (typeof svFMCalcRate === 'function') setTimeout(svFMCalcRate, 200);
   if (to === 2 && typeof svGTOCalcRate === 'function') setTimeout(svGTOCalcRate, 100);
   if (to === 4) fsBuildSigSummary(); fsInitSigCanvas();
   if (to === 5) { fsAutoFillAcctFromClientInfo(); }
@@ -12331,20 +12334,73 @@ function svBuildScope(){
     const d = svState.surveyData[svc]||{};
     let details = '';
     if(svc==='unipro' || svc==='quality3'){
-      // Build violations list from survey data
-      const hoods = Array.isArray(d.hoods) ? d.hoods : [];
-      const exts  = Array.isArray(d.exts)  ? d.exts  : [];
-      const lights= Array.isArray(d.lights) ? d.lights: [];
-      const hoodFindings = hoods.filter(h=>h.cond&&h.cond!=='good'&&h.cond!=='').map(h=>`Hood ${h.idx}: ${h.cond}${h.loc?' ('+h.loc+')':''}`);
-      const extFindings  = exts.filter(e=>e.condition&&e.condition!=='good'&&e.condition!=='').map(e=>`Ext ${e.idx}: ${e.condition}`);
-      const lightFindings= lights.filter(l=>l.status&&l.status!=='pass'&&l.status!=='').map(l=>`${l.type||'Light'} ${l.idx}: ${l.status}`);
-      const allFindings  = [...hoodFindings, ...extFindings, ...lightFindings];
-      const findingsHtml = allFindings.length
-        ? `<div style="margin-top:8px;padding:8px 12px;background:#FEF2F2;border-left:3px solid #C8102E;border-radius:0 6px 6px 0;font-size:12px;color:#7F1D1D">
-            <strong style="font-size:10px;letter-spacing:.08em;text-transform:uppercase">⚠ Violations Found (${allFindings.length})</strong><br>
-            ${allFindings.map(f=>`• ${f}`).join('<br>')}
-           </div>` : '';
-      details = `Extinguishers: ${d.ext_qty||'—'} · Hood systems: ${d.hood_qty||'—'} · Monitoring: ${d.monitoring_status||'—'}${findingsHtml}`;
+      const hoods  = Array.isArray(d.hoods)  ? d.hoods  : [];
+      const exts   = Array.isArray(d.exts)   ? d.exts   : [];
+      const lights = Array.isArray(d.lights) ? d.lights : [];
+
+      // "Good" condition values — everything else is a finding
+      const isGood = v => !v || v===''||v.startsWith('—')||v.toLowerCase().startsWith('good')||v.toLowerCase().startsWith('pass');
+
+      // All items (good + deficient) for full review with customer
+      const hoodRows = hoods.map(h => {
+        const ok = isGood(h.cond);
+        return `<tr style="background:${ok?'#fff':'#FEF2F2'}">
+          <td style="padding:5px 8px;font-size:11px;font-weight:600">Hood ${h.idx}${h.loc?' — '+h.loc:''}</td>
+          <td style="padding:5px 8px;font-size:11px;color:${ok?'#16a34a':'#C8102E'};font-weight:${ok?'400':'700'}">${h.cond||'Not assessed'}${!ok?' ⚠':''}</td>
+          <td style="padding:5px 8px;font-size:11px;color:var(--soft)">${h.last||'—'}</td>
+          <td style="padding:5px 8px;font-size:11px;color:${ok?'var(--soft)':'#C8102E'}">${h.ai||''}</td>
+        </tr>`;
+      }).join('');
+
+      const extRows = exts.map(e => {
+        const ok = isGood(e.cond);
+        return `<tr style="background:${ok?'#fff':'#FEF2F2'}">
+          <td style="padding:5px 8px;font-size:11px;font-weight:600">Ext ${e.idx}${e.loc?' — '+e.loc:''}</td>
+          <td style="padding:5px 8px;font-size:11px;color:${ok?'#16a34a':'#C8102E'};font-weight:${ok?'400':'700'}">${e.cond||'Not assessed'}${!ok?' ⚠':''}</td>
+          <td style="padding:5px 8px;font-size:11px;color:var(--soft)">${e.last||'—'}</td>
+          <td style="padding:5px 8px;font-size:11px;color:${ok?'var(--soft)':'#C8102E'}">${e.ai||e.action||''}</td>
+        </tr>`;
+      }).join('');
+
+      const lightRows = lights.map(l => {
+        const ok = isGood(l.cond);
+        return `<tr style="background:${ok?'#fff':'#FEF2F2'}">
+          <td style="padding:5px 8px;font-size:11px;font-weight:600">${l.type||'Light'} ${l.idx}${l.loc?' — '+l.loc:''}</td>
+          <td style="padding:5px 8px;font-size:11px;color:${ok?'#16a34a':'#C8102E'};font-weight:${ok?'400':'700'}">${l.cond||'Not assessed'}${!ok?' ⚠':''}</td>
+          <td style="padding:5px 8px;font-size:11px;color:var(--soft)">—</td>
+          <td style="padding:5px 8px;font-size:11px;color:${ok?'var(--soft)':'#C8102E'}">${l.ai||''}</td>
+        </tr>`;
+      }).join('');
+
+      const deficientCount = [
+        ...hoods.filter(h=>!isGood(h.cond)),
+        ...exts.filter(e=>!isGood(e.cond)),
+        ...lights.filter(l=>!isGood(l.cond))
+      ].length;
+
+      const tableHtml = (label, rows) => rows ? `
+        <div style="margin-top:12px">
+          <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.10em;text-transform:uppercase;color:var(--soft);margin-bottom:4px">${label}</div>
+          <table style="width:100%;border-collapse:collapse;border:1px solid var(--line);border-radius:6px;overflow:hidden">
+            <thead><tr style="background:#F8F9FA">
+              <th style="padding:5px 8px;text-align:left;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--soft)">Unit / Location</th>
+              <th style="padding:5px 8px;text-align:left;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--soft)">Condition</th>
+              <th style="padding:5px 8px;text-align:left;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--soft)">Last Service</th>
+              <th style="padding:5px 8px;text-align:left;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--soft)">AI Note / Action</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>` : '';
+
+      const summaryLine = `Extinguishers: ${d.ext_qty||exts.length||'—'} · Hood systems: ${d.hood_qty||hoods.length||'—'} · Monitoring: ${d.monitoring_status||'—'}`;
+      const deficiencyBanner = deficientCount > 0
+        ? `<div style="margin-top:6px;padding:6px 10px;background:#FEF2F2;border-left:3px solid #C8102E;border-radius:0 5px 5px 0;font-size:11px;font-weight:700;color:#C8102E">⚠ ${deficientCount} item${deficientCount>1?'s':''} require attention — review with customer below</div>`
+        : `<div style="margin-top:6px;padding:6px 10px;background:#F0FDF4;border-left:3px solid #16a34a;border-radius:0 5px 5px 0;font-size:11px;font-weight:700;color:#15803d">✓ All systems assessed — no critical deficiencies found</div>`;
+
+      details = summaryLine + deficiencyBanner +
+        tableHtml('🔥 Hood Suppression Systems', hoodRows) +
+        tableHtml('🧯 Fire Extinguishers', extRows) +
+        tableHtml('💡 Exit / Emergency Lighting', lightRows);
     } else if(svc==='filterman'){
       details = `Filters: ${d.fm_count||'—'} × ${d.fm_size||'—'} · Frequency: ${d.fm_frequency||'—'} · Term: ${d.fm_term||'—'}`;
     } else if(svc==='gto'){
@@ -12469,47 +12525,23 @@ function svBuildEstimateFromScope(){
   const svOv = document.getElementById('svOverlay');
   if (svOv) svOv.classList.remove('open');
 
-  // Open estimate overlay — open the overlay FIRST so it's visible even if render throws
-  const estOv = document.getElementById('estOverlay');
-  if (estOv) estOv.classList.add('open');
-
+  // Open estimate using svOpenEstimate which has the full correct logic
+  // (estState is defined later in the file — must not reference it here directly)
   try {
-    // Reset estimate panels
-    document.getElementById('estDecision').classList.add('open');
-    document.getElementById('estSquarePanel').style.display = 'none';
-    const _sp = document.getElementById('estSigPanel'); if (_sp) _sp.style.display = 'none';
-    document.getElementById('estOnboard').classList.remove('open');
-    document.getElementById('estThinkingPanel').style.display = 'none';
-    document.getElementById('estNotInterestedPanel').style.display = 'none';
-    // Populate estimate state
-    estState.bizName = svState.bizName;
-    estState.accountId = svState.accountId;
-    estState.sections = {};
-    estState.customLines = [];
-    estState.decision = null;
-    document.getElementById('estBizName').textContent = estState.bizName || '';
-    svState.selectedServices.forEach(svc => {
-      try { estState.sections[svc] = estBuildLines(svc, svState.surveyData[svc] || {}); }
-      catch(e) { console.warn('estBuildLines error for', svc, e); estState.sections[svc] = []; }
-    });
-    estRender();
-    // Mark estimate as built
-    if (estState.accountId) {
-      try {
-        const _d = crmLoad('accounts');
-        const _r = _d.find(x => x.id === estState.accountId);
-        if (_r) {
-          _r.estimateBuilt = true; _r.estimateBuiltAt = Date.now(); crmSave('accounts', _d);
-          // Save chemical program + trigger intelligence engine
-          if (typeof window.estMarkBuilt === 'function') window.estMarkBuilt(estState.accountId);
-        }
-      } catch(e) {}
-    }
+    svOpenEstimate();
   } catch(e) {
-    console.error('Estimate render error:', e);
-    // Overlay is already open — show error inside it
-    const decEl = document.getElementById('estDecision');
-    if (decEl) decEl.innerHTML += `<div style="background:#FEF2F2;border:1.5px solid #C8102E;border-radius:8px;padding:14px;margin-top:16px;font-size:13px;color:#C8102E">⚠ Estimate build error: ${e.message}. Survey data saved — tap <strong>✕ Close</strong> to go back and try again.</div>`;
+    console.error('svOpenEstimate error:', e);
+    // Open overlay manually so rep sees something
+    const estOv = document.getElementById('estOverlay');
+    if (estOv) estOv.classList.add('open');
+    // Show error inline
+    setTimeout(() => {
+      const decEl = document.getElementById('estDecision');
+      if (decEl) {
+        decEl.classList.add('open');
+        decEl.innerHTML += `<div style="background:#FEF2F2;border:1.5px solid #C8102E;border-radius:8px;padding:14px;margin-top:16px;font-size:13px;color:#C8102E">⚠ Estimate error: ${e.message}. Your survey data is saved — tap ✕ Close and try Resume Estimate from the account card.</div>`;
+      }
+    }, 100);
   }
 }
 
@@ -13074,7 +13106,8 @@ async function svTMAIAnalyze() {
   const prompt = `You are a commercial kitchen equipment specialist for Termac. Select the EXACT model from the catalogs below based on restaurant volume, machine specs, and kitchen dimensions.
 
 VOLUME-BASED SELECTION RULES (STRICT — follow these first):
-- 0–50 covers/day: UC-180 (undercounter) — low-volume, space-saving
+- 0–60 covers/day: UC-180 (undercounter) — ONLY for very low volume. Do NOT select for 61+ covers.
+- CRITICAL: 300 covers/day is HIGH volume. UC-180 physically cannot handle this — it does max 35 racks/hour. Never recommend UC-180 above 60 covers/day under any circumstances.
 - 51–150 covers/day: ET/ETPD/ET3 or Single Tank Straight/Corner — medium volume door-type
 - 151–300 covers/day: AFB/AFBC or HT-25 — high-temp option for busy operations
 - 301–500 covers/day: ADC-44 conveyor — high volume, continuous washing
@@ -14503,7 +14536,11 @@ function svOpenEstimate(){
     try {
       const _d = crmLoad('accounts');
       const _r = _d.find(x => x.id === estState.accountId);
-      if (_r) { _r.estimateBuilt = true; _r.estimateBuiltAt = Date.now(); crmSave('accounts', _d); }
+      if (_r) {
+        _r.estimateBuilt = true; _r.estimateBuiltAt = Date.now();
+        crmSave('accounts', _d);
+        if (typeof window.estMarkBuilt === 'function') window.estMarkBuilt(estState.accountId);
+      }
     } catch(e) {}
   }
 }
@@ -26381,6 +26418,48 @@ function mgrCreditDecide(decision) {
 // Shows where leads die in the funnel, how long they sit in each stage,
 // and a 30/60/90-day revenue forecast based on current pipeline value
 // and each rep's historical conversion rates.
+// ── CHART DRILL-DOWN ENGINE ───────────────────────────────────────────────
+// Attach to any Chart.js chart to show detail on bar/point click
+function attachChartDrilldown(chart, getDrilldownData) {
+  if (!chart || !chart.canvas) return;
+  chart.canvas.onclick = (evt) => {
+    const points = chart.getElementsAtEventForMode(evt, 'nearest', { intersect: true }, true);
+    if (!points.length) return;
+    const pt = points[0];
+    const label = chart.data.labels?.[pt.index] || '';
+    const value = chart.data.datasets?.[pt.datasetIndex]?.data?.[pt.index];
+    const details = getDrilldownData ? getDrilldownData(pt.datasetIndex, pt.index, label) : null;
+    showChartDrilldown(label, value, details);
+  };
+}
+
+function showChartDrilldown(label, value, details) {
+  let modal = document.getElementById('_chartDrilldownModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = '_chartDrilldownModal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center;padding:16px';
+    modal.onclick = (e) => { if (e.target===modal) modal.remove(); };
+    document.body.appendChild(modal);
+  }
+  modal.innerHTML = `
+    <div style="background:#fff;border-radius:12px;box-shadow:0 8px 40px rgba(0,0,0,.2);width:min(560px,95vw);max-height:80vh;overflow-y:auto">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--line)">
+        <div>
+          <div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:18px">${label}</div>
+          ${value !== undefined ? `<div style="font-size:13px;color:var(--soft);margin-top:2px">${typeof value === 'number' ? (value >= 1000 ? '$'+value.toLocaleString() : value) : value}</div>` : ''}
+        </div>
+        <button onclick="document.getElementById('_chartDrilldownModal').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--soft)">✕</button>
+      </div>
+      <div style="padding:18px 20px">
+        ${details || '<div style="color:var(--soft);font-size:13px">No additional detail available.</div>'}
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+}
+
+// Pipeline velocity chart — drill-down shows accounts at each pipeline stage
+// Wired via attachChartDrilldown after chart creation in renderPipelineVelocity
 function renderPipelineVelocity() {
   const el = document.getElementById('pipelineVelocityBody');
   if (!el) return;
@@ -27983,6 +28062,30 @@ function renderPnlChart() {
         },
       },
     });
+    // Wire drill-down — clicking a bar shows that month's order detail
+    setTimeout(() => {
+      const ci = document.getElementById('termacPnlChart')?._chartInstance;
+      if (ci && typeof attachChartDrilldown === 'function') {
+        attachChartDrilldown(ci, (dsIdx, ptIdx, label) => {
+          const d = window._pnlChartData;
+          if (!d) return null;
+          const month = d.months6[ptIdx];
+          if (!month) return null;
+          const orders = crmLoad('delivery_orders') || [];
+          const monthOrders = orders.filter(o => {
+            const d2 = new Date(o.deliveredAt || o.createdAt || 0);
+            return d2.getFullYear() === month.year && d2.getMonth() === month.month;
+          });
+          const rows = monthOrders.map(o =>
+            `<div style="padding:8px 0;border-bottom:1px solid var(--line);font-size:12px">
+              <div style="font-weight:700">${o.accountName || 'Unknown'}</div>
+              <div style="color:var(--soft);margin-top:2px">$${(o.items||[]).reduce((s,i)=>s+(i.qty||0)*(i.unitPrice||0),0).toFixed(2)} · ${o.status||'—'} · ${new Date(o.deliveredAt||o.createdAt||0).toLocaleDateString()}</div>
+            </div>`
+          ).join('') || '<div style="color:var(--soft);font-size:12px;font-style:italic">No delivery orders on file for this month.</div>';
+          return `<div style="font-size:12px;margin-bottom:10px;color:var(--soft)">${monthOrders.length} order${monthOrders.length!==1?'s':''} · Rev: <strong>$${(month.rev||0).toLocaleString()}</strong></div>${rows}`;
+        });
+      }
+    }, 200);
   }, 50);
 }
 
