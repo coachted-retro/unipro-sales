@@ -265,6 +265,7 @@ footer{text-align:center;margin-top:40px;color:#9AA0A8;font-size:11px;letter-spa
 .crm-action-btn.convert{background:var(--red);color:#fff;border-color:var(--red)}
 .crm-action-btn.convert:hover{background:#8B0A1E}
 .crm-action-btn.dead{background:#fff;color:#6B7280;border-color:var(--line)}
+.crm-stage-sel{font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:10px;letter-spacing:.04em;padding:4px 8px;border-radius:5px;border:1.5px solid #7C3AED;background:#F3E8FF;color:#5B21B6;cursor:pointer;text-transform:uppercase;height:28px}
 .crm-action-btn.dead:hover{background:#1A1D21;color:#fff;border-color:#1A1D21}
 .crm-action-btn.restore{background:var(--green);color:#fff;border-color:var(--green)}
 .crm-action-btn.restore:hover{background:#15602F}
@@ -1645,7 +1646,7 @@ function crmSave(key, val){ try{ localStorage.setItem('termac_crm_'+key, JSON.st
       { id:'lead004', business:'St. Mary Medical Center', name:'St. Mary Medical Center', status:'hot', temp:'hot', source:'Referral - Existing Client', city:'Langhorne', zip:'19047', services:['UniPro'], assignedRep:'Ted Scholl', createdAt:Date.now()-3*86400000, notes:'Large campus. Multiple kitchens. High priority.' },
       { id:'lead005', business:'Neshaminy School District', name:'Neshaminy School District', status:'warm', temp:'warm', source:'RFP / Bid Board', city:'Langhorne', zip:'19047', services:['UniPro'], assignedRep:'Unassigned', createdAt:Date.now()-8*86400000, notes:'12 buildings. Annual inspection contract opportunity.' },
       { id:'lead006', business:"Applebee's Langhorne", name:"Applebee's Langhorne", status:'cold', temp:'cold', source:'Cold Call / Phone Outreach', city:'Langhorne', zip:'19047', services:['UniPro','Filter Man'], assignedRep:'Unassigned', createdAt:Date.now()-30*86400000, notes:'GM said call back in Q3.' },
-      { id:'lead007', business:'Oxford Valley Mall Food Court', name:'Oxford Valley Mall Food Court', status:'warm', temp:'warm', source:'Email Outreach', city:'Langhorne', zip:'19047', services:['UniPro','Filter Man','GTO'], assignedRep:'Ted Scholl', createdAt:Date.now()-15*86400000, notes:'5 restaurants in food court. Great bundle opportunity.' },
+      { id:'lead007', business:'Oxford Valley Mall Food Court', name:'Oxford Valley Mall Food Court', status:'warm', temp:'warm', source:'Email Outreach', city:'Langhorne', zip:'19047', services:['UniPro','Filter Man','GTO'], assignedRep:'Ted Scholl', createdAt:Date.now()-15*86400000, notes:'5 restaurants in food court. Great bundle opportunity.', lifecycleStage:'opportunity', opportunityCreatedAt:Date.now()-3*86400000, opportunityStatus:'pending', opportunityFollowups:[{daysAfter:1,dueAt:Date.now()-2*86400000,done:true,completedAt:Date.now()-2*86400000},{daysAfter:4,dueAt:Date.now()+1*86400000,done:false},{daysAfter:14,dueAt:Date.now()+11*86400000,done:false},{daysAfter:30,dueAt:Date.now()+27*86400000,done:false}] },
     ]);
     console.log('Demo leads seeded');
   }
@@ -2292,20 +2293,69 @@ function renderCRMView(){
   const q=document.getElementById('crmSearch').value.trim().toLowerCase();
   const co=document.getElementById('crmCompanyFilter').value;
   const st=document.getElementById('crmStatusFilter').value;
-  let data=crmLoad(tab);
+
+  // ── UNIFIED SINGLE-RECORD PIPELINE ──
+  // All pipeline records live in the 'leads' localStorage pool.
+  // Each tab filters by lifecycleStage — no duplication, no conversion copies.
+  // 'accounts' tab shows records that have reached onboarding/active/renewal.
+  // The old 'contacts' localStorage pool is legacy; new contacts are just leads with stage='contact'.
+  const PIPELINE_STAGES = {
+    leads:         ['lead'],
+    contacts:      ['contact'],
+    opportunities: ['opportunity', 'site_visit'],
+    accounts:      ['close','onboarding','first_service','active','renewal','jeopardy'],
+  };
+
+  let data;
+  if (tab === 'dms_coldcall') {
+    data = crmLoad('dms_coldcall');
+  } else if (PIPELINE_STAGES[tab]) {
+    const stageKeys = PIPELINE_STAGES[tab];
+    // Pull from unified 'leads' pool + legacy per-tab pool (for backwards compat)
+    const unified = crmLoad('leads').filter(r => {
+      const s = r.lifecycleStage || 'lead';
+      return stageKeys.includes(s);
+    });
+    // Also pull from legacy per-tab pool for accounts (pre-existing account records)
+    const legacy = (tab === 'accounts') ? crmLoad('accounts').filter(r => {
+      const s = r.lifecycleStage || 'active';
+      return stageKeys.includes(s) || !r.lifecycleStage; // accounts without stage = active
+    }) : [];
+    // Merge, deduplicate by id
+    const seen = new Set();
+    data = [...unified, ...legacy].filter(r => { if(seen.has(r.id)) return false; seen.add(r.id); return true; });
+  } else {
+    data = crmLoad(tab);
+  }
+
   if(q) data=data.filter(r=>JSON.stringify(r).toLowerCase().includes(q));
   if(co) data=data.filter(r=>r.company===co);
-  if(st) data=data.filter(r=>r.status===st);
-  else data=data.filter(r=>r.status!=='dead'); // dead records hidden by default — use Status filter to view them
-  // Leads tab: reps (and territory-carrying managers) only see leads that
-  // actually fall in their own territory -- harvested leads route to the
-  // right person automatically by ZIP rather than dumping the whole pool
-  // on everyone. DMS/reception and managers without a personal territory
-  // still see the full pool, since their job is routing/oversight across
-  // all of it (see currentRepTerritory()'s own comment for why).
+  if(st) {
+    if (tab === 'opportunities') {
+      data = data.filter(r => r.lifecycleStage === st || r.status === st);
+    } else {
+      data = data.filter(r=>r.status===st);
+    }
+  } else {
+    data=data.filter(r=>r.status!=='dead');
+  }
+
+  // Leads tab: reps only see their territory
   const repTerritory = tab === 'leads' ? currentRepTerritory() : null;
   if (tab === 'leads' && repTerritory) {
     data = data.filter(r => zipMatchesTerritory(r.zip, repTerritory));
+  }
+
+  // Opportunities: float to top, then sort by most urgent follow-up
+  if (tab === 'opportunities') {
+    data.sort((a,b) => {
+      const aNext = _nextOpptyFollowup(a);
+      const bNext = _nextOpptyFollowup(b);
+      if (aNext && !bNext) return -1;
+      if (!aNext && bNext) return 1;
+      if (aNext && bNext) return aNext - bNext;
+      return (b.created||0)-(a.created||0);
+    });
   }
   // Sort: pinned recently viewed at top, then everything else by most recent.
   const recent=getRecent(tab).map(r=>r.id);
@@ -2462,6 +2512,28 @@ function renderCRMView(){
         });
       });
 
+    // 6. Opportunity follow-up sequence — 1d / 4d / 14d / 30d reminders
+    const allLeadsForFU = crmLoad('leads');
+    allLeadsForFU
+      .filter(r => r.lifecycleStage === 'opportunity' && r.opportunityFollowups && (r.assignedRep === repName || !r.assignedRep || r.claimedBy === repName))
+      .forEach(r => {
+        const due = r.opportunityFollowups.filter(f => !f.done && f.dueAt <= Date.now() + 86400000); // due today or overdue
+        due.slice(0,1).forEach(f => {
+          const overdue = f.dueAt < Date.now();
+          const key = `oppty_fu_${r.id}_${f.daysAfter}`;
+          if (!dismissed.includes(key)) alerts.push({
+            key,
+            color: overdue ? '#991B1B' : '#D97706',
+            bg: overdue ? '#FEE2E2' : '#FEF3C7',
+            icon: '💼',
+            label: overdue ? `Opportunity follow-up overdue (day ${f.daysAfter})` : `Opportunity follow-up due today (day ${f.daysAfter})`,
+            detail: `${r.name||r.business} · ${overdue ? 'Overdue' : 'Due today'} — check in and keep this moving`,
+            action: `switchCRMTab('opportunities')`,
+            extraBtn: `<button onclick="markOpptyFollowupDone('${r.id}',${f.daysAfter});this.closest('[id]').remove()" style="background:#166534;color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:10px;font-family:'Barlow Condensed',sans-serif;font-weight:700;cursor:pointer">✓ Done</button>`
+          });
+        });
+      });
+
     // Routing notifications from reception
     const routingHtml = (typeof rcpCheckRoutingNotifications === 'function') ? rcpCheckRoutingNotifications() : '';
     if (routingHtml) {
@@ -2479,6 +2551,7 @@ function renderCRMView(){
             </div>
             <div style="display:flex;gap:6px;flex-shrink:0">
               <button onclick="${a.action}" style="background:${a.color};color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:10px;font-family:Barlow Condensed,sans-serif;font-weight:700;cursor:pointer">Act →</button>
+              ${a.extraBtn || ''}
               <button onclick="(function(){var d=JSON.parse(sessionStorage.getItem('rep_alerts_dismissed')||'[]');d.push('${a.key}');sessionStorage.setItem('rep_alerts_dismissed',JSON.stringify(d));document.getElementById('repAlertBar').remove()})()" style="background:none;border:1px solid ${a.color};color:${a.color};border-radius:5px;padding:4px 8px;font-size:10px;cursor:pointer;opacity:.7">✕</button>
             </div>
           </div>`).join('')}
@@ -2788,22 +2861,29 @@ function renderCard(tab,r){
       actions=`<button class="crm-action-btn" onclick="openLogModal('${r.id}','leads')">📞 Log Call</button>
                <button class="crm-action-btn" onclick="openApptModal('${r.id}','leads')">📅 Appt</button>
                <button class="crm-action-btn" onclick="openFollowupModal('${r.id}','leads')">🔔 Follow-Up</button>
-               <button class="crm-action-btn convert" onclick="convertRecord('${r.id}','leads','contacts')">→ Contact</button>
+               ${renderStageDropdown(r, 'leads')}
                <button class="crm-action-btn dead" onclick="openDeadModal('${r.id}','leads')">💀 Dead</button>`;
     }
   } else if(tab==='contacts'){
-    actions=`<button class="crm-action-btn" onclick="openLogModal('${r.id}','contacts')">📞 Log</button>
-             <button class="crm-action-btn" onclick="openApptModal('${r.id}','contacts')">📅 Appt</button>
-             <button class="crm-action-btn" onclick="openFollowupModal('${r.id}','contacts')">🔔 Follow-Up</button>
-             <button class="crm-action-btn convert" onclick="convertRecord('${r.id}','contacts','accounts')">→ Account</button>
-             <button class="crm-action-btn dead" onclick="openDeadModal('${r.id}','contacts')">💀 Dead</button>`;
+    actions=`<button class="crm-action-btn" onclick="openLogModal('${r.id}','leads')">📞 Log</button>
+             <button class="crm-action-btn" onclick="openApptModal('${r.id}','leads')">📅 Appt</button>
+             <button class="crm-action-btn" onclick="openFollowupModal('${r.id}','leads')">🔔 Follow-Up</button>
+             ${renderStageDropdown(r, 'leads')}
+             <button class="crm-action-btn dead" onclick="openDeadModal('${r.id}','leads')">💀 Dead</button>`;
+  } else if(tab==='opportunities'){
+    actions=`<button class="crm-action-btn" onclick="openLogModal('${r.id}','leads')">📞 Log</button>
+             <button class="crm-action-btn" onclick="openApptModal('${r.id}','leads')">📅 Appt</button>
+             <button class="crm-action-btn" onclick="openSiteSurvey('${r.id}')">📋 Survey</button>
+             ${renderStageDropdown(r, 'leads')}
+             <button class="crm-action-btn dead" onclick="openDeadModal('${r.id}','leads')">💀 Dead</button>`;
   } else if(tab==='accounts'){
+    const srcTab2 = r._sourceTab || 'accounts';
     actions=`${(r.estimateBuilt && !r.estimateAccepted) ? `<button class="crm-action-btn" style="background:#6B21A8;color:#fff;border-color:#6B21A8;font-weight:800" onclick="openLastEstimate('${r.id}')">📄 Resume Estimate</button>` : (r._surveyInProgress && r._surveyInProgress.currentStep > 0) ? `<button class="crm-action-btn" style="background:#1B5FA8;color:#fff;border-color:#1B5FA8;font-weight:800" onclick="openSiteSurvey('${r.id}')">↩ Resume Survey</button>` : ''}<button class="crm-action-btn" onclick="openSiteSurvey('${r.id}')">📋 Survey</button>
-             <button class="crm-action-btn" onclick="openLogModal('${r.id}','accounts')">📞 Log</button>
-             <button class="crm-action-btn" onclick="openApptModal('${r.id}','accounts')">📅 Appt</button>
-             <button class="crm-action-btn" onclick="openFollowupModal('${r.id}','accounts')">🔔 Follow-Up</button>
-             <button class="crm-action-btn" onclick="editRecord('${r.id}','accounts')">✏️ Edit</button>
-             <button class="crm-action-btn dead" onclick="openDeadModal('${r.id}','accounts')">💀 Dead</button>`;
+             <button class="crm-action-btn" onclick="openLogModal('${r.id}','${srcTab2}')">📞 Log</button>
+             <button class="crm-action-btn" onclick="openApptModal('${r.id}','${srcTab2}')">📅 Appt</button>
+             <button class="crm-action-btn" onclick="openFollowupModal('${r.id}','${srcTab2}')">🔔 Follow-Up</button>
+             <button class="crm-action-btn" onclick="editRecord('${r.id}','${srcTab2}')">✏️ Edit</button>
+             <button class="crm-action-btn dead" onclick="openDeadModal('${r.id}','${srcTab2}')">💀 Dead</button>`;
   } else if(tab==='dms_coldcall'){
     if (r.promotedToLeadId) {
       actions=`<button class="crm-action-btn" onclick="openLogModal('${r.id}','dms_coldcall')">📞 Log</button>
@@ -2839,7 +2919,9 @@ function renderCard(tab,r){
     extraInfo=`${r.lifecycleStage ? `<div class="crm-card-tag" style="background:#F3E8FF;color:#5B21B6;font-weight:700">${LC_STAGES.find(s=>s.key===r.lifecycleStage)?.icon||''} ${LC_STAGES.find(s=>s.key===r.lifecycleStage)?.label||r.lifecycleStage}</div>` : ''}`;
   } else if(tab==='opportunities'){
     const stg = LC_STAGES.find(s=>s.key===r.lifecycleStage);
-    extraInfo=`${stg?`<div class="crm-card-tag" style="background:#F3E8FF;color:#5B21B6;font-weight:700">${stg.icon} ${stg.label}</div>`:''}${r.assignedRep?`<div class="crm-card-tag">Rep: ${escH(r.assignedRep)}</div>`:''}`;
+    const nextFU = _nextOpptyFollowup(r);
+    const fuBadge = nextFU ? (nextFU < Date.now() ? `<div class="crm-card-tag" style="background:#FEE2E2;color:#991B1B;font-weight:700">⚠️ Follow-up overdue</div>` : `<div class="crm-card-tag" style="background:#FEF3C7;color:#92400E;font-weight:700">🔔 Follow-up ${_fuLabel(nextFU)}</div>`) : '';
+    extraInfo=`${stg?`<div class="crm-card-tag" style="background:#F3E8FF;color:#5B21B6;font-weight:700">${stg.icon} ${stg.label}</div>`:''}${r.assignedRep?`<div class="crm-card-tag">Rep: ${escH(r.assignedRep)}</div>`:''}${fuBadge}`;
   } else if(tab==='dms_coldcall'){
     extraInfo=`<div class="crm-card-tag">📡 ${escH(r.chamberSource||'Unknown source')}</div>${r.assignedDmsRep?`<div class="crm-card-tag">${escH(r.assignedDmsRep)}</div>`:''}${r.phone?`<div class="crm-card-tag">${escH(r.phone)}</div>`:''}`;
   }
@@ -2899,47 +2981,163 @@ function viewRecord(tab,id){
 }
 function quickOpenRecord(tab,id){ viewRecord(tab,id); }
 
-function convertRecord(id,fromTab,toTab){
-  const data=crmLoad(fromTab);
-  const r=data.find(x=>x.id===id);
-  if(!r) return;
-  const destData=crmLoad(toTab);
-  const newId=toTab.charAt(0).toUpperCase()+String(Date.now()).slice(-4);
-  const newRec={...r, id:newId, status:toTab==='accounts'?'active':'new', created:Date.now(), convertedFrom:id};
-  if(toTab==='accounts' && !newRec.contact){ newRec.contact=newRec.name; }
+// ══════════════════════════════════════════════════════════════════════════
+//  UNIFIED PIPELINE STAGE PROGRESSION
+//  One record moves through all stages — no duplication, no copies.
+//  All pipeline records live in the 'leads' localStorage pool.
+//  The stage dropdown on cards + detail panel is the only way to advance.
+// ══════════════════════════════════════════════════════════════════════════
 
-  // DMS → Contact: auto-route to territory rep
-  if(fromTab==='leads' && toTab==='contacts'){
-    const zip = r.zip || (r.address||'').match(/\b\d{5}\b/)?.[0] || '';
-    const rep  = getRepForZip(zip);
-    newRec.assignedRep = rep;
-    newRec.routedFromDMS = true;
-    newRec.dmsAgent = _currentUser?.name || 'DMS';
-    if(!newRec.activityLog) newRec.activityLog = [];
-    newRec.activityLog.push({
-      ts:Date.now(), type:'system', icon:'📍',
-      title:`Routed to ${rep}`,
-      note:`DMS convert by ${_currentUser?.name||'DMS'} — auto-routed by ZIP ${zip||'unknown'}`,
-      who:'System'
-    });
-    // Log DMS conversion activity on original lead
-    const origIdx = data.findIndex(x=>x.id===id);
-    if(origIdx>-1){
-      if(!data[origIdx].activityLog) data[origIdx].activityLog=[];
-      data[origIdx].activityLog.push({ts:Date.now(),type:'system',icon:'✅',title:'Converted to Contact',note:`Routed to rep: ${rep}`,who:'System'});
-      crmSave(fromTab,data);
+// Stage sequence for the pipeline dropdown (pre-account stages)
+const PIPELINE_STAGE_SEQUENCE = [
+  { key:'lead',        icon:'🎯', label:'Lead'        },
+  { key:'contact',     icon:'📞', label:'Contact'     },
+  { key:'opportunity', icon:'💼', label:'Opportunity' },
+  { key:'close',       icon:'🤝', label:'Closed — Signing' },
+];
+// Post-close stages live in accounts pool handled by office
+const ACCOUNT_STAGES = ['close','onboarding','first_service','active','renewal'];
+
+function renderStageDropdown(r, pool) {
+  const cur = r.lifecycleStage || 'lead';
+  const opts = PIPELINE_STAGE_SEQUENCE.map(s =>
+    `<option value="${s.key}" ${s.key === cur ? 'selected' : ''}>${s.icon} ${s.label}</option>`
+  ).join('');
+  return `<select class="crm-stage-sel" onchange="advanceStage('${r.id}','${pool}',this.value,this)" title="Move to stage">
+    ${opts}
+  </select>`;
+}
+
+function advanceStage(id, pool, newStage, selectEl) {
+  // Always operate on the leads pool (unified pipeline)
+  const srcPool = 'leads';
+  let data = crmLoad(srcPool);
+  let r = data.find(x => x.id === id);
+
+  // Fallback: check legacy contacts/accounts pools
+  if (!r) {
+    const legacy = crmLoad(pool);
+    r = legacy.find(x => x.id === id);
+    if (r) {
+      // Migrate: move to leads pool
+      data.push({...r, _sourceTab: pool});
+      // Remove from legacy pool
+      crmSave(pool, legacy.filter(x => x.id !== id));
+    }
+  }
+  if (!r) { showToast('Record not found'); return; }
+
+  const oldStage = r.lifecycleStage || 'lead';
+  if (oldStage === newStage) return; // no change
+
+  r.lifecycleStage = newStage;
+  r.updated = Date.now();
+
+  // Stage-specific actions
+  if (newStage === 'contact') {
+    // Auto-route to territory rep if not already assigned
+    if (!r.assignedRep || r.assignedRep === 'Unassigned') {
+      const zip = r.zip || (r.address||'').match(/\b\d{5}\b/)?.[0] || '';
+      const rep = typeof getRepForZip === 'function' ? getRepForZip(zip) : 'Unassigned';
+      r.assignedRep = rep;
     }
   }
 
-  destData.push(newRec);
-  crmSave(toTab,destData);
+  if (newStage === 'opportunity') {
+    // Set opportunity created timestamp for follow-up sequence
+    r.opportunityCreatedAt = r.opportunityCreatedAt || Date.now();
+    r.opportunityStatus = 'pending'; // pending until closed
+    // Schedule follow-up sequence: 1d, 4d, 14d, 30d
+    r.opportunityFollowups = [
+      { daysAfter: 1,  dueAt: r.opportunityCreatedAt + 1*86400000,  done: false },
+      { daysAfter: 4,  dueAt: r.opportunityCreatedAt + 4*86400000,  done: false },
+      { daysAfter: 14, dueAt: r.opportunityCreatedAt + 14*86400000, done: false },
+      { daysAfter: 30, dueAt: r.opportunityCreatedAt + 30*86400000, done: false },
+    ];
+  }
 
-  const repMsg = (fromTab==='leads'&&toTab==='contacts'&&newRec.assignedRep)
-    ? `\nRouted to: ${newRec.assignedRep}` : '';
-  alert(`✅ Converted to ${toTab.charAt(0).toUpperCase()+toTab.slice(1)}!${repMsg}`);
-  switchCRMTab(toTab);
-  buildActionQueue();
+  if (newStage === 'close') {
+    // Promote to accounts pool — office assigns account number
+    r.status = 'active';
+    r.lifecycleStage = 'onboarding';
+    r._sourceTab = 'leads';
+    if (!r.contact) r.contact = r.name;
+    // Copy to accounts pool
+    const accts = crmLoad('accounts');
+    const exists = accts.find(a => a.id === id);
+    if (!exists) {
+      accts.push({...r});
+      crmSave('accounts', accts);
+    }
+    // Mark as won in leads pool
+    r.status = 'won';
+    r.lifecycleStage = 'active';
+    showToast(`🎉 ${r.name || r.business} moved to Accounts — office will assign account number`);
+  }
+
+  // Activity log
+  r.activityLog = r.activityLog || [];
+  r.activityLog.push({
+    ts: Date.now(), type: 'stage', icon: '🔄',
+    title: `Stage: ${oldStage} → ${newStage}`,
+    note: `Advanced by ${_currentUser?.name || 'User'}`,
+    who: _currentUser?.name || 'User'
+  });
+
+  // Save back to leads pool
+  const idx = data.findIndex(x => x.id === id);
+  if (idx > -1) data[idx] = r; else data.push(r);
+  crmSave(srcPool, data);
+
+  showToast(`✅ Moved to ${PIPELINE_STAGE_SEQUENCE.find(s=>s.key===newStage)?.label || newStage}`);
+
+  // Navigate to the correct tab
+  const tabMap = { lead:'leads', contact:'contacts', opportunity:'opportunities', close:'accounts', onboarding:'accounts', active:'accounts' };
+  const destTab = tabMap[newStage] || 'leads';
+  if (destTab !== crmCurrentTab) {
+    switchCRMTab(destTab);
+  } else {
+    renderCRMView();
+  }
+  if (typeof buildActionQueue === 'function') buildActionQueue();
 }
+
+// Keep convertRecord as a thin shim for any legacy callers
+function convertRecord(id, fromTab, toTab) {
+  const stageMap = { contacts:'contact', accounts:'close' };
+  const newStage = stageMap[toTab] || 'contact';
+  advanceStage(id, fromTab, newStage, null);
+}
+
+// ── OPPORTUNITY FOLLOW-UP SEQUENCE ──
+// Returns the timestamp of the next due (undone) follow-up, or null
+function _nextOpptyFollowup(r) {
+  if (!r.opportunityFollowups) return null;
+  const undone = r.opportunityFollowups.filter(f => !f.done);
+  if (!undone.length) return null;
+  return Math.min(...undone.map(f => f.dueAt));
+}
+
+function _fuLabel(ts) {
+  const days = Math.round((ts - Date.now()) / 86400000);
+  if (days < 0) return 'overdue';
+  if (days === 0) return 'today';
+  if (days === 1) return 'tomorrow';
+  return `in ${days}d`;
+}
+
+function markOpptyFollowupDone(id, daysAfter) {
+  const data = crmLoad('leads');
+  const r = data.find(x => x.id === id);
+  if (!r || !r.opportunityFollowups) return;
+  const fu = r.opportunityFollowups.find(f => f.daysAfter === daysAfter);
+  if (fu) { fu.done = true; fu.completedAt = Date.now(); }
+  crmSave('leads', data);
+  showToast('Follow-up marked done');
+  renderCRMView();
+}
+
+
 
 // ── RECEPTION: ASSIGN LEAD TO REP ────────────────────────────────────
 function receptionAssignLead(leadId) {
@@ -16897,14 +17095,19 @@ function acctRenderLifecycle(r) {
   const currentIdx = stages.findIndex(s => s.key === stage);
 
   // Stage-change dropdown — inline, no page bounce
-  const stageOpts = stages.map(s =>
+  // Use PIPELINE_STAGE_SEQUENCE for pre-account stages + full LC_STAGES for post-close
+  const allStageOpts = [
+    ...PIPELINE_STAGE_SEQUENCE,
+    ...LC_STAGES.filter(s => !PIPELINE_STAGE_SEQUENCE.find(p => p.key === s.key) && s.key !== 'lead')
+  ];
+  const stageOpts = allStageOpts.map(s =>
     `<option value="${s.key}" ${s.key === stage ? 'selected' : ''}>${s.icon} ${s.label}</option>`
   ).join('');
 
   const dropdownHtml = `
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
       <span style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.08em">Stage:</span>
-      <select onchange="changeRecordStage('${r.id}','${_acctTab}',this.value)" style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:13px;padding:4px 10px;border-radius:6px;border:1.5px solid #7C3AED;color:#5B21B6;background:#F3E8FF;cursor:pointer">
+      <select onchange="advanceStage('${r.id}','${_acctTab}',this.value,this)" style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:13px;padding:4px 10px;border-radius:6px;border:1.5px solid #7C3AED;color:#5B21B6;background:#F3E8FF;cursor:pointer">
         ${stageOpts}
       </select>
       <span style="font-size:10px;color:var(--soft)">Change stage without leaving this record</span>
