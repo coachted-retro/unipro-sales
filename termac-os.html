@@ -2295,10 +2295,10 @@ function renderCRMView(){
   // 'accounts' tab shows records that have reached onboarding/active/renewal.
   // The old 'contacts' localStorage pool is legacy; new contacts are just leads with stage='contact'.
   const PIPELINE_STAGES = {
-    leads:         ['lead'],
-    contacts:      ['contact'],
-    opportunities: ['opportunity', 'site_visit'],
-    accounts:      ['close','onboarding','first_service','active','renewal','jeopardy'],
+    leads:         ['lead','contacted','qualified','disqualified'],
+    contacts:      ['contact','appointment','site_visit'],
+    opportunities: ['opportunity','survey','survey_done','proposal','lost'],
+    accounts:      ['accepted','close','onboarding','first_service','active','renewal','jeopardy'],
   };
 
   let data;
@@ -2943,11 +2943,20 @@ function renderCard(tab,r){
   }
   // ── PIPELINE STATUS BADGE ──
   const PIPELINE_STATUS_MAP = {
-    lead:         { label:'🎯 Lead',             bg:'#EBF2FD', color:'#1B5FA8' },
-    contact:      { label:'📞 Contact',           bg:'#F3E8FF', color:'#6B21A8' },
-    opportunity:  { label:'💼 Opportunity — Open',bg:'#FEF3C7', color:'#92400E' },
+    lead:         { label:'🎯 New Lead',          bg:'#EBF2FD', color:'#1B5FA8' },
+    contacted:    { label:'📞 Contacted',         bg:'#DBEAFE', color:'#1E40AF' },
+    qualified:    { label:'✅ Qualified',         bg:'#ECFDF5', color:'#065F46' },
+    disqualified: { label:'🚫 Disqualified',      bg:'#FEE9EC', color:'#C8102E' },
+    contact:      { label:'👤 Contact',           bg:'#F3E8FF', color:'#6B21A8' },
+    appointment:  { label:'📅 Appointment Set',   bg:'#EDE9FE', color:'#4C1D95' },
     site_visit:   { label:'🏢 Site Visit',        bg:'#FEF3C7', color:'#92400E' },
-    close:        { label:'🤝 Signing',           bg:'#DCFCE7', color:'#166534' },
+    opportunity:  { label:'💼 Opportunity',       bg:'#FEF3C7', color:'#D97706' },
+    survey:       { label:'📋 Survey Pending',    bg:'#FFF7ED', color:'#C2410C' },
+    survey_done:  { label:'📝 Survey Complete',   bg:'#ECFDF5', color:'#059669' },
+    proposal:     { label:'📄 Proposal Sent',     bg:'#EFF6FF', color:'#2563EB' },
+    accepted:     { label:'🤝 Accepted',          bg:'#DCFCE7', color:'#166534' },
+    lost:         { label:'❌ Lost',              bg:'#FEE9EC', color:'#9F1239' },
+    close:        { label:'🏆 Closed Won',        bg:'#DCFCE7', color:'#166534' },
     onboarding:   { label:'📋 Onboarding',        bg:'#DCFCE7', color:'#166534' },
     first_service:{ label:'🔧 First Service',     bg:'#DCFCE7', color:'#166534' },
     active:       { label:'✅ Active Customer',   bg:'#D1FAE5', color:'#065F46' },
@@ -3027,20 +3036,61 @@ function quickOpenRecord(tab,id){ viewRecord(tab,id); }
 
 // Stage sequence for the pipeline dropdown (pre-account stages)
 const PIPELINE_STAGE_SEQUENCE = [
-  { key:'lead',        icon:'🎯', label:'Lead'        },
-  { key:'contact',     icon:'📞', label:'Contact'     },
-  { key:'opportunity', icon:'💼', label:'Opportunity' },
-  { key:'close',       icon:'🤝', label:'Closed — Signing' },
+  { key:'lead',          icon:'🎯', label:'Lead'             },
+  { key:'contacted',     icon:'📞', label:'Contacted'        },
+  { key:'qualified',     icon:'✅', label:'Qualified'        },
+  { key:'contact',       icon:'👤', label:'Contact'          },
+  { key:'appointment',   icon:'📅', label:'Appointment Set'  },
+  { key:'site_visit',    icon:'🏢', label:'Site Visit'       },
+  { key:'opportunity',   icon:'💼', label:'Opportunity'      },
+  { key:'survey',        icon:'📋', label:'Survey Pending'   },
+  { key:'survey_done',   icon:'📝', label:'Survey Complete'  },
+  { key:'proposal',      icon:'📄', label:'Proposal Sent'    },
+  { key:'accepted',      icon:'🤝', label:'Accepted'         },
+  { key:'lost',          icon:'❌', label:'Lost'             },
+  { key:'disqualified',  icon:'🚫', label:'Disqualified'     },
+  { key:'close',         icon:'🏆', label:'Closed Won'       },
 ];
 // Post-close stages live in accounts pool handled by office
 const ACCOUNT_STAGES = ['close','onboarding','first_service','active','renewal'];
 
+// Per-tab stage options for the dropdown
+const TAB_STAGE_OPTIONS = {
+  leads: [
+    { key:'lead',         icon:'🎯', label:'New Lead'      },
+    { key:'contacted',    icon:'📞', label:'Contacted'     },
+    { key:'qualified',    icon:'✅', label:'Qualified'     },
+    { key:'disqualified', icon:'🚫', label:'Disqualified'  },
+  ],
+  contacts: [
+    { key:'contact',      icon:'👤', label:'Contact'            },
+    { key:'appointment',  icon:'📅', label:'Appointment Set'    },
+    { key:'site_visit',   icon:'🏢', label:'Site Visit Sched.'  },
+    { key:'disqualified', icon:'🚫', label:'Disqualified'       },
+  ],
+  opportunities: [
+    { key:'opportunity',  icon:'💼', label:'Opportunity'        },
+    { key:'survey',       icon:'📋', label:'Survey Pending'     },
+    { key:'survey_done',  icon:'📝', label:'Survey Complete'    },
+    { key:'proposal',     icon:'📄', label:'Proposal Sent'      },
+    { key:'accepted',     icon:'🤝', label:'Accepted'           },
+    { key:'lost',         icon:'❌', label:'Lost'               },
+  ],
+};
+
 function renderStageDropdown(r, pool) {
   const cur = r.lifecycleStage || 'lead';
-  const opts = PIPELINE_STAGE_SEQUENCE.map(s =>
+  // Use per-tab options; fall back to full sequence
+  const tabMap = { leads:'leads', contacts:'contacts', opportunities:'opportunities' };
+  const tabKey = tabMap[pool] || pool;
+  const stageList = TAB_STAGE_OPTIONS[tabKey] || PIPELINE_STAGE_SEQUENCE;
+  // Always include current stage even if not in list
+  let hasCur = stageList.find(x=>x.key===cur);
+  const allStages = hasCur ? stageList : [PIPELINE_STAGE_SEQUENCE.find(x=>x.key===cur)||{key:cur,icon:'🔄',label:cur}, ...stageList];
+  const opts = allStages.map(s =>
     `<option value="${s.key}" ${s.key === cur ? 'selected' : ''}>${s.icon} ${s.label}</option>`
   ).join('');
-  return `<select class="crm-stage-sel" onchange="advanceStage('${r.id}','${pool}',this.value,this)" title="Move to stage">
+  return `<select class="crm-stage-sel" onchange="advanceStage('${r.id}','${pool}',this.value,this)" title="Change stage" onclick="event.stopPropagation()">
     ${opts}
   </select>`;
 }
@@ -3053,29 +3103,60 @@ function advanceStage(id, pool, newStage, selectEl) {
 
   // Fallback: check legacy contacts/accounts pools
   if (!r) {
-    const legacy = crmLoad(pool);
-    r = legacy.find(x => x.id === id);
-    if (r) {
-      // Migrate: move to leads pool
-      data.push({...r, _sourceTab: pool});
-      // Remove from legacy pool
-      crmSave(pool, legacy.filter(x => x.id !== id));
-    }
+    ['contacts','accounts'].forEach(p => {
+      if (r) return;
+      const legacy = crmLoad(p);
+      const found = legacy.find(x => x.id === id);
+      if (found) {
+        r = found;
+        data.push({...r, _sourceTab: p});
+        crmSave(p, legacy.filter(x => x.id !== id));
+      }
+    });
   }
-  if (!r) { showToast('Record not found'); return; }
+  if (!r) { showToast('Record not found'); if (selectEl) selectEl.value = r?.lifecycleStage||'lead'; return; }
 
   const oldStage = r.lifecycleStage || 'lead';
-  if (oldStage === newStage) return; // no change
+  if (oldStage === newStage) return;
+
+  // ── DISQUALIFIED: require note, add to manager review ──
+  if (newStage === 'disqualified' || newStage === 'lost') {
+    const reason = prompt(`Reason for ${newStage === 'lost' ? 'Lost' : 'Disqualifying'} ${r.business || r.name || 'this record'}?\n\nThis will be flagged for manager review.`);
+    if (reason === null) { if (selectEl) selectEl.value = oldStage; return; } // cancelled
+    r.disqualifiedReason = reason;
+    r.disqualifiedAt = Date.now();
+    r.disqualifiedBy = _currentUser?.name || 'Rep';
+    // Add to manager review queue
+    const mgr_queue = JSON.parse(localStorage.getItem('termac_mgr_disq_queue') || '[]');
+    mgr_queue.push({ id: r.id, name: r.business||r.name, reason, by: r.disqualifiedBy, ts: Date.now(), stage: oldStage });
+    localStorage.setItem('termac_mgr_disq_queue', JSON.stringify(mgr_queue));
+    r.activityLog = r.activityLog || [];
+    r.activityLog.push({ ts:Date.now(), type:'stage', icon:'🚫', title:`${newStage==='lost'?'Lost':'Disqualified'}: ${reason}`, who: r.disqualifiedBy });
+    r.lifecycleStage = newStage;
+    r.updated = Date.now();
+    const dIdx = data.findIndex(x => x.id === id);
+    if (dIdx > -1) data[dIdx] = r; else data.push(r);
+    crmSave(srcPool, data);
+    showToast(`🚫 Flagged for manager review`);
+    renderCRMView();
+    if (typeof buildActionQueue === 'function') buildActionQueue();
+    return;
+  }
 
   r.lifecycleStage = newStage;
   r.updated = Date.now();
-  // Preserve original owner — never overwrite, only set if missing
   if (!r.ownedBy && _currentUser?.name) r.ownedBy = _currentUser.name;
   if (!r.createdBy && _currentUser?.name) r.createdBy = _currentUser.name;
 
-  // Stage-specific actions
+  // ── Stage-specific side effects ──
+
+  // Lead → Contacted / Qualified: stay in leads tab
+  if (newStage === 'contacted') {
+    r.lastContactDate = new Date().toISOString().slice(0,10);
+  }
+
+  // Qualified → Contact: auto-route rep
   if (newStage === 'contact') {
-    // Auto-route to territory rep if not already assigned
     if (!r.assignedRep || r.assignedRep === 'Unassigned') {
       const zip = r.zip || (r.address||'').match(/\b\d{5}\b/)?.[0] || '';
       const rep = typeof getRepForZip === 'function' ? getRepForZip(zip) : 'Unassigned';
@@ -3083,62 +3164,95 @@ function advanceStage(id, pool, newStage, selectEl) {
     }
   }
 
-  if (newStage === 'opportunity') {
-    // Set opportunity created timestamp for follow-up sequence
+  // Contact → Opportunity
+  if (newStage === 'opportunity' || newStage === 'appointment' || newStage === 'site_visit') {
     r.opportunityCreatedAt = r.opportunityCreatedAt || Date.now();
-    r.opportunityStatus = 'pending'; // pending until closed
-    // Schedule follow-up sequence: 1d, 4d, 14d, 30d
-    r.opportunityFollowups = [
-      { daysAfter: 1,  dueAt: r.opportunityCreatedAt + 1*86400000,  done: false },
-      { daysAfter: 4,  dueAt: r.opportunityCreatedAt + 4*86400000,  done: false },
-      { daysAfter: 14, dueAt: r.opportunityCreatedAt + 14*86400000, done: false },
-      { daysAfter: 30, dueAt: r.opportunityCreatedAt + 30*86400000, done: false },
-    ];
+    r.opportunityStatus = 'pending';
+    if (!r.opportunityFollowups) {
+      r.opportunityFollowups = [
+        { daysAfter:1,  dueAt: Date.now()+1*86400000,  done:false },
+        { daysAfter:4,  dueAt: Date.now()+4*86400000,  done:false },
+        { daysAfter:14, dueAt: Date.now()+14*86400000, done:false },
+        { daysAfter:30, dueAt: Date.now()+30*86400000, done:false },
+      ];
+    }
   }
 
-  if (newStage === 'close') {
-    // Promote to accounts pool — office assigns account number
+  // ── SURVEY: open survey overlay from opportunity ──
+  if (newStage === 'survey') {
+    // Ensure record is saved first
+    const dIdx = data.findIndex(x => x.id === id);
+    if (dIdx > -1) data[dIdx] = r; else data.push(r);
+    crmSave(srcPool, data);
+    // Open survey — will find record in leads pool
+    if (typeof openSiteSurveyFromLead === 'function') openSiteSurveyFromLead(id);
+    else if (typeof openSiteSurvey === 'function') openSiteSurvey(id);
+    return;
+  }
+
+  // ── ACCEPTED: auto-create account, notify scheduler ──
+  if (newStage === 'accepted') {
     r.status = 'active';
-    r.lifecycleStage = 'onboarding';
-    r._sourceTab = 'leads';
-    if (!r.contact) r.contact = r.name;
+    r.acceptedAt = Date.now();
+    r.acceptedBy = _currentUser?.name || 'Rep';
     // Copy to accounts pool
     const accts = crmLoad('accounts');
-    const exists = accts.find(a => a.id === id);
-    if (!exists) {
-      accts.push({...r});
+    if (!accts.find(a => a.id === id)) {
+      accts.push({...r, lifecycleStage:'onboarding', status:'active'});
       crmSave('accounts', accts);
     }
-    // Mark as won in leads pool
-    r.status = 'won';
-    r.lifecycleStage = 'active';
-    showToast(`🎉 ${r.name || r.business} moved to Accounts — office will assign account number`);
+    // Push to scheduler queue
+    const schedQueue = JSON.parse(localStorage.getItem('termac_scheduler_queue') || '[]');
+    schedQueue.push({
+      id: r.id,
+      business: r.business || r.name,
+      contact: r.contact || r.name,
+      phone: r.phone,
+      address: r.address,
+      services: r.services,
+      surveyData: r.surveyData,
+      acceptedAt: Date.now(),
+      assignedRep: r.assignedRep,
+      status: 'needs_scheduling',
+    });
+    localStorage.setItem('termac_scheduler_queue', JSON.stringify(schedQueue));
+    showToast(`🎉 Account created — Scheduler notified for ${r.business || r.name}`);
+    r.activityLog = r.activityLog || [];
+    r.activityLog.push({ ts:Date.now(), type:'stage', icon:'🤝', title:'Accepted — Account Created', who: r.acceptedBy });
+    const dIdx = data.findIndex(x => x.id === id);
+    if (dIdx > -1) data[dIdx] = r; else data.push(r);
+    crmSave(srcPool, data);
+    renderCRMView();
+    if (typeof buildActionQueue === 'function') buildActionQueue();
+    return;
   }
 
   // Activity log
   r.activityLog = r.activityLog || [];
   r.activityLog.push({
-    ts: Date.now(), type: 'stage', icon: '🔄',
-    title: `Stage: ${oldStage} → ${newStage}`,
-    note: `Advanced by ${_currentUser?.name || 'User'}`,
+    ts:Date.now(), type:'stage', icon:'🔄',
+    title:`Stage: ${oldStage} → ${newStage}`,
     who: _currentUser?.name || 'User'
   });
 
-  // Save back to leads pool
-  const idx = data.findIndex(x => x.id === id);
-  if (idx > -1) data[idx] = r; else data.push(r);
+  // Save
+  const dIdx = data.findIndex(x => x.id === id);
+  if (dIdx > -1) data[dIdx] = r; else data.push(r);
   crmSave(srcPool, data);
 
-  showToast(`✅ Moved to ${PIPELINE_STAGE_SEQUENCE.find(s=>s.key===newStage)?.label || newStage}`);
+  showToast(`✅ ${PIPELINE_STAGE_SEQUENCE.find(x=>x.key===newStage)?.label || newStage}`);
 
-  // Navigate to the correct tab
-  const tabMap = { lead:'leads', contact:'contacts', opportunity:'opportunities', close:'accounts', onboarding:'accounts', active:'accounts' };
-  const destTab = tabMap[newStage] || 'leads';
-  if (destTab !== crmCurrentTab) {
-    switchCRMTab(destTab);
-  } else {
-    renderCRMView();
-  }
+  // Navigate to correct tab
+  const tabMap2 = {
+    lead:'leads', contacted:'leads', qualified:'leads', disqualified:'leads',
+    contact:'contacts', appointment:'contacts', site_visit:'contacts',
+    opportunity:'opportunities', survey:'opportunities', survey_done:'opportunities',
+    proposal:'opportunities', accepted:'accounts', lost:'opportunities',
+    close:'accounts', onboarding:'accounts', active:'accounts'
+  };
+  const destTab = tabMap2[newStage] || 'leads';
+  if (destTab !== crmCurrentTab) switchCRMTab(destTab);
+  else renderCRMView();
   if (typeof buildActionQueue === 'function') buildActionQueue();
 }
 
@@ -8003,10 +8117,37 @@ function getAccountContext(accountId) {
   };
 }
 
+function openSiteSurveyFromLead(id) {
+  // Bridge: finds record in leads pool and opens survey overlay
+  const leadsData = crmLoad('leads');
+  let r = leadsData.find(x=>x.id===id);
+  if (!r) {
+    const acctData = crmLoad('accounts');
+    r = acctData.find(x=>x.id===id);
+  }
+  if (!r) { showToast('Record not found'); return; }
+  // Temporarily mirror into accounts pool so openSiteSurvey can find it
+  const accts = crmLoad('accounts');
+  if (!accts.find(x=>x.id===id)) {
+    accts.push({...r});
+    crmSave('accounts', accts);
+  }
+  openSiteSurvey(id);
+}
+
 function openSiteSurvey(id){
-  const data = crmLoad('accounts');
-  const r = data.find(x=>x.id===id);
-  if(!r){ alert('Account not found.'); return; }
+  let data = crmLoad('accounts');
+  let r = data.find(x=>x.id===id);
+  // Also check leads pool (opportunity-stage surveys)
+  if (!r) {
+    const leadsData = crmLoad('leads');
+    r = leadsData.find(x=>x.id===id);
+    if (r) {
+      // Mirror to accounts pool temporarily
+      data = [...data, {...r}];
+    }
+  }
+  if(!r){ showToast('Record not found — cannot open survey'); return; }
 
   // Reset state
   // Use universal context builder for complete pre-fill data
@@ -9474,7 +9615,56 @@ function fsAcceptProposal() {
     r.surveySignerTitle           = signerTitle;
     r.surveySignerDate            = signerDate;
     r.surveySignedAt              = Date.now();
-    crmSave('accounts', r, 'accounts');
+    crmSave('accounts', acctData);
+
+    // ── Auto-promote the lead record to 'accepted' + create account ──
+    if (svState.accountId) {
+      const leadsData = crmLoad('leads');
+      const lead = leadsData.find(x => x.id === svState.accountId);
+      if (lead && lead.lifecycleStage !== 'accepted') {
+        lead.lifecycleStage = 'accepted';
+        lead.acceptedAt = Date.now();
+        lead.surveyData = svState.surveyData || {};
+        lead.surveyComplete = true;
+        lead.status = 'active';
+        lead.activityLog = lead.activityLog || [];
+        lead.activityLog.push({ ts:Date.now(), type:'stage', icon:'🤝', title:'Survey Accepted — Account Created', who: _currentUser?.name || 'Rep' });
+        const lIdx = leadsData.findIndex(x => x.id === svState.accountId);
+        if (lIdx > -1) leadsData[lIdx] = lead; else leadsData.push(lead);
+        crmSave('leads', leadsData);
+        // Also ensure account exists with survey data
+        const accts2 = crmLoad('accounts');
+        const existAcct = accts2.find(a => a.id === svState.accountId);
+        if (existAcct) {
+          existAcct.lifecycleStage = 'onboarding';
+          existAcct.surveyData = svState.surveyData || {};
+          existAcct.surveyComplete = true;
+          existAcct.acceptedAt = Date.now();
+          crmSave('accounts', accts2);
+        } else {
+          accts2.push({...lead, lifecycleStage:'onboarding', status:'active'});
+          crmSave('accounts', accts2);
+        }
+        // Push to scheduler queue
+        const schedQueue = JSON.parse(localStorage.getItem('termac_scheduler_queue') || '[]');
+        const alreadyQueued = schedQueue.find(x => x.id === svState.accountId);
+        if (!alreadyQueued) {
+          schedQueue.push({
+            id: lead.id,
+            business: lead.business || lead.name,
+            contact: lead.contact || lead.name,
+            phone: lead.phone,
+            address: lead.address,
+            services: lead.services,
+            surveyData: svState.surveyData || {},
+            acceptedAt: Date.now(),
+            assignedRep: lead.assignedRep || _currentUser?.name,
+            status: 'needs_scheduling',
+          });
+          localStorage.setItem('termac_scheduler_queue', JSON.stringify(schedQueue));
+        }
+      }
+    }
   }
   fsGo(4, 5);
 }

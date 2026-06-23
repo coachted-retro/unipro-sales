@@ -459,20 +459,52 @@ function spSvcColor(s){
 //  STAGE LABELS
 // ══════════════════════════════════════════════════════
 const SP_STAGES = {
-  lead:{label:'Lead',color:'#6B7280',bg:'#F3F4F6'},
-  contact:{label:'Contact',color:'#1B5FA8',bg:'#DBEAFE'},
-  opportunity:{label:'Opportunity',color:'#D97706',bg:'#FEF3C7'},
-  site_visit:{label:'Site Visit',color:'#7C3AED',bg:'#EDE9FE'},
-  close:{label:'Closing',color:'#059669',bg:'#D1FAE5'},
-  active:{label:'Active',color:'#1E7B3C',bg:'#DCFCE7'},
-  onboarding:{label:'Onboarding',color:'#0D7490',bg:'#E0F2FE'},
+  lead:         {label:'New Lead',         color:'#1B5FA8', bg:'#EBF2FD'},
+  contacted:    {label:'Contacted',        color:'#1E40AF', bg:'#DBEAFE'},
+  qualified:    {label:'Qualified',        color:'#065F46', bg:'#ECFDF5'},
+  disqualified: {label:'Disqualified',     color:'#C8102E', bg:'#FEE9EC'},
+  contact:      {label:'Contact',          color:'#6B21A8', bg:'#F3E8FF'},
+  appointment:  {label:'Appointment Set',  color:'#4C1D95', bg:'#EDE9FE'},
+  site_visit:   {label:'Site Visit',       color:'#92400E', bg:'#FEF3C7'},
+  opportunity:  {label:'Opportunity',      color:'#D97706', bg:'#FEF3C7'},
+  survey:       {label:'Survey Pending',   color:'#C2410C', bg:'#FFF7ED'},
+  survey_done:  {label:'Survey Complete',  color:'#059669', bg:'#ECFDF5'},
+  proposal:     {label:'Proposal Sent',    color:'#2563EB', bg:'#EFF6FF'},
+  accepted:     {label:'Accepted',         color:'#166534', bg:'#DCFCE7'},
+  lost:         {label:'Lost',             color:'#9F1239', bg:'#FEE9EC'},
+  close:        {label:'Closed Won',       color:'#166534', bg:'#DCFCE7'},
+  active:       {label:'Active',           color:'#1E7B3C', bg:'#DCFCE7'},
+  onboarding:   {label:'Onboarding',       color:'#0D7490', bg:'#E0F2FE'},
+};
+
+const SP_TAB_STAGE_OPTIONS = {
+  leads: [
+    {key:'lead',         label:'🎯 New Lead'},
+    {key:'contacted',    label:'📞 Contacted'},
+    {key:'qualified',    label:'✅ Qualified'},
+    {key:'disqualified', label:'🚫 Disqualified'},
+  ],
+  contacts: [
+    {key:'contact',      label:'👤 Contact'},
+    {key:'appointment',  label:'📅 Appointment Set'},
+    {key:'site_visit',   label:'🏢 Site Visit'},
+    {key:'disqualified', label:'🚫 Disqualified'},
+  ],
+  opportunities: [
+    {key:'opportunity',  label:'💼 Opportunity'},
+    {key:'survey',       label:'📋 Survey Pending'},
+    {key:'survey_done',  label:'📝 Survey Complete'},
+    {key:'proposal',     label:'📄 Proposal Sent'},
+    {key:'accepted',     label:'🤝 Accepted'},
+    {key:'lost',         label:'❌ Lost'},
+  ],
 };
 
 const SP_TAB_STAGES = {
-  leads:['lead'],
-  contacts:['contact'],
-  opportunities:['opportunity','site_visit'],
-  accounts:['close','onboarding','first_service','active','renewal','jeopardy'],
+  leads:['lead','contacted','qualified','disqualified'],
+  contacts:['contact','appointment','site_visit'],
+  opportunities:['opportunity','survey','survey_done','proposal','lost'],
+  accounts:['accepted','close','onboarding','first_service','active','renewal','jeopardy'],
 };
 
 // ══════════════════════════════════════════════════════
@@ -589,7 +621,9 @@ function spRecordCard(r, tab) {
       <span class="sp-stage-pill" style="background:${stage.bg};color:${stage.color}">${stage.label}</span>
       <div class="sp-actions" onclick="event.stopPropagation()">
         <button class="sp-rec-btn" onclick="spEditRecord('${r.id}','${tab}')">Edit</button>
-        <button class="sp-rec-btn primary" onclick="spAdvanceStage('${r.id}','${tab}')">Advance →</button>
+        <select class="sp-stage-sel" onchange="spSetStage('${r.id}','${tab}',this.value,this)" title="Change stage" style="padding:4px 8px;border:1.5px solid var(--line);border-radius:5px;font-size:11px;font-family:'Barlow Condensed',sans-serif;font-weight:700;background:#fff;color:var(--ink);cursor:pointer">
+          ${spStageOptions(r, tab)}
+        </select>
       </div>
     </div>
   </div>`;
@@ -1000,20 +1034,66 @@ function spDupeCheck(val, field) {
 //  ADVANCE STAGE
 // ══════════════════════════════════════════════════════
 const STAGE_SEQUENCE = ['lead','contact','opportunity','site_visit','close','onboarding','first_service','active'];
-function spAdvanceStage(id, tab) {
+function spStageOptions(r, tab) {
+  const cur = r.lifecycleStage || 'lead';
+  const opts = SP_TAB_STAGE_OPTIONS[tab] || [{key:cur, label:cur}];
+  let hasCur = opts.find(o => o.key === cur);
+  const allOpts = hasCur ? opts : [{key:cur, label:'— ' + (SP_STAGES[cur]?.label || cur) + ' —'}, ...opts];
+  return allOpts.map(o =>
+    `<option value="${o.key}" ${o.key === cur ? 'selected' : ''}>${o.label}</option>`
+  ).join('');
+}
+
+function spSetStage(id, tab, newStage, selectEl) {
   const data = crmLoad('leads');
   const r = data.find(x => x.id === id);
-  if (!r) return;
-  const cur = r.lifecycleStage || 'lead';
-  const idx = STAGE_SEQUENCE.indexOf(cur);
-  const next = STAGE_SEQUENCE[idx + 1];
-  if (!next) { spToast('Already at final stage'); return; }
-  r.lifecycleStage = next;
+  if (!r) { spToast('Record not found'); return; }
+  const oldStage = r.lifecycleStage || 'lead';
+  if (oldStage === newStage) return;
+
+  // Disqualified / Lost: require note
+  if (newStage === 'disqualified' || newStage === 'lost') {
+    const reason = prompt('Reason for ' + (newStage === 'lost' ? 'Lost' : 'Disqualifying') + ' this record?\n(This will be sent to your manager for review)');
+    if (reason === null) { if (selectEl) selectEl.value = oldStage; return; }
+    r.disqualifiedReason = reason;
+    r.disqualifiedAt = Date.now();
+    r.disqualifiedBy = _spRep.name;
+    const q = JSON.parse(localStorage.getItem('termac_mgr_disq_queue') || '[]');
+    q.push({ id:r.id, name:r.business||r.name, reason, by:r.disqualifiedBy, ts:Date.now(), stage:oldStage });
+    localStorage.setItem('termac_mgr_disq_queue', JSON.stringify(q));
+  }
+
+  // Survey stage: open survey if available
+  if (newStage === 'survey') {
+    spToast('Survey stage set — open the main platform to run the survey');
+  }
+
+  // Accepted: create account entry + notify scheduler
+  if (newStage === 'accepted') {
+    r.acceptedAt = Date.now();
+    r.acceptedBy = _spRep.name;
+    r.status = 'active';
+    const accts = crmLoad('accounts');
+    if (!accts.find(a => a.id === id)) {
+      accts.push({...r, lifecycleStage:'onboarding', status:'active'});
+      crmSave('accounts', accts);
+    }
+    const schedQ = JSON.parse(localStorage.getItem('termac_scheduler_queue') || '[]');
+    if (!schedQ.find(x => x.id === id)) {
+      schedQ.push({ id:r.id, business:r.business||r.name, contact:r.contact||r.name, phone:r.phone, address:r.address, services:r.services, acceptedAt:Date.now(), assignedRep:r.assignedRep||_spRep.name, status:'needs_scheduling' });
+      localStorage.setItem('termac_scheduler_queue', JSON.stringify(schedQ));
+    }
+    spToast('🎉 Account created — Scheduler notified!');
+  }
+
+  r.lifecycleStage = newStage;
   r.updated = Date.now();
   r.activityLog = r.activityLog || [];
-  r.activityLog.push({ ts:Date.now(), type:'stage', icon:'🔄', title:`Stage: ${cur} → ${next}`, who:_spRep.name });
+  r.activityLog.push({ ts:Date.now(), type:'stage', icon:'🔄', title:`Stage: ${oldStage} → ${newStage}`, who:_spRep.name });
+  const idx = data.findIndex(x => x.id === id);
+  if (idx > -1) data[idx] = r; else data.push(r);
   crmSave('leads', data);
-  spToast('Stage advanced → ' + (SP_STAGES[next]?.label || next));
+  spToast('✅ ' + (SP_STAGES[newStage]?.label || newStage));
   spRenderCRM(tab);
 }
 
