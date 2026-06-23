@@ -12656,25 +12656,27 @@ function svBuildEstimateFromScope(){
       // Clear progress
       try { if (typeof svClearProgress === 'function') svClearProgress(); } catch(e) {}
 
-      // Build estimate state
-      estBundleState = { selectedBundle:null, selectedTerm:'3yr', dismissed:false };
-      estState.bizName    = svState.bizName || '';
-      estState.accountId  = svState.accountId || null;
-      estState.sections   = {};
-      estState.customLines= [];
-      estState.decision   = null;
+      // Build estimate state — use window.estState to guarantee access across script blocks
+      if (typeof window.estBundleState !== 'undefined') window.estBundleState = { selectedBundle:null, selectedTerm:'3yr', dismissed:false };
+      const _es = window.estState;
+      if (!_es) { throw new Error('Estimate engine not loaded — please hard-refresh (Ctrl+Shift+R)'); }
+      _es.bizName    = svState.bizName || '';
+      _es.accountId  = svState.accountId || null;
+      _es.sections   = {};
+      _es.customLines= [];
+      _es.decision   = null;
 
       // Set biz name
       const bizNameEl = document.getElementById('estBizName');
-      if (bizNameEl) bizNameEl.textContent = estState.bizName;
+      if (bizNameEl) bizNameEl.textContent = _es.bizName;
 
       // Build line items per service
       svState.selectedServices.forEach(svc => {
         try {
-          estState.sections[svc] = estBuildLines(svc, svState.surveyData[svc] || {});
+          _es.sections[svc] = estBuildLines(svc, svState.surveyData[svc] || {});
         } catch(e) {
           console.warn('estBuildLines', svc, e.message);
-          estState.sections[svc] = [{
+          _es.sections[svc] = [{
             desc: (SVC_LABEL[svc]||svc) + ' — pricing TBD',
             detail: 'Edit manually', qty:1, unitPrice:0, editable:true
           }];
@@ -12700,7 +12702,7 @@ function svBuildEstimateFromScope(){
 
       window._estBuildActive = false;
       // Mark estimate built on account
-      if (estState.accountId) {
+      if (_es && _es.accountId) {
         try {
           const _d2 = crmLoad('accounts');
           const _r2 = _d2.find(x => x.id === estState.accountId);
@@ -14685,6 +14687,7 @@ let estState = {
   customLines: [],
   decision: null  // 'accepted' | 'thinking' | 'declined'
 };
+window.estState = estState; // expose globally so other script blocks can access it
 
 /* ── OPEN ESTIMATE ── */
 function svOpenEstimate(){
