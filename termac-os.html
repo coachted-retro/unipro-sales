@@ -3101,6 +3101,20 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
     </div>
   </div>
 
+  <!-- TERMAC WAREHOUSE DEMAND FORECAST ─────────────────────────────────── -->
+  <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;margin-bottom:16px">
+    <div onclick="mgrToggle('whForecast')" style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none;padding-bottom:10px">
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft)">📦 Warehouse Demand Forecast</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <button onclick="event.stopPropagation();renderWarehouseForecast()" style="background:var(--navy);color:#fff;border:none;border-radius:6px;padding:4px 10px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:10px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">↻ Refresh</button>
+        <span id="cs-icon-whForecast" style="color:var(--soft);font-size:14px">▾</span>
+      </div>
+    </div>
+    <div id="cs-body-whForecast" style="margin-top:4px">
+      <div id="whForecastBody"><div style="color:var(--soft);font-size:12px">Click Refresh to generate this month's demand forecast.</div></div>
+    </div>
+  </div>
+
   <!-- DELIVERY ORDERS — Office creates orders here; driver reads them in termac-delivery.html -->
   <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;margin-bottom:16px">
     <div onclick="mgrToggle('deliveryOrders')" style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none;padding-bottom:10px">
@@ -6751,6 +6765,7 @@ document.addEventListener('keydown', e=>{
           <div class="sv-form-grid">
             <div class="sv-field"><label>Booster Needed?</label>
               <select id="sv_tm_booster_needed" onchange="svTMRenderBoosterOptions()"><option value="">No</option><option value="yes">Yes</option></select>
+              <div id="svTMBoosterNote" style="margin-top:6px"></div>
             </div>
             <div class="sv-field"><label>Booster Model / Rise / Voltage</label>
               <select id="sv_tm_booster_model" onchange="svTMCalcBooster()" disabled><option value="">— Select Booster Needed first —</option></select>
@@ -12482,7 +12497,11 @@ function svBuildEstimateFromScope(){
       try {
         const _d = crmLoad('accounts');
         const _r = _d.find(x => x.id === estState.accountId);
-        if (_r) { _r.estimateBuilt = true; _r.estimateBuiltAt = Date.now(); crmSave('accounts', _d); }
+        if (_r) {
+          _r.estimateBuilt = true; _r.estimateBuiltAt = Date.now(); crmSave('accounts', _d);
+          // Save chemical program + trigger intelligence engine
+          if (typeof window.estMarkBuilt === 'function') window.estMarkBuilt(estState.accountId);
+        }
       } catch(e) {}
     }
   } catch(e) {
@@ -13178,6 +13197,11 @@ function svTMAutoFillFromAI(text) {
       modelSelectEl.dispatchEvent(new Event('change'));
     }
   }
+  // Auto-select booster based on machine + zip
+  setTimeout(() => {
+    const zip = svState?.surveyData?.account?.zip || document.getElementById('sv_acct_zip')?.value || '';
+    if (typeof tmAutoSelectBooster === 'function') tmAutoSelectBooster(zip);
+  }, 300);
 
   // Auto-check booster if AI says required
   if (boosterMatch && boosterMatch[1].toLowerCase() === 'yes') {
@@ -15877,6 +15901,7 @@ window.svOpenEstimate = function(){
         <button class="acct-tab" onclick="acctShowTab('estimates',this)">📄 Estimates</button>
         <button class="acct-tab" onclick="acctShowTab('photos',this)">📷 Photos</button>
         <button class="acct-tab" onclick="acctShowTab('notes',this)">📝 Notes</button>
+        <button class="acct-tab" onclick="acctShowTab('chem_forecast',this)">🧪 Chem Forecast</button>
       </div>
 
       <!-- Timeline tab -->
@@ -15926,6 +15951,13 @@ window.svOpenEstimate = function(){
       <!-- Photos tab -->
       <div class="acct-tab-content" id="tab-photos">
         <div id="acctPhotosGrid"></div>
+      </div>
+
+      <!-- Chem Forecast tab -->
+      <div class="acct-tab-content" id="tab-chem_forecast">
+        <div id="acctChemForecastBody" style="padding:4px 0">
+          <div style="color:var(--soft);font-size:13px;font-style:italic">Loading forecast…</div>
+        </div>
       </div>
 
       <!-- Notes tab -->
@@ -16502,6 +16534,9 @@ function acctSaveNote() {
 
 // ── TAB SWITCHING ──
 function acctShowTab(tabId, btn) {
+  if (tabId === 'chem_forecast') {
+    setTimeout(() => tmRenderAccountForecast(_acctId, 'acctChemForecastBody'), 50);
+  }
   document.querySelectorAll('.acct-tab-content').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.acct-tab').forEach(el => el.classList.remove('active'));
   const content = document.getElementById('tab-'+tabId);
@@ -27636,6 +27671,57 @@ function rerenderPricingRow(input, sku, salePrice) {
 }
 
 // ── TERMAC P&L CARD RENDERER ─────────────────────────────────────────────────
+function renderWarehouseForecast() {
+  const el = document.getElementById('whForecastBody');
+  if (!el) return;
+  el.innerHTML = '<div style="color:var(--soft);font-size:12px">Calculating…</div>';
+  setTimeout(() => {
+    try {
+      const month = new Date().getMonth();
+      const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      const forecast = tmWarehouseForecast(month);
+      if (!forecast.byProduct.length) {
+        el.innerHTML = '<div style="color:var(--soft);font-size:12px">No active Termac accounts with chemical programs on file. Complete surveys to enable forecasting.</div>';
+        return;
+      }
+      const catColors = { dish:'#6B21A8', sink:'#1B5FA8', cleaning:'#1E7B3C', hand:'#D8690B', paper:'#566573' };
+      const rows = forecast.byProduct.slice(0,20).map(p => `
+        <tr style="border-bottom:1px solid var(--line)">
+          <td style="padding:7px 10px;font-size:12px;font-weight:600">${p.description}</td>
+          <td style="padding:7px 10px;text-align:center">
+            <span style="background:${catColors[p.category]||'#6B728020'};color:${catColors[p.category]||'#6B7280'};border-radius:4px;padding:2px 6px;font-size:10px;font-weight:700;text-transform:uppercase">${p.category||'misc'}</span>
+          </td>
+          <td style="padding:7px 10px;text-align:center;font-weight:700;font-size:13px;color:var(--red)">${Math.ceil(p.totalContainers)}</td>
+          <td style="padding:7px 10px;text-align:center;font-size:11px;color:var(--soft)">${p.accounts.map(a=>a.name+' ('+a.qty+')').slice(0,3).join(', ')}${p.accounts.length>3?` +${p.accounts.length-3} more`:''}</td>
+          <td style="padding:7px 10px;text-align:right;font-weight:700;font-size:12px">$${p.totalCost.toFixed(0)}</td>
+        </tr>`).join('');
+
+      el.innerHTML = `
+        <div style="display:flex;align-items:baseline;gap:16px;margin-bottom:12px;flex-wrap:wrap">
+          <div><span style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:22px">$${forecast.grandTotal.toLocaleString()}</span> <span style="font-size:11px;color:var(--soft)">projected supply cost — ${monthNames[month]}</span></div>
+          <div style="font-size:11px;color:var(--soft)">${forecast.accountsAnalyzed} active Termac accounts</div>
+        </div>
+        <div style="overflow-x:auto">
+          <table style="width:100%;border-collapse:collapse">
+            <thead>
+              <tr style="background:#F8F9FA;border-bottom:2px solid var(--line)">
+                <th style="padding:6px 10px;text-align:left;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--soft)">Product</th>
+                <th style="padding:6px 10px;text-align:center;font-size:10px;text-transform:uppercase;color:var(--soft)">Cat</th>
+                <th style="padding:6px 10px;text-align:center;font-size:10px;text-transform:uppercase;color:var(--soft)">Units to Order</th>
+                <th style="padding:6px 10px;text-align:center;font-size:10px;text-transform:uppercase;color:var(--soft)">Accounts</th>
+                <th style="padding:6px 10px;text-align:right;font-size:10px;text-transform:uppercase;color:var(--soft)">Est. Cost</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+        <div style="margin-top:8px;font-size:11px;color:var(--soft)">Forecasts use covers/day × dilution rates × seasonal adjustments learned from delivery history. Accuracy improves as more deliveries are logged.</div>`;
+    } catch(e) {
+      el.innerHTML = `<div style="color:#C8102E;font-size:12px">Forecast error: ${e.message}</div>`;
+    }
+  }, 50);
+}
+
 function renderTermacPnlCard() {
   const el = document.getElementById('termacPnlCardBody');
   if (!el) return;
@@ -27979,6 +28065,569 @@ function cancelDeliveryOrder(id) {
 }
 
 console.log('✅ Termac Drip Engine v1.0 — 20 automated sequences live. BREVO_API_KEY: ' + (BREVO_API_KEY ? 'ACTIVE' : 'Pending credentials — queuing all sequences'));
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TERMAC INTELLIGENCE ENGINE v5.0
+// Predictive chemical usage, warehouse demand forecasting, seasonal learning,
+// booster auto-selection, and account-level program management.
+// Every data point fed in makes the next recommendation smarter.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── CHEMICAL DILUTION MASTER TABLE ─────────────────────────────────────────
+// oz_per_rack: ounces of concentrate dispensed per dish rack (machine chemicals)
+// oz_per_gal:  ounces to dilute per gallon of water (sink/cleaning chemicals)
+// gal_per_use: gallons used per application (surface cleaners)
+// coverage_sqft_per_gal: for floor cleaners
+// units_per_month_base: flat usage rate at baseline (paper, misc)
+// volume_scalar: how much volume affects usage (1.0 = linear with covers)
+const TM_CHEM_DILUTION = {
+  // ── DISH MACHINE CHEMICALS ──────────────────────────────────────────────
+  'DETE01': { name:'340X1 Detergent',        category:'dish', oz_per_rack:0.50, volume_scalar:1.0,  container_oz:128,  notes:'Liquid detergent — usage scales directly with rack count' },
+  'DETE04': { name:'340X4 Detergent',        category:'dish', oz_per_rack:0.50, volume_scalar:1.0,  container_oz:512,  notes:'4-pack — same dose, better unit economics' },
+  'DETE05': { name:'340X5 Detergent',        category:'dish', oz_per_rack:0.50, volume_scalar:1.0,  container_oz:640,  notes:'5-gal pail' },
+  'RINS01': { name:'310X1 Rinse Aid',        category:'dish', oz_per_rack:0.08, volume_scalar:1.0,  container_oz:128,  notes:'Lower dose — small container, high-freq reorder' },
+  'RINS04': { name:'310X4 Rinse Aid',        category:'dish', oz_per_rack:0.08, volume_scalar:1.0,  container_oz:512,  notes:'4-pack rinse' },
+  'RINS05': { name:'310X5 Rinse Aid',        category:'dish', oz_per_rack:0.08, volume_scalar:1.0,  container_oz:640,  notes:'5-gal' },
+  'RINB04': { name:'B100X4 Rinse Injector',  category:'dish', oz_per_rack:0.08, volume_scalar:1.0,  container_oz:512,  notes:'High-temp injector rinse' },
+  'RINB05': { name:'B100X5 Rinse Injector',  category:'dish', oz_per_rack:0.08, volume_scalar:1.0,  container_oz:640,  notes:'High-temp injector 5-gal' },
+  'SANI01': { name:'600X1 Sanitizer',        category:'dish', oz_per_rack:0.12, volume_scalar:1.0,  container_oz:128,  notes:'Low-temp machines only — not needed for high-temp' },
+  'SANI04': { name:'600X4 Sanitizer',        category:'dish', oz_per_rack:0.12, volume_scalar:1.0,  container_oz:512,  notes:'4-pack sanitizer' },
+  'SANI05': { name:'600X5 Sanitizer',        category:'dish', oz_per_rack:0.12, volume_scalar:1.0,  container_oz:640,  notes:'5-gal sanitizer' },
+  'MAXAID': { name:'205X Max-Aid Rinse',     category:'dish', oz_per_rack:0.09, volume_scalar:1.0,  container_oz:512,  notes:'Conveyor machines (ADC-44/66) — required purchase' },
+  'DESC01': { name:'150X1 Descale',          category:'dish', oz_per_rack:0,    volume_scalar:0,    container_oz:128,  flat_per_month:0.5, notes:'Monthly descale treatment — hard water areas use more' },
+  'DESC04': { name:'150X4 Descale',          category:'dish', oz_per_rack:0,    volume_scalar:0,    container_oz:512,  flat_per_month:0.5, notes:'4-pack descale' },
+  'EMERD04':{ name:'408X4 Em Pearl',         category:'dish', oz_per_rack:0.45, volume_scalar:1.0,  container_oz:512,  notes:'Premium low-temp detergent' },
+  'EMERD05':{ name:'408X5 Em Pearl',         category:'dish', oz_per_rack:0.45, volume_scalar:1.0,  container_oz:640,  notes:'5-gal' },
+  // ── POT SINK CHEMICALS ─────────────────────────────────────────────────
+  'PANDEE': { name:'Durapot Pot & Pan Det.', category:'sink',  oz_per_gal:2,    volume_scalar:0.7,  container_oz:1280, notes:'2 oz/gal sink solution; busy kitchens change water 2–3×/shift' },
+  'POWE04': { name:'214X Power Soak',        category:'sink',  oz_per_gal:1.5,  volume_scalar:0.7,  container_oz:512,  notes:'Heavy-duty soak for baked-on soils' },
+  'MINI05': { name:'530X5 Minipot',          category:'sink',  oz_per_gal:2,    volume_scalar:0.7,  container_oz:640,  notes:'Concentrated pot & pan' },
+  'MULE04': { name:'425X4 Mule',             category:'sink',  oz_per_gal:2,    volume_scalar:0.7,  container_oz:512,  notes:'Multi-purpose sink detergent' },
+  // ── HAND SOAPS ─────────────────────────────────────────────────────────
+  'INOP100':{ name:'Antibacterial Liquid Soap',category:'hand', oz_per_gal:0,   volume_scalar:0.5,  container_oz:192,  flat_per_month:2,   notes:'~1 dispenser refill per 50 staff-days; scales with staff count' },
+  'INOP200':{ name:'Antibacterial Foam Soap', category:'hand', oz_per_gal:0,    volume_scalar:0.5,  container_oz:512,  flat_per_month:1.5, notes:'Foam — more economical per wash' },
+  'PINK100':{ name:'Termac Pink Lotion Soap', category:'hand', oz_per_gal:0,    volume_scalar:0.4,  container_oz:1280, flat_per_month:1,   notes:'Bulk lotion soap' },
+  // ── DEGREASERS / CLEANERS ──────────────────────────────────────────────
+  'ULTR100':{ name:'Ultra T Degreaser',       category:'cleaning', oz_per_gal:4, volume_scalar:0.6, container_oz:1280, notes:'4 oz/gal RTU; high-volume kitchens use ~3× more' },
+  'BRUT100':{ name:'Brute Force Oven & Grill',category:'cleaning', oz_per_gal:8, volume_scalar:0.8, container_oz:1280, notes:'Heavy-duty; usage peaks with grill/fryer volume' },
+  'GREE105':{ name:'Supreme Green Degreaser', category:'cleaning', oz_per_gal:3, volume_scalar:0.5, container_oz:1280, notes:'General kitchen degreaser' },
+  'GRILLA': { name:'Grill-A-Kleen',           category:'cleaning', oz_per_gal:0, volume_scalar:0.8, container_oz:1024, flat_per_month:1,   notes:'Ready-to-use grill cleaner; one case/mo for active grill ops' },
+  'FABOL100':{ name:'Fab-O All Purpose',      category:'cleaning', oz_per_gal:2, volume_scalar:0.4, container_oz:1280, notes:'Light-duty daily surfaces' },
+  'NEUT100':{ name:'Neutral Floor Cleaner',   category:'cleaning', oz_per_gal:2, coverage_sqft_per_gal:500, volume_scalar:0.3, container_oz:1280, notes:'Floor area drives usage more than covers' },
+  'BIOW100':{ name:'Bio Walk Enzyme Cleaner', category:'cleaning', oz_per_gal:2, coverage_sqft_per_gal:400, volume_scalar:0.3, container_oz:1280, notes:'Enzyme-based; penetrates grout and drains' },
+  'SANI100':{ name:'Sani Rinse RTU',          category:'cleaning', oz_per_gal:0, volume_scalar:1.0, container_oz:1024, flat_per_month:2,   notes:'Surface sanitizer — high-touch areas; heavy use in peak season' },
+  'PERO200':{ name:'Peroxy Multi-Purpose',    category:'cleaning', oz_per_gal:3, volume_scalar:0.5, container_oz:512,  notes:'Peroxide-based; premium surface cleaner' },
+  'STERAMINE100':{ name:'Steramine Tabs',     category:'cleaning', oz_per_gal:0, volume_scalar:1.0, container_oz:0,    flat_per_month:1,   notes:'1 tab per gal sanitizer solution; one bottle ~150 gal' },
+};
+
+// ── SEASONAL MULTIPLIER PROFILES ─────────────────────────────────────────
+// Indexed by restaurant type → month (0=Jan) → multiplier
+// 1.0 = baseline, >1.0 = busier than average, <1.0 = slower
+const TM_SEASONAL_PROFILES = {
+  fine_dining:    [0.75,0.70,0.85,0.90,1.05,1.15,0.95,0.90,1.10,1.20,1.30,1.40],
+  casual_dining:  [0.80,0.78,0.88,0.95,1.05,1.15,1.20,1.15,1.05,1.00,1.05,1.20],
+  quick_service:  [0.90,0.88,0.92,0.95,1.00,1.10,1.20,1.15,1.00,0.95,0.95,1.05],
+  bar_lounge:     [0.85,0.80,0.90,0.95,1.10,1.25,1.35,1.25,1.10,1.00,1.05,1.40],
+  cafeteria:      [0.85,0.90,0.95,0.90,0.90,0.70,0.60,0.65,0.90,0.95,0.95,0.85], // school/corp
+  healthcare:     [0.98,0.96,0.98,0.99,1.00,1.00,1.00,1.00,1.00,1.00,1.00,1.01], // flat
+  hotel:          [0.70,0.68,0.80,0.90,1.05,1.15,1.30,1.25,1.10,0.95,0.85,1.10],
+  pizza:          [0.85,0.83,0.90,0.95,1.05,1.10,1.15,1.10,1.00,1.00,0.95,1.10],
+  default:        [0.90,0.88,0.93,0.97,1.02,1.08,1.10,1.08,1.02,0.98,0.98,1.07]
+};
+
+// ── BOOSTER SELECTION MATRIX ──────────────────────────────────────────────
+// Keys: machine model partial match → array of compatible boosters by water temp rise needed
+// Water inlet temp: cold (≤50°F, well water/northern winter), normal (50–65°F), warm (≥65°F, southern)
+const TM_BOOSTER_MATRIX = [
+  // HT-25 boosters
+  { machines:['HT-25'],  waterTemp:'cold',   boosterIdx:2,  label:'HT-25 · S7 · 40°F',  note:'High-temp machine — 40°F rise required for cold water areas (winter PA/NJ/MD)' },
+  { machines:['HT-25'],  waterTemp:'normal', boosterIdx:0,  label:'HT-25 · C7 · 40°F',  note:'Standard 40°F rise coil heater for HT-25 in normal inlet conditions' },
+  { machines:['HT-25'],  waterTemp:'warm',   boosterIdx:1,  label:'HT-25 · C12 · 70°F', note:'Hot-climate install — 70°F rise handles high-temp sanitizing requirement' },
+  // ADC-44/66 boosters
+  { machines:['ADC-44','ADC-66'], waterTemp:'cold',   boosterIdx:4, label:'ADC 44/66 · C12 · 40°F', note:'Conveyor machines need consistent 180°F final rinse — coil heater for cold inlets' },
+  { machines:['ADC-44','ADC-66'], waterTemp:'normal', boosterIdx:4, label:'ADC 44/66 · C12 · 40°F', note:'Standard coil booster for conveyor dish machines' },
+  { machines:['ADC-44','ADC-66'], waterTemp:'warm',   boosterIdx:5, label:'ADC 44/66 · C24 · 70°F', note:'High-temp rise for warmer inlet — large conveyor operations' },
+  // L-90 / AFB / AFBC boosters
+  { machines:['L-90','AFB','AFBC','AFB/AFBC'], waterTemp:'cold',   boosterIdx:9,  label:'L90 · S6 · 30°F',  note:'Door-type — steam booster for cold inlet conditions' },
+  { machines:['L-90','AFB','AFBC','AFB/AFBC'], waterTemp:'normal', boosterIdx:8,  label:'L-90 · C4 · 30°F', note:'Coil booster for L-90/AFB in normal conditions' },
+  { machines:['L-90','AFB','AFBC','AFB/AFBC'], waterTemp:'warm',   boosterIdx:8,  label:'L-90 · C4 · 30°F', note:'Same coil — warm inlets still need 30°F rise for high-temp rinse' },
+  // Single tank / ET / ETPD boosters
+  { machines:['ET','ETPD','ET3','Single Tank','UC-180'], waterTemp:'cold',   boosterIdx:11, label:'ETAF · S6 · 30°F', note:'Door/undercounter machines — steam booster cold climate' },
+  { machines:['ET','ETPD','ET3','Single Tank','UC-180'], waterTemp:'normal', boosterIdx:10, label:'ETAF · C4 · 30°F', note:'Coil booster for door/undercounter — standard conditions' },
+  { machines:['ET','ETPD','ET3','Single Tank','UC-180'], waterTemp:'warm',   boosterIdx:10, label:'ETAF · C4 · 30°F', note:'Coil booster — warm climate, still needed for high-temp sanitizing' },
+  // 5AG
+  { machines:['5AG'],    waterTemp:'cold',   boosterIdx:21, label:'5AG · S9 · 30°F',  note:'Double rack — steam booster cold conditions' },
+  { machines:['5AG'],    waterTemp:'normal', boosterIdx:20, label:'5AG · C9 · 30°F',  note:'Standard coil for 5AG double rack' },
+  { machines:['5AG'],    waterTemp:'warm',   boosterIdx:20, label:'5AG · C9 · 30°F',  note:'Same coil — warm inlet still needs rise' },
+];
+
+// ── WATER HARDNESS BY ZIP/REGION (PA/NJ/DE/MD/DC) ──────────────────────────
+// Used to determine softener recommendation and descale frequency
+// grains_per_gal: <3 soft, 3–7 moderate, 7–11 hard, >11 very hard
+// inlet_temp_winter: estimated coldest month water temp °F
+const TM_WATER_REGION = [
+  { zips:['191','192','193','194','195','196'], city:'Philadelphia Metro PA',  gpg:7,  inlet_temp_winter:48, softener:'recommended', descale_multiplier:1.5 },
+  { zips:['197','198','199'],                  city:'Delaware',               gpg:5,  inlet_temp_winter:46, softener:'optional',     descale_multiplier:1.2 },
+  { zips:['080','081','082','083','084','085','086','087','088','089'], city:'South NJ', gpg:6, inlet_temp_winter:44, softener:'recommended', descale_multiplier:1.3 },
+  { zips:['074','075','076','077','078','079'], city:'North NJ',              gpg:8,  inlet_temp_winter:40, softener:'strongly recommended', descale_multiplier:1.8 },
+  { zips:['206','207','208','209'],             city:'DC / MD Suburbs',       gpg:9,  inlet_temp_winter:45, softener:'strongly recommended', descale_multiplier:2.0 },
+  { zips:['210','211','212','214'],             city:'Baltimore MD',           gpg:10, inlet_temp_winter:43, softener:'strongly recommended', descale_multiplier:2.0 },
+  { zips:['215','216','217','218','219'],       city:'Central/Western MD',    gpg:8,  inlet_temp_winter:41, softener:'recommended',  descale_multiplier:1.7 },
+];
+
+// ── CORE INTELLIGENCE FUNCTIONS ───────────────────────────────────────────
+
+/**
+ * tmGetWaterRegion(zip) → { gpg, inlet_temp_winter, softener, descale_multiplier, city }
+ * Returns water quality data for a given ZIP code prefix
+ */
+function tmGetWaterRegion(zip) {
+  if (!zip) return { gpg:7, inlet_temp_winter:46, softener:'recommended', descale_multiplier:1.5, city:'Unknown' };
+  const prefix3 = String(zip).replace(/\D/g,'').slice(0,3);
+  const region = TM_WATER_REGION.find(r => r.zips.includes(prefix3));
+  return region || { gpg:7, inlet_temp_winter:46, softener:'recommended', descale_multiplier:1.5, city:'Unknown' };
+}
+
+/**
+ * tmGetBoosterRecommendation(machineModel, zip) → { boosterIdx, label, note, required }
+ * Auto-selects the exact booster from TERMAC_BOOSTERS based on machine + water conditions
+ */
+function tmGetBoosterRecommendation(machineModel, zip) {
+  if (!machineModel) return { required:false, reason:'No machine selected' };
+  const model = machineModel.toString().toUpperCase();
+  const region = tmGetWaterRegion(zip);
+
+  // Low-temp machines (UC-180, ET/ETPD in low-temp mode) may not need booster
+  // High-temp machines always need booster
+  const isHighTemp = model.includes('HT-25') || model.includes('ADC') || model.includes('AFB') || model.includes('5AG') || model.includes('L-90') || model.includes('SINGLE TANK');
+
+  if (!isHighTemp) {
+    return { required:false, reason:'Low-temp machine — chemical sanitizer replaces booster heater' };
+  }
+
+  // Determine water temp category
+  const winterTemp = region.inlet_temp_winter;
+  const tempCat = winterTemp <= 45 ? 'cold' : winterTemp <= 58 ? 'normal' : 'warm';
+
+  // Find matching rule
+  for (const rule of TM_BOOSTER_MATRIX) {
+    const matchesMachine = rule.machines.some(m => model.includes(m.toUpperCase()));
+    if (matchesMachine && rule.waterTemp === tempCat) {
+      return {
+        required: true,
+        boosterIdx: rule.boosterIdx,
+        label: rule.label,
+        note: rule.note,
+        waterGPG: region.gpg,
+        winterTempF: winterTemp,
+        city: region.city,
+        tempCategory: tempCat
+      };
+    }
+  }
+
+  return { required:true, boosterIdx:0, label:'Standard Booster', note:'Booster recommended — confirm inlet temp on-site', required:true };
+}
+
+/**
+ * tmForecastMonthlyUsage(accountId, targetMonth) 
+ * Returns { products: [{partNum, desc, unitsNeeded, unitsPerContainer, containersNeeded, costPerContainer, totalCost}], totalCost, seasonalFactor }
+ * targetMonth: 0=Jan..11=Dec, defaults to current month
+ */
+function tmForecastMonthlyUsage(accountId, targetMonth) {
+  const accounts = crmLoad('accounts');
+  const acct = accounts.find(a => a.id === accountId);
+  if (!acct) return null;
+
+  const chemProgram  = acct.termacChemProgram || {};
+  const covers       = parseFloat(acct.termacCoversPerDay || chemProgram.coversPerDay || 100);
+  const restType     = acct.termacRestType     || chemProgram.restType     || 'default';
+  const racksPerDay  = Math.ceil(covers / 10); // ~10 covers per rack average
+  const sinkGalPerDay= Math.ceil(covers / 25); // pot sink fill rate
+  const daysPerMonth = 26; // avg operating days
+  const month        = targetMonth !== undefined ? targetMonth : new Date().getMonth();
+
+  // Seasonal factor — blend profile with any learned adjustments
+  const profile      = TM_SEASONAL_PROFILES[restType] || TM_SEASONAL_PROFILES.default;
+  const baseFactor   = profile[month];
+  const learnedAdj   = (acct.termacSeasonalAdj || {})[month] || 0; // additive correction learned from order history
+  const seasonFactor = Math.max(0.3, baseFactor + learnedAdj);
+
+  const products = [];
+
+  // Process each product in the chemical program
+  const programProducts = chemProgram.products || [];
+  for (const pp of programProducts) {
+    const spec = TM_CHEM_DILUTION[pp.partNum];
+    if (!spec) {
+      // Unknown product — use flat qty from program
+      products.push({ ...pp, containersNeeded: pp.qty || 1, seasonalFactor: seasonFactor,
+        forecastBasis: 'manual', note: 'No dilution data — using surveyed quantity' });
+      continue;
+    }
+
+    let unitsOzPerMonth = 0;
+    if (spec.oz_per_rack > 0) {
+      unitsOzPerMonth = spec.oz_per_rack * racksPerDay * daysPerMonth * spec.volume_scalar * seasonFactor;
+    } else if (spec.oz_per_gal > 0) {
+      unitsOzPerMonth = spec.oz_per_gal * sinkGalPerDay * daysPerMonth * spec.volume_scalar * seasonFactor;
+    } else if (spec.flat_per_month > 0) {
+      unitsOzPerMonth = spec.flat_per_month * spec.container_oz * seasonFactor;
+    }
+
+    // Descale: multiply by water hardness factor
+    if (pp.partNum.startsWith('DESC')) {
+      const region = tmGetWaterRegion(acct.zip || acct.zipCode || '');
+      unitsOzPerMonth *= region.descale_multiplier;
+    }
+
+    const containerOz = spec.container_oz || 128;
+    const containersNeeded = containerOz > 0 ? Math.ceil(unitsOzPerMonth / containerOz) : 1;
+    const costEach = pp.unitPrice || 0;
+
+    products.push({
+      partNum:          pp.partNum,
+      description:      spec.name,
+      category:         spec.category,
+      ozForecast:       Math.round(unitsOzPerMonth),
+      containerOz,
+      containersNeeded: Math.max(1, containersNeeded),
+      unitPrice:        costEach,
+      totalCost:        Math.round(containersNeeded * costEach * 100) / 100,
+      seasonalFactor,
+      month,
+      forecastBasis:    spec.oz_per_rack > 0 ? `${racksPerDay} racks/day × ${spec.oz_per_rack} oz/rack × ${daysPerMonth} days` :
+                        spec.oz_per_gal  > 0 ? `${sinkGalPerDay} gal/day × ${spec.oz_per_gal} oz/gal × ${daysPerMonth} days` :
+                        `Flat: ${spec.flat_per_month} containers/mo`,
+      notes: spec.notes
+    });
+  }
+
+  const totalCost = products.reduce((s, p) => s + (p.totalCost || 0), 0);
+  return { products, totalCost: Math.round(totalCost * 100) / 100, seasonalFactor, coversPerDay: covers, racksPerDay, month };
+}
+
+/**
+ * tmSaveChemProgramToAccount(accountId, surveyData, coversPerDay, restType, zip)
+ * Called after survey/estimate to persist chemical program + usage specs to account record
+ */
+function tmSaveChemProgramToAccount(accountId, surveyData, coversPerDay, restType, zip) {
+  if (!accountId) return;
+  const accounts = crmLoad('accounts');
+  const acct = accounts.find(a => a.id === accountId);
+  if (!acct) return;
+
+  const tmData = surveyData?.termac || {};
+  const supplyLineItems = tmData.tm_supply_line_items || window._svTMLineItems || [];
+  const machineModel = tmData.tm_machine_mode === 'rental' && TERMAC_RENTAL_MACHINES[tmData.tm_machine_model_idx]
+    ? TERMAC_RENTAL_MACHINES[tmData.tm_machine_model_idx].model
+    : tmData.tm_machine_mode === 'sell' && TERMAC_SELL_MACHINES[tmData.tm_machine_model_idx]
+    ? TERMAC_SELL_MACHINES[tmData.tm_machine_model_idx].model : '';
+
+  // Get booster recommendation
+  const boosterRec = tmGetBoosterRecommendation(machineModel, zip || acct.zip || acct.zipCode || '');
+  const waterRegion = tmGetWaterRegion(zip || acct.zip || acct.zipCode || '');
+
+  // Build structured chemical program
+  const products = supplyLineItems.map(li => ({
+    partNum:    li.part_number,
+    desc:       li.description,
+    qty:        li.qty || 1,
+    unitPrice:  li.unit_price || 0,
+    uom:        li.uom || 'EACH',
+    addedAt:    Date.now()
+  }));
+
+  // Parse AI recommendation for chem concentrations if available
+  const aiText = tmData.dishMachineAI || '';
+  const parseDoseFromAI = (regex) => {
+    const m = aiText.match(regex);
+    return m ? m[1] : null;
+  };
+
+  const chemProgram = {
+    savedAt:         Date.now(),
+    machineModel,
+    machineMode:     tmData.tm_machine_mode,
+    coversPerDay:    parseFloat(coversPerDay) || 100,
+    restType:        restType || 'default',
+    products,
+    boosterRec,
+    waterRegion: {
+      gpg:            waterRegion.gpg,
+      city:           waterRegion.city,
+      softener:       waterRegion.softener,
+      inletTempWinter: waterRegion.inlet_temp_winter
+    },
+    aiChemProgram: {
+      detergentDose:  parseDoseFromAI(/Detergent:.*?([\d.]+)\s*oz\/rack/i),
+      rinseDose:      parseDoseFromAI(/Rinse Aid:.*?([\d.]+)\s*oz\/rack/i),
+      sanitizerDose:  parseDoseFromAI(/Sanitizer:.*?([\d.]+)\s*oz\/rack/i),
+      rawText:        aiText.slice(0, 1000)
+    },
+    version: 1
+  };
+
+  acct.termacChemProgram = chemProgram;
+  acct.termacCoversPerDay = parseFloat(coversPerDay) || acct.termacCoversPerDay || 100;
+  acct.termacRestType     = restType || acct.termacRestType || 'default';
+
+  // Append to intelligence log
+  if (!acct.termacIntelLog) acct.termacIntelLog = [];
+  acct.termacIntelLog.push({
+    ts:    Date.now(),
+    event: 'survey_complete',
+    coversPerDay, machineModel, productCount: products.length,
+    boosterRequired: boosterRec.required
+  });
+  // Keep last 50 log entries
+  if (acct.termacIntelLog.length > 50) acct.termacIntelLog = acct.termacIntelLog.slice(-50);
+
+  crmSave('accounts', accounts);
+  console.log(`✅ Termac chem program saved to account ${accountId} — ${products.length} products, machine: ${machineModel}`);
+  return chemProgram;
+}
+
+/**
+ * tmLearnFromDelivery(accountId, deliveredItems, deliveryMonth)
+ * Called when a delivery is marked complete — compares delivered qty to forecast
+ * and adjusts seasonal multiplier for that account to improve future forecasts.
+ */
+function tmLearnFromDelivery(accountId, deliveredItems, deliveryMonth) {
+  const accounts = crmLoad('accounts');
+  const acct = accounts.find(a => a.id === accountId);
+  if (!acct || !acct.termacChemProgram) return;
+
+  const month = deliveryMonth !== undefined ? deliveryMonth : new Date().getMonth();
+  const forecast = tmForecastMonthlyUsage(accountId, month);
+  if (!forecast || !forecast.products.length) return;
+
+  // Calculate actual vs forecast ratio for products we have data on
+  let totalForecast = 0, totalActual = 0;
+  for (const delivered of deliveredItems) {
+    const forecasted = forecast.products.find(p => p.partNum === delivered.partNum);
+    if (forecasted && forecasted.containersNeeded > 0) {
+      totalForecast += forecasted.containersNeeded;
+      totalActual   += delivered.qty || 0;
+    }
+  }
+
+  if (totalForecast > 0 && totalActual > 0) {
+    const ratio = totalActual / totalForecast; // 1.0 = perfect, >1 = underforecast, <1 = overforecast
+    const correction = (ratio - 1) * 0.3; // dampen: absorb 30% of error as seasonal adjustment
+
+    if (!acct.termacSeasonalAdj) acct.termacSeasonalAdj = {};
+    const current = acct.termacSeasonalAdj[month] || 0;
+    acct.termacSeasonalAdj[month] = Math.max(-0.3, Math.min(0.3, current + correction));
+
+    // Intelligence log
+    if (!acct.termacIntelLog) acct.termacIntelLog = [];
+    acct.termacIntelLog.push({
+      ts: Date.now(), event: 'delivery_learned',
+      month, forecastContainers: Math.round(totalForecast * 10)/10,
+      actualContainers: totalActual, ratio: Math.round(ratio * 100)/100,
+      seasonalAdj: Math.round(acct.termacSeasonalAdj[month] * 100)/100
+    });
+    if (acct.termacIntelLog.length > 50) acct.termacIntelLog = acct.termacIntelLog.slice(-50);
+
+    crmSave('accounts', accounts);
+    console.log(`📊 Termac learning: acct ${accountId} month ${month} — ratio ${Math.round(ratio*100)}%, adj ${Math.round(acct.termacSeasonalAdj[month]*100)/100}`);
+  }
+}
+
+/**
+ * tmWarehouseForecast(targetMonth) → { byProduct: [{partNum, desc, totalContainers, totalCost, accounts[]}], grandTotal, month }
+ * Aggregates usage forecasts across ALL active Termac accounts → warehouse reorder quantities
+ */
+function tmWarehouseForecast(targetMonth) {
+  const accounts = crmLoad('accounts');
+  const termacAccts = accounts.filter(a =>
+    a.status === 'active' &&
+    (a.services || []).some(s => s.toLowerCase().includes('termac')) &&
+    a.termacChemProgram
+  );
+
+  const month = targetMonth !== undefined ? targetMonth : new Date().getMonth();
+  const byProduct = {};
+
+  for (const acct of termacAccts) {
+    const forecast = tmForecastMonthlyUsage(acct.id, month);
+    if (!forecast) continue;
+    for (const p of forecast.products) {
+      if (!byProduct[p.partNum]) {
+        byProduct[p.partNum] = {
+          partNum: p.partNum, description: p.description,
+          category: p.category, totalContainers: 0, totalCost: 0, accounts: []
+        };
+      }
+      byProduct[p.partNum].totalContainers += p.containersNeeded;
+      byProduct[p.partNum].totalCost       += p.totalCost;
+      byProduct[p.partNum].accounts.push({ name: acct.name || acct.business, qty: p.containersNeeded });
+    }
+  }
+
+  const sorted = Object.values(byProduct).sort((a,b) => b.totalCost - a.totalCost);
+  const grandTotal = sorted.reduce((s,p) => s + p.totalCost, 0);
+
+  return { byProduct: sorted, grandTotal: Math.round(grandTotal * 100)/100, month,
+    accountsAnalyzed: termacAccts.length };
+}
+
+/**
+ * tmRenderAccountForecast(accountId, containerEl)
+ * Renders a monthly usage forecast card inside a given container element
+ */
+function tmRenderAccountForecast(accountId, containerId) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  const month = new Date().getMonth();
+  const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const forecast = tmForecastMonthlyUsage(accountId, month);
+  if (!forecast || !forecast.products.length) {
+    el.innerHTML = '<div style="color:var(--soft);font-size:13px;font-style:italic">No chemical program on file — complete a Termac survey to enable forecasting.</div>';
+    return;
+  }
+
+  const catColors = { dish:'#6B21A8', sink:'#1B5FA8', cleaning:'#1E7B3C', hand:'#D8690B', paper:'#566573', trash:'#374151' };
+  const rows = forecast.products.map(p => `
+    <tr style="border-bottom:1px solid var(--line)">
+      <td style="padding:8px 10px;font-size:12px;font-weight:600">${p.description}</td>
+      <td style="padding:8px 10px;text-align:center">
+        <span style="background:${catColors[p.category]||'#6B7280'}20;color:${catColors[p.category]||'#6B7280'};border-radius:4px;padding:2px 7px;font-size:10px;font-weight:700;text-transform:uppercase">${p.category||'misc'}</span>
+      </td>
+      <td style="padding:8px 10px;text-align:center;font-weight:700;font-size:13px">${p.containersNeeded}</td>
+      <td style="padding:8px 10px;text-align:right;font-size:12px;color:var(--soft)">${p.forecastBasis||'—'}</td>
+      <td style="padding:8px 10px;text-align:right;font-weight:700;font-size:13px">$${p.totalCost.toFixed(2)}</td>
+    </tr>`).join('');
+
+  const seasonPct = Math.round((forecast.seasonalFactor - 1) * 100);
+  const seasonTag = seasonPct > 0 ? `<span style="color:#16a34a;font-weight:700">↑ ${seasonPct}% peak season</span>`
+                  : seasonPct < 0 ? `<span style="color:#dc2626;font-weight:700">↓ ${Math.abs(seasonPct)}% slow season</span>`
+                  : '<span style="color:var(--soft)">baseline month</span>';
+
+  el.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+      <div>
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft)">📦 Chemical Usage Forecast — ${monthNames[month]}</div>
+        <div style="font-size:12px;color:var(--soft);margin-top:2px">${forecast.coversPerDay} covers/day · ${forecast.racksPerDay} racks/day · ${seasonTag}</div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:20px">$${forecast.totalCost.toLocaleString()}</div>
+        <div style="font-size:10px;color:var(--soft)">est. monthly supply cost</div>
+      </div>
+    </div>
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse">
+        <thead>
+          <tr style="background:#F8F9FA;border-bottom:2px solid var(--line)">
+            <th style="padding:7px 10px;text-align:left;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--soft)">Product</th>
+            <th style="padding:7px 10px;text-align:center;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--soft)">Category</th>
+            <th style="padding:7px 10px;text-align:center;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--soft)">Units</th>
+            <th style="padding:7px 10px;text-align:right;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--soft)">Basis</th>
+            <th style="padding:7px 10px;text-align:right;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--soft)">Cost</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line);display:flex;justify-content:flex-end">
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px">Monthly Total: <span style="color:var(--red)">$${forecast.totalCost.toFixed(2)}</span></div>
+    </div>`;
+}
+
+/**
+ * tmAutoSelectBooster(zip)
+ * Called after machine model is selected — auto-fills booster dropdown + shows recommendation
+ */
+function tmAutoSelectBooster(zip) {
+  const modeEl  = document.getElementById('sv_tm_machine_mode');
+  const modelEl = document.getElementById('sv_tm_machine_model');
+  if (!modelEl || !modeEl) return;
+
+  const modeVal  = modeEl.value;
+  const modelIdx = parseInt(modelEl.value);
+  const catalog  = modeVal === 'rental' ? TERMAC_RENTAL_MACHINES : TERMAC_SELL_MACHINES;
+  const machine  = !isNaN(modelIdx) && catalog[modelIdx] ? catalog[modelIdx].model : '';
+
+  const zipVal = zip || svState?.surveyData?.termac?.zipCode
+    || document.getElementById('sv_acct_zip')?.value
+    || document.getElementById('sv_zip')?.value || '';
+
+  const rec = tmGetBoosterRecommendation(machine, zipVal);
+
+  // Show/hide booster section
+  const boosterEl    = document.getElementById('sv_tm_booster_needed');
+  const boosterPanel = document.getElementById('svTMBoosterPanel');
+  const boosterNote  = document.getElementById('svTMBoosterNote');
+
+  if (rec.required) {
+    if (boosterEl) boosterEl.value = 'yes';
+    // Auto-select booster model
+    const boosterModelEl = document.getElementById('sv_tm_booster_model');
+    if (boosterModelEl && rec.boosterIdx !== undefined) {
+      if (rec.boosterIdx < boosterModelEl.options.length) {
+        boosterModelEl.selectedIndex = rec.boosterIdx;
+        boosterModelEl.dispatchEvent(new Event('change'));
+      }
+    }
+    if (boosterNote) boosterNote.innerHTML = `<div style="background:#EFF6FF;border-left:3px solid #1B5FA8;border-radius:0 6px 6px 0;padding:8px 12px;font-size:12px;color:#1B5FA8;margin-top:8px">
+      <strong>Booster auto-selected:</strong> ${rec.label}<br>
+      <span style="color:#6B7280">${rec.note}</span><br>
+      <span style="font-size:11px;color:#9CA3AF">Water: ${rec.waterGPG || '?'} gpg · ${rec.city || ''} · Winter inlet: ${rec.winterTempF || '?'}°F</span>
+    </div>`;
+    if (typeof svTMRenderBoosterOptions === 'function') svTMRenderBoosterOptions();
+    if (boosterPanel) boosterPanel.style.display = '';
+  } else {
+    if (boosterEl) boosterEl.value = 'no';
+    if (boosterNote) boosterNote.innerHTML = `<div style="background:#F0FDF4;border-left:3px solid #16a34a;border-radius:0 6px 6px 0;padding:8px 12px;font-size:12px;color:#15803d;margin-top:8px">
+      ✓ No booster required — low-temp machine uses chemical sanitizer instead of heat.<br>
+      <span style="font-size:11px;color:#9CA3AF">${rec.reason || ''}</span>
+    </div>`;
+    if (boosterPanel) boosterPanel.style.display = 'none';
+  }
+}
+
+// ── WIRE: save chem program after estimate is built ────────────────────────
+// Called inside svBuildEstimateFromScope after data is saved
+const _origEstMarkBuilt = window.estMarkBuilt;
+window.estMarkBuilt = function(accountId) {
+  // Save chemical program
+  const tmData = svState?.surveyData?.termac;
+  if (tmData && accountId) {
+    const zip      = svState?.surveyData?.account?.zip || '';
+    const covers   = tmData.dishMachineCovers || document.getElementById('sv_tm_covers')?.value || 100;
+    const restType = tmData.dishMachineRestType || document.getElementById('sv_tm_rest_type')?.value || 'default';
+    tmSaveChemProgramToAccount(accountId, svState.surveyData, covers, restType, zip);
+  }
+  if (_origEstMarkBuilt) _origEstMarkBuilt(accountId);
+};
+
+// ── WIRE: auto-select booster when machine model changes ──────────────────
+document.addEventListener('change', function(e) {
+  if (e.target && (e.target.id === 'sv_tm_machine_model' || e.target.id === 'sv_tm_machine_mode')) {
+    setTimeout(() => tmAutoSelectBooster(), 150);
+  }
+});
+
+// ── WIRE: learning trigger on delivery completion ─────────────────────────
+const _origMarkDelivered = window.markDeliveryComplete;
+window.markDeliveryComplete = function(orderId) {
+  if (_origMarkDelivered) _origMarkDelivered(orderId);
+  // Learn from actual delivery vs forecast
+  try {
+    const orders = crmLoad('delivery_orders') || [];
+    const order  = orders.find(o => o.id === orderId);
+    if (order && order.accountId && order.items) {
+      const month = new Date(order.deliveredAt || Date.now()).getMonth();
+      tmLearnFromDelivery(order.accountId, order.items.map(i => ({
+        partNum: i.partNum || i.part_number, qty: i.deliveredQty || i.qty
+      })), month);
+    }
+  } catch(e) { console.warn('tmLearnFromDelivery error:', e); }
+};
+
+console.log('🧠 Termac Intelligence Engine v5.0 loaded — chemical forecasting, seasonal learning, booster auto-selection, warehouse demand aggregation');
 
 console.log('✅ Termac Intelligence Engine v4.0 — Invoice Aging · Estimate Recovery · Agreement Gaps · Bundle Tracker · Price Reviews · Emergency Conversions · Drive Time · FTFR Analysis · Proposal Aging · Seasonal Distribution · AHJ Calendar · Cert Dispatch Block · Proof of Service');
 </script>
