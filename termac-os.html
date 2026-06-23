@@ -12355,11 +12355,27 @@ function svBuildScope(){
       const lights = Array.isArray(d.lights) ? d.lights : [];
 
       // "Good" condition values — everything else is a finding
-      const isGood = v => !v || v===''||v.startsWith('—')||v.toLowerCase().startsWith('good')||v.toLowerCase().startsWith('pass');
+      // isGood: checks condition string + optional last-service date
+      // "Good — Service due" with a last date >180 days ago = OVERDUE = not good
+      const isGood = (v, lastDate) => {
+        if (!v || v==='' || v.startsWith('—') || v.startsWith('—')) return true; // unassessed
+        const lv = v.toLowerCase();
+        if (lv.startsWith('pass')) return true;
+        if (lv.startsWith('good')) {
+          // Check if last service date is overdue (>180 days for semi-annual)
+          if (lastDate) {
+            const last = new Date(lastDate);
+            const daysSince = (Date.now() - last.getTime()) / 86400000;
+            if (daysSince > 180) return false; // Good condition but past due = flag it
+          }
+          return true;
+        }
+        return false; // Overdue, Deficiency, Damaged, Missing, etc = never good
+      };
 
       // All items (good + deficient) for full review with customer
       const hoodRows = hoods.map(h => {
-        const ok = isGood(h.cond);
+        const ok = isGood(h.cond, h.last);
         return `<tr style="background:${ok?'#fff':'#FEF2F2'}">
           <td style="padding:5px 8px;font-size:11px;font-weight:600">Hood ${h.idx}${h.loc?' — '+h.loc:''}</td>
           <td style="padding:5px 8px;font-size:11px;color:${ok?'#16a34a':'#C8102E'};font-weight:${ok?'400':'700'}">${h.cond||'Not assessed'}${!ok?' ⚠':''}</td>
@@ -12369,7 +12385,7 @@ function svBuildScope(){
       }).join('');
 
       const extRows = exts.map(e => {
-        const ok = isGood(e.cond);
+        const ok = isGood(e.cond, e.last);
         return `<tr style="background:${ok?'#fff':'#FEF2F2'}">
           <td style="padding:5px 8px;font-size:11px;font-weight:600">Ext ${e.idx}${e.loc?' — '+e.loc:''}</td>
           <td style="padding:5px 8px;font-size:11px;color:${ok?'#16a34a':'#C8102E'};font-weight:${ok?'400':'700'}">${e.cond||'Not assessed'}${!ok?' ⚠':''}</td>
@@ -12379,7 +12395,7 @@ function svBuildScope(){
       }).join('');
 
       const lightRows = lights.map(l => {
-        const ok = isGood(l.cond);
+        const ok = isGood(l.cond, null);
         return `<tr style="background:${ok?'#fff':'#FEF2F2'}">
           <td style="padding:5px 8px;font-size:11px;font-weight:600">${l.type||'Light'} ${l.idx}${l.loc?' — '+l.loc:''}</td>
           <td style="padding:5px 8px;font-size:11px;color:${ok?'#16a34a':'#C8102E'};font-weight:${ok?'400':'700'}">${l.cond||'Not assessed'}${!ok?' ⚠':''}</td>
@@ -12530,8 +12546,21 @@ function svBuildEstimateFromScope(){
 
   // Save survey data for every service before building estimate
   // (Build Estimate bypasses the normal svGoNext save path)
+  // Only save the service whose panel is currently active — others were
+  // already saved on Continue. Saving all of them risks reading empty
+  // DOM fields from inactive panels and overwriting good saved data.
+  const currentStep = (_svSteps||[])[svState.currentStep];
   svState.selectedServices.forEach(svc => {
-    try { if (typeof svSaveSurveyData === 'function') svSaveSurveyData(svc); } catch(e) { console.warn('svSaveSurveyData error for', svc, e); }
+    try {
+      if (typeof svSaveSurveyData === 'function') {
+        // For the active service panel, collect from DOM.
+        // For others, only save if we already have data (don't overwrite with empty).
+        const hasData = svState.surveyData[svc] && Object.keys(svState.surveyData[svc]).length > 0;
+        if (currentStep?.id === svc || !hasData) {
+          svSaveSurveyData(svc);
+        }
+      }
+    } catch(e) { console.warn('svSaveSurveyData skip for', svc, e.message); }
   });
 
   // Clear in-progress flag — survey is complete
@@ -13871,6 +13900,7 @@ function svTMRemoveLineItem(idx) {
   if (!Array.isArray(window._svTMLineItems)) return;
   window._svTMLineItems.splice(idx, 1);
   svTMRenderLineItems();
+  svTMRenderProductList(); // refresh catalog so removed items show + Add again
 }
 function svTMAdjustQty(idx, delta) {
   if (!Array.isArray(window._svTMLineItems)) return;
@@ -28423,7 +28453,10 @@ function tmGetBoosterRecommendation(machineModel, zip) {
 
   // Low-temp machines (UC-180, ET/ETPD in low-temp mode) may not need booster
   // High-temp machines always need booster
-  const isHighTemp = model.includes('HT-25') || model.includes('ADC') || model.includes('AFB') || model.includes('5AG') || model.includes('L-90') || model.includes('SINGLE TANK');
+  // ADC-44/66 come in both low-temp and high-temp — can't determine from model name alone.
+  // Caller (tmAutoSelectBooster) already filters on AI temp recommendation.
+  // Here we only flag as definitively high-temp if the model itself implies it (HT-25).
+  const isHighTemp = model.includes('HT-25') || model.includes('AFB') || model.includes('5AG') || model.includes('L-90') || model.includes('SINGLE TANK') || model.includes('ET');
 
   if (!isHighTemp) {
     return { required:false, reason:'Low-temp machine — chemical sanitizer replaces booster heater' };
@@ -28777,7 +28810,19 @@ function tmAutoSelectBooster(zip) {
     || document.getElementById('sv_acct_zip')?.value
     || document.getElementById('sv_zip')?.value || '';
 
-  const rec = tmGetBoosterRecommendation(machine, zipVal);
+  // Check if AI explicitly said Low-Temp — if so, no booster needed regardless of model name
+  const aiText = svState?.surveyData?.termac?.dishMachineAI || '';
+  const aiSaysLowTemp = aiText.toLowerCase().includes('low-temp') ||
+                        aiText.toLowerCase().includes('low temp') ||
+                        /temperature type:\s*low/i.test(aiText);
+  // Also check the AI summary visible on screen
+  const summaryEl = document.getElementById('svTMAIResultSummary');
+  const summaryText = summaryEl ? summaryEl.textContent : '';
+  const summaryLowTemp = summaryText.toLowerCase().includes('low-temp') || summaryText.toLowerCase().includes('low temp');
+
+  const rec = (aiSaysLowTemp || summaryLowTemp)
+    ? { required: false, reason: 'Low-temp machine — uses liquid chemical sanitizer. No booster heater needed.' }
+    : tmGetBoosterRecommendation(machine, zipVal);
 
   // Show/hide booster section
   const boosterEl    = document.getElementById('sv_tm_booster_needed');
