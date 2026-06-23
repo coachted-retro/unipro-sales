@@ -2696,22 +2696,14 @@ function renderCRMView(){
     ];
     const DIVISIONS = ['UniPro','Quality III','Filter Man','GTO','ALLPro','Termac'];
     // Full assign roster: sales reps + managers + Aine (scheduling)
-    const DMS_ASSIGN_ROSTER = [
-      { group:"Sales Reps", names:["Ted Scholl","Tom Pittakas","TJ O'Reilly","Brad Fricks","Dan Rini","Chris Carzo","Tom Jordan","Joe McDonnell","Matt Belz","Todd Gill"] },
-      { group:"Owners / Managers", names:["Terence O'Reilly","Sean O'Reilly","Jim Kennedy","Dennis Muracco","Paul Brahan"] },
-      { group:"Scheduling", names:["Aine Curran"] },
-    ];
-    const DMS_ASSIGN_OPTS = DMS_ASSIGN_ROSTER.map(g =>
-      `<optgroup label="${g.group}">${g.names.map(n=>`<option value="${n}">${n}</option>`).join('')}</optgroup>`
-    ).join('');
-    // Escalate: sales reps + internal routing options
+    // DMS Escalate: simplified — Sales auto-routes by territory ZIP, no manual rep selection needed
     const DMS_ESC_OPTS = [
-      `<optgroup label="Sales Reps"><option value="Ted Scholl">Ted Scholl</option><option value="Tom Pittakas">Tom Pittakas</option><option value="TJ O'Reilly">TJ O'Reilly</option><option value="Brad Fricks">Brad Fricks</option><option value="Dan Rini">Dan Rini</option><option value="Chris Carzo">Chris Carzo</option><option value="Tom Jordan">Tom Jordan</option><option value="Joe McDonnell">Joe McDonnell</option><option value="Matt Belz">Matt Belz</option><option value="Todd Gill">Todd Gill</option></optgroup>`,
-      `<optgroup label="Owners / Managers"><option value="Terence O'Reilly">Terence O'Reilly</option><option value="Sean O'Reilly">Sean O'Reilly</option><option value="Jim Kennedy">Jim Kennedy</option><option value="Dennis Muracco">Dennis Muracco</option><option value="Paul Brahan">Paul Brahan</option></optgroup>`,
-      `<optgroup label="Internal"><option value="Scheduling">Scheduling — Aine Curran</option><option value="Dispatch">Dispatch</option></optgroup>`,
+      '<option value="sales">📍 Sales — Auto-route by territory</option>',
+      '<option value="scheduling">📅 Scheduling — Aine Curran</option>',
+      '<option value="dispatch">🚚 Dispatch</option>',
+      '<option value="manager">👔 Manager</option>',
     ].join('');
 
-    const q3 = document.getElementById('crmSearch').value.trim().toLowerCase();
     const viewRecs = q3 ? sessionRecs.filter(r=>JSON.stringify(r).toLowerCase().includes(q3)) : sessionRecs;
 
     body.innerHTML = `
@@ -2773,7 +2765,7 @@ function renderCRMView(){
           <colgroup>
             <col class="dms-col-num"><col class="dms-col-chk"><col class="dms-col-biz">
             <col class="dms-col-outcome"><col class="dms-col-div"><col class="dms-col-notes">
-            <col class="dms-col-assign"><col class="dms-col-esc">
+            <col class="dms-col-esc">
           </colgroup>
           <thead><tr>
             <th class="dms-col-num">#</th>
@@ -2782,8 +2774,7 @@ function renderCRMView(){
             <th class="dms-col-outcome">Outcome</th>
             <th class="dms-col-div">Division Interest</th>
             <th class="dms-col-notes">Notes</th>
-            <th class="dms-col-assign">Assign To</th>
-            <th class="dms-col-esc">Escalate</th>
+            <th class="dms-col-esc">🔥 Hot Lead / Escalate</th>
           </tr></thead>
           <tbody id="dmsSheetBody">
           ${viewRecs.map((r,idx) => {
@@ -2800,8 +2791,6 @@ function renderCRMView(){
             const contactLine = r.contactName ? `<div class="dms-contact">👤 ${escH(r.contactName)}${r.contactTitle?` · ${escH(r.contactTitle)}`:''}</div>` : '';
             const addrLine = r.address ? `<div class="dms-addr">📍 ${escH(r.address)}</div>` : '';
             const phoneLine = r.phone ? `<div class="dms-addr">📞 ${escH(r.phone)}</div>` : '';
-            const savedAssign = r.dmsAssignedTo || '';
-            const assignSelOpts = `<option value="">— Assign to… —</option>${DMS_ASSIGN_OPTS}`;
             return `<tr class="${rowCls}" id="dmsrow_${r.id}" style="height:72px">
               <td class="dms-ts" style="padding-top:12px">${idx+1}</td>
               <td style="padding-top:12px"><input type="checkbox" class="dms-check" ${isContacted?'checked':''} onchange="dmsMarkContacted('${r.id}',this.checked)">${isContacted&&r.dmsContactedTs?`<div class="dms-ts" style="margin-top:3px">${new Date(r.dmsContactedTs).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</div>`:''}</td>
@@ -2812,13 +2801,12 @@ function renderCRMView(){
               <td><select class="dms-outcome-sel" onchange="dmsSetOutcome('${r.id}',this.value)">${outcomeOpts}</select></td>
               <td><div class="dms-div-checks">${divChecks}</div></td>
               <td><textarea class="dms-notes-ta" rows="3" placeholder="Call notes, contact name, best time to reach…" onblur="dmsSaveNotes('${r.id}',this.value)">${escH(r.dmsNotes||r.notes||'')}</textarea></td>
-              <td>${isPromoted
-                ? `<span class="dms-promoted-badge">In Leads Pool</span>`
-                : `<select class="dms-assign-sel" id="dmsassign_${r.id}" onchange="dmsSaveAssignPref('${r.id}',this.value)"><option value="">— Assign to… —</option>${DMS_ASSIGN_OPTS.replace(`value="${savedAssign}"`,`value="${savedAssign}" selected`)}</select>
-                   <button class="dms-assign-btn" ${isHot?'':'disabled'} onclick="dmsAssignHotLead('${r.id}')" title="${isHot?'Assign hot lead to selected rep':'Mark as Hot Lead first'}">🔥 Assign Hot Lead</button>`
-              }</td>
               <td><div class="dms-escalate-wrap">
-                <select class="dms-escalate-sel" id="dmsesc_${r.id}"><option value="">To…</option>${DMS_ESC_OPTS}</select>
+                ${isPromoted
+                  ? `<span class="dms-promoted-badge">✅ In Leads</span>`
+                  : `<button class="dms-assign-btn" ${isHot?'':'disabled'} onclick="dmsAssignHotLead('${r.id}')" title="${isHot?'Auto-routes to territory rep':'Mark Hot Lead first'}">🔥 Hot Lead</button>`
+                }
+                <select class="dms-escalate-sel" id="dmsesc_${r.id}"><option value="">Escalate…</option>${DMS_ESC_OPTS}</select>
                 <button class="dms-escalate-btn" onclick="dmsEscalate('${r.id}')">📨 Send</button>
               </div></td>
             </tr>`;
@@ -15917,7 +15905,12 @@ function estPrint(){
     <div id="printBody"></div>
     <script>document.getElementById('printBody').innerHTML=\`${content.replace(/`/g,'\\`')}\`;<\/script>
     
-<script>
+    </body></html>`);
+  w.document.close();
+  setTimeout(()=>w.print(), 800);
+}
+</script>
+
 
 <!-- ═══════════════════════════════════════════════════════════
      RECEPTIONIST LANDING — Inbound Call Log
@@ -16062,14 +16055,15 @@ function rcpRenderLog(){
     const leadBadge=c.createdLead?'<span style="background:#DBEAFE;color:#1E40AF;border-radius:4px;padding:1px 6px;font-size:9px;font-weight:800">LEAD ✓</span>':'';
     const coSpan=c.company?(' <span style="color:var(--soft);font-weight:400">· '+escH(c.company)+'</span>'):'';
     const routeEl=c.routeTo?('→ '+escH(c.routeTo)):'<span style="color:var(--soft)">Not routed</span>';
-    return `
-    <div style="display:grid;grid-template-columns:80px 1fr 1fr 1fr 120px;align-items:center;gap:10px;padding:10px 12px;border:1.5px solid var(--line);border-left:3px solid ${bColor};border-radius:8px;background:#fff;margin-bottom:6px">
-      <div style="text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px">${c.time}</div><span style="background:${bBg};color:${bColor};border-radius:4px;padding:1px 6px;font-size:9px;font-weight:800">${(c.urgency||'').toUpperCase()}</span></div>
-      <div><div style="font-weight:700;font-size:13px">${escH(c.name)}${coSpan} ${leadBadge}</div><div style="font-size:11px;color:var(--soft)">${escH(c.phone||'')}${c.type?' · '+escH(c.type):''}</div></div>
-      <div style="font-size:12px;color:var(--soft)">${escH(c.notes||'—')}</div>
-      <div style="font-size:12px">${routeEl}</div>
-      <div style="display:flex;gap:4px;flex-wrap:wrap"><span style="color:${sColor};font-size:10px;font-weight:800;font-family:Barlow Condensed,sans-serif">${(c.status||'open').toUpperCase()}</span>${resolveBtn}</div>
-    </div>`;
+    return (
+      '<div style="display:grid;grid-template-columns:80px 1fr 1fr 1fr 120px;align-items:center;gap:10px;padding:10px 12px;border:1.5px solid var(--line);border-left:3px solid '+bColor+';border-radius:8px;background:#fff;margin-bottom:6px">' +
+        '<div style="text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px">'+c.time+'</div><span style="background:'+bBg+';color:'+bColor+';border-radius:4px;padding:1px 6px;font-size:9px;font-weight:800">'+(c.urgency||'').toUpperCase()+'</span></div>' +
+        '<div><div style="font-weight:700;font-size:13px">'+escH(c.name)+coSpan+' '+leadBadge+'</div><div style="font-size:11px;color:var(--soft)">'+escH(c.phone||'')+(c.type?' · '+escH(c.type):'')+'</div></div>' +
+        '<div style="font-size:12px;color:var(--soft)">'+escH(c.notes||'—')+'</div>' +
+        '<div style="font-size:12px">'+routeEl+'</div>' +
+        '<div style="display:flex;gap:4px;flex-wrap:wrap"><span style="color:'+sColor+';font-size:10px;font-weight:800;font-family:Barlow Condensed,sans-serif">'+(c.status||'open').toUpperCase()+'</span>'+resolveBtn+'</div>' +
+      '</div>'
+    );
   }).join('');
 }
 </script>
@@ -16302,10 +16296,6 @@ function rcpMarkNotificationRead(id) {
 }
 </script>
 
-</body></html>`);
-  w.document.close();
-  setTimeout(()=>w.print(), 800);
-}
 
 // ══════════════════════════════════════════════════════════════
 //  SERVICE SCHEDULING QUEUE
@@ -16450,6 +16440,7 @@ function opsCertAHJ(accountId) {
 </script>
 
 
+<script>
 /* ── ACCEPT / DECLINE ── */
 function estAccept(){
   estState.decision = 'accepted';
