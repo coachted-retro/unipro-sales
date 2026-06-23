@@ -12627,13 +12627,21 @@ function svBuildEstimateFromScope(){
   // Clear in-progress flag — survey is complete
   try { if (typeof svClearProgress === 'function') svClearProgress(); } catch(e) {}
 
-  // Close survey overlay
+  // Open estimate FIRST (before closing survey) so there is never a gap
+  // where neither overlay is open — that gap lets renderCRMView fire and
+  // bounce the rep back to the accounts page
+  try {
+    svOpenEstimate();
+  } catch(e) {
+    console.error('svOpenEstimate threw:', e);
+  }
+
+  // NOW close the survey overlay — estimate is already visible
   const svOv = document.getElementById('svOverlay');
   if (svOv) svOv.classList.remove('open');
 
-  // Open estimate using svOpenEstimate which has the full correct logic
-  // (estState is defined later in the file — must not reference it here directly)
-  try {
+  // (kept for catch fallback below)
+  if (false) try {
     svOpenEstimate();
   } catch(e) {
     console.error('svOpenEstimate error:', e);
@@ -12659,14 +12667,16 @@ function svSaveSurveyData(svc){
   const getChk = id => { const el=document.getElementById(id); return el?el.checked:false; };
 
   if(svc==='unipro' || svc==='quality3'){
-    // Both UniPro and Quality III are collected by uvCollectData()
-    // (camera/sign/hood/ext/light system, panel 3) which writes directly
-    // into svState.surveyData[fsState.activeService] -- see fsFinishUniProSurvey.
-    // Do NOT overwrite it here — these field IDs (sv_ext_qty, sv_hood_qty,
-    // sv_q3_ext_qty, etc.) belong to retired UI and no longer exist in the
-    // DOM. Calling uvCollectData() again is safe/idempotent and keeps
-    // photos + AI results.
     if (typeof uvCollectData === 'function') uvCollectData();
+    // Also capture findings if the textareas have content
+    const _d = svState.surveyData[svc] || {};
+    const _imm = document.getElementById('fs_findImmediate')?.value.trim();
+    const _rec = document.getElementById('fs_findRecommended')?.value.trim();
+    const _adv = document.getElementById('fs_findAdvisory')?.value.trim();
+    if (_imm) _d.findings_immediate   = _imm;
+    if (_rec) _d.findings_recommended = _rec;
+    if (_adv) _d.findings_advisory    = _adv;
+    svState.surveyData[svc] = _d;
     return;
   } else if(svc==='filterman'){
     d.fm_count=getNum('sv_fm_count'); d.fm_size=get('sv_fm_size');
