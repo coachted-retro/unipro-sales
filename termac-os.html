@@ -12243,13 +12243,31 @@ function svBuildEstimateFromScope(){
   }
 
   try {
+    // Save survey data for every service before building estimate
+    // (Build Estimate bypasses the normal svGoNext save path)
+    svState.selectedServices.forEach(svc => {
+      if (typeof svSaveSurveyData === 'function') svSaveSurveyData(svc);
+    });
     // Close survey overlay first so estimate renders on top cleanly
     const svOv = document.getElementById('svOverlay');
     if (svOv) svOv.classList.remove('open');
     svOpenEstimate();
   } catch(e) {
     console.error('svOpenEstimate error:', e);
-    alert('Error opening estimate: ' + e.message);
+    // Re-open survey so it's not just blank screen
+    const svOv2 = document.getElementById('svOverlay');
+    if (svOv2) svOv2.classList.add('open');
+    // Show error on-screen (alert can be blocked on mobile)
+    let errDiv = document.getElementById('_estErrBanner');
+    if (!errDiv) {
+      errDiv = document.createElement('div');
+      errDiv.id = '_estErrBanner';
+      errDiv.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#C8102E;color:#fff;padding:14px 20px;border-radius:10px;font-size:13px;font-family:Barlow,sans-serif;z-index:9999;max-width:90vw;box-shadow:0 4px 20px rgba(0,0,0,.3)';
+      document.body.appendChild(errDiv);
+    }
+    errDiv.textContent = '⚠ Estimate error: ' + e.message + ' — tap to dismiss';
+    errDiv.onclick = () => errDiv.remove();
+    setTimeout(() => errDiv && errDiv.remove(), 8000);
   }
 }
 
@@ -12849,16 +12867,20 @@ function svTMAutoFillFromAI(text) {
   if (modeEl && !modeEl.value) modeEl.value = 'rental';
 
   // Try to match model
-  const rentalModels = document.getElementById('sv_tm_rental_model');
-  if (rentalModels && rentalModels.options.length > 1) {
-    let bestIdx = 0;
-    if (typeText.includes('undercounter')) bestIdx = 0;
-    else if (typeText.includes('low-profile') || typeText.includes('low profile')) bestIdx = 2;
-    else if (typeText.includes('door')) bestIdx = 3;
-    if (rentalModels.value === '' || rentalModels.value === '0') {
-      rentalModels.selectedIndex = bestIdx + 1;
-      rentalModels.dispatchEvent(new Event('change'));
-    }
+  // Auto-select rental mode and best-fit model
+  const modeSelectEl = document.getElementById('sv_tm_machine_mode');
+  if (modeSelectEl && !modeSelectEl.value) {
+    modeSelectEl.value = 'rental';
+    svTMRenderMachineOptions();
+  }
+  const modelSelectEl = document.getElementById('sv_tm_machine_model');
+  if (modelSelectEl && modelSelectEl.options.length > 1 && !modelSelectEl.value) {
+    let bestIdx = 1; // default: first rental option
+    if (typeText.includes('undercounter') || typeText.includes('under counter')) bestIdx = 9; // UC-180
+    else if (typeText.includes('conveyor')) bestIdx = 1; // ADC-44
+    else if (typeText.includes('door') || typeText.includes('single')) bestIdx = 8; // Single Tank
+    modelSelectEl.selectedIndex = bestIdx;
+    modelSelectEl.dispatchEvent(new Event('change'));
   }
 
   // Water softener — suggest Small by default if not set
