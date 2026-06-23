@@ -1466,6 +1466,7 @@ setTimeout(function(){ if(typeof TECHS!=='undefined') renderLB('score'); }, 200)
         <div class="crm-tabs">
           <button class="crm-tab active" id="crmTabLeads" onclick="switchCRMTab('leads')">Leads</button>
           <button class="crm-tab" id="crmTabContacts" onclick="switchCRMTab('contacts')">Contacts</button>
+          <button class="crm-tab" id="crmTabOpportunities" onclick="switchCRMTab('opportunities')">💼 Opportunities</button>
           <button class="crm-tab" id="crmTabAccounts" onclick="switchCRMTab('accounts')">Accounts</button>
           <button class="crm-tab" id="crmTabDmsCalls" onclick="switchCRMTab('dms_coldcall')" style="display:none">📋 Call List <span id="crmDmsCallCount" class="crm-badge" style="background:#1E3A8A;color:#fff;margin-left:4px"></span></button>
           <button class="crm-tab" id="crmTabReception" onclick="switchCRMTab('leads')" style="display:none">👋 Reception</button>
@@ -1515,6 +1516,7 @@ setTimeout(function(){ if(typeof TECHS!=='undefined') renderLB('score'); }, 200)
       <button class="crm-btn" id="crmHarvestGMapsBtn" onclick="openGoogleMapsHarvest()" style="background:#0F9D58;color:#fff;display:none">🌎 Harvest Google Maps</button>
       <button class="crm-btn" id="crmDuplicatesBtn" onclick="openDuplicateFinder()" style="background:#fff;color:#1A1D21;border:1.5px solid var(--line);display:none">🔍 Find Duplicates</button>
       <button class="crm-btn primary" id="crmAddBtn" onclick="openAddModal()">+ Add New</button>
+      <button class="crm-btn" id="crmQuickOpptyBtn" onclick="quickCreateOpportunity()" style="background:#7C3AED;color:#fff;border-color:#7C3AED;display:none">💼 + New Opportunity</button>
     </div>
     <!-- harvest status banner -->
     <div id="harvestStatusBanner" style="display:none;background:#FFF8E6;border-bottom:1.5px solid #F2B705;padding:10px 16px;font-size:12px;color:#5A4A00"></div>
@@ -2172,6 +2174,9 @@ function switchCRMTab(tab){
   } else if (isReceptionLeads) {
     document.getElementById('crmTabReception')?.classList.add('active');
     document.getElementById('crmTitle').textContent = 'Reception';
+  } else if (tab === 'opportunities') {
+    document.getElementById('crmTabOpportunities')?.classList.add('active');
+    document.getElementById('crmTitle').textContent = 'Opportunities';
   } else {
     document.querySelectorAll('.crm-tab').forEach(b=>{if(b.textContent.trim().toLowerCase()===tab) b.classList.add('active');});
     document.getElementById('crmTitle').textContent=tab.charAt(0).toUpperCase()+tab.slice(1);
@@ -2220,6 +2225,8 @@ function switchCRMTab(tab){
   // DMS rep, even though it's free to run.
   const duplicatesBtn = document.getElementById('crmDuplicatesBtn');
   if (duplicatesBtn) duplicatesBtn.style.display = ((tab === 'leads' || tab === 'dms_coldcall') && isHarvestAdmin) ? '' : 'none';
+  const quickOpptyBtn = document.getElementById('crmQuickOpptyBtn');
+  if (quickOpptyBtn) quickOpptyBtn.style.display = (tab === 'opportunities' || tab === 'leads' || tab === 'contacts') ? '' : 'none';
   renderCRMView();
 }
 
@@ -2541,6 +2548,28 @@ function renderCRMView(){
     }
   }
 
+  // ── OPPORTUNITIES TAB ──
+  if (tab === 'opportunities') {
+    const allLeads = crmLoad('leads');
+    const allContacts = crmLoad('contacts');
+    const opptyRecords = [
+      ...allLeads.filter(r => r.lifecycleStage === 'opportunity' || r.lifecycleStage === 'site_visit'),
+      ...allContacts.filter(r => r.lifecycleStage === 'opportunity' || r.lifecycleStage === 'site_visit'),
+    ];
+    const q2 = document.getElementById('crmSearch').value.trim().toLowerCase();
+    const filtered = q2 ? opptyRecords.filter(r => JSON.stringify(r).toLowerCase().includes(q2)) : opptyRecords;
+    filtered.sort((a,b) => (b.created||0)-(a.created||0));
+    if (!filtered.length) {
+      html += `<div class="crm-empty"><div class="crm-empty-icon">💼</div><div class="crm-empty-msg">No open opportunities yet. Use <strong>💼 + New Opportunity</strong> to create one, or move a Lead/Contact to Opportunity stage from its detail view.</div></div>`;
+    } else {
+      html += `<div class="crm-section-title">${filtered.length} OPEN OPPORTUNITIES</div><div class="crm-cards">`;
+      filtered.forEach(r => { html += renderCard('opportunities', r); });
+      html += `</div>`;
+    }
+    body.innerHTML = html;
+    return;
+  }
+
   html+=`<div class="crm-section-title">${data.length} ${tab.toUpperCase()}${repTerritory ? ` <span style="color:#1E7B3C">· Your Territory</span>` : ''}</div><div class="crm-cards">`;
   data.forEach(r=>{ html+=renderCard(tab,r); });
   html+=`</div>`;
@@ -2625,7 +2654,12 @@ function renderCard(tab,r){
       else if (ageDays <= 60) ageBadge = `<div class="crm-card-tag" style="background:#FEF3C7;color:#92400E;font-weight:700">⏳ ${ageDays}d old</div>`;
       else                    ageBadge = `<div class="crm-card-tag" style="background:#FEE2E2;color:#991B1B;font-weight:700">🚨 ${ageDays}d old</div>`;
     }
-    extraInfo=`<div class="crm-card-tag">Score: ${r.score||'—'}/10</div><div class="crm-card-tag">Source: ${escH(r.source||'—')}</div>${ageBadge}`;
+    extraInfo=`<div class="crm-card-tag">Score: ${r.score||'—'}/10</div><div class="crm-card-tag">Source: ${escH(r.source||'—')}</div>${ageBadge}${r.lifecycleStage && r.lifecycleStage !== 'lead' ? `<div class="crm-card-tag" style="background:#F3E8FF;color:#5B21B6;font-weight:700">${LC_STAGES.find(s=>s.key===r.lifecycleStage)?.icon||''} ${LC_STAGES.find(s=>s.key===r.lifecycleStage)?.label||r.lifecycleStage}</div>` : ''}`;
+  } else if(tab==='contacts'){
+    extraInfo=`${r.lifecycleStage ? `<div class="crm-card-tag" style="background:#F3E8FF;color:#5B21B6;font-weight:700">${LC_STAGES.find(s=>s.key===r.lifecycleStage)?.icon||''} ${LC_STAGES.find(s=>s.key===r.lifecycleStage)?.label||r.lifecycleStage}</div>` : ''}`;
+  } else if(tab==='opportunities'){
+    const stg = LC_STAGES.find(s=>s.key===r.lifecycleStage);
+    extraInfo=`${stg?`<div class="crm-card-tag" style="background:#F3E8FF;color:#5B21B6;font-weight:700">${stg.icon} ${stg.label}</div>`:''}${r.assignedRep?`<div class="crm-card-tag">Rep: ${escH(r.assignedRep)}</div>`:''}`;
   } else if(tab==='dms_coldcall'){
     extraInfo=`<div class="crm-card-tag">📡 ${escH(r.chamberSource||'Unknown source')}</div>${r.assignedDmsRep?`<div class="crm-card-tag">${escH(r.assignedDmsRep)}</div>`:''}${r.phone?`<div class="crm-card-tag">${escH(r.phone)}</div>`:''}`;
   }
@@ -2798,7 +2832,7 @@ function setFollowup(id,tab){
 let _modalTab='',_modalId=null;
 
 function openAddModal(){
-  _modalTab=crmCurrentTab;
+  _modalTab=crmCurrentTab==='opportunities'?'leads':crmCurrentTab;
   _modalId=null;
   document.getElementById('crmModalTitle').textContent='Add '+_modalTab.charAt(0).toUpperCase()+_modalTab.slice(1,-1);
   document.getElementById('crmModalBody').innerHTML=buildModalForm(_modalTab,null);
@@ -2811,6 +2845,20 @@ function openAddModal(){
       customEl.style.display = roleEl.value === 'Other' ? 'block' : 'none';
     };
   }
+}
+
+function quickCreateOpportunity(){
+  // Quick-create: opens an Add Lead modal but pre-sets lifecycleStage to 'opportunity'
+  // System back-fills Lead/Contact records automatically on save
+  _modalTab = 'leads';
+  _modalId = null;
+  document.getElementById('crmModalTitle').textContent = '💼 New Opportunity';
+  document.getElementById('crmModalBody').innerHTML = buildModalForm('leads', null) +
+    `<input type="hidden" id="mf_quickOppty" value="1">
+     <div style="background:#F3E8FF;border:1px solid #7C3AED;border-radius:7px;padding:8px 12px;margin-top:6px;font-size:12px;color:#5B21B6">
+       💼 This will create a new Opportunity. Lead &amp; Contact records are auto-created from this info.
+     </div>`;
+  document.getElementById('crmModalBg').classList.add('open');
 }
 
 function editRecord(id,tab){
@@ -2915,6 +2963,35 @@ function saveModalRecord(){
     }
   }
   if(!rec.name){ alert('Name is required.'); return; }
+
+  // Quick-create opportunity: set lifecycleStage and back-fill contact record
+  const isQuickOppty = !!document.getElementById('mf_quickOppty');
+  if (isQuickOppty && !_modalId) {
+    rec.lifecycleStage = 'opportunity';
+    rec.status = rec.status || 'warm';
+    // Auto-create a matching contact record
+    const contactData = crmLoad('contacts');
+    const autoContact = {
+      id: 'C' + String(Date.now()).slice(-5),
+      name: rec.name,
+      business: rec.business,
+      phone: rec.phone,
+      email: rec.email,
+      address: rec.address,
+      zip: rec.zip,
+      company: rec.company,
+      services: rec.services,
+      status: 'warm',
+      lifecycleStage: 'opportunity',
+      notes: `Auto-created from Opportunity: ${rec.name}`,
+      sourceLeadId: rec.id,
+      created: Date.now(),
+      updated: Date.now()
+    };
+    contactData.push(autoContact);
+    crmSave('contacts', contactData);
+  }
+
   if(_modalId){
     const idx=data.findIndex(x=>x.id===_modalId);
     if(idx>-1) data[idx]={...data[idx],...rec}; else data.push(rec);
@@ -15161,9 +15238,10 @@ function rcpSeedDemoCalls() {
 }
 
 function openReceptionPrompt(){
-  const name = prompt("Receptionist name for today's call log (e.g. Lauren Canfield):", sessionStorage.getItem('termacReceptionName')||'');
-  if (name === null) return; // cancelled
-  const displayName = name.trim() || 'Receptionist';
+  const stored = sessionStorage.getItem('termacReceptionName');
+  if (stored) { openReceptionLanding(); return; }
+  const name = prompt("Receptionist name for today's call log (e.g. Lauren Canfield):", '');
+  const displayName = (name || '').trim() || 'Receptionist';
   sessionStorage.setItem('termacReceptionName', displayName);
   if (_currentUser) _currentUser.name = displayName;
   openReceptionLanding();
@@ -16085,6 +16163,7 @@ window.svOpenEstimate = function(){
       <button class="acct-nav-btn" onclick="acctOpenEdit()">✏️ Edit</button>
       <button id="acctOpenEstBtn" class="acct-nav-btn" style="display:none;background:#6B21A8;color:#fff;border-color:#6B21A8" onclick="openLastEstimate(currentAcctId)">📄 Open Estimate</button><button class="acct-nav-btn primary" onclick="acctLaunchSurvey()">📋 Site Survey</button>
       <button class="acct-nav-btn" onclick="acctOpenLog()">📞 Log Activity</button>
+      <button class="acct-nav-btn" onclick="openMarkLostModal()" style="background:#FEE2E2;color:#991B1B;border-color:#FCA5A5">🚫 Mark Lost</button>
       <button class="acct-nav-btn" onclick="closeAcctDetail()">✕</button>
     </div>
   </div>
@@ -16235,7 +16314,9 @@ let _acctTab = 'accounts';
 
 // ── LIFECYCLE STAGES ──
 const LC_STAGES = [
-  { key:'lead',         icon:'🎯', label:'Lead Qualified'       },
+  { key:'lead',         icon:'🎯', label:'Lead'                 },
+  { key:'contact',      icon:'📞', label:'Contact'              },
+  { key:'opportunity',  icon:'💼', label:'Opportunity'          },
   { key:'site_visit',   icon:'🏢', label:'Site Visit'           },
   { key:'close',        icon:'🤝', label:'Estimate / Close'     },
   { key:'onboarding',   icon:'📋', label:'Onboarding'          },
@@ -16370,7 +16451,21 @@ function acctRenderLifecycle(r) {
   const stages = isJeopardy ? [...LC_STAGES, JEOPARDY_STAGE] : LC_STAGES;
   const currentIdx = stages.findIndex(s => s.key === stage);
 
-  document.getElementById('acctLifecycle').innerHTML = stages.map((s, i) => {
+  // Stage-change dropdown — inline, no page bounce
+  const stageOpts = stages.map(s =>
+    `<option value="${s.key}" ${s.key === stage ? 'selected' : ''}>${s.icon} ${s.label}</option>`
+  ).join('');
+
+  const dropdownHtml = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+      <span style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.08em">Stage:</span>
+      <select onchange="changeRecordStage('${r.id}','${_acctTab}',this.value)" style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:13px;padding:4px 10px;border-radius:6px;border:1.5px solid #7C3AED;color:#5B21B6;background:#F3E8FF;cursor:pointer">
+        ${stageOpts}
+      </select>
+      <span style="font-size:10px;color:var(--soft)">Change stage without leaving this record</span>
+    </div>`;
+
+  document.getElementById('acctLifecycle').innerHTML = dropdownHtml + stages.map((s, i) => {
     const isDone = i < currentIdx;
     const isCurrent = i === currentIdx;
     const cls = isDone ? 'done' : isCurrent ? 'current' : 'pending';
@@ -16380,6 +16475,38 @@ function acctRenderLifecycle(r) {
       ${isCurrent ? '<span style="font-size:9px;background:var(--red);color:#fff;border-radius:10px;padding:1px 6px;font-family:\'Barlow Condensed\',sans-serif;font-weight:700;letter-spacing:.06em">NOW</span>' : ''}
     </div>`;
   }).join('');
+}
+
+function changeRecordStage(id, tab, newStage) {
+  const data = crmLoad(tab);
+  const r = data.find(x => x.id === id);
+  if (!r) return;
+  const oldStage = r.lifecycleStage || 'lead';
+  r.lifecycleStage = newStage;
+  r.updated = Date.now();
+  // Log to activity timeline
+  r.activityLog = r.activityLog || [];
+  r.activityLog.push({
+    ts: Date.now(),
+    type: 'stage',
+    icon: '🔄',
+    title: `Stage changed: ${oldStage} → ${newStage}`,
+    note: `Moved to ${LC_STAGES.find(s=>s.key===newStage)?.label || newStage} by ${_currentUser?.name || 'User'}`,
+    who: _currentUser?.name || 'User'
+  });
+  // If promoted to opportunity, also tag any matching contact
+  if (newStage === 'opportunity' || newStage === 'site_visit') {
+    if (tab === 'leads') {
+      const contacts = crmLoad('contacts');
+      const match = contacts.find(c => c.sourceLeadId === id || (c.name === r.name && c.business === r.business));
+      if (match) { match.lifecycleStage = newStage; crmSave('contacts', contacts); }
+    }
+  }
+  crmSave(tab, data);
+  acctRenderLifecycle(r);
+  acctRenderTimeline(r);
+  // Show confirmation toast
+  showToast(`Stage updated → ${LC_STAGES.find(s=>s.key===newStage)?.label || newStage}`);
 }
 
 // ── NEXT ACTION ──
@@ -16832,12 +16959,103 @@ function setLifecycleStage(accountId, stage) {
   crmSave('accounts', data);
 }
 
+// ── TOAST NOTIFICATION ──
+function showToast(msg, duration=2800) {
+  let el = document.getElementById('termacToast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'termacToast';
+    el.style.cssText = 'position:fixed;bottom:28px;left:50%;transform:translateX(-50%) translateY(20px);background:#1A1D21;color:#fff;padding:10px 20px;border-radius:8px;font-family:"Barlow Condensed",sans-serif;font-weight:700;font-size:14px;letter-spacing:.04em;z-index:9999;opacity:0;transition:opacity .2s,transform .2s;pointer-events:none;white-space:nowrap';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.style.opacity = '1';
+  el.style.transform = 'translateX(-50%) translateY(0)';
+  clearTimeout(el._hideTimer);
+  el._hideTimer = setTimeout(() => {
+    el.style.opacity = '0';
+    el.style.transform = 'translateX(-50%) translateY(20px)';
+  }, duration);
+}
+
+// ── MARK ACCOUNT LOST ──
+const LOST_REASONS = [
+  'Price too high',
+  'Went with competitor',
+  'No budget / cut spending',
+  'Poor response time',
+  'Service issue',
+  'Relationship / personnel change',
+  'Could not reach',
+  'Already under contract',
+  'Business closed',
+  'Other'
+];
+
+function openMarkLostModal() {
+  const reasonOpts = LOST_REASONS.map(r => `<option value="${r}">${r}</option>`).join('');
+  const html = `
+    <div style="padding:20px;max-width:440px;margin:0 auto">
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:18px;color:var(--ink);margin-bottom:4px">🚫 Mark Account Lost</div>
+      <div style="font-size:12px;color:var(--soft);margin-bottom:16px">This account will be marked inactive and queued for re-engagement in 90 days.</div>
+      <label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Reason Lost</label>
+      <select id="lostReasonSelect" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:12px">
+        <option value="">— Select a reason —</option>
+        ${reasonOpts}
+      </select>
+      <label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Notes (optional)</label>
+      <textarea id="lostNotesField" placeholder="Any additional context..." rows="3" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;resize:vertical;box-sizing:border-box;margin-bottom:16px"></textarea>
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <button onclick="document.getElementById('lostAccountModal').remove()" style="padding:8px 18px;border-radius:7px;border:1.5px solid var(--line);background:#fff;cursor:pointer;font-family:'Barlow Condensed',sans-serif;font-weight:700">Cancel</button>
+        <button onclick="markAccountLost()" style="padding:8px 18px;border-radius:7px;border:none;background:#991B1B;color:#fff;cursor:pointer;font-family:'Barlow Condensed',sans-serif;font-weight:700">🚫 Confirm Lost</button>
+      </div>
+    </div>`;
+  const modal = document.createElement('div');
+  modal.id = 'lostAccountModal';
+  modal.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:9990;display:flex;align-items:center;justify-content:center';
+  modal.innerHTML = `<div style="background:#fff;border-radius:12px;box-shadow:0 8px 40px rgba(0,0,0,.18);max-width:480px;width:90%">${html}</div>`;
+  document.body.appendChild(modal);
+}
+
+function markAccountLost() {
+  const reason = document.getElementById('lostReasonSelect')?.value;
+  const notes = document.getElementById('lostNotesField')?.value?.trim();
+  if (!reason) { alert('Please select a reason.'); return; }
+  const data = crmLoad(_acctTab);
+  const r = data.find(x => x.id === _acctId);
+  if (!r) return;
+  r.status = 'inactive';
+  r.lostReason = reason;
+  r.lostDate = Date.now();
+  r.lostNotes = notes || '';
+  r.reengageAfter = Date.now() + (90 * 86400000); // 90-day re-engage queue
+  r.lifecycleStage = 'lead'; // reset back to lead for re-engagement cycle
+  r.activityLog = r.activityLog || [];
+  r.activityLog.push({
+    ts: Date.now(), type:'lost', icon:'🚫',
+    title:`Account marked lost — ${reason}`,
+    note: notes || `Marked lost by ${_currentUser?.name || 'User'}`,
+    who: _currentUser?.name || 'User'
+  });
+  crmSave(_acctTab, data);
+  document.getElementById('lostAccountModal')?.remove();
+  showToast('Account marked lost — queued for 90-day re-engagement');
+  closeAcctDetail();
+}
+
 // ── WIRE viewRecord TO OPEN FULL-SCREEN DETAIL ──
 // Override the existing viewRecord to open account detail for accounts tab
 const _origViewRecord = window.viewRecord;
 window.viewRecord = function(tab, id) {
-  if (tab === 'accounts') {
-    openAcctDetail(id, tab);
+  // Open full-screen detail for accounts, leads, contacts, and opportunities
+  if (tab === 'accounts' || tab === 'leads' || tab === 'contacts' || tab === 'opportunities') {
+    // For opportunities tab, determine source tab from record
+    let sourceTab = tab;
+    if (tab === 'opportunities') {
+      const inLeads = (crmLoad('leads').find(x => x.id === id));
+      sourceTab = inLeads ? 'leads' : 'contacts';
+    }
+    openAcctDetail(id, sourceTab);
   } else {
     if (_origViewRecord) _origViewRecord(tab, id);
   }
@@ -17292,6 +17510,8 @@ function applyRoleAccess(user) {
   const dmsDashBtn = document.getElementById('dmsDashBtn');
   if (dmsDashBtn) dmsDashBtn.style.display = (user.role === 'dms' || user.role === 'manager' || user.role === 'reception') ? '' : 'none';
   // Reception button always visible — demo mode
+  const receptionDashBtn = document.getElementById('receptionDashBtn');
+  if (receptionDashBtn) receptionDashBtn.style.display = '';
 
   // Command Center — manager-only once deployed (isCommandCenterManagerOnly
   // flips this on); stays visible to everyone during the demo for now.
