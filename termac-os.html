@@ -7036,6 +7036,77 @@ function openSiteSurvey(id){
   const tmTotal = document.getElementById('svTMSupplyTotal'); if (tmTotal) tmTotal.textContent = '$0';
   const tmResult = document.getElementById('svTMResult'); if (tmResult) tmResult.style.display = 'none';
   const tmBreakdown = document.getElementById('svTMMachineBreakdown'); if (tmBreakdown) tmBreakdown.textContent = '';
+  // ── RESUME: check for saved in-progress survey ──────────────────────────
+  const savedProgress = r._surveyInProgress;
+  const tenHours = 10 * 60 * 60 * 1000;
+  const isRecent = savedProgress && (Date.now() - (savedProgress.savedAt||0)) < tenHours;
+  const isUsable = isRecent && savedProgress.currentStep > 0 && savedProgress.selectedServices?.length;
+
+  if (isUsable) {
+    // Show resume banner inside the overlay (already open) instead of a blocking alert
+    svGotoStep(0); // go to step 0 first so overlay is visible
+    const banner = document.createElement('div');
+    banner.id = '_svResumeBanner';
+    banner.style.cssText = 'position:absolute;top:60px;left:0;right:0;z-index:50;background:#1A1D21;color:#fff;padding:18px 24px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;box-shadow:0 4px 16px rgba(0,0,0,.3)';
+    const stepLabel = savedProgress.selectedServices.join(', ').toUpperCase();
+    banner.innerHTML = `
+      <div style="flex:1;min-width:180px">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px;letter-spacing:.10em;text-transform:uppercase;margin-bottom:2px">📋 Resume Previous Survey?</div>
+        <div style="font-size:12px;color:#9CA3AF">Saved progress: ${stepLabel} · Step ${savedProgress.currentStep + 1}</div>
+      </div>
+      <button onclick="svResumeProgress()" style="background:#16a34a;color:#fff;border:none;border-radius:8px;padding:9px 20px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;white-space:nowrap">↩ Resume</button>
+      <button onclick="svDismissResume()" style="background:transparent;color:#9CA3AF;border:1.5px solid #3A3E45;border-radius:8px;padding:9px 16px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;cursor:pointer;white-space:nowrap">Start Fresh</button>
+    `;
+    const overlay = document.getElementById('svOverlay');
+    if (overlay) overlay.style.position = 'relative'; // ensure absolute child works
+    const body = overlay?.querySelector('.sv-body') || overlay;
+    if (overlay) overlay.insertBefore(banner, overlay.firstChild);
+    // Store progress for resume function
+    window._svPendingResume = savedProgress;
+  } else {
+    svGotoStep(0);
+  }
+}
+
+function svResumeProgress() {
+  const p = window._svPendingResume;
+  if (!p) return;
+  const banner = document.getElementById('_svResumeBanner');
+  if (banner) banner.remove();
+  // Restore state
+  svState.visitType = p.visitType;
+  svState.selectedServices = p.selectedServices || [];
+  svState.surveyOrder = p.surveyOrder || [];
+  svState.surveyData = p.surveyData || {};
+  // Re-check service cards
+  document.querySelectorAll('.svc-check-card').forEach(card => {
+    const svc = card.dataset.svc;
+    const on = svState.selectedServices.includes(svc);
+    card.classList.toggle('selected', on);
+    card.querySelector('.svc-check-mark').textContent = on ? '✓' : '';
+  });
+  // Set visit type radio
+  if (p.visitType) {
+    document.querySelectorAll('.sv-visit-card').forEach(c => {
+      c.classList.toggle('selected', c.dataset.type === p.visitType);
+    });
+  }
+  // Restore TM line items if any
+  if (p.surveyData?.termac?.tm_supply_line_items) {
+    window._svTMLineItems = p.surveyData.termac.tm_supply_line_items;
+    svTMRenderLineItems();
+  }
+  // Jump to saved step
+  svGotoStep(p.currentStep);
+  window._svPendingResume = null;
+}
+
+function svDismissResume() {
+  const banner = document.getElementById('_svResumeBanner');
+  if (banner) banner.remove();
+  // Clear saved progress and start fresh from step 0
+  svClearProgress();
+  window._svPendingResume = null;
   svGotoStep(0);
 }
 
@@ -7044,6 +7115,35 @@ function svClose(){
 }
 
 /* ── NAVIGATION ── */
+function svSaveProgress() {
+  // Persist current survey progress to account so it can be resumed
+  if (!svState.accountId) return;
+  try {
+    const data = crmLoad('accounts');
+    const r = data.find(x => x.id === svState.accountId);
+    if (r) {
+      r._surveyInProgress = {
+        currentStep: svState.currentStep,
+        visitType: svState.visitType,
+        selectedServices: svState.selectedServices,
+        surveyOrder: svState.surveyOrder,
+        surveyData: svState.surveyData,
+        savedAt: Date.now()
+      };
+      crmSave('accounts', data);
+    }
+  } catch(e) { console.warn('svSaveProgress failed:', e); }
+}
+
+function svClearProgress() {
+  if (!svState.accountId) return;
+  try {
+    const data = crmLoad('accounts');
+    const r = data.find(x => x.id === svState.accountId);
+    if (r) { delete r._surveyInProgress; crmSave('accounts', data); }
+  } catch(e) {}
+}
+
 function svGotoStep(idx){
   _svSteps = svGetSteps();
   svState.currentStep = Math.max(0, Math.min(idx, _svSteps.length-1));
@@ -7121,6 +7221,9 @@ function svGotoStep(idx){
 
   // Sidebar
   svUpdateSidebar();
+
+  // Persist progress for resume
+  svSaveProgress();
 }
 
 function svGoNext(){
@@ -12248,6 +12351,8 @@ function svBuildEstimateFromScope(){
     svState.selectedServices.forEach(svc => {
       if (typeof svSaveSurveyData === 'function') svSaveSurveyData(svc);
     });
+    // Clear in-progress flag — survey is complete
+    if (typeof svClearProgress === 'function') svClearProgress();
     // Close survey overlay first so estimate renders on top cleanly
     const svOv = document.getElementById('svOverlay');
     if (svOv) svOv.classList.remove('open');
