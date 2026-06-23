@@ -3257,6 +3257,7 @@ let _modalTab='',_modalId=null;
 function openAddModal(){
   _modalTab=crmCurrentTab==='opportunities'?'leads':crmCurrentTab;
   _modalId=null;
+  mfInitExtraContacts(null);
   document.getElementById('crmModalTitle').textContent='Add '+_modalTab.charAt(0).toUpperCase()+_modalTab.slice(1,-1);
   document.getElementById('crmModalBody').innerHTML=buildModalForm(_modalTab,null);
   document.getElementById('crmModalBg').classList.add('open');
@@ -3289,6 +3290,7 @@ function editRecord(id,tab){
   _modalId=id;
   const data=crmLoad(_modalTab);
   const r=data.find(x=>x.id===id)||null;
+  mfInitExtraContacts(r);
   document.getElementById('crmModalTitle').textContent='Edit '+(r&&r.name?r.name:'Record');
   document.getElementById('crmModalBody').innerHTML=buildModalForm(_modalTab,r);
   document.getElementById('crmModalBg').classList.add('open');
@@ -3322,14 +3324,18 @@ function buildModalForm(tab,r){
   }
   return `
     <label>Name</label><input id="mf_name" value="${v('name')}">
-    <label>Business Name</label><input id="mf_business" value="${v('business')||v('contact')||''}">
+    <label>Business Name</label>
+    <input id="mf_business" value="${v('business')||v('contact')||''}" oninput="mfDupeCheck(this.value,'business')" autocomplete="off">
+    <div id="mf_dupe_biz" style="display:none;margin-top:4px"></div>
     <label>Role / Title</label>
     <select id="mf_role" style="margin-bottom:4px">
       <option value="">— Select role —</option>
-      ${['Owner','General Manager','Manager','Chef / Head Chef','Kitchen Manager','Facilities Manager','Purchasing Manager','Food & Beverage Director','Corporate Contact','Office Manager','Other'].map(role=>`<option ${v('role')===role?'selected':''}>${role}</option>`).join('')}
+      ${['Owner','General Manager','Manager','Chef / Head Chef','Kitchen Manager','Facilities Manager','Purchasing Manager','Food & Beverage Director','Corporate Contact','Office Manager','Landlord','Property Manager','Other'].map(role=>`<option ${v('role')===role?'selected':''}>${role}</option>`).join('')}
     </select>
     <input id="mf_role_custom" placeholder="Custom role (if Other)" value="${v('roleCustom')}" style="margin-top:4px;display:${v('role')==='Other'?'block':'none'}">
-    <label>Phone</label><input id="mf_phone" value="${v('phone')}">
+    <label>Phone</label>
+    <input id="mf_phone" value="${v('phone')}" oninput="mfDupeCheck(this.value,'phone')" autocomplete="off">
+    <div id="mf_dupe_phone" style="display:none;margin-top:4px"></div>
     <label>Email</label><input id="mf_email" value="${v('email')}">
     <label>Address / ZIP</label><input id="mf_address" value="${v('address')}">
     <label>Company (Division)</label><select id="mf_company">${coOpts}</select>
@@ -3337,8 +3343,39 @@ function buildModalForm(tab,r){
     <label>Services Interested In</label><div class="svc-grid">${svcBoxes}</div>
     ${repFields}
     <label>Notes</label><textarea id="mf_notes" rows="3">${v('notes')}</textarea>
+    <label style="margin-top:8px;display:flex;align-items:center;gap:6px">
+      🔶 Site Notes
+      <span style="font-size:10px;font-weight:400;color:var(--soft);font-family:Barlow,sans-serif">Door codes, delivery instructions, special access — shows on tech tickets &amp; delivery orders</span>
+    </label>
+    <textarea id="mf_siteNotes" rows="3" placeholder="e.g. Door code #4521 · Delivery entrance on Oak St · Call ahead 30 min · No deliveries before 10am">${v('siteNotes')}</textarea>
+    ${buildExtraContactsForm(r, tab)}
   `;
 }
+
+// ── BUILD EXTRA CONTACTS SECTION (no nested template literals) ──
+function buildExtraContactsForm(r, tab) {
+  if (tab === 'dms_coldcall') return ''; // DMS sheet has its own layout
+  const contacts = (r && r.extraContacts) || [];
+  const ROLES = ['','Owner','General Manager','Manager','Chef / Head Chef','Kitchen Manager','Facilities Manager','Purchasing Manager','Landlord','Property Manager','Office Manager','Other'];
+  const roleOpts = ROLES.map(function(role){ return '<option value="'+escH(role)+'">'+(role||'— Select role —')+'</option>'; }).join('');
+  const rows = contacts.map(function(c, i) {
+    const selOpts = ROLES.map(function(role){ return '<option value="'+escH(role)+'"'+((c.role||'')===role?' selected':'')+'>'+escH(role||'— Select role —')+'</option>'; }).join('');
+    return '<div class="mf-extra-contact" style="border:1px solid var(--line);border-radius:7px;padding:10px;margin-bottom:8px;background:#F8F9FA">'
+      + '<div style="font-size:10px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;display:flex;justify-content:space-between">Contact '+(i+2)
+      + '<button type="button" onclick="this.closest(\'.mf-extra-contact\').remove()" style="background:none;border:none;color:var(--soft);cursor:pointer;font-size:14px">&times;</button></div>'
+      + '<input placeholder="Name" value="'+escH(c.name||'')+'" data-ci="'+i+'" data-field="name" oninput="mfExtraContactUpdate(this)" style="margin-bottom:4px;width:100%;box-sizing:border-box">'
+      + '<input placeholder="Phone" value="'+escH(c.phone||'')+'" data-ci="'+i+'" data-field="phone" oninput="mfExtraContactUpdate(this)" style="margin-bottom:4px;width:100%;box-sizing:border-box">'
+      + '<input placeholder="Email" value="'+escH(c.email||'')+'" data-ci="'+i+'" data-field="email" oninput="mfExtraContactUpdate(this)" style="margin-bottom:4px;width:100%;box-sizing:border-box">'
+      + '<select data-ci="'+i+'" data-field="role" onchange="mfExtraContactUpdate(this)" style="width:100%;box-sizing:border-box">'+selOpts+'</select>'
+      + '</div>';
+  }).join('');
+  return '<div style="margin-top:12px;border-top:1px solid var(--line);padding-top:12px">'
+    + '<div style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:8px">Additional Contacts</div>'
+    + '<div id="mf_extra_contacts_wrap">'+rows+'</div>'
+    + '<button type="button" onclick="mfAddExtraContact()" style="background:#F3F4F6;border:1.5px dashed var(--line);border-radius:7px;padding:6px 14px;font-size:12px;font-family:\'Barlow Condensed\',sans-serif;font-weight:700;color:var(--soft);cursor:pointer;width:100%">+ Add Contact</button>'
+    + '</div>';
+}
+
 
 function saveModalRecord(){
   const data=crmLoad(_modalTab);
@@ -3356,8 +3393,10 @@ function saveModalRecord(){
     status: document.getElementById('mf_status').value,
     services: svcs,
     notes: document.getElementById('mf_notes').value.trim(),
+    siteNotes: document.getElementById('mf_siteNotes')?.value?.trim() || '',
     role: document.getElementById('mf_role')?.value || '',
     roleCustom: document.getElementById('mf_role_custom')?.value?.trim() || '',
+    extraContacts: window._mfExtraContacts || [],
     created: _modalId?existing.created||Date.now():Date.now(),
     updated: Date.now(),
     // Ownership: stamp on create, preserve on edit
@@ -3398,9 +3437,9 @@ function saveModalRecord(){
           ts: Date.now(),
           type:'office',
           icon: newRep==='Unassigned' ? '⚠️' : (newType==='temporary' ? '⏳' : '🔄'),
-          title: newRep==='Unassigned' ? 'Rep Unassigned' : `Territory reassigned → ${newRep}`,
+          title: newRep==='Unassigned' ? 'Rep Unassigned' : ('Territory reassigned → ' + newRep),
           note: newRep==='Unassigned' ? 'No rep currently assigned to this account.' :
-                (newType==='temporary' ? `Temporary coverage by ${newRep} — original account was brought in by ${rec.createdBy||'unknown'}.` : `Permanently reassigned to ${newRep} by ${_currentUser?.name||'Manager'}. Original rep: ${existing.assignedRep||'—'}.`),
+                (newType==='temporary' ? ('Temporary coverage by ' + newRep + ' — original account was brought in by ' + (rec.createdBy||'unknown') + '.') : ('Permanently reassigned to ' + newRep + ' by ' + (_currentUser?.name||'Manager') + '. Original rep: ' + (existing.assignedRep||'—') + '.')),
           who: _currentUser?.name || 'Manager'
         });
       }
@@ -3427,7 +3466,7 @@ function saveModalRecord(){
       services: rec.services,
       status: 'warm',
       lifecycleStage: 'opportunity',
-      notes: `Auto-created from Opportunity: ${rec.name}`,
+      notes: 'Auto-created from Opportunity: ' + rec.name,
       sourceLeadId: rec.id,
       created: Date.now(),
       updated: Date.now()
@@ -16968,9 +17007,15 @@ window.svOpenEstimate = function(){
         <div id="acctNextActionContent"></div>
       </div>
 
+      <!-- Site Notes Banner — amber, always visible if set -->
+      <div id="acctSiteNotesBanner" style="display:none;background:#FEF3C7;border:1.5px solid #F59E0B;border-radius:8px;padding:10px 12px;margin-bottom:12px"></div>
+
       <!-- Contact Info -->
       <div class="acct-sidebar-section">
-        <div class="acct-sidebar-label">Contact</div>
+        <div class="acct-sidebar-label" style="display:flex;align-items:center;justify-content:space-between">
+          Contacts
+          <button onclick="acctAddContact()" style="background:none;border:1px solid var(--line);border-radius:5px;padding:2px 8px;font-size:10px;font-family:'Barlow Condensed',sans-serif;font-weight:700;color:var(--soft);cursor:pointer">+ Add</button>
+        </div>
         <div id="acctContactInfo"></div>
       </div>
 
@@ -17374,8 +17419,17 @@ function acctRenderContact(r) {
       }</span></div>`
     : '';
 
+  // Extra contacts
+  const extraContactsHtml = (r.extraContacts||[]).map((c,i) => `
+    <div style="border-top:1px dashed var(--line);margin-top:8px;padding-top:8px">
+      <div style="font-size:10px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Contact ${i+2}${c.role?' — '+escH(c.role):''}</div>
+      <div class="acct-info-row"><label>Name</label><span>${escH(c.name||'—')}</span></div>
+      ${c.phone?`<div class="acct-info-row"><label>Phone</label><a href="tel:${escH(c.phone)}">${escH(c.phone)}</a></div>`:''}
+      ${c.email?`<div class="acct-info-row"><label>Email</label><a href="mailto:${escH(c.email)}">${escH(c.email)}</a></div>`:''}
+    </div>`).join('');
+
   document.getElementById('acctContactInfo').innerHTML = `
-    <div class="acct-info-row"><label>Contact</label><span>${r.contact||r.name||'—'}</span></div>
+    <div class="acct-info-row"><label>Contact</label><span>${escH(r.contact||r.name||'—')}${r.role?' <span style="font-size:10px;color:var(--soft)">'+escH(r.role)+'</span>':''}</span></div>
     <div class="acct-info-row"><label>Phone</label>
       <a href="tel:${r.phone||''}">${r.phone||'—'}</a></div>
     <div class="acct-info-row"><label>Email</label>
@@ -17386,7 +17440,19 @@ function acctRenderContact(r) {
     ${owner?`<div class="acct-info-row"><label>Current Rep</label><span style="font-weight:700">👤 ${escH(owner)}</span></div>`:''}
     ${creator && creator !== owner?`<div class="acct-info-row"><label>Original Rep</label><span style="color:var(--soft)">🌟 ${escH(creator)}</span></div>`:''}
     ${repHistoryHtml}
+    ${extraContactsHtml}
   `;
+
+  // Site Notes — amber sticky banner, shown above the sidebar if present
+  const siteNotesEl = document.getElementById('acctSiteNotesBanner');
+  if (siteNotesEl) {
+    if (r.siteNotes) {
+      siteNotesEl.style.display = '';
+      siteNotesEl.innerHTML = `<div style="font-size:10px;font-weight:800;color:#92400E;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">🔶 Site Notes</div><div style="font-size:12px;color:#78350F;line-height:1.5">${escH(r.siteNotes)}</div>`;
+    } else {
+      siteNotesEl.style.display = 'none';
+    }
+  }
 }
 
 // ── SERVICES ──
@@ -17773,6 +17839,110 @@ function setLifecycleStage(accountId, stage) {
 }
 
 // ── TOAST NOTIFICATION ──
+// ── LIVE DUPLICATE DETECTION ──
+// Fires as user types in Business Name or Phone fields.
+// Searches across leads + contacts + accounts simultaneously.
+const PIPELINE_STAGE_LABELS = {
+  lead:'🎯 Lead', contact:'📞 Contact', opportunity:'💼 Opportunity',
+  site_visit:'🏢 Site Visit', close:'🤝 Signing', onboarding:'📋 Onboarding',
+  first_service:'🔧 First Service', active:'✅ Active Customer', renewal:'🔄 Renewal'
+};
+function mfDupeCheck(val, field) {
+  const containerId = field === 'business' ? 'mf_dupe_biz' : 'mf_dupe_phone';
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  const q = (val || '').trim().toLowerCase();
+  if (q.length < 3) { el.style.display = 'none'; el.innerHTML = ''; return; }
+
+  const pools = ['leads','contacts','accounts'];
+  const matches = [];
+  const seenIds = new Set();
+  pools.forEach(pool => {
+    (crmLoad(pool) || []).forEach(r => {
+      if (seenIds.has(r.id)) return;
+      const bizVal = (r.business || r.name || '').toLowerCase();
+      const phoneVal = (r.phone || '').replace(/\D/g,'');
+      const qPhone = q.replace(/\D/g,'');
+      const hit = field === 'business'
+        ? (bizVal.includes(q) && q.length >= 3)
+        : (phoneVal && qPhone.length >= 5 && phoneVal.includes(qPhone));
+      if (hit && r.status !== 'dead') {
+        seenIds.add(r.id);
+        matches.push({ r, pool });
+      }
+    });
+  });
+
+  if (!matches.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+
+  const stage = m => PIPELINE_STAGE_LABELS[m.r.lifecycleStage || (m.r.status === 'active' ? 'active' : 'lead')] || m.r.lifecycleStage || '—';
+  const owner = m => m.r.ownedBy || m.r.assignedRep || '—';
+
+  el.style.display = '';
+  el.innerHTML = '<div style="background:#FEF3C7;border:1.5px solid #F59E0B;border-radius:7px;padding:8px 10px">'
+    + '<div style="font-size:10px;font-weight:800;color:#92400E;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">⚠️ Possible Duplicates Found</div>'
+    + matches.slice(0, 4).map(m =>
+        '<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #FDE68A;justify-content:space-between">'
+        + '<div>'
+        + '<div style="font-weight:700;font-size:12px;color:#1A1D21">' + escH(m.r.business || m.r.name || '—') + '</div>'
+        + '<div style="font-size:10px;color:#78350F">' + stage(m) + ' · 👤 ' + escH(owner(m)) + (m.r.phone ? ' · ' + escH(m.r.phone) : '') + '</div>'
+        + '</div>'
+        + '<button type="button" onclick="viewRecord(\'' + m.pool + '\',\'' + m.r.id + '\');closeModal()" '
+        + 'style="background:#D97706;color:#fff;border:none;border-radius:5px;padding:3px 10px;font-size:10px;font-family:\'Barlow Condensed\',sans-serif;font-weight:700;cursor:pointer;white-space:nowrap">View →</button>'
+        + '</div>'
+      ).join('')
+    + '</div>';
+}
+
+// ── MULTIPLE CONTACTS HELPERS ──
+function acctAddContact() {
+  // Opens the edit modal for this account — extra contacts section is visible there
+  acctOpenEdit();
+  setTimeout(() => {
+    const wrap = document.getElementById('mf_extra_contacts_wrap');
+    if (wrap) {
+      const btn = document.querySelector('[onclick="mfAddExtraContact()"]');
+      if (btn) btn.click();
+    }
+  }, 200);
+}
+
+// Called from the modal form — adds a blank extra contact row
+window._mfExtraContacts = [];
+function mfAddExtraContact() {
+  const wrap = document.getElementById('mf_extra_contacts_wrap');
+  if (!wrap) return;
+  const idx = window._mfExtraContacts.length;
+  window._mfExtraContacts.push({ name:'', phone:'', email:'', role:'' });
+  const div = document.createElement('div');
+  div.className = 'mf-extra-contact';
+  div.style.cssText = 'border:1px solid var(--line);border-radius:7px;padding:10px;margin-bottom:8px;background:#F8F9FA';
+  const roleOpts = ['','Owner','General Manager','Manager','Chef / Head Chef','Kitchen Manager','Facilities Manager','Purchasing Manager','Landlord','Property Manager','Office Manager','Other']
+    .map(r => `<option value="${r}">${r||'— Select role —'}</option>`).join('');
+  div.innerHTML = `
+    <div style="font-size:10px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;display:flex;justify-content:space-between">
+      Contact ${idx+2}
+      <button type="button" onclick="this.closest('.mf-extra-contact').remove();window._mfExtraContacts.splice(${idx},1)" style="background:none;border:none;color:var(--soft);cursor:pointer;font-size:14px">✕</button>
+    </div>
+    <input placeholder="Name" data-ci="${idx}" data-field="name" oninput="mfExtraContactUpdate(this)" style="margin-bottom:4px;width:100%;box-sizing:border-box">
+    <input placeholder="Phone" data-ci="${idx}" data-field="phone" oninput="mfExtraContactUpdate(this)" style="margin-bottom:4px;width:100%;box-sizing:border-box">
+    <input placeholder="Email" data-ci="${idx}" data-field="email" oninput="mfExtraContactUpdate(this)" style="margin-bottom:4px;width:100%;box-sizing:border-box">
+    <select data-ci="${idx}" data-field="role" onchange="mfExtraContactUpdate(this)" style="width:100%;box-sizing:border-box">${roleOpts}</select>`;
+  wrap.appendChild(div);
+}
+
+function mfExtraContactUpdate(el) {
+  const idx = parseInt(el.dataset.ci);
+  const field = el.dataset.field;
+  if (!window._mfExtraContacts[idx]) window._mfExtraContacts[idx] = {};
+  window._mfExtraContacts[idx][field] = el.value;
+}
+
+// Pre-populate _mfExtraContacts when editing existing account
+function mfInitExtraContacts(r) {
+  window._mfExtraContacts = (r && r.extraContacts) ? JSON.parse(JSON.stringify(r.extraContacts)) : [];
+}
+
 function showToast(msg, duration=2800) {
   let el = document.getElementById('termacToast');
   if (!el) {
@@ -31192,6 +31362,8 @@ function visitSave(placeOrder) {
       orders.unshift({
         id: 'ORD' + String(now).slice(-6),
         accountId, accountName: acct.name || acct.business,
+        address: acct.address || '',
+        siteNotes: acct.siteNotes || '',
         rep, type: 'Customer Visit Order',
         lines: orderLines,
         total: orderLines.reduce((s,l)=>s+l.total,0),
