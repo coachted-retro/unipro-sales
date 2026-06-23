@@ -1629,8 +1629,8 @@ function crmSave(key, val){ try{ localStorage.setItem('termac_crm_'+key, JSON.st
       { id:'acc002', name:'Wu Dim Sum Palace', business:'Wu Dim Sum Palace', status:'active', services:['GTO','Filter Man'], annualValue:3600, nextDue:'2026-07-01', renewalDate:'2026-07-01', lastService:'2025-12-01', healthScore:3, assignedRep:'Ted Scholl', openDeficiencies:1, city:'Feasterville', zip:'19053', lastCheckin:Date.now()-45*86400000, createdAt:Date.now()-220*86400000, onboarding:{agreementSigned:'2025-11-15',squareOnFile:'2025-11-15',firstJobScheduled:'2025-12-01',firstServiceDone:'2025-12-05'} },
       { id:'acc003', name:'Midtown Office Plaza', business:'Midtown Office Plaza', status:'active', services:['UniPro'], annualValue:5800, nextDue:'2026-07-15', renewalDate:'2026-07-15', lastService:'2025-10-01', healthScore:2, assignedRep:'Ted Scholl', openDeficiencies:0, city:'Langhorne', zip:'19047', lastCheckin:Date.now()-95*86400000, createdAt:Date.now()-300*86400000, certStatus:{issuedDate:'2026-01-15',expiryDate:'2026-07-15'}, onboarding:{agreementSigned:'2025-07-01',squareOnFile:'2025-07-01',firstJobScheduled:'2025-07-15',firstServiceDone:'2025-07-20',certIssued:'2025-07-20',rep30dCheckin:'2025-08-20'} },
       { id:'acc004', name:'Fairless Hills Retirement Center', business:'Fairless Hills Retirement Center', status:'active', services:['UniPro','Filter Man','GTO','Termac'], annualValue:12400, nextDue:'2026-10-20', renewalDate:'2026-10-20', lastService:'2026-04-20', healthScore:5, assignedRep:'Ted Scholl', openDeficiencies:0, city:'Fairless Hills', zip:'19030', lastCheckin:Date.now()-10*86400000, createdAt:Date.now()-400*86400000, certStatus:{issuedDate:'2026-04-20',expiryDate:'2026-10-20'}, onboarding:{agreementSigned:'2025-04-01',squareOnFile:'2025-04-01',firstJobScheduled:'2025-04-15',firstServiceDone:'2025-04-20',certIssued:'2025-04-20',rep30dCheckin:'2025-05-20'} },
-      { id:'acc005', name:'Eastside Grille & Bar', business:'Eastside Grille & Bar', status:'inactive', services:['Quality III','Filter Man'], annualValue:900, nextDue:'2026-02-20', renewalDate:'2026-02-20', lastService:'2025-08-20', healthScore:1, assignedRep:'Ted Scholl', openDeficiencies:2, city:'Levittown', zip:'19054', lastCheckin:Date.now()-120*86400000, createdAt:Date.now()-500*86400000 },
-      { id:'acc006', name:'Harbor View Diner', business:'Harbor View Diner', status:'active', services:['UniPro','GTO'], annualValue:2200, nextDue:'2026-07-10', renewalDate:'2026-07-10', lastService:'2026-01-10', healthScore:3, assignedRep:'Unassigned', openDeficiencies:0, city:'Trenton', zip:'08611', lastCheckin:Date.now()-60*86400000, createdAt:Date.now()-90*86400000 },
+      { id:'acc005', name:'Eastside Grille & Bar', business:'Eastside Grille & Bar', status:'inactive', services:['Quality III','Filter Man'], annualValue:900, nextDue:'2026-02-20', renewalDate:'2026-02-20', lastService:'2025-08-20', healthScore:1, assignedRep:'Ted Scholl', openDeficiencies:2, city:'Levittown', zip:'19054', lastCheckin:Date.now()-120*86400000, createdAt:Date.now()-500*86400000, lostDate:Date.now()-95*86400000, lostReason:'Price too high', lostNotes:'Manager said Cintas came in 10% lower. Worth a re-pitch with bundle pricing.', reengageAfter:Date.now()-5*86400000 },
+      { id:'acc006', name:'Harbor View Diner', business:'Harbor View Diner', status:'active', services:['UniPro','GTO'], annualValue:2200, nextDue:'2026-07-10', renewalDate:'2026-07-10', lastService:'2026-01-10', healthScore:3, assignedRep:'Unassigned', openDeficiencies:0, city:'Trenton', zip:'08611', lastCheckin:Date.now()-75*86400000, createdAt:Date.now()-90*86400000 },
       { id:'acc007', name:"Mario's Restaurant", business:"Mario's Restaurant", status:'active', services:['UniPro','Termac'], annualValue:3200, nextDue:'2026-07-20', renewalDate:'2026-07-20', lastService:'2026-01-20', healthScore:4, assignedRep:'Ted Scholl', openDeficiencies:0, city:'Philadelphia', zip:'19147', lastCheckin:Date.now()-5*86400000, createdAt:Date.now()-25*86400000, onboarding:{agreementSigned:'2026-05-28',squareOnFile:'2026-05-28',firstJobScheduled:'2026-06-10'} },
       { id:'acc008', name:'El Rancho Cantina', business:'El Rancho Cantina', status:'active', services:['UniPro','Filter Man','GTO','Termac'], annualValue:5200, nextDue:'2026-08-01', renewalDate:'2026-08-01', lastService:'2026-02-01', healthScore:5, assignedRep:'Ted Scholl', openDeficiencies:0, city:'Philadelphia', zip:'19140', lastCheckin:Date.now()-2*86400000, createdAt:Date.now()-18*86400000, onboarding:{agreementSigned:'2026-06-05',squareOnFile:'2026-06-05'} },
     ]);
@@ -2426,6 +2426,36 @@ function renderCRMView(){
         const daysToRenewal = Math.floor((new Date(a.renewalDate).getTime() - Date.now()) / 86400000);
         const key = `renewal_${a.id}`;
         if (!dismissed.includes(key)) alerts.push({ key, color:'#1B5FA8', bg:'#DBEAFE', icon:'🔔', label:'Renewal approaching — no recent contact', detail:`${a.name||a.business} — renews in ${daysToRenewal}d`, action:`openAcctDetail('${a.id}','accounts')` });
+      });
+
+    // 4. No-visit alert — active accounts with no check-in in 60+ days
+    accounts.filter(a => (a.assignedRep === repName || a.rep === repName) && a.status === 'active')
+      .filter(a => {
+        const daysSince = a.lastCheckin ? (Date.now() - a.lastCheckin) / 86400000 : 999;
+        return daysSince >= 60;
+      }).slice(0,3).forEach(a => {
+        const daysSince = a.lastCheckin ? Math.floor((Date.now() - a.lastCheckin) / 86400000) : null;
+        const key = `novisit_${a.id}`;
+        if (!dismissed.includes(key)) alerts.push({
+          key, color:'#0F6E56', bg:'#DCFCE7', icon:'📍',
+          label:`No visit in ${daysSince || '60+'}d — account going cold`,
+          detail:`${a.name||a.business} · Last contact: ${daysSince ? daysSince+'d ago' : 'never logged'}`,
+          action:`openVisitOverlay('${a.id}')`
+        });
+      });
+
+    // 5. 90-day re-engagement queue — accounts marked lost with reengageAfter date reached
+    const allAccounts = crmLoad('accounts');
+    allAccounts.filter(a => (a.assignedRep === repName || !a.assignedRep) && a.lostDate && a.reengageAfter && Date.now() >= a.reengageAfter)
+      .slice(0,3).forEach(a => {
+        const lostDays = Math.floor((Date.now() - a.lostDate) / 86400000);
+        const key = `reengage_${a.id}`;
+        if (!dismissed.includes(key)) alerts.push({
+          key, color:'#7C3AED', bg:'#F3E8FF', icon:'🔁',
+          label:`Re-engagement window open — ${lostDays}d since lost`,
+          detail:`${a.name||a.business} · Lost reason: ${a.lostReason||'—'} · Ready for fresh outreach`,
+          action:`openAcctDetail('${a.id}','accounts')`
+        });
       });
 
     // Routing notifications from reception
@@ -3537,6 +3567,40 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
     <div onclick="mgrToggle('jeopardy')" style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none;padding-bottom:10px"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft)">⚠️ Jeopardy Queue — Accounts at Risk</div><div style="display:flex;align-items:center;gap:8px"><span id="cs-icon-jeopardy" style="color:var(--soft);font-size:14px;transition:transform .2s;display:inline-block">&#9660;</span></div></div>
     <div id="cs-body-jeopardy" style="margin-top:4px">
       <div id="mgrJeopardyList" style="display:flex;flex-direction:column;gap:8px"></div>
+    </div>
+  </div>
+
+  <!-- RE-ENGAGEMENT QUEUE -->
+  <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;margin-bottom:16px">
+    <div onclick="mgrToggle('reengage')" style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none;padding-bottom:10px">
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft)">🔁 90-Day Re-Engagement Queue</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span id="mgrReengageBadge" style="display:none;background:#7C3AED;color:#fff;border-radius:10px;padding:1px 8px;font-size:10px;font-weight:800">0</span>
+        <span id="cs-icon-reengage" style="color:var(--soft);font-size:14px;transition:transform .2s;display:inline-block">&#9660;</span>
+      </div>
+    </div>
+    <div id="cs-body-reengage" style="margin-top:4px">
+      <div style="font-size:11px;color:var(--soft);margin-bottom:8px">Accounts marked lost that have passed their 90-day re-engagement window. Ready for a fresh outreach attempt.</div>
+      <div id="mgrReengageList" style="display:flex;flex-direction:column;gap:8px">
+        <div style="color:var(--soft);font-size:12px">Loading…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 60-DAY NO-VISIT ALERT -->
+  <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;margin-bottom:16px">
+    <div onclick="mgrToggle('novisit')" style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none;padding-bottom:10px">
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft)">📍 60-Day No-Visit Alert</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span id="mgrNoVisitBadge" style="display:none;background:#0F6E56;color:#fff;border-radius:10px;padding:1px 8px;font-size:10px;font-weight:800">0</span>
+        <span id="cs-icon-novisit" style="color:var(--soft);font-size:14px;transition:transform .2s;display:inline-block">&#9660;</span>
+      </div>
+    </div>
+    <div id="cs-body-novisit" style="margin-top:4px">
+      <div style="font-size:11px;color:var(--soft);margin-bottom:8px">Active accounts with no logged visit or check-in in 60+ days. Rep should make contact before these go cold.</div>
+      <div id="mgrNoVisitList" style="display:flex;flex-direction:column;gap:8px">
+        <div style="color:var(--soft);font-size:12px">Loading…</div>
+      </div>
     </div>
   </div>
 
@@ -19933,6 +19997,77 @@ function refreshManagerDashboard() {
           </div>
           <div style="font-family:Barlow Condensed,sans-serif;font-weight:700;color:var(--ink);font-size:12px">${a.annualValue ? fmt$(a.annualValue)+'/yr' : '—'}</div>
           <button onclick="closeOverlay();setTimeout(()=>openAcctDetail('${a.id}'),100)" style="background:var(--red);color:#fff;border:none;border-radius:6px;padding:6px 12px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:10px;text-transform:uppercase;cursor:pointer">View →</button>
+        </div>`;
+      }).join('');
+    }
+  }
+
+  // ── RE-ENGAGEMENT QUEUE ──
+  const reengageList = document.getElementById('mgrReengageList');
+  const reengageBadge = document.getElementById('mgrReengageBadge');
+  if (reengageList) {
+    const now3 = Date.now();
+    const allAccts3 = crmLoad('accounts');
+    const reengageAccts = allAccts3.filter(a => a.lostDate && a.reengageAfter && now3 >= a.reengageAfter);
+    reengageAccts.sort((a,b) => (a.reengageAfter||0) - (b.reengageAfter||0));
+    if (reengageBadge) {
+      reengageBadge.style.display = reengageAccts.length ? '' : 'none';
+      reengageBadge.textContent = reengageAccts.length;
+    }
+    if (!reengageAccts.length) {
+      reengageList.innerHTML = '<div style="color:var(--soft);font-size:12px;padding:8px">No accounts in re-engagement window right now.</div>';
+    } else {
+      reengageList.innerHTML = reengageAccts.slice(0,10).map(a => {
+        const lostDays = Math.floor((now3 - a.lostDate) / 86400000);
+        const repName3 = a.assignedRep || 'Unassigned';
+        return `<div style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:#F3E8FF;border-radius:8px;border-left:3px solid #7C3AED">
+          <div style="flex:1">
+            <div style="font-weight:700;font-size:13px">${escH(a.name||a.business||'')}</div>
+            <div style="font-size:11px;color:var(--soft)">Lost ${lostDays}d ago · Reason: ${escH(a.lostReason||'—')} · Rep: ${escH(repName3)}</div>
+            ${a.lostNotes ? `<div style="font-size:11px;color:#5B21B6;margin-top:2px">${escH(a.lostNotes)}</div>` : ''}
+          </div>
+          <div style="font-family:Barlow Condensed,sans-serif;font-weight:700;color:var(--ink);font-size:12px">${a.annualValue ? '$'+a.annualValue.toLocaleString()+'/yr' : '—'}</div>
+          <button onclick="closeOverlay();setTimeout(()=>openAcctDetail('${a.id}','accounts'),100)" style="background:#7C3AED;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:10px;cursor:pointer">Reach Out →</button>
+        </div>`;
+      }).join('');
+    }
+  }
+
+  // ── 60-DAY NO-VISIT ALERT ──
+  const noVisitList = document.getElementById('mgrNoVisitList');
+  const noVisitBadge = document.getElementById('mgrNoVisitBadge');
+  if (noVisitList) {
+    const now4 = Date.now();
+    const allAccts4 = crmLoad('accounts');
+    const noVisitAccts = allAccts4
+      .filter(a => a.status === 'active')
+      .filter(a => {
+        const daysSince = a.lastCheckin ? (now4 - a.lastCheckin) / 86400000 : 999;
+        return daysSince >= 60;
+      })
+      .map(a => ({ ...a, _daysSince: a.lastCheckin ? Math.floor((now4 - a.lastCheckin) / 86400000) : null }))
+      .sort((a,b) => (b._daysSince||999) - (a._daysSince||999));
+    if (noVisitBadge) {
+      noVisitBadge.style.display = noVisitAccts.length ? '' : 'none';
+      noVisitBadge.textContent = noVisitAccts.length;
+    }
+    if (!noVisitAccts.length) {
+      noVisitList.innerHTML = '<div style="color:var(--green);font-size:12px;font-weight:600;padding:8px">✅ All active accounts visited within 60 days</div>';
+    } else {
+      noVisitList.innerHTML = noVisitAccts.slice(0,10).map(a => {
+        const days = a._daysSince;
+        const color = days >= 120 ? '#991B1B' : days >= 90 ? '#D97706' : '#0F6E56';
+        const bg = days >= 120 ? '#FEE2E2' : days >= 90 ? '#FEF3C7' : '#DCFCE7';
+        return `<div style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:${bg};border-radius:8px;border-left:3px solid ${color}">
+          <div style="flex:1">
+            <div style="font-weight:700;font-size:13px">${escH(a.name||a.business||'')}</div>
+            <div style="font-size:11px;color:var(--soft)">Rep: ${escH(a.assignedRep||'Unassigned')} · ${(a.services||[]).join(', ')||'—'}</div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:18px;color:${color}">${days ? days+'d' : '—'}</div>
+            <div style="font-size:9px;color:var(--soft);text-transform:uppercase;letter-spacing:.04em">since visit</div>
+          </div>
+          <button onclick="closeOverlay();setTimeout(()=>openVisitOverlay('${a.id}'),100)" style="background:${color};color:#fff;border:none;border-radius:6px;padding:6px 12px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:10px;cursor:pointer">Log Visit →</button>
         </div>`;
       }).join('');
     }
