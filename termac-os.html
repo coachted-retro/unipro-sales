@@ -2535,7 +2535,7 @@ function renderCard(tab,r){
              <button class="crm-action-btn convert" onclick="convertRecord('${r.id}','contacts','accounts')">→ Account</button>
              <button class="crm-action-btn dead" onclick="openDeadModal('${r.id}','contacts')">💀 Dead</button>`;
   } else if(tab==='accounts'){
-    actions=`${r.estimateBuilt && !r.estimateAccepted ? `<button class="crm-action-btn" style="background:#6B21A8;color:#fff;border-color:#6B21A8" onclick="openLastEstimate('${r.id}')">📄 Estimate</button>` : ''}<button class="crm-action-btn" onclick="openSiteSurvey('${r.id}')">📋 Survey</button>
+    actions=`${(r.estimateBuilt && !r.estimateAccepted) ? `<button class="crm-action-btn" style="background:#6B21A8;color:#fff;border-color:#6B21A8;font-weight:800" onclick="openLastEstimate('${r.id}')">📄 Resume Estimate</button>` : (r._surveyInProgress && r._surveyInProgress.currentStep > 0) ? `<button class="crm-action-btn" style="background:#1B5FA8;color:#fff;border-color:#1B5FA8;font-weight:800" onclick="openSiteSurvey('${r.id}')">↩ Resume Survey</button>` : ''}<button class="crm-action-btn" onclick="openSiteSurvey('${r.id}')">📋 Survey</button>
              <button class="crm-action-btn" onclick="openLogModal('${r.id}','accounts')">📞 Log</button>
              <button class="crm-action-btn" onclick="openApptModal('${r.id}','accounts')">📅 Appt</button>
              <button class="crm-action-btn" onclick="openFollowupModal('${r.id}','accounts')">🔔 Follow-Up</button>
@@ -14324,11 +14324,27 @@ function openLastEstimate(accountId) {
   svState.accountId = accountId;
   svState.bizName = r.name || r.business || 'Account';
   svState.selectedServices = (r.services || []).map(s => s.toLowerCase().replace(/[^a-z0-9]/g,'')).filter(s => SVC_PANEL[s]);
-  svState.surveyData = r.surveyData || {};
-  // Also restore TM line items if present
+  // Use in-progress survey data if available, otherwise saved survey data
+  const progress = r._surveyInProgress;
+  if (progress && progress.surveyData && Object.keys(progress.surveyData).length) {
+    svState.surveyData = progress.surveyData;
+    svState.visitType = progress.visitType;
+    if (progress.selectedServices?.length) svState.selectedServices = progress.selectedServices;
+  } else {
+    svState.surveyData = r.surveyData || {};
+  }
+  // Restore TM line items if present
   const tmData = svState.surveyData['termac'];
   if (tmData?.tm_supply_line_items) window._svTMLineItems = tmData.tm_supply_line_items;
-  svOpenEstimate();
+  // Mark as built so button stays visible
+  r.estimateBuilt = true;
+  crmSave('accounts', data);
+  try {
+    svOpenEstimate();
+  } catch(e) {
+    console.error('openLastEstimate error:', e);
+    alert('Error opening estimate: ' + e.message);
+  }
 }
 
 function estClose(){
