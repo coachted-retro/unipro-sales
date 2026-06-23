@@ -2627,7 +2627,7 @@ function renderCard(tab,r){
   return `<div class="crm-card" onclick="viewRecord('${tab}','${r.id}')">
     <div class="crm-card-header">
       <div>
-        <div class="crm-card-name">${escH(r.name)}</div>
+        <div class="crm-card-name">${escH(r.name)}${r.role?` <span style="font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:9px;letter-spacing:.06em;background:#F3F4F6;color:#6B7280;border-radius:3px;padding:1px 5px;vertical-align:middle;text-transform:uppercase">${escH(r.role==='Other'&&r.roleCustom?r.roleCustom:r.role)}</span>`:''}</div>
         <div class="crm-card-sub">${escH(r.business||r.contact||'')}</div>
       </div>
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end">${territoryBadge}${statusBadge(r.status||'new')}</div>
@@ -2793,6 +2793,14 @@ function openAddModal(){
   document.getElementById('crmModalTitle').textContent='Add '+_modalTab.charAt(0).toUpperCase()+_modalTab.slice(1,-1);
   document.getElementById('crmModalBody').innerHTML=buildModalForm(_modalTab,null);
   document.getElementById('crmModalBg').classList.add('open');
+  // Wire role select → show/hide custom field
+  const roleEl = document.getElementById('mf_role');
+  const customEl = document.getElementById('mf_role_custom');
+  if (roleEl && customEl) {
+    roleEl.onchange = () => {
+      customEl.style.display = roleEl.value === 'Other' ? 'block' : 'none';
+    };
+  }
 }
 
 function editRecord(id,tab){
@@ -2834,6 +2842,12 @@ function buildModalForm(tab,r){
   return `
     <label>Name</label><input id="mf_name" value="${v('name')}">
     <label>Business Name</label><input id="mf_business" value="${v('business')||v('contact')||''}">
+    <label>Role / Title</label>
+    <select id="mf_role" style="margin-bottom:4px">
+      <option value="">— Select role —</option>
+      ${['Owner','General Manager','Manager','Chef / Head Chef','Kitchen Manager','Facilities Manager','Purchasing Manager','Food & Beverage Director','Corporate Contact','Office Manager','Other'].map(role=>`<option ${v('role')===role?'selected':''}>${role}</option>`).join('')}
+    </select>
+    <input id="mf_role_custom" placeholder="Custom role (if Other)" value="${v('roleCustom')}" style="margin-top:4px;display:${v('role')==='Other'?'block':'none'}">
     <label>Phone</label><input id="mf_phone" value="${v('phone')}">
     <label>Email</label><input id="mf_email" value="${v('email')}">
     <label>Address / ZIP</label><input id="mf_address" value="${v('address')}">
@@ -2861,6 +2875,8 @@ function saveModalRecord(){
     status: document.getElementById('mf_status').value,
     services: svcs,
     notes: document.getElementById('mf_notes').value.trim(),
+    role: document.getElementById('mf_role')?.value || '',
+    roleCustom: document.getElementById('mf_role_custom')?.value?.trim() || '',
     created: _modalId?existing.created||Date.now():Date.now(),
     updated: Date.now()
   };
@@ -15406,10 +15422,16 @@ function estAccept(){
     // Initialize canvas
     estInitSigCanvas();
     // Pre-fill name from account
-    const nameEl = document.getElementById('est_sigName');
-    if (nameEl && !nameEl.value && estState.accountId) {
+    const nameEl  = document.getElementById('est_sigName');
+    const titleEl = document.getElementById('est_sigTitle');
+    if (estState.accountId) {
       const r = crmLoad('accounts').find(x => x.id === estState.accountId);
-      if (r) nameEl.value = r.contact || r.name || '';
+      if (r) {
+        if (nameEl && !nameEl.value)  nameEl.value  = r.contact || r.name || '';
+        if (titleEl && !titleEl.value && r.role) {
+          titleEl.value = r.role === 'Other' && r.roleCustom ? r.roleCustom : r.role;
+        }
+      }
     }
   } else {
     // fallback if sig panel missing
