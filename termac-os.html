@@ -3388,14 +3388,31 @@ function saveModalRecord(){
       rec.repAssignmentType = newType;
       if (repChanged) {
         rec.repAssignedAt = Date.now();
+        // ownedBy updates to new rep on reassignment (management action)
+        // createdBy is NEVER changed — always tracks who brought the account in
+        if (newRep !== 'Unassigned') {
+          rec.ownedBy = newRep;
+          // preserve original creator separately
+          rec.createdBy = existing.createdBy || existing.ownedBy || newRep;
+        }
+        // repHistory: full audit trail of every assignment change
+        rec.repHistory = existing.repHistory || [];
+        rec.repHistory.push({
+          ts: Date.now(),
+          fromRep: existing.assignedRep || 'Unassigned',
+          toRep: newRep,
+          type: newType,
+          changedBy: _currentUser?.name || 'Manager',
+          reason: 'Territory reassignment'
+        });
         rec.activityLog = existing.activityLog || [];
         rec.activityLog.push({
           ts: Date.now(),
           type:'office',
-          icon: newRep==='Unassigned' ? '⚠️' : (newType==='temporary' ? '⏳' : '📋'),
-          title: newRep==='Unassigned' ? 'Rep Unassigned' : `${newType==='temporary'?'Temporarily a':'A'}ssigned to ${newRep}`,
+          icon: newRep==='Unassigned' ? '⚠️' : (newType==='temporary' ? '⏳' : '🔄'),
+          title: newRep==='Unassigned' ? 'Rep Unassigned' : `Territory reassigned → ${newRep}`,
           note: newRep==='Unassigned' ? 'No rep currently assigned to this account.' :
-                (newType==='temporary' ? `Temporary coverage by ${newRep} until a rep is hired for this area.` : `Permanently assigned to ${newRep}.`),
+                (newType==='temporary' ? `Temporary coverage by ${newRep} — original account was brought in by ${rec.createdBy||'unknown'}.` : `Permanently reassigned to ${newRep} by ${_currentUser?.name||'Manager'}. Original rep: ${existing.assignedRep||'—'}.`),
           who: _currentUser?.name || 'Manager'
         });
       }
@@ -5482,24 +5499,55 @@ async function fireAI(scenario, context, triggerLabel) {
 }
 
 async function callAI(scenario, context) {
-  const promptFn = AI_PROMPTS2[scenario];
-  if (!promptFn) return;
+  // Merge all prompt libraries at call time to ensure all scenarios available
+  const allPrompts = Object.assign({}, 
+    typeof AI_PROMPTS !== 'undefined' ? AI_PROMPTS : {},
+    typeof AI_PROMPTS2 !== 'undefined' ? AI_PROMPTS2 : {},
+    typeof EXTRA_PROMPTS !== 'undefined' ? EXTRA_PROMPTS : {}
+  );
+  const promptFn = allPrompts[scenario];
+  if (!promptFn) {
+    document.getElementById('aiContent').innerHTML = '<div style="color:#8A909A;font-size:12px">⚠️ No prompt defined for scenario: ' + scenario + '</div>';
+    return;
+  }
   const prompt = promptFn(context);
+  const aiEl = document.getElementById('aiContent');
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 28000); // 28s before CF worker timeout
     const res = await fetch('https://unipro-ai-proxy.tedscholl.workers.dev/', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
       body: JSON.stringify({
-        model:'claude-sonnet-4-6',
-        max_tokens:1000,
-        messages:[{role:'user',content:prompt}]
+        model: 'claude-sonnet-4-6',
+        max_tokens: 600,
+        messages: [{ role: 'user', content: prompt }]
       })
     });
+    clearTimeout(timeout);
+    if (!res.ok) {
+      aiEl.innerHTML = '<div style="color:#F87171;font-size:12px">⚠️ Proxy returned HTTP ' + res.status + ' — check Cloudflare Worker logs.</div>';
+      return;
+    }
     const data = await res.json();
-    const text = data.content?.find(b=>b.type==='text')?.text || 'No response received.';
+    // Handle Anthropic error response format
+    if (data.error) {
+      aiEl.innerHTML = '<div style="color:#F87171;font-size:12px">⚠️ API error: ' + (data.error.message || JSON.stringify(data.error)) + '</div>';
+      return;
+    }
+    const text = (data.content || []).find(b => b.type === 'text')?.text || '';
+    if (!text) {
+      aiEl.innerHTML = '<div style="color:#8A909A;font-size:12px">⚠️ AI returned an empty response. Try again or check proxy logs.</div>';
+      return;
+    }
     renderAIResponse(text);
   } catch(e) {
-    document.getElementById('aiContent').innerHTML = '<div style="color:#8A909A;font-size:12px">Error connecting to AI. Check network or API access.</div>';
+    if (e.name === 'AbortError') {
+      aiEl.innerHTML = '<div style="color:#F87171;font-size:12px">⚠️ Request timed out (28s). The Cloudflare Worker may have hit its CPU limit — try upgrading to a paid Workers plan or reducing max_tokens.</div>';
+    } else {
+      aiEl.innerHTML = '<div style="color:#8A909A;font-size:12px">⚠️ Connection error: ' + e.message + '</div>';
+    }
   }
 }
 
@@ -17327,6 +17375,14 @@ function acctRenderNextAction(r) {
 
 // ── CONTACT INFO ──
 function acctRenderContact(r) {
+  const owner = r.ownedBy || r.assignedRep || '';
+  const creator = r.createdBy || '';
+  const repHistoryHtml = (r.repHistory||[]).length > 0
+    ? `<div class="acct-info-row" style="align-items:flex-start"><label>Rep History</label><span style="font-size:11px;color:var(--soft)">${
+        r.repHistory.map(h => `${new Date(h.ts).toLocaleDateString()} — ${h.fromRep} → ${h.toRep} (by ${h.changedBy})`).join('<br>')
+      }</span></div>`
+    : '';
+
   document.getElementById('acctContactInfo').innerHTML = `
     <div class="acct-info-row"><label>Contact</label><span>${r.contact||r.name||'—'}</span></div>
     <div class="acct-info-row"><label>Phone</label>
@@ -17336,6 +17392,9 @@ function acctRenderContact(r) {
     <div class="acct-info-row"><label>Address</label><span>${r.address||'—'}</span></div>
     <div class="acct-info-row"><label>Division</label><span>${r.company||'—'}</span></div>
     ${r.accountNumber?`<div class="acct-info-row"><label>Account #</label><span style="font-weight:700;color:var(--green)">${r.accountNumber}</span></div>`:''}
+    ${owner?`<div class="acct-info-row"><label>Current Rep</label><span style="font-weight:700">👤 ${escH(owner)}</span></div>`:''}
+    ${creator && creator !== owner?`<div class="acct-info-row"><label>Original Rep</label><span style="color:var(--soft)">🌟 ${escH(creator)}</span></div>`:''}
+    ${repHistoryHtml}
   `;
 }
 
@@ -17386,10 +17445,17 @@ function acctRenderTimeline(r) {
 
   // Add system events to timeline
   const events = [];
-  if (r.created) events.push({ ts:r.created, type:'system', icon:'🌟', title:'Account Created', note:'Record added to Termac OS', who:'System' });
+  if (r.created) events.push({ ts:r.created, type:'system', icon:'🌟', title:'Account Created', note:`Created by ${r.createdBy||'System'}`, who:'System' });
   if (r.estimateDate) events.push({ ts:new Date(r.estimateDate).getTime(), type:'rep', icon:'📄', title:'Estimate Presented', note:`Estimate accepted: ${r.estimateAccepted?'Yes':'Pending'}`, who:'Rep' });
   if (r.onboarded) events.push({ ts:r.updated||r.created, type:'office', icon:'✅', title:'Account Onboarded', note:'Setup complete — office confirmed', who:'Office' });
   if (r.bundleAgreement) events.push({ ts:new Date(r.bundleAgreement.date||Date.now()).getTime(), type:'rep', icon:'⭐', title:'Bundle Agreement Signed', note:`${r.bundleAgreement.bundle} · ${r.bundleAgreement.term}`, who:'Rep' });
+  // Rep history — territory reassignment events
+  (r.repHistory||[]).forEach(h => {
+    events.push({ ts:h.ts, type:'office', icon:'🔄',
+      title:`Territory reassigned: ${h.fromRep} → ${h.toRep}`,
+      note:`Changed by ${h.changedBy}${h.reason?' — '+h.reason:''}`,
+      who: h.changedBy });
+  });
   log.forEach(a => events.push(a));
   // Sort by timestamp desc
   events.sort((a,b) => (b.ts||0)-(a.ts||0));
