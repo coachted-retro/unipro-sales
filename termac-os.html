@@ -8461,9 +8461,13 @@ function fsFinishUniProSurvey() {
   const fsTotal = parseFloat(fsTotalText.replace(/[^0-9.]/g, '')) || 0;
 
   const d = svState.surveyData[svc];
-  d.ext_qty  = fsExtUnits;   // also fixes the Scope Summary screen, which reads these same fields
+  d.ext_qty  = fsExtUnits;
   d.hood_qty = fsHoodTanks;
   d.fs_total = fsTotal;
+  // Save AI findings summary so scope can display them alongside violations
+  d.findings_immediate   = document.getElementById('fs_findImmediate')?.value.trim()   || '';
+  d.findings_recommended = document.getElementById('fs_findRecommended')?.value.trim() || '';
+  d.findings_advisory    = document.getElementById('fs_findAdvisory')?.value.trim()    || '';
   const summaryParts = [];
   if (fsHoodTanks > 0) summaryParts.push(`${fsHoodTanks} suppression system${fsHoodTanks>1?'s':''}`);
   if (fsExtUnits  > 0) summaryParts.push(`${fsExtUnits} extinguisher${fsExtUnits>1?'s':''}`);
@@ -12463,11 +12467,33 @@ function svBuildScope(){
         ? '<div style="margin-top:6px;padding:8px 12px;background:#FEF2F2;border-left:3px solid #C8102E;border-radius:0 5px 5px 0;font-size:12px;font-weight:700;color:#C8102E">⚠ '+violations+' violation'+(violations>1?'s':'')+' found — review each item with the customer</div>'
         : '<div style="margin-top:6px;padding:8px 12px;background:#F0FDF4;border-left:3px solid #16a34a;border-radius:0 5px 5px 0;font-size:12px;font-weight:700;color:#15803d">✓ All systems current at time of visit</div>';
 
+      // AI findings panel — only shown when findings were generated from the walkthrough
+      const hasFindings = d.findings_immediate || d.findings_recommended || d.findings_advisory;
+      const findingsHtml = hasFindings ? `
+        <div style="margin-top:18px;border-top:2px solid var(--line);padding-top:14px">
+          <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin-bottom:10px">📋 AI Walkthrough Findings — Review with Customer</div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
+            <div style="background:#FEF2F2;border-top:3px solid #C8102E;border-radius:0 0 8px 8px;padding:12px">
+              <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:#C8102E;margin-bottom:6px">Immediate — Correct Before Next Use</div>
+              <div style="font-size:12px;line-height:1.6;color:#7F1D1D;white-space:pre-wrap">${d.findings_immediate||'None identified.'}</div>
+            </div>
+            <div style="background:#FFFBEB;border-top:3px solid #D97706;border-radius:0 0 8px 8px;padding:12px">
+              <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:#D97706;margin-bottom:6px">Recommended — Address at Next Visit</div>
+              <div style="font-size:12px;line-height:1.6;color:#78350F;white-space:pre-wrap">${d.findings_recommended||'None identified.'}</div>
+            </div>
+            <div style="background:#EFF6FF;border-top:3px solid #1B5FA8;border-radius:0 0 8px 8px;padding:12px">
+              <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:#1B5FA8;margin-bottom:6px">Advisory — Plan For</div>
+              <div style="font-size:12px;line-height:1.6;color:#1E3A5F;white-space:pre-wrap">${d.findings_advisory||'None identified.'}</div>
+            </div>
+          </div>
+        </div>` : '';
+
       details = summaryLine + banner
         + (hoods.length ? tbl('🔥 Hood Suppression — NFPA 96 (semi-annual required)', hoodRows)
             : '<div style="margin-top:10px;font-size:12px;color:#D97706;font-weight:600">⚠ No hood systems recorded — confirm with customer</div>')
         + (exts.length  ? tbl('🧯 Fire Extinguishers — NFPA 10 (annual required)', extRows) : '')
-        + (lights.length? tbl('💡 Exit / Emergency Lighting — NFPA 101 (annual + 90-min test)', lightRows) : '');
+        + (lights.length? tbl('💡 Exit / Emergency Lighting — NFPA 101 (annual + 90-min test)', lightRows) : '')
+        + findingsHtml;
     } else if(svc==='filterman'){
       details = `Filters: ${d.fm_count||'—'} × ${d.fm_size||'—'} · Frequency: ${d.fm_frequency||'—'} · Term: ${d.fm_term||'—'}`;
     } else if(svc==='gto'){
