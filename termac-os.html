@@ -15978,7 +15978,7 @@ function estPrint(){
         <div style="position:relative"><label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em">Phone <span style="font-size:10px;color:#1B5FA8;font-weight:600;text-transform:none;letter-spacing:0">— enter to search accounts</span></label><input id="rcpCallerPhone" type="tel" placeholder="(xxx) xxx-xxxx" autocomplete="off" oninput="rcpPhoneLookup(this.value)" style="width:100%;margin-top:4px;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;box-sizing:border-box"><div id="rcpPhoneDropdown" style="display:none;position:absolute;z-index:999;background:#fff;border:1.5px solid var(--line);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);max-height:220px;overflow-y:auto;width:100%;margin-top:2px"></div></div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px">
-        <div><label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em">Call Type</label><select id="rcpCallType" style="width:100%;margin-top:4px;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;box-sizing:border-box"><option value="">Select…</option><option>New Service Inquiry</option><option>Existing Customer — Service Question</option><option>Existing Customer — Deficiency / Issue</option><option>Schedule / Reschedule</option><option>Quote / Pricing</option><option>Emergency — Fire Safety</option><option>Complaint</option><option>Vendor / Supplier</option><option>Other</option></select></div>
+        <div><label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em">Call Type</label><select id="rcpCallType" onchange="rcpCallTypeChange()" style="width:100%;margin-top:4px;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;box-sizing:border-box"><option value="">Select…</option><option>New Service Inquiry</option><option>Existing Customer — Service Question</option><option>Existing Customer — Deficiency / Issue</option><option>Schedule / Reschedule</option><option>Quote / Pricing</option><option>Emergency — Fire Safety</option><option>Complaint</option><option>Vendor / Supplier</option><option>Other</option></select></div>
         <div><label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em">Route To</label><select id="rcpRouteTo" style="width:100%;margin-top:4px;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;box-sizing:border-box"><option value="">Route to…</option><optgroup label="Sales"><option>Ted Scholl</option><option>Brad Fickes</option><option>Chris Carzo</option><option>Dan Rini</option><option>Joe McDonnell</option><option>Matt Belz</option><option>Todd Grill</option><option>Tom Jordan</option><option>TJ O'Reilly</option></optgroup><optgroup label="Management"><option>Sean O'Reilly</option><option>Terence O'Reilly</option><option>Jim Kennedy</option><option>Tom Pittakas</option></optgroup><optgroup label="Operations"><option>Scheduler — Aine Curran</option><option>Scheduler — Jasmine Paez</option><option>Scheduler — Samuel Holmes</option><option>Dispatcher</option><option>Office — Lauren Canfield</option><option>Paul Brahan</option></optgroup><option>Voicemail</option><option>Call Back Required</option></select></div>
         <div><label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em">Urgency</label><select id="rcpUrgency" style="width:100%;margin-top:4px;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;box-sizing:border-box"><option value="normal">Normal</option><option value="high">High — Follow Up Today</option><option value="emergency">🚨 Emergency</option></select></div>
       </div>
@@ -16062,9 +16062,15 @@ function rcpLogCall(){
   if(!n&&!co){alert('Please enter a caller name or company.');return null;}
   const call={id:'call_'+Date.now(),date:new Date().toISOString().slice(0,10),time:new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}),name:n||'Unknown',company:co||'',phone:ph||'',type:ty||'General',routeTo:rt||'',urgency:ur,notes:no||'',status:rt?'routed':'open',loggedBy:_currentUser?.name||'Reception',createdLead:false};
   const calls=rcpLoadCalls();calls.unshift(call);rcpSaveCalls(calls);
+  // Complaint: fire escalation email to Jim Kennedy + Tom Pittakas
+  if (ty === 'Complaint') {
+    rcpSendComplaintEscalation(call);
+    showToast('⚠️ Complaint logged — escalation email opened for Jim Kennedy & Tom Pittakas');
+  }
   ['rcpCallerName','rcpCallerCompany','rcpCallerPhone','rcpNotes'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
   ['rcpCallType','rcpRouteTo'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
   const eu=document.getElementById('rcpUrgency');if(eu)eu.value='normal';
+  rcpHideComplaintBanner();
   rcpRefresh();return call;
 }
 function rcpLogAndCreateLead(){
@@ -16075,6 +16081,79 @@ function rcpLogAndCreateLead(){
   rcpRefresh();alert('Call logged and lead created for '+(call.name||call.company)+'. Find it in the Lead Pool to assign to a rep.');
 }
 function rcpResolve(callId){const calls=rcpLoadCalls();const c=calls.find(x=>x.id===callId);if(c){c.status='resolved';rcpSaveCalls(calls);rcpRefresh();}}
+
+// ── CALL TYPE AUTO-ROUTING ──
+// Fires when rep changes the Call Type dropdown.
+// Sets Route To and Urgency automatically based on call type.
+function rcpCallTypeChange() {
+  const typeEl = document.getElementById('rcpCallType');
+  const routeEl = document.getElementById('rcpRouteTo');
+  const urgEl  = document.getElementById('rcpUrgency');
+  if (!typeEl) return;
+  const ty = typeEl.value;
+
+  // Service Question or Complaint → Paul Brahan
+  if (ty === 'Existing Customer — Service Question' || ty === 'Complaint') {
+    if (routeEl) routeEl.value = 'Paul Brahan';
+  }
+  // Emergency → keep existing Emergency urgency
+  if (ty === 'Emergency — Fire Safety') {
+    if (urgEl) urgEl.value = 'emergency';
+    if (routeEl && !routeEl.value) routeEl.value = 'Dispatcher';
+  }
+  // Complaint → High priority + show escalation notice
+  if (ty === 'Complaint') {
+    if (urgEl) urgEl.value = 'high';
+    rcpShowComplaintBanner();
+  } else {
+    rcpHideComplaintBanner();
+  }
+  // Deficiency / Issue → High
+  if (ty === 'Existing Customer — Deficiency / Issue') {
+    if (urgEl && urgEl.value === 'normal') urgEl.value = 'high';
+  }
+}
+
+function rcpShowComplaintBanner() {
+  let banner = document.getElementById('rcpComplaintBanner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'rcpComplaintBanner';
+    banner.style.cssText = 'background:#FEE2E2;border:1.5px solid #EF4444;border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:12px;color:#991B1B';
+    banner.innerHTML = '⚠️ <strong>Complaint — High Priority</strong> · Jim Kennedy &amp; Tom Pittakas will be notified by email when this call is logged. Paul Brahan is assigned as primary contact.';
+    const notesDiv = document.getElementById('rcpNotes')?.closest('div');
+    if (notesDiv && notesDiv.parentNode) {
+      notesDiv.parentNode.insertBefore(banner, notesDiv);
+    }
+  }
+  banner.style.display = '';
+}
+
+function rcpHideComplaintBanner() {
+  const banner = document.getElementById('rcpComplaintBanner');
+  if (banner) banner.style.display = 'none';
+}
+
+// Send complaint escalation email via Brevo (or mailto fallback)
+async function rcpSendComplaintEscalation(call) {
+  const subject = encodeURIComponent('⚠️ Customer Complaint — Immediate Attention Required');
+  const body = encodeURIComponent(
+    'A customer complaint has been logged in Termac One Reception.\n\n' +
+    'Caller: ' + (call.name || 'Unknown') + '\n' +
+    'Company: ' + (call.company || '—') + '\n' +
+    'Phone: ' + (call.phone || '—') + '\n' +
+    'Time: ' + call.time + '\n' +
+    'Notes: ' + (call.notes || '—') + '\n\n' +
+    'Routed to: Paul Brahan (pbrahan@termac.com)\n' +
+    'Priority: HIGH — Follow Up Today\n\n' +
+    'Logged by: ' + (call.loggedBy || 'Reception') + '\n' +
+    'View in Termac One: https://coachted-retro.github.io/unipro-sales/termac-os.html'
+  );
+  // mailto fallback — opens default email client with both recipients pre-filled
+  // Replace with Brevo API call once BREVO_API_KEY is active
+  window.open('mailto:jkennedy@termac.com,tpittakas@termac.com?subject=' + subject + '&body=' + body, '_blank');
+}
+
 function rcpRenderLog(){
   const body=document.getElementById('rcpCallLog');if(!body)return;
   const filter=document.getElementById('rcpFilterStatus')?.value||'';
