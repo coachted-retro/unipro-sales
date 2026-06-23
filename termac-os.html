@@ -17539,7 +17539,6 @@ function saveActivity() {
 
 /* ── SAVE APPOINTMENT ── */
 function saveAppointment() {
-  if (!_actRecordId || !_actRecordTab) return;
   const apptType = document.getElementById('apptType')?.value || 'appointment';
   const date     = document.getElementById('apptDate')?.value || '';
   const time     = document.getElementById('apptTime')?.value || '';
@@ -17549,36 +17548,58 @@ function saveAppointment() {
 
   if (!date) { alert('Please select an appointment date.'); return; }
 
-  const data = crmLoad(_actRecordTab);
-  const r    = data.find(x => x.id === _actRecordId);
-  if (!r) { closeActModal('actApptModal'); return; }
-
   const dateLabel = new Date(date + 'T12:00:00').toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' });
   const timeLabel = time ? new Date('1970-01-01T'+time).toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' }) : '';
   const apptLabels = { appointment:'📅 Appointment', blind:'🚶 Blind Visit', follow_up:'🔄 Follow-Up', demo:'📋 Site Survey' };
 
-  if (!r.activityLog) r.activityLog = [];
-  r.activityLog.push({
-    ts: Date.now(), type:'rep',
-    icon: '📅',
-    title: `${apptLabels[apptType]||'Appointment'} set — ${dateLabel}${timeLabel ? ' at '+timeLabel : ''}`,
-    note: `${location ? 'Location: '+location+'. ' : ''}${notes || ''}`.trim() || null,
-    who: _currentUser?.name || 'Rep'
-  });
-
-  // Store appointment on record
-  r.appointment = { type:apptType, date, time, location, contact, notes, setAt:Date.now() };
-  r.followupDate = date;
-  r.followupNote = `${apptLabels[apptType]||'Appointment'} — ${timeLabel||''}`;
-
-  // Advance lifecycle if lead
-  if (_actRecordTab === 'leads') {
-    r.status = 'hot';
-    if (typeof setLifecycleStage === 'function') setLifecycleStage(r.id, 'site_visit');
+  // Write to the linked record if we have one
+  if (_actRecordId && _actRecordTab) {
+    try {
+      const data = crmLoad(_actRecordTab);
+      const r    = data.find(x => x.id === _actRecordId);
+      if (r) {
+        if (!r.activityLog) r.activityLog = [];
+        r.activityLog.push({
+          ts: Date.now(), type:'rep', icon: '📅',
+          title: `${apptLabels[apptType]||'Appointment'} set — ${dateLabel}${timeLabel ? ' at '+timeLabel : ''}`,
+          note: `${location ? 'Location: '+location+'. ' : ''}${notes || ''}`.trim() || null,
+          who: _currentUser?.name || 'Rep'
+        });
+        r.appointment  = { type:apptType, date, time, location, contact, notes, setAt:Date.now() };
+        r.followupDate = date;
+        r.followupNote = `${apptLabels[apptType]||'Appointment'} — ${timeLabel||''}`;
+        if (_actRecordTab === 'leads') {
+          r.status = 'hot';
+          if (typeof setLifecycleStage === 'function') setLifecycleStage(r.id, 'site_visit');
+        }
+        r.updated = Date.now();
+        crmSave(_actRecordTab, data);
+      }
+    } catch(e) { console.warn('appt record update failed:', e.message); }
   }
 
-  r.updated = Date.now();
-  crmSave(_actRecordTab, data);
+  // Always write to the standalone appointments collection so the rep calendar shows it
+  try {
+    const appts = crmLoad('appointments') || [];
+    // Remove any existing entry for this record on this date to avoid duplicates
+    const filtered = appts.filter(a => !(a.recordId === _actRecordId && a.date === date));
+    filtered.push({
+      id:        'appt_' + Date.now(),
+      recordId:  _actRecordId,
+      tab:       _actRecordTab,
+      account:   r.name || r.business || r.contact || '—',
+      type:      apptType,
+      date,
+      time,
+      location,
+      contact,
+      note:      notes,
+      setAt:     Date.now(),
+      setBy:     _currentUser?.name || 'Rep'
+    });
+    crmSave('appointments', filtered);
+  } catch(e) { console.warn('appointments collection save failed:', e.message); }
+
   closeActModal('actApptModal');
   renderCRMView();
   buildActionQueue();
@@ -17602,6 +17623,19 @@ function saveFollowup() {
   r.followupNote     = note || 'Scheduled follow-up';
   r.followupPriority = priority;
   r.updated          = Date.now();
+
+  // Write to appointments collection for calendar display
+  try {
+    const _fuAppts = crmLoad('appointments') || [];
+    const _fuFiltered = _fuAppts.filter(a => !(a.recordId === _actRecordId && a.date === date && a.type === 'follow_up'));
+    _fuFiltered.push({
+      id: 'fu_' + Date.now(), recordId: _actRecordId, tab: _actRecordTab,
+      account: r.name || r.business || r.contact || '—',
+      type: 'follow_up', date, time: '', location: '', contact: '',
+      note: note || 'Scheduled follow-up', setAt: Date.now(), setBy: _currentUser?.name || 'Rep'
+    });
+    crmSave('appointments', _fuFiltered);
+  } catch(e) {}
 
   const dateLabel = new Date(date + 'T12:00:00').toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' });
   if (!r.activityLog) r.activityLog = [];
