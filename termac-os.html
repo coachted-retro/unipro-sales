@@ -2140,6 +2140,8 @@ function openCRM(tab, viaDmsDashboard){
   if (contactsBtn) contactsBtn.style.display = (role === 'dms' || isReception) ? 'none' : '';
   const accountsBtn = document.getElementById('crmTabAccounts');
   if (accountsBtn) accountsBtn.style.display = (role === 'dms') ? 'none' : '';
+  const opptiesBtn = document.getElementById('crmTabOpportunities');
+  if (opptiesBtn) opptiesBtn.style.display = (role === 'dms' || isReception) ? 'none' : '';
 
   // My Goals / Weekly Report — relevant to sales/DMS pipeline work, not
   // office/tech/scheduler/dispatcher. Defaults to visible (permissive) so
@@ -2199,6 +2201,8 @@ function switchCRMTab(tab){
     sf.innerHTML='<option value="">All Statuses</option><option value="hot">🔥 Hot — Promote me</option><option value="warm">☀️ Warm — Interested/Callback</option><option value="cold">❄️ Cold — No answer/Not interested</option><option value="new">New — Not yet called</option><option value="dead">💀 Dead</option>';
   } else if(tab==='accounts'){
     sf.innerHTML='<option value="">All Statuses</option><option value="active">Active</option><option value="inactive">Inactive</option><option value="winback">Win-Back</option><option value="dead">💀 Dead</option>';
+  } else if(tab==='opportunities'){
+    sf.innerHTML='<option value="">All Stages</option><option value="opportunity">💼 Opportunity</option><option value="site_visit">🏢 Site Visit</option>';
   } else {
     sf.innerHTML='<option value="">All</option><option value="dead">💀 Dead</option>';
   }
@@ -2719,6 +2723,7 @@ function renderCRMView(){
         <div style="margin-top:10px;font-size:11px;color:var(--soft);text-align:center">
           End-of-day summary updates automatically · Hot lead → Assign button activates → rep notified in-app + email
         </div>
+        <div id="dmsHotLeadSLA" style="margin-top:8px;font-size:11px;text-align:center;min-height:18px"></div>
       </div>`;
     return;
   }
@@ -30671,15 +30676,29 @@ function catRender() {
 let _visitAccountId = null;
 
 function openVisitOverlay(accountId) {
-  _visitAccountId = accountId || null;
+  // If ID is from leads/contacts pool, try to find matching account by name
+  const accounts = crmLoad('accounts').filter(a => a.status !== 'dead');
+  let resolvedId = accountId;
+  if (accountId && !accounts.find(a => a.id === accountId)) {
+    // Not an account ID — look it up from leads/contacts to get business name, then match account
+    const allRecs = [...crmLoad('leads'), ...crmLoad('contacts')];
+    const srcRec = allRecs.find(r => r.id === accountId);
+    if (srcRec) {
+      const bizName = (srcRec.business || srcRec.name || '').toLowerCase();
+      const matched = accounts.find(a => (a.name||'').toLowerCase() === bizName || (a.business||'').toLowerCase() === bizName);
+      resolvedId = matched ? matched.id : null;
+    } else {
+      resolvedId = null;
+    }
+  }
+  _visitAccountId = resolvedId || null;
   // Populate account selector
   const sel = document.getElementById('visitAccountSel');
   if (sel) {
-    const accounts = crmLoad('accounts').filter(a => a.status !== 'dead');
     accounts.sort((a,b) => (a.name||'').localeCompare(b.name||''));
     sel.innerHTML = '<option value="">— Select Account —</option>' +
-      accounts.map(a => `<option value="${a.id}" ${a.id === accountId ? 'selected' : ''}>${escH(a.name||a.business||'')}</option>`).join('');
-    if (accountId) visitLoadAccount(accountId);
+      accounts.map(a => `<option value="${a.id}" ${a.id === resolvedId ? 'selected' : ''}>${escH(a.name||a.business||'')}</option>`).join('');
+    if (resolvedId) visitLoadAccount(resolvedId);
   }
   // Pre-fill rep
   const repEl = document.getElementById('visitRep');
