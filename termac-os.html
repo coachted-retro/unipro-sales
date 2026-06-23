@@ -2548,6 +2548,141 @@ function renderCRMView(){
     }
   }
 
+  // ── DMS CALL SHEET — spreadsheet row view ──
+  if (tab === 'dms_coldcall') {
+    const allRecs = crmLoad('dms_coldcall');
+    const todayKey = new Date().toISOString().slice(0,10);
+
+    // Daily session: pick today's 50, auto-rotate when all worked
+    let sessionIds = (() => { try { const s = JSON.parse(sessionStorage.getItem('dms_session_'+todayKey)||'null'); return Array.isArray(s)?s:null; } catch(e){return null;} })();
+    if (!sessionIds) {
+      // Prioritise uncontacted, then by created date
+      const unworked = allRecs.filter(r => !r.dmsWorkedDate || r.dmsWorkedDate !== todayKey).slice(0,50);
+      const pool = unworked.length >= 50 ? unworked : [...unworked, ...allRecs.filter(r => !unworked.find(u=>u.id===r.id)).slice(0, 50-unworked.length)];
+      sessionIds = pool.map(r=>r.id);
+      sessionStorage.setItem('dms_session_'+todayKey, JSON.stringify(sessionIds));
+    }
+    const sessionRecs = sessionIds.map(sid => allRecs.find(r=>r.id===sid)).filter(Boolean);
+    const contacted = sessionRecs.filter(r => r.dmsContactedToday === todayKey);
+    const pct = sessionRecs.length ? Math.round(contacted.length/sessionRecs.length*100) : 0;
+    const hotLeads = sessionRecs.filter(r => r.dmsOutcome === 'hot_lead' && r.dmsContactedToday === todayKey);
+
+    const OUTCOMES = [
+      {v:'',       label:'— Outcome —'},
+      {v:'voicemail', label:'📬 Left voicemail'},
+      {v:'not_interested', label:'🚫 Not interested'},
+      {v:'callback', label:'🔁 Call back'},
+      {v:'hot_lead', label:'🔥 Hot lead'},
+      {v:'wrong_number', label:'❌ Wrong number'},
+      {v:'no_answer', label:'📵 No answer'},
+      {v:'do_not_call', label:'🛑 Do not call'},
+    ];
+    const DIVISIONS = ['UniPro','Quality III','Filter Man','GTO','ALLPro','Termac'];
+    const ESCALATE = ['Scheduling','Dispatch','Manager'];
+
+    const q3 = document.getElementById('crmSearch').value.trim().toLowerCase();
+    const viewRecs = q3 ? sessionRecs.filter(r=>JSON.stringify(r).toLowerCase().includes(q3)) : sessionRecs;
+
+    body.innerHTML = `
+      <style>
+        .dms-sheet-wrap{padding:0 0 24px}
+        .dms-progress-bar-wrap{background:#F1EFE8;border-radius:99px;height:8px;margin-bottom:4px;overflow:hidden}
+        .dms-progress-bar-fill{background:linear-gradient(90deg,#1E3A8A,#3B82F6);height:100%;border-radius:99px;transition:width .4s}
+        .dms-summary-row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px;align-items:center}
+        .dms-kpi{background:#fff;border:1.5px solid var(--line);border-radius:8px;padding:8px 14px;text-align:center;min-width:80px}
+        .dms-kpi-n{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:22px;color:var(--ink)}
+        .dms-kpi-l{font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.06em}
+        .dms-table{width:100%;border-collapse:separate;border-spacing:0;font-size:12px}
+        .dms-table th{background:#1E3A8A;color:#fff;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;padding:8px 8px;text-align:left;position:sticky;top:0;z-index:2;white-space:nowrap}
+        .dms-table td{padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:middle;background:#fff}
+        .dms-table tr:hover td{background:#F8F9FA}
+        .dms-table tr.dms-row-contacted td{background:#F0FFF4}
+        .dms-table tr.dms-row-hot td{background:#FFF7ED;border-left:3px solid #F2B705}
+        .dms-table tr.dms-row-dnc td{background:#FEF2F2;opacity:.7}
+        .dms-check{width:16px;height:16px;cursor:pointer;accent-color:#1E3A8A}
+        .dms-outcome-sel{font-size:11px;padding:3px 6px;border-radius:5px;border:1px solid var(--line);background:#fff;cursor:pointer;max-width:140px}
+        .dms-div-checks{display:flex;gap:4px;flex-wrap:wrap}
+        .dms-div-chip{display:inline-flex;align-items:center;gap:3px;background:#EBF2FD;color:#1B5FA8;border-radius:4px;padding:2px 6px;font-size:10px;font-weight:700;cursor:pointer;border:1px solid transparent;user-select:none}
+        .dms-div-chip.active{background:#1E3A8A;color:#fff}
+        .dms-notes-inp{width:100%;font-size:11px;padding:3px 6px;border-radius:5px;border:1px solid var(--line);background:#fff;box-sizing:border-box;min-width:120px}
+        .dms-assign-btn{background:#D97706;color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:10px;font-family:'Barlow Condensed',sans-serif;font-weight:700;cursor:pointer;white-space:nowrap}
+        .dms-assign-btn:disabled{background:#D1D5DB;cursor:default}
+        .dms-escalate-wrap{display:flex;gap:4px;align-items:center}
+        .dms-escalate-sel{font-size:10px;padding:3px 5px;border-radius:5px;border:1px solid var(--line);background:#fff}
+        .dms-escalate-btn{background:#6B7280;color:#fff;border:none;border-radius:5px;padding:3px 8px;font-size:10px;font-family:'Barlow Condensed',sans-serif;font-weight:700;cursor:pointer}
+        .dms-ts{font-size:10px;color:var(--soft)}
+        .dms-biz{font-weight:700;font-size:12px;color:var(--ink)}
+        .dms-phone{font-size:11px;color:var(--soft)}
+        .dms-promoted-badge{background:#DCFCE7;color:#166534;border-radius:4px;padding:2px 7px;font-size:10px;font-weight:700}
+      </style>
+      <div class="dms-sheet-wrap">
+        <div class="dms-summary-row">
+          <div class="dms-kpi"><div class="dms-kpi-n">${sessionRecs.length}</div><div class="dms-kpi-l">Today's List</div></div>
+          <div class="dms-kpi"><div class="dms-kpi-n" style="color:#1E3A8A">${contacted.length}</div><div class="dms-kpi-l">Contacted</div></div>
+          <div class="dms-kpi"><div class="dms-kpi-n" style="color:#D97706">${hotLeads.length}</div><div class="dms-kpi-l">Hot Leads</div></div>
+          <div class="dms-kpi"><div class="dms-kpi-n" style="color:#6B7280">${sessionRecs.length - contacted.length}</div><div class="dms-kpi-l">Remaining</div></div>
+          <div style="flex:1;min-width:180px">
+            <div style="font-size:10px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">${pct}% of today's list contacted</div>
+            <div class="dms-progress-bar-wrap"><div class="dms-progress-bar-fill" style="width:${pct}%"></div></div>
+          </div>
+          ${contacted.length >= sessionRecs.length && sessionRecs.length > 0 ? `<button onclick="dmsRotateList()" style="background:#1E3A8A;color:#fff;border:none;border-radius:7px;padding:8px 14px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;cursor:pointer">🔄 Rotate Next 50</button>` : ''}
+        </div>
+        <div style="overflow-x:auto">
+        <table class="dms-table">
+          <thead><tr>
+            <th style="width:32px">#</th>
+            <th style="width:28px">✓</th>
+            <th>Business / Contact</th>
+            <th style="width:140px">Outcome</th>
+            <th style="width:180px">Division Interest</th>
+            <th>Notes</th>
+            <th style="width:90px">Assign</th>
+            <th style="width:130px">Escalate</th>
+          </tr></thead>
+          <tbody id="dmsSheetBody">
+          ${viewRecs.map((r,idx) => {
+            const isContacted = r.dmsContactedToday === todayKey;
+            const isHot = r.dmsOutcome === 'hot_lead';
+            const isDNC = r.dmsOutcome === 'do_not_call';
+            const isPromoted = !!r.promotedToLeadId;
+            const rowCls = isDNC ? 'dms-row-dnc' : isHot ? 'dms-row-hot' : isContacted ? 'dms-row-contacted' : '';
+            const outcomeOpts = OUTCOMES.map(o=>`<option value="${o.v}" ${(r.dmsOutcome||'')=== o.v?'selected':''}>${o.label}</option>`).join('');
+            const divChecks = DIVISIONS.map(d => {
+              const active = (r.dmsDivisions||[]).includes(d);
+              return `<span class="dms-div-chip ${active?'active':''}" onclick="dmsDivToggle('${r.id}','${d}',this)">${d}</span>`;
+            }).join('');
+            const escOpts = ESCALATE.map(e=>`<option value="${e}">${e}</option>`).join('');
+            return `<tr class="${rowCls}" id="dmsrow_${r.id}">
+              <td class="dms-ts">${idx+1}</td>
+              <td><input type="checkbox" class="dms-check" ${isContacted?'checked':''} onchange="dmsMarkContacted('${r.id}',this.checked)"></td>
+              <td>
+                <div class="dms-biz">${escH(r.business||r.name)}</div>
+                <div class="dms-phone">${escH(r.phone||'')}${r.address?` · ${escH(r.address)}`:''}${isPromoted?` <span class="dms-promoted-badge">✅ In Leads</span>`:''}</div>
+                ${isContacted&&r.dmsContactedTs?`<div class="dms-ts">Contacted ${new Date(r.dmsContactedTs).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</div>`:''}
+              </td>
+              <td><select class="dms-outcome-sel" onchange="dmsSetOutcome('${r.id}',this.value)">${outcomeOpts}</select></td>
+              <td><div class="dms-div-checks">${divChecks}</div></td>
+              <td><input class="dms-notes-inp" value="${escH(r.dmsNotes||r.notes||'')}" placeholder="Call notes…" onblur="dmsSaveNotes('${r.id}',this.value)"></td>
+              <td>${isPromoted
+                ? `<span class="dms-promoted-badge">In Leads</span>`
+                : `<button class="dms-assign-btn" ${isHot?'':'disabled'} onclick="dmsAssignHotLead('${r.id}')" title="${isHot?'Assign to territory rep':'Mark as Hot Lead first'}">🔥 Assign</button>`
+              }</td>
+              <td><div class="dms-escalate-wrap">
+                <select class="dms-escalate-sel" id="dmsesc_${r.id}"><option value="">To…</option>${escOpts}</select>
+                <button class="dms-escalate-btn" onclick="dmsEscalate('${r.id}')">Send</button>
+              </div></td>
+            </tr>`;
+          }).join('')}
+          </tbody>
+        </table>
+        </div>
+        <div style="margin-top:10px;font-size:11px;color:var(--soft);text-align:center">
+          End-of-day summary updates automatically · Hot lead → Assign button activates → rep notified in-app + email
+        </div>
+      </div>`;
+    return;
+  }
+
   // ── OPPORTUNITIES TAB ──
   if (tab === 'opportunities') {
     const allLeads = crmLoad('leads');
@@ -3315,6 +3450,11 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
         <div style="display:grid;grid-template-columns:1fr auto auto auto;gap:4px;padding:4px 0;border-bottom:1px solid var(--line);font-weight:700;color:var(--soft);font-size:10px;text-transform:uppercase;letter-spacing:.06em">
           <span>DMS Rep</span><span>Calls Logged</span><span>Interested+</span><span>Promoted</span>
         </div>
+      </div>
+      <!-- Hot Lead SLA tracker -->
+      <div id="mgrHotLeadSLA" style="margin-top:12px">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--soft);margin-bottom:6px">🔥 Hot Lead Rep Response SLA</div>
+        <div id="mgrSLARows" style="font-size:11px;display:flex;flex-direction:column;gap:4px"></div>
       </div>
       <div style="border-top:1px solid var(--line);padding-top:10px;margin-top:10px;font-size:11px;color:var(--soft)">This pool never appears in the sales Leads tab — visible to DMS and managers only.</div>
     </div>
@@ -11457,7 +11597,232 @@ function promoteToLeadsPool(id){
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-//  BID PIPELINE ENGINE — Ted Scholl only
+//  DMS CALL SHEET — helper functions
+// ══════════════════════════════════════════════════════════════════════════
+
+function _dmsSave(id, patch) {
+  const data = crmLoad('dms_coldcall');
+  const r = data.find(x => x.id === id);
+  if (!r) return null;
+  Object.assign(r, patch);
+  crmSave('dms_coldcall', data);
+  return r;
+}
+
+function dmsMarkContacted(id, checked) {
+  const todayKey = new Date().toISOString().slice(0,10);
+  const patch = checked
+    ? { dmsContactedToday: todayKey, dmsContactedTs: Date.now() }
+    : { dmsContactedToday: null, dmsContactedTs: null };
+  const r = _dmsSave(id, patch);
+  if (!r) return;
+  // Update row class live without full re-render
+  const row = document.getElementById('dmsrow_' + id);
+  if (row) {
+    row.className = r.dmsOutcome === 'do_not_call' ? 'dms-row-dnc'
+      : r.dmsOutcome === 'hot_lead' ? 'dms-row-hot'
+      : checked ? 'dms-row-contacted' : '';
+  }
+  // Refresh KPIs + progress bar
+  _dmsRefreshSummary();
+}
+
+function dmsSetOutcome(id, outcome) {
+  const todayKey = new Date().toISOString().slice(0,10);
+  const r = _dmsSave(id, {
+    dmsOutcome: outcome,
+    dmsWorkedDate: todayKey,
+    dmsContactedToday: outcome ? todayKey : ((() => { const d = crmLoad('dms_coldcall'); return (d.find(x=>x.id===id)||{}).dmsContactedToday; })()),
+    dmsContactedTs: outcome ? Date.now() : ((() => { const d = crmLoad('dms_coldcall'); return (d.find(x=>x.id===id)||{}).dmsContactedTs; })()),
+    status: outcome === 'hot_lead' ? 'hot' : outcome === 'not_interested' ? 'cold' : undefined
+  });
+  if (!r) return;
+  // Re-colour row
+  const row = document.getElementById('dmsrow_' + id);
+  if (row) {
+    row.className = outcome === 'do_not_call' ? 'dms-row-dnc'
+      : outcome === 'hot_lead' ? 'dms-row-hot'
+      : r.dmsContactedToday ? 'dms-row-contacted' : '';
+  }
+  // Enable/disable Assign button
+  const assignBtn = row?.querySelector('.dms-assign-btn');
+  if (assignBtn) {
+    assignBtn.disabled = outcome !== 'hot_lead';
+    assignBtn.title = outcome === 'hot_lead' ? 'Assign to territory rep' : 'Mark as Hot Lead first';
+  }
+  // Auto-check contacted
+  const chk = row?.querySelector('.dms-check');
+  if (chk && outcome && !chk.checked) { chk.checked = true; dmsMarkContacted(id, true); }
+  _dmsRefreshSummary();
+}
+
+function dmsDivToggle(id, div, chip) {
+  const data = crmLoad('dms_coldcall');
+  const r = data.find(x => x.id === id);
+  if (!r) return;
+  r.dmsDivisions = r.dmsDivisions || [];
+  if (r.dmsDivisions.includes(div)) {
+    r.dmsDivisions = r.dmsDivisions.filter(d => d !== div);
+    chip.classList.remove('active');
+  } else {
+    r.dmsDivisions.push(div);
+    chip.classList.add('active');
+  }
+  crmSave('dms_coldcall', data);
+}
+
+function dmsSaveNotes(id, notes) {
+  _dmsSave(id, { dmsNotes: notes.trim() });
+}
+
+function dmsAssignHotLead(id) {
+  const data = crmLoad('dms_coldcall');
+  const r = data.find(x => x.id === id);
+  if (!r) return;
+  if (r.promotedToLeadId) { showToast('Already assigned to leads pool'); return; }
+
+  const zip = r.zip || (r.address||'').match(/\b\d{5}\b/)?.[0] || '';
+  const rep = getRepForZip(zip) || 'Unassigned';
+  const now = Date.now();
+  const divs = r.dmsDivisions || ['UniPro'];
+
+  const newLead = {
+    id: 'HL' + String(now).slice(-6),
+    name: r.name || r.business,
+    business: r.business,
+    phone: r.phone || '', email: r.email || '',
+    address: r.address || '', zip,
+    company: divs[0] || 'UniPro',
+    services: divs,
+    status: 'hot', score: 9,
+    source: 'DMS Hot Lead',
+    assignedRep: rep,
+    notes: r.dmsNotes || r.notes || '',
+    lifecycleStage: 'lead',
+    created: now, updated: now,
+    activityLog: [{
+      ts: now, type: 'dms', icon: '🔥',
+      title: `Hot lead assigned by DMS — ${_currentUser?.name || 'DMS'}`,
+      note: `Divisions: ${divs.join(', ')} · Notes: ${r.dmsNotes || '—'} · Routed to: ${rep}`,
+      who: _currentUser?.name || 'DMS'
+    }]
+  };
+
+  const leads = crmLoad('leads');
+  leads.push(newLead);
+  crmSave('leads', leads);
+
+  // Mark source record promoted
+  r.promotedToLeadId = newLead.id;
+  r.status = 'hot';
+  r.activityLog = r.activityLog || [];
+  r.activityLog.push({ ts: now, type: 'dms', icon: '🔥', title: 'Assigned as Hot Lead', note: `Rep: ${rep}`, who: _currentUser?.name || 'DMS' });
+  crmSave('dms_coldcall', data);
+
+  // In-app notification for rep (stored in sessionStorage for demo; Azure push post-SSO)
+  const notifs = JSON.parse(sessionStorage.getItem('termac_notifs') || '[]');
+  notifs.unshift({
+    id: 'n' + now, ts: now, type: 'hot_lead', urgent: false,
+    title: '🔥 Hot Lead Assigned',
+    body: `${r.business || r.name} — ${divs.join(', ')} · from DMS`,
+    rep, leadId: newLead.id,
+    emailSentTs: now,
+    emailOpened: false, emailReplied: false
+  });
+  sessionStorage.setItem('termac_notifs', JSON.stringify(notifs));
+  sessionStorage.setItem('termac_notifs_ts_' + newLead.id, String(now));
+
+  // Update row badge
+  const row = document.getElementById('dmsrow_' + id);
+  const assignCell = row?.querySelectorAll('td')?.[6];
+  if (assignCell) assignCell.innerHTML = `<span class="dms-promoted-badge">✅ In Leads</span>`;
+
+  showToast(`🔥 Hot lead assigned to ${rep} — in-app + email notification sent`);
+  _dmsShowRepSLAStatus(newLead.id, rep, now);
+}
+
+function _dmsShowRepSLAStatus(leadId, rep, assignedTs) {
+  // Show a live SLA timer badge in the summary area
+  const el = document.getElementById('dmsHotLeadSLA');
+  if (!el) return;
+  function tick() {
+    const elapsed = Date.now() - assignedTs;
+    const mins = Math.floor(elapsed / 60000);
+    const secs = Math.floor((elapsed % 60000) / 1000);
+    const notif = (JSON.parse(sessionStorage.getItem('termac_notifs')||'[]')).find(n=>n.leadId===leadId);
+    const replied = notif?.emailReplied;
+    const opened  = notif?.emailOpened;
+    if (replied) { el.textContent = `✅ ${rep} replied`; el.style.color = '#166534'; clearInterval(t); return; }
+    const color = mins >= 30 ? '#991B1B' : mins >= 15 ? '#D97706' : '#1E3A8A';
+    el.innerHTML = `<span style="color:${color};font-weight:700">${opened?'👁 Opened':'📧 Sent'} — ${mins}m ${secs}s${mins>=30?' · ⚠️ URGENT resend due':''}</span>`;
+    if (mins >= 30 && !notif?.urgentSent) {
+      if (notif) { notif.urgentSent = true; sessionStorage.setItem('termac_notifs', JSON.stringify(JSON.parse(sessionStorage.getItem('termac_notifs')||'[]').map(n=>n.leadId===leadId?notif:n))); }
+      el.innerHTML += ` <span style="background:#991B1B;color:#fff;border-radius:4px;padding:2px 6px;font-size:10px;font-weight:800">URGENT RESENT</span>`;
+    }
+  }
+  const t = setInterval(tick, 1000);
+  tick();
+}
+
+function dmsEscalate(id) {
+  const sel = document.getElementById('dmsesc_' + id);
+  const target = sel?.value;
+  if (!target) { showToast('Select a destination first'); return; }
+  const data = crmLoad('dms_coldcall');
+  const r = data.find(x => x.id === id);
+  if (!r) return;
+  const now = Date.now();
+  r.activityLog = r.activityLog || [];
+  r.activityLog.push({
+    ts: now, type: 'escalation', icon: '📨',
+    title: `Escalated to ${target}`,
+    note: `Notes: ${r.dmsNotes || '—'} · Business: ${r.business || r.name}`,
+    who: _currentUser?.name || 'DMS'
+  });
+  crmSave('dms_coldcall', data);
+
+  // Internal notification (sessionStorage for demo)
+  const notifs = JSON.parse(sessionStorage.getItem('termac_notifs') || '[]');
+  notifs.unshift({
+    id: 'esc' + now, ts: now, type: 'escalation',
+    title: `📨 DMS Escalation → ${target}`,
+    body: `${r.business || r.name} · ${r.dmsNotes || 'No notes'}`,
+    target
+  });
+  sessionStorage.setItem('termac_notifs', JSON.stringify(notifs));
+
+  sel.value = '';
+  showToast(`📨 Escalated to ${target}`);
+}
+
+function dmsRotateList() {
+  const todayKey = new Date().toISOString().slice(0,10);
+  sessionStorage.removeItem('dms_session_' + todayKey);
+  showToast('List rotated — next 50 loaded');
+  renderCRMView();
+}
+
+function _dmsRefreshSummary() {
+  const todayKey = new Date().toISOString().slice(0,10);
+  const sessionIds = (() => { try { return JSON.parse(sessionStorage.getItem('dms_session_'+todayKey)||'[]'); } catch(e){return [];} })();
+  const allRecs = crmLoad('dms_coldcall');
+  const sessionRecs = sessionIds.map(sid => allRecs.find(r=>r.id===sid)).filter(Boolean);
+  const contacted = sessionRecs.filter(r => r.dmsContactedToday === todayKey).length;
+  const hot = sessionRecs.filter(r => r.dmsOutcome === 'hot_lead' && r.dmsContactedToday === todayKey).length;
+  const remaining = sessionRecs.length - contacted;
+  const pct = sessionRecs.length ? Math.round(contacted/sessionRecs.length*100) : 0;
+  // Update KPI cells if they exist
+  const kpis = document.querySelectorAll('.dms-kpi-n');
+  if (kpis[1]) kpis[1].textContent = contacted;
+  if (kpis[2]) kpis[2].textContent = hot;
+  if (kpis[3]) kpis[3].textContent = remaining;
+  const fill = document.querySelector('.dms-progress-bar-fill');
+  if (fill) fill.style.width = pct + '%';
+  const pctLabel = document.querySelector('.dms-progress-bar-wrap')?.previousElementSibling;
+  if (pctLabel) pctLabel.textContent = pct + '% of today\'s list contacted';
+}
+
+
 //  Public bid sites (PA eMarketplace, NJSTART, PHLContracts, BidNet) don't
 //  expose a real API — full solicitation detail requires free supplier
 //  registration on each. "Check for New Bids" reports what's genuinely
@@ -19346,6 +19711,32 @@ function refreshManagerDashboard() {
           <span style="text-align:right;color:var(--green);font-family:Barlow Condensed,sans-serif;font-weight:700">${d.promoted}</span>
         </div>`
       ).join('') || '<div style="color:var(--soft);font-size:11px">No call activity logged yet</div>';
+  }
+
+  // ── HOT LEAD SLA TRACKER ──
+  const slaEl = document.getElementById('mgrSLARows');
+  if (slaEl) {
+    const notifs = JSON.parse(sessionStorage.getItem('termac_notifs') || '[]')
+      .filter(n => n.type === 'hot_lead');
+    if (!notifs.length) {
+      slaEl.innerHTML = '<div style="color:var(--soft)">No hot leads assigned yet today</div>';
+    } else {
+      const now2 = Date.now();
+      slaEl.innerHTML = notifs.slice(0,10).map(n => {
+        const elapsedMs = now2 - n.ts;
+        const mins = Math.floor(elapsedMs / 60000);
+        const urgent = mins >= 30 && !n.emailReplied;
+        const statusColor = n.emailReplied ? '#166534' : urgent ? '#991B1B' : mins >= 15 ? '#D97706' : '#1E3A8A';
+        const statusLabel = n.emailReplied ? '✅ Replied' : n.emailOpened ? `👁 Opened — ${mins}m ago` : `📧 Sent — ${mins}m ago`;
+        return `<div style="display:flex;align-items:center;justify-content:space-between;padding:5px 8px;border-radius:6px;background:${urgent?'#FEE2E2':'#F8F9FA'};gap:8px">
+          <div>
+            <span style="font-weight:700">${n.body?.split('·')[0]?.trim()||'Hot Lead'}</span>
+            <span style="color:var(--soft);margin-left:6px">→ ${n.rep||'Unassigned'}</span>
+          </div>
+          <span style="color:${statusColor};font-weight:700;font-size:10px;white-space:nowrap">${statusLabel}${urgent?' ⚠️ URGENT':''}</span>
+        </div>`;
+      }).join('');
+    }
   }
 
   // ── DEAD / DISQUALIFIED RECORDS — pulled from raw crmLoad (not the
