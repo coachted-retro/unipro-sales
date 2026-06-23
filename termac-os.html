@@ -2535,7 +2535,7 @@ function renderCard(tab,r){
              <button class="crm-action-btn convert" onclick="convertRecord('${r.id}','contacts','accounts')">→ Account</button>
              <button class="crm-action-btn dead" onclick="openDeadModal('${r.id}','contacts')">💀 Dead</button>`;
   } else if(tab==='accounts'){
-    actions=`<button class="crm-action-btn" onclick="openSiteSurvey('${r.id}')">📋 Survey</button>
+    actions=`${r.estimateBuilt && !r.estimateAccepted ? `<button class="crm-action-btn" style="background:#6B21A8;color:#fff;border-color:#6B21A8" onclick="openLastEstimate('${r.id}')">📄 Estimate</button>` : ''}<button class="crm-action-btn" onclick="openSiteSurvey('${r.id}')">📋 Survey</button>
              <button class="crm-action-btn" onclick="openLogModal('${r.id}','accounts')">📞 Log</button>
              <button class="crm-action-btn" onclick="openApptModal('${r.id}','accounts')">📅 Appt</button>
              <button class="crm-action-btn" onclick="openFollowupModal('${r.id}','accounts')">🔔 Follow-Up</button>
@@ -7122,12 +7122,23 @@ function svSaveProgress() {
     const data = crmLoad('accounts');
     const r = data.find(x => x.id === svState.accountId);
     if (r) {
+      // Strip photos from progress snapshot too
+      const _sdProgress = {};
+      Object.keys(svState.surveyData||{}).forEach(svc => {
+        const d = svState.surveyData[svc];
+        if (!d) return;
+        const dc = Object.assign({}, d);
+        if (dc.photos) dc.photos = Object.fromEntries(Object.entries(dc.photos).filter(([,v]) => typeof v === 'string' && v.startsWith('http')));
+        delete dc.areaPhotoData;
+        delete dc.clientSignatureData;
+        _sdProgress[svc] = dc;
+      });
       r._surveyInProgress = {
         currentStep: svState.currentStep,
         visitType: svState.visitType,
         selectedServices: svState.selectedServices,
         surveyOrder: svState.surveyOrder,
-        surveyData: svState.surveyData,
+        surveyData: _sdProgress,
         savedAt: Date.now()
       };
       crmSave('accounts', data);
@@ -12429,7 +12440,27 @@ function svSaveSurveyData(svc){
   // Persist to account record
   const data = crmLoad('accounts');
   const r = data.find(x=>x.id===svState.accountId);
-  if(r){ r.surveyData = svState.surveyData; r.photos = buildAccountPhotosArray(svState.surveyData); crmSave('accounts',data); }
+  if(r){
+      // Strip base64 photo data before saving to localStorage (prevents quota overflow).
+      // Only permanent R2 URLs (http...) are kept; raw data URIs are transient and not needed in the record.
+      const sdClean = {};
+      Object.keys(svState.surveyData).forEach(svc => {
+        const d = svState.surveyData[svc];
+        if (!d) return;
+        const dc = Object.assign({}, d);
+        if (dc.photos) {
+          dc.photos = Object.fromEntries(
+            Object.entries(dc.photos).filter(([,v]) => typeof v === 'string' && v.startsWith('http'))
+          );
+        }
+        // Also strip top-level base64 fields (areaPhotoData, clientSignatureData)
+        delete dc.areaPhotoData;
+        sdClean[svc] = dc;
+      });
+      r.surveyData = sdClean;
+      r.photos = buildAccountPhotosArray(sdClean);
+      crmSave('accounts',data);
+    }
 }
 
 // Intercept svGoNext to save survey data first
@@ -14272,6 +14303,32 @@ function svOpenEstimate(){
   document.getElementById('estNotInterestedPanel').style.display = 'none';
 
   document.getElementById('estOverlay').classList.add('open');
+
+  // Mark estimate as built on account so card shows "Open Estimate" button
+  if (estState.accountId) {
+    try {
+      const _d = crmLoad('accounts');
+      const _r = _d.find(x => x.id === estState.accountId);
+      if (_r) { _r.estimateBuilt = true; _r.estimateBuiltAt = Date.now(); crmSave('accounts', _d); }
+    } catch(e) {}
+  }
+}
+
+function openLastEstimate(accountId) {
+  // Re-open the estimate overlay for an account that has a built estimate.
+  // Pulls surveyData and selectedServices from the saved account record.
+  const data = crmLoad('accounts');
+  const r = data.find(x => x.id === accountId);
+  if (!r) { alert('Account not found.'); return; }
+  // Restore svState from account record
+  svState.accountId = accountId;
+  svState.bizName = r.name || r.business || 'Account';
+  svState.selectedServices = (r.services || []).map(s => s.toLowerCase().replace(/[^a-z0-9]/g,'')).filter(s => SVC_PANEL[s]);
+  svState.surveyData = r.surveyData || {};
+  // Also restore TM line items if present
+  const tmData = svState.surveyData['termac'];
+  if (tmData?.tm_supply_line_items) window._svTMLineItems = tmData.tm_supply_line_items;
+  svOpenEstimate();
 }
 
 function estClose(){
@@ -15567,7 +15624,7 @@ window.svOpenEstimate = function(){
     </div>
     <div class="acct-hdr-btns">
       <button class="acct-nav-btn" onclick="acctOpenEdit()">✏️ Edit</button>
-      <button class="acct-nav-btn primary" onclick="acctLaunchSurvey()">📋 Site Survey</button>
+      <button id="acctOpenEstBtn" class="acct-nav-btn" style="display:none;background:#6B21A8;color:#fff;border-color:#6B21A8" onclick="openLastEstimate(currentAcctId)">📄 Open Estimate</button><button class="acct-nav-btn primary" onclick="acctLaunchSurvey()">📋 Site Survey</button>
       <button class="acct-nav-btn" onclick="acctOpenLog()">📞 Log Activity</button>
       <button class="acct-nav-btn" onclick="closeAcctDetail()">✕</button>
     </div>
@@ -15743,6 +15800,8 @@ function openAcctDetail(id, tab) {
 
   // Render header
   document.getElementById('acctHdrName').textContent = r.name || r.business || 'Account';
+  const _estBtn = document.getElementById('acctOpenEstBtn');
+  if (_estBtn) _estBtn.style.display = (r.estimateBuilt && !r.estimateAccepted) ? '' : 'none';
   const statusEl = document.getElementById('acctHdrStatus');
   const statusColors = {
     active:   { bg:'#D1FAE5', color:'#065F46' },
