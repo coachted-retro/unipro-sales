@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<script src="termac-intelligence.js"></script>
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Termac One · Tech Portal</title>
 
@@ -3123,6 +3124,66 @@ function woRenderComplete() {
   const jobObj = JOBS.find(j => j.id === woState.jobId);
   if (jobObj) jobObj.status = 'complete';
   if (typeof renderJobs === 'function') renderJobs();
+
+  // ── INTELLIGENCE ENGINE: Close the loops ──────────────────────────────
+  if (typeof TermacIntelligence !== 'undefined') {
+    const _tech = typeof getCurrentTech === 'function' ? getCurrentTech() : null;
+    const _zip = job.addr ? (job.addr.match(/\b\d{5}\b/) || [''])[0] : '';
+    const _rep = typeof getRepForZip === 'function' ? getRepForZip(_zip) : (job.assignedRep || 'Unassigned');
+    const _division = job.typeKey === 'grease' ? 'gto' : 'unipro';
+    const _nfpaCode = job.priority ? (job.priority.includes('NFPA 96') ? 'NFPA 96' : job.priority.includes('NFPA 10') || job.priority.includes('Extinguisher') ? 'NFPA 10' : job.priority.includes('NFPA 25') ? 'NFPA 25' : null) : null;
+    const _intervalMonths = _division === 'gto' ? 1 : (_nfpaCode === 'NFPA 96' ? 6 : 12);
+    const _revenue = woState.lines.reduce(function(s, l){ return s + ((l.qty||1)*(l.unitPrice||0)); }, 0);
+    const _deficiencies = [];
+    if (woState.notes && woState.notes.toLowerCase().includes('deficiency')) _deficiencies.push(woState.notes);
+
+    // Loop 1 — Job → Account feedback
+    TermacIntelligence.onJobComplete({
+      jobId: woState.jobId,
+      accountName: job.account,
+      address: job.addr,
+      zip: _zip,
+      division: _division,
+      serviceType: woState.type,
+      techName: _tech ? _tech.name : 'Tech',
+      techId: _tech ? _tech.id : null,
+      assignedRep: _rep,
+      result: woState.type === 'service' ? 'completed' : 'pass',
+      totalRevenue: _revenue,
+      deficiencies: _deficiencies,
+      partsUsed: (woState.lines || []).filter(function(l){ return l.sku; }).map(function(l){ return { sku: l.sku, name: l.label, qty: l.qty||1, unitCost: l.unitPrice||0 }; }),
+      completedAt: Date.now(),
+      nfpaCode: _nfpaCode,
+      nextIntervalMonths: _intervalMonths,
+      complianceFormSubmitted: !!woState.formsSubmitted
+    });
+
+    // Loop 2 — Cross-sell leads (supplement existing logic)
+    xsell.forEach(function(svcKey) {
+      TermacIntelligence.createCrossSellLead({
+        accountName: job.account,
+        address: job.addr,
+        zip: _zip,
+        currentDivision: _division,
+        targetDivision: svcKey,
+        observation: 'Flagged during ' + (woState.type || 'service') + ' visit',
+        techName: _tech ? _tech.name : 'Tech',
+        assignedRep: _rep,
+        urgency: 'hot'
+      });
+    });
+
+    // Loop 5 — Parts → COGS deduction
+    const _parts = (woState.lines || []).filter(function(l){ return l.sku; });
+    if (_parts.length > 0) {
+      TermacIntelligence.deductPartsFromInventory(
+        _parts.map(function(l){ return { sku: l.sku, name: l.label, qty: l.qty||1, unitCost: l.unitPrice||0 }; }),
+        woState.jobId,
+        job.account
+      );
+    }
+  }
+  // ── END INTELLIGENCE ENGINE ───────────────────────────────────────────
 
   // Complete message
   const msg = document.getElementById('woCompleteMsg');
