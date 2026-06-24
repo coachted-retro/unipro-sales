@@ -843,6 +843,60 @@ body.rail-open .rail-overlay{display:block}
     <button class="lrail-btn ghost" onclick="lrailTool('debrief')">📝 Job Debrief</button>
   </div>
 
+  <!-- FIELD LEAD CAPTURE -->
+  <div class="lrail-section">
+    <div class="lrail-hdr">🎯 Field Lead Capture</div>
+    <div class="lrail-card" style="background:#0F172A;border-color:#334155">
+      <!-- Mode selector -->
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:3px;margin-bottom:10px">
+        <button class="lrail-adv-cat active" id="leadMode-scan" onclick="leadSetMode('scan')">📷 Scan Tag</button>
+        <button class="lrail-adv-cat" id="leadMode-voice" onclick="leadSetMode('voice')">🎤 Voice</button>
+        <button class="lrail-adv-cat" id="leadMode-manual" onclick="leadSetMode('manual')">✏️ Manual</button>
+      </div>
+
+      <!-- SCAN TAG MODE -->
+      <div id="leadPanel-scan">
+        <div style="font-size:10px;color:#64748B;margin-bottom:6px">Point camera at inspection tag to extract company, service, and expiration date</div>
+        <button class="lrail-btn gold" onclick="leadScanTag()">📷 Open Camera</button>
+        <input type="file" id="leadTagFile" accept="image/*" capture="environment" style="display:none" onchange="leadTagPhotoSelected(this)">
+        <div id="leadTagPreview" style="margin-top:8px;display:none"></div>
+        <div id="leadTagResult" style="margin-top:8px;display:none"></div>
+      </div>
+
+      <!-- VOICE MODE -->
+      <div id="leadPanel-voice" style="display:none">
+        <div style="font-size:10px;color:#64748B;margin-bottom:6px">Tap mic and describe the lead — business name, location, what you saw, contact info</div>
+        <button class="lrail-btn" id="leadVoiceBtn" onclick="leadStartVoice()">🎤 Start Recording</button>
+        <div id="leadVoiceStatus" style="font-size:10px;color:#64748B;margin-top:6px;min-height:16px"></div>
+        <div id="leadVoiceTranscript" style="background:#1E293B;border-radius:6px;padding:8px;font-size:11px;color:#E2E8F0;margin-top:6px;min-height:40px;display:none"></div>
+        <button id="leadVoiceProcess" class="lrail-btn gold" style="display:none;margin-top:6px" onclick="leadProcessVoice()">⚡ Process Lead</button>
+      </div>
+
+      <!-- MANUAL MODE -->
+      <div id="leadPanel-manual" style="display:none">
+        <div style="font-size:10px;color:#64748B;margin-bottom:6px">Saw a competitor tag? Spotted a business that needs service?</div>
+        <input id="leadManBiz" style="width:100%;background:#1E293B;border:1px solid #334155;border-radius:5px;color:#F8FAFC;font-size:11px;padding:6px 8px;outline:none;margin-bottom:5px" placeholder="Business name…">
+        <input id="leadManAddr" style="width:100%;background:#1E293B;border:1px solid #334155;border-radius:5px;color:#F8FAFC;font-size:11px;padding:6px 8px;outline:none;margin-bottom:5px" placeholder="Address…">
+        <input id="leadManPhone" style="width:100%;background:#1E293B;border:1px solid #334155;border-radius:5px;color:#F8FAFC;font-size:11px;padding:6px 8px;outline:none;margin-bottom:5px" placeholder="Phone (optional)…">
+        <select id="leadManService" style="width:100%;background:#1E293B;border:1px solid #334155;border-radius:5px;color:#F8FAFC;font-size:11px;padding:6px 8px;outline:none;margin-bottom:5px">
+          <option value="">Service type…</option>
+          <option>Fire Inspection</option><option>Hood Suppression</option>
+          <option>Extinguisher Service</option><option>Grease Trap</option>
+          <option>Hood Filter Exchange</option><option>Fire Alarm</option>
+          <option>Sprinkler Inspection</option><option>Dish Machine</option>
+        </select>
+        <select id="leadManCompetitor" style="width:100%;background:#1E293B;border:1px solid #334155;border-radius:5px;color:#F8FAFC;font-size:11px;padding:6px 8px;outline:none;margin-bottom:8px">
+          <option value="">Competitor on tag? (optional)</option>
+          <option>Cintas</option><option>Amerex</option><option>Koorsen</option>
+          <option>Johnson Controls</option><option>Tyco</option><option>Other</option>
+        </select>
+        <input id="leadManExpiry" type="date" style="width:100%;background:#1E293B;border:1px solid #334155;border-radius:5px;color:#F8FAFC;font-size:11px;padding:6px 8px;outline:none;margin-bottom:8px" title="Inspection expiry date from tag">
+        <button class="lrail-btn" onclick="leadSubmitManual()">⚡ Submit Lead to CRM</button>
+      </div>
+    </div>
+    <div id="leadConfirm" style="display:none"></div>
+  </div>
+
   <!-- PERFORMANCE PULSE -->
   <div class="lrail-section">
     <div class="lrail-hdr">📊 Performance Pulse</div>
@@ -5180,6 +5234,906 @@ window.addEventListener('load', () => {
   };
 })();
 </script>
+<div id="spCamModal" onclick="if(event.target===this)spCloseCamera()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:600;align-items:flex-start;justify-content:center;padding:16px;overflow-y:auto">
+  <div id="spCamBox" style="background:#1A1D21;border-radius:14px;width:min(560px,96vw);box-shadow:0 8px 40px rgba(0,0,0,.4);overflow:hidden">
+    <!-- Header -->
+    <div style="padding:14px 18px;display:flex;align-items:center;justify-content:space-between;border-bottom:2px solid #C8102E">
+      <div>
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:15px;letter-spacing:.12em;text-transform:uppercase;color:#F2B705">📷 AI Camera</div>
+        <div style="font-size:11px;color:#6B7280;margin-top:2px">Scan, read tags, or dictate field notes</div>
+      </div>
+      <button onclick="spCloseCamera()" style="background:none;border:none;color:#6B7280;font-size:20px;cursor:pointer;line-height:1">✕</button>
+    </div>
+    <!-- Mode tabs -->
+    <div id="spCamModeBar" style="display:flex;gap:4px;padding:10px 14px;background:#0F1114;border-bottom:1px solid #2A2E33"></div>
+
+    <!-- MODE: GENERAL -->
+    <div id="spCamZoneGeneral" style="padding:16px">
+      <div onclick="document.getElementById('spCamCapture').click()" style="border:2px dashed #3A3E43;border-radius:10px;padding:28px 20px;text-align:center;cursor:pointer;background:#0F1114;margin-bottom:12px;transition:border-color .12s" onmouseover="this.style.borderColor='#1B5FA8'" onmouseout="this.style.borderColor='#3A3E43'">
+        <div style="font-size:36px;margin-bottom:8px">📷</div>
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:15px;color:#1B5FA8;margin-bottom:4px">Tap to Take Photo</div>
+        <div style="font-size:12px;color:#6B7280">Equipment, site conditions, fire systems</div>
+      </div>
+      <input type="file" id="spCamCapture" accept="image/*" capture="environment" style="display:none" onchange="spCamAnalyze(this)">
+      <div style="text-align:center;margin-bottom:10px;color:#4B5563;font-size:11px">— or —</div>
+      <label style="display:flex;align-items:center;justify-content:center;gap:6px;padding:9px;background:#2A2E33;border:1.5px solid #3A3E43;border-radius:8px;cursor:pointer;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;color:#9CA3AF;letter-spacing:.04em;margin-bottom:14px">
+        🖼️ Upload from Photos
+        <input type="file" id="spCamUpload" accept="image/*" style="display:none" onchange="spCamAnalyze(this)">
+      </label>
+      <div id="spCamPreview" style="display:none;margin-bottom:12px;border-radius:8px;overflow:hidden"><img id="spCamPreviewImg" style="width:100%;max-height:220px;object-fit:contain;background:#000" alt=""></div>
+      <div id="spCamThinking" style="display:none;text-align:center;padding:14px;color:#F2B705;font-size:13px">🤖 Analyzing with AI…</div>
+      <div id="spCamResult" style="display:none;background:#fff;border-radius:8px;padding:14px">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12px;color:#166534;margin-bottom:8px" id="spCamResultTitle">AI Analysis</div>
+        <div id="spCamResultBody" style="font-size:12px;color:#1A1D21;line-height:1.6"></div>
+        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+          <button onclick="spCamCreateLead()" style="padding:8px 14px;background:#C8102E;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">📋 Create Lead</button>
+          <button onclick="spCamClear()" style="padding:8px 14px;background:#fff;border:1.5px solid #D7DBE0;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;color:#6B7280;cursor:pointer">Clear</button>
+        </div>
+      </div>
+      <!-- Use cases hint -->
+      <div style="margin-top:14px;border-top:1px solid #2A2E33;padding-top:12px">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:#4B5563;margin-bottom:8px">What This Scans</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+          ${['🔴 Fire suppression — deficiencies','🟡 Expiry tags — service dates','🟠 Hood filters — grease buildup','🔵 Dish machines — model & needs','🟢 Grease traps — condition','⚡ Cross-sell — Termac services'].map(t=>`<div style="background:#0F1114;border-radius:5px;padding:6px 8px;font-size:10px;color:#9CA3AF">${t}</div>`).join('')}
+        </div>
+      </div>
+    </div>
+
+    <!-- MODE: INSPECTION TAG -->
+    <div id="spCamZoneTag" style="display:none;padding:16px">
+      <div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:10px 12px;font-size:12px;color:#92400E;margin-bottom:14px">
+        🏷️ <strong>Scan a competitor's inspection tag</strong> — AI reads the company name, next due date, and automatically sets a 60-day-before follow-up reminder to steal the business.
+      </div>
+      <div onclick="document.getElementById('spCamTagCapture').click()" style="border:2px dashed #F59E0B;border-radius:10px;padding:22px 20px;text-align:center;cursor:pointer;background:#0F1114;margin-bottom:12px" onmouseover="this.style.borderColor='#F2B705'" onmouseout="this.style.borderColor='#F59E0B'">
+        <div style="font-size:32px;margin-bottom:6px">🏷️</div>
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:14px;color:#F2B705;margin-bottom:4px">Photograph the Tag</div>
+        <div style="font-size:11px;color:#6B7280">Point at any inspection sticker, service tag, or compliance label</div>
+      </div>
+      <input type="file" id="spCamTagCapture" accept="image/*" capture="environment" style="display:none" onchange="spCamAnalyzeTag(this)">
+      <div id="spCamTagPreview" style="display:none;margin-bottom:12px;border-radius:8px;overflow:hidden"><img id="spCamTagPreviewImg" style="width:100%;max-height:200px;object-fit:contain;background:#000" alt=""></div>
+      <div id="spCamTagThinking" style="display:none;text-align:center;padding:14px;color:#F2B705;font-size:13px">🤖 Reading tag with AI…</div>
+      <div id="spCamTagResult" style="background:#fff;border-radius:8px;padding:14px;display:none"></div>
+    </div>
+
+    <!-- MODE: TALK TO TEXT -->
+    <div id="spCamZoneVoice" style="display:none;padding:16px">
+      <div style="background:#DBEAFE;border:1px solid #93C5FD;border-radius:8px;padding:10px 12px;font-size:12px;color:#1E40AF;margin-bottom:14px">
+        🎙️ <strong>Dictate while you walk.</strong> Speak the address, business name, hours, what you see — AI parses it into contact fields automatically.
+      </div>
+      <div style="margin-bottom:12px">
+        <label style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#9CA3AF;display:block;margin-bottom:6px">Live Transcript</label>
+        <textarea id="spVoiceTranscript" rows="5" placeholder="Tap Start Recording, then speak. Transcript appears here in real time. Say something like: 'Wu Dim Sum Palace, 1234 Main Street, Philadelphia. They open at 11am. I can see their fire extinguisher tag is from ABC Fire. Next inspection is March 2027. Good grease trap candidate too.'" style="width:100%;padding:8px 10px;border:1.5px solid #3A3E43;border-radius:7px;font-size:12px;resize:vertical;font-family:inherit;outline:none;background:#0F1114;color:#D1D5DB;line-height:1.5"></textarea>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:14px">
+        <button id="spVoiceBtn" onclick="spStartVoice()" style="flex:1;padding:10px;background:#059669;color:#fff;border:none;border-radius:8px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">🎙️ Start Recording</button>
+        <button onclick="spVoiceParseAndFill()" style="flex:1;padding:10px;background:#1B5FA8;color:#fff;border:none;border-radius:8px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">⚡ Parse with AI</button>
+      </div>
+      <div id="spVoiceThinking" style="display:none;text-align:center;padding:12px;color:#F2B705;font-size:13px">🤖 Parsing voice note…</div>
+      <div id="spVoiceResult" style="display:none;background:#fff;border-radius:8px;padding:14px">
+        <div id="spVoiceResultBody"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+<script>
+/* ══ AI CAMERA — SALES PORTAL (Enhanced) ══
+   Modes:
+   1. General scan — equipment, site conditions, cross-sell
+   2. Inspection Tag — read competitor tag, extract company/date,
+      create contact + 60-day-before reminder
+   3. Talk-to-Text — Web Speech API, fills contact form fields live
+═══════════════════════════════════════════════════════════════ */
+
+var _spCamB64 = null;
+var _spCamMediaType = 'image/jpeg';
+var _spCamContext = '';
+var _spCamMode = 'general';       // 'general' | 'tag' | 'voice'
+var _spCamParsed = null;          // parsed tag data {competitor, nextDate, address, notes}
+var _spVoiceRecog = null;
+var _spVoiceActive = false;
+var _spVoiceAccum = '';
+
+/* ── OPEN / CLOSE ── */
+function spOpenCamera(mode) {
+  _spCamMode = mode || 'general';
+  _spCamB64 = null; _spCamContext = ''; _spCamParsed = null;
+  document.getElementById('spCamModal').style.display = 'flex';
+  spCamRenderMode();
+}
+function spCloseCamera() {
+  spStopVoice();
+  document.getElementById('spCamModal').style.display = 'none';
+}
+function spCamClear() {
+  _spCamB64 = null; _spCamContext = ''; _spCamParsed = null;
+  const ids = ['spCamPreview','spCamResult','spCamThinking','spCamTagResult','spCamVoiceResult'];
+  ids.forEach(id => { const el = document.getElementById(id); if(el) el.style.display = 'none'; });
+  const caps = ['spCamCapture','spCamTagCapture','spCamUpload'];
+  caps.forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
+}
+
+/* ── MODE TABS ── */
+function spCamRenderMode() {
+  const tabs = ['general','tag','voice'];
+  const labels = {'general':'📷 General Scan','tag':'🏷️ Inspection Tag','voice':'🎙️ Talk to Text'};
+  const bar = document.getElementById('spCamModeBar');
+  if (bar) bar.innerHTML = tabs.map(t =>
+    `<button onclick="spCamSetMode('${t}')" style="flex:1;padding:7px 4px;border:none;border-radius:6px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;transition:background .1s,color .1s;background:${_spCamMode===t?'#C8102E':'transparent'};color:${_spCamMode===t?'#fff':'#9CA3AF'}">${labels[t]}</button>`
+  ).join('');
+
+  ['spCamZoneGeneral','spCamZoneTag','spCamZoneVoice'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
+  const active = document.getElementById('spCamZone' + _spCamMode.charAt(0).toUpperCase() + _spCamMode.slice(1));
+  if (active) active.style.display = 'block';
+}
+
+function spCamSetMode(mode) {
+  spStopVoice();
+  spCamClear();
+  _spCamMode = mode;
+  spCamRenderMode();
+}
+
+/* ══════════════════════════════════════
+   MODE 1: GENERAL SCAN
+══════════════════════════════════════ */
+async function spCamAnalyze(input) {
+  const file = input.files[0];
+  if (!file) return;
+  _spCamMediaType = file.type || 'image/jpeg';
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    _spCamB64 = e.target.result.split(',')[1];
+    const prev = document.getElementById('spCamPreview');
+    const img = document.getElementById('spCamPreviewImg');
+    if (prev) prev.style.display = 'block';
+    if (img) img.src = e.target.result;
+
+    const resultEl = document.getElementById('spCamResult');
+    const thinkEl = document.getElementById('spCamThinking');
+    if (resultEl) resultEl.style.display = 'none';
+    if (thinkEl) thinkEl.style.display = 'block';
+
+    const prompt = `You are a Termac sales intelligence assistant. A field sales rep just took this photo.
+
+Analyze the image and provide a concise field report with these sections:
+**What I See** — equipment, brand, model, condition, visible labels or tags
+**Service Dates** — any inspection dates, expiry dates, or compliance stickers visible
+**Deficiencies** — anything out of spec, overdue, damaged, or non-compliant
+**Termac Opportunity** — which service division applies and what specifically to pitch:
+  · UniPro / Quality III: fire suppression, extinguishers, sprinklers, alarms
+  · Filter Man: hood filter exchange
+  · GTO: grease trap service
+  · AllPro: stainless fab
+  · Termac: dish machines, chemicals
+**Rep's Next Move** — one specific action to take right now at this location
+
+Be direct and brief. Use bold headers only.`;
+
+    try {
+      const res = await fetch('https://unipro-ai-proxy.tedscholl.workers.dev', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-6', max_tokens: 600,
+          messages: [{ role: 'user', content: [
+            { type: 'image', source: { type: 'base64', media_type: _spCamMediaType, data: _spCamB64 }},
+            { type: 'text', text: prompt }
+          ]}]
+        })
+      });
+      const data = await res.json();
+      const text = (data.content || []).map(c => c.text || '').join('') || 'No response.';
+      _spCamContext = text;
+      const body = document.getElementById('spCamResultBody');
+      if (body) body.innerHTML = text
+        .replace(/\n/g, '<br>')
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+      const title = document.getElementById('spCamResultTitle');
+      if (title) title.textContent = '🤖 AI Analysis';
+      if (resultEl) resultEl.style.display = 'block';
+    } catch(err) {
+      const body = document.getElementById('spCamResultBody');
+      if (body) body.innerHTML = '<span style="color:#C8102E">Could not reach AI — check connection.</span>';
+      if (resultEl) resultEl.style.display = 'block';
+    }
+    if (thinkEl) thinkEl.style.display = 'none';
+  };
+  reader.readAsDataURL(file);
+}
+
+function spCamCreateLead() {
+  if (typeof spOpenAdd === 'function') {
+    spCloseCamera();
+    spOpenAdd(_spTab || 'leads');
+    setTimeout(() => {
+      const notesEl = document.getElementById('spf_notes') || document.getElementById('spf_siteNotes');
+      if (notesEl && _spCamContext) {
+        notesEl.value = '[AI Camera] ' + _spCamContext.replace(/<[^>]+>/g, '').substring(0, 500);
+      }
+    }, 300);
+  }
+}
+
+/* ══════════════════════════════════════
+   MODE 2: INSPECTION TAG SCAN
+   Reads competitor tag → extracts company,
+   next inspection date → creates contact
+   with 60-day-before reminder
+══════════════════════════════════════ */
+async function spCamAnalyzeTag(input) {
+  const file = input.files[0];
+  if (!file) return;
+  _spCamMediaType = file.type || 'image/jpeg';
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    _spCamB64 = e.target.result.split(',')[1];
+    const prev = document.getElementById('spCamTagPreview');
+    const img = document.getElementById('spCamTagPreviewImg');
+    if (prev) prev.style.display = 'block';
+    if (img) img.src = e.target.result;
+
+    const tagResultEl = document.getElementById('spCamTagResult');
+    const thinkEl = document.getElementById('spCamTagThinking');
+    if (tagResultEl) tagResultEl.style.display = 'none';
+    if (thinkEl) thinkEl.style.display = 'block';
+
+    const prompt = `You are a Termac fire protection sales assistant reading an inspection or service tag from a photo.
+
+Extract the following information from the tag/sticker/label in the image. Respond ONLY with valid JSON, no markdown, no explanation:
+{
+  "competitor": "company name on the tag (string, or null if not visible)",
+  "serviceType": "type of service shown (e.g. Fire Extinguisher Inspection, Hood Suppression, Sprinkler ITM) or null",
+  "lastInspectionDate": "date as YYYY-MM-DD or null",
+  "nextInspectionDate": "next due date as YYYY-MM-DD or null",
+  "technicianName": "technician name if visible or null",
+  "tagNotes": "any other relevant info visible on the tag or null",
+  "confidence": "high | medium | low"
+}
+
+If you cannot read the tag clearly, still return the JSON with null values and confidence: "low".
+Do not include any text outside the JSON object.`;
+
+    try {
+      const res = await fetch('https://unipro-ai-proxy.tedscholl.workers.dev', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-6', max_tokens: 400,
+          messages: [{ role: 'user', content: [
+            { type: 'image', source: { type: 'base64', media_type: _spCamMediaType, data: _spCamB64 }},
+            { type: 'text', text: prompt }
+          ]}]
+        })
+      });
+      const data = await res.json();
+      const raw = (data.content || []).map(c => c.text || '').join('').trim();
+      let parsed;
+      try {
+        // Strip any accidental markdown fences
+        const clean = raw.replace(/```json|```/g, '').trim();
+        parsed = JSON.parse(clean);
+      } catch(e) {
+        parsed = { competitor: null, serviceType: null, lastInspectionDate: null, nextInspectionDate: null, technicianName: null, tagNotes: raw.substring(0,120), confidence: 'low' };
+      }
+      _spCamParsed = parsed;
+      spCamRenderTagResult(parsed);
+    } catch(err) {
+      const el = document.getElementById('spCamTagResultBody');
+      if (el) el.innerHTML = '<span style="color:#C8102E">Could not reach AI — check connection.</span>';
+      if (tagResultEl) tagResultEl.style.display = 'block';
+    }
+    if (thinkEl) thinkEl.style.display = 'none';
+  };
+  reader.readAsDataURL(file);
+}
+
+function spCamRenderTagResult(p) {
+  const el = document.getElementById('spCamTagResult');
+  if (!el) return;
+
+  // Calculate reminder date (60 days before next inspection)
+  let reminderDate = null;
+  let reminderStr = 'Not set';
+  let daysUntil = null;
+  if (p.nextInspectionDate) {
+    const next = new Date(p.nextInspectionDate + 'T00:00:00');
+    const rem = new Date(next.getTime() - 60 * 86400000);
+    reminderDate = rem.toISOString().slice(0,10);
+    daysUntil = Math.round((next - new Date()) / 86400000);
+    reminderStr = rem.toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'});
+  }
+
+  const confColor = p.confidence === 'high' ? '#059669' : p.confidence === 'medium' ? '#D97706' : '#C8102E';
+
+  el.style.display = 'block';
+  el.innerHTML = `
+    <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12px;letter-spacing:.10em;text-transform:uppercase;color:#065F46;margin-bottom:12px">
+      🏷️ Tag Scan Results
+      <span style="font-size:9px;color:${confColor};margin-left:8px">● ${(p.confidence||'').toUpperCase()} CONFIDENCE</span>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">
+      ${[
+        ['Competitor', p.competitor || '(not visible)', p.competitor ? '#FEE2E2' : '#F3F4F6', p.competitor ? '#991B1B' : '#374151'],
+        ['Service Type', p.serviceType || '—', '#F0FDF4','#065F46'],
+        ['Last Inspection', p.lastInspectionDate ? new Date(p.lastInspectionDate+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—', '#F8F9FA','#374151'],
+        ['Next Due', p.nextInspectionDate ? new Date(p.nextInspectionDate+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) + (daysUntil !== null ? ` (${daysUntil}d)` : '') : '—', daysUntil !== null && daysUntil < 90 ? '#FEF3C7' : '#F8F9FA', daysUntil !== null && daysUntil < 90 ? '#92400E' : '#374151'],
+      ].map(([l,v,bg,col]) => `<div style="background:${bg};border-radius:7px;padding:8px 10px"><div style="font-size:9px;color:${col};text-transform:uppercase;letter-spacing:.08em;font-family:'Barlow Condensed',sans-serif;font-weight:700;margin-bottom:2px">${l}</div><div style="font-size:13px;font-weight:700;color:${col}">${v}</div></div>`).join('')}
+    </div>
+    ${reminderDate ? `<div style="background:#DBEAFE;border:1px solid #93C5FD;border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:#1E40AF">
+      ⏰ <strong>Follow-Up Reminder will be set for ${reminderStr}</strong> — 60 days before their next inspection. The rep will be prompted to reach out and try to take this account.
+    </div>` : ''}
+    ${p.tagNotes ? `<div style="font-size:12px;color:#5A616B;margin-bottom:12px"><strong>Tag Notes:</strong> ${p.tagNotes}</div>` : ''}
+    <!-- Editable fields before creating contact -->
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">
+      <div>
+        <label style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#5A616B;display:block;margin-bottom:3px">Business Name at This Location</label>
+        <input id="spTagBizName" type="text" placeholder="Restaurant / facility name" style="width:100%;padding:7px 10px;border:1.5px solid #D7DBE0;border-radius:6px;font-size:13px;outline:none;font-family:inherit">
+      </div>
+      <div>
+        <label style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#5A616B;display:block;margin-bottom:3px">Address</label>
+        <input id="spTagAddress" type="text" placeholder="Street address" style="width:100%;padding:7px 10px;border:1.5px solid #D7DBE0;border-radius:6px;font-size:13px;outline:none;font-family:inherit">
+      </div>
+      <div>
+        <label style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#5A616B;display:block;margin-bottom:3px">Service Type to Pitch</label>
+        <input id="spTagService" type="text" value="${p.serviceType || ''}" placeholder="e.g. Fire Extinguisher Inspection" style="width:100%;padding:7px 10px;border:1.5px solid #D7DBE0;border-radius:6px;font-size:13px;outline:none;font-family:inherit">
+      </div>
+      <div>
+        <label style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#5A616B;display:block;margin-bottom:3px">Site Notes</label>
+        <textarea id="spTagNotes" rows="2" placeholder="Hours of operation, contact name, anything relevant…" style="width:100%;padding:7px 10px;border:1.5px solid #D7DBE0;border-radius:6px;font-size:13px;resize:vertical;font-family:inherit;outline:none"></textarea>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button onclick="spCamCreateTagContact()" style="flex:1;padding:10px;background:#C8102E;color:#fff;border:none;border-radius:8px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">📋 Create Contact + Set Reminder</button>
+      <button onclick="spCamClear()" style="padding:10px 16px;background:#fff;border:1.5px solid #D7DBE0;border-radius:8px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;cursor:pointer;color:#5A616B">Clear</button>
+    </div>`;
+}
+
+function spCamCreateTagContact() {
+  const p = _spCamParsed || {};
+  const bizName = document.getElementById('spTagBizName')?.value.trim();
+  const address = document.getElementById('spTagAddress')?.value.trim();
+  const service = document.getElementById('spTagService')?.value.trim();
+  const notes = document.getElementById('spTagNotes')?.value.trim();
+
+  if (!bizName) { alert('Please enter the business name.'); return; }
+
+  // Build follow-up date (60 days before inspection)
+  let followUpDate = null;
+  if (p.nextInspectionDate) {
+    const next = new Date(p.nextInspectionDate + 'T00:00:00');
+    followUpDate = new Date(next.getTime() - 60 * 86400000).toISOString().slice(0,10);
+  }
+
+  const siteNotes = [
+    p.competitor ? `Current provider: ${p.competitor}` : null,
+    p.nextInspectionDate ? `Next inspection due: ${p.nextInspectionDate}` : null,
+    p.serviceType ? `Service: ${p.serviceType}` : null,
+    p.technicianName ? `Current tech: ${p.technicianName}` : null,
+    notes || null,
+    '[Source: AI Camera — Inspection Tag Scan]',
+  ].filter(Boolean).join('\n');
+
+  const allRecs = typeof crmLoad === 'function' ? crmLoad('leads') : JSON.parse(localStorage.getItem('termac_leads') || '[]');
+  const id = 'lead_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
+  const newLead = {
+    id,
+    name: bizName,
+    business: bizName,
+    address: address || '',
+    phone: '',
+    email: '',
+    role: 'prospect',
+    services: service ? [service] : [],
+    lifecycleStage: 'lead',
+    score: 7,
+    siteNotes,
+    notes: siteNotes,
+    lastContactDate: new Date().toISOString().slice(0,10),
+    followUpDate: followUpDate || '',
+    competitorName: p.competitor || '',
+    nextInspectionDate: p.nextInspectionDate || '',
+    source: 'AI Camera — Tag Scan',
+    assignedRep: (typeof _currentUser !== 'undefined' && _currentUser?.name) || '',
+    activityLog: [{
+      ts: Date.now(), type: 'note', icon: '🏷️',
+      title: 'Inspection tag scanned',
+      note: `Tag scanned at location. Current provider: ${p.competitor || 'unknown'}. Next inspection: ${p.nextInspectionDate || 'unknown'}.${followUpDate ? ` Follow-up reminder set for ${followUpDate} (60 days before inspection).` : ''}`,
+      who: (typeof _currentUser !== 'undefined' && _currentUser?.name) || 'Rep',
+    }],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+
+  // Save lead
+  allRecs.push(newLead);
+  if (typeof crmSave === 'function') {
+    crmSave('leads', allRecs);
+  } else {
+    localStorage.setItem('termac_leads', JSON.stringify(allRecs));
+  }
+
+  spCloseCamera();
+
+  // Navigate to the new lead
+  if (typeof spNav === 'function') {
+    spNav('leads');
+    setTimeout(() => {
+      if (typeof spLoadIntelPanel === 'function') spLoadIntelPanel(id, 'leads');
+    }, 300);
+  }
+
+  const reminderMsg = followUpDate ? ` Follow-up reminder set for ${followUpDate}.` : '';
+  if (typeof showToast === 'function') showToast('📋 Contact created from tag scan.' + reminderMsg);
+  else alert('Contact created!' + reminderMsg);
+}
+
+/* ══════════════════════════════════════
+   MODE 3: TALK TO TEXT
+   Web Speech API — live dictation
+   fills contact fields as rep walks
+══════════════════════════════════════ */
+function spStartVoice() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    alert('Talk-to-Text is not supported in this browser. Use Chrome on Android or Safari on iOS.');
+    return;
+  }
+  if (_spVoiceActive) { spStopVoice(); return; }
+
+  _spVoiceRecog = new SpeechRecognition();
+  _spVoiceRecog.continuous = true;
+  _spVoiceRecog.interimResults = true;
+  _spVoiceRecog.lang = 'en-US';
+
+  _spVoiceActive = true;
+  _spVoiceAccum = document.getElementById('spVoiceTranscript')?.value || '';
+  spVoiceUpdateBtn(true);
+
+  _spVoiceRecog.onresult = (event) => {
+    let interim = '';
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const t = event.results[i][0].transcript;
+      if (event.results[i].isFinal) {
+        _spVoiceAccum += t + ' ';
+      } else {
+        interim = t;
+      }
+    }
+    const el = document.getElementById('spVoiceTranscript');
+    if (el) el.value = _spVoiceAccum + interim;
+  };
+
+  _spVoiceRecog.onerror = (e) => {
+    spStopVoice();
+    if (e.error !== 'no-speech') alert('Microphone error: ' + e.error);
+  };
+
+  _spVoiceRecog.onend = () => {
+    if (_spVoiceActive) _spVoiceRecog.start(); // auto-restart for continuous
+  };
+
+  _spVoiceRecog.start();
+}
+
+function spStopVoice() {
+  _spVoiceActive = false;
+  if (_spVoiceRecog) { try { _spVoiceRecog.stop(); } catch(e){} _spVoiceRecog = null; }
+  spVoiceUpdateBtn(false);
+}
+
+function spVoiceUpdateBtn(active) {
+  const btn = document.getElementById('spVoiceBtn');
+  if (!btn) return;
+  btn.style.background = active ? '#C8102E' : '#059669';
+  btn.textContent = active ? '⏹ Stop Recording' : '🎙️ Start Recording';
+}
+
+function spVoiceParseAndFill() {
+  const raw = document.getElementById('spVoiceTranscript')?.value || '';
+  if (!raw.trim()) { alert('No voice input captured yet.'); return; }
+
+  // Send to AI to parse into structured contact fields
+  const thinkEl = document.getElementById('spVoiceThinking');
+  const resultEl = document.getElementById('spVoiceResult');
+  if (thinkEl) thinkEl.style.display = 'block';
+  if (resultEl) resultEl.style.display = 'none';
+
+  const prompt = `A field sales rep just dictated this voice note while walking through a commercial location. Extract structured contact information from it.
+
+Dictation: "${raw}"
+
+Respond ONLY with valid JSON, no markdown, no explanation:
+{
+  "businessName": "business name or null",
+  "address": "street address or null",
+  "phone": "phone number or null",
+  "contactName": "person's name or null",
+  "hoursOfOperation": "hours if mentioned or null",
+  "serviceType": "what service they need or null",
+  "siteNotes": "all other relevant observations as a single string, or null",
+  "urgency": "high | medium | low based on tone and situation"
+}`;
+
+  fetch('https://unipro-ai-proxy.tedscholl.workers.dev', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-6', max_tokens: 400,
+      messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }]
+    })
+  })
+  .then(r => r.json())
+  .then(data => {
+    const raw2 = (data.content || []).map(c => c.text || '').join('').trim();
+    let parsed;
+    try {
+      parsed = JSON.parse(raw2.replace(/```json|```/g, '').trim());
+    } catch(e) {
+      parsed = { businessName: null, address: null, phone: null, contactName: null, hoursOfOperation: null, serviceType: null, siteNotes: raw.substring(0,300), urgency: 'medium' };
+    }
+    if (thinkEl) thinkEl.style.display = 'none';
+    spVoiceRenderResult(parsed, raw);
+    if (resultEl) resultEl.style.display = 'block';
+  })
+  .catch(() => {
+    if (thinkEl) thinkEl.style.display = 'none';
+    alert('Could not parse voice input — check connection.');
+  });
+}
+
+function spVoiceRenderResult(p, rawTranscript) {
+  const el = document.getElementById('spVoiceResultBody');
+  if (!el) return;
+
+  const urgColor = p.urgency === 'high' ? '#991B1B' : p.urgency === 'medium' ? '#92400E' : '#065F46';
+  const urgBg = p.urgency === 'high' ? '#FEE2E2' : p.urgency === 'medium' ? '#FEF3C7' : '#D1FAE5';
+
+  el.innerHTML = `
+    <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12px;letter-spacing:.10em;text-transform:uppercase;color:#1B5FA8;margin-bottom:10px">AI Parsed Contact Fields</div>
+    <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:12px">
+      ${[
+        ['Business Name', p.businessName, 'spVFBiz'],
+        ['Address', p.address, 'spVFAddr'],
+        ['Phone', p.phone, 'spVFPhone'],
+        ['Contact Name', p.contactName, 'spVFContact'],
+        ['Hours of Operation', p.hoursOfOperation, 'spVFHours'],
+        ['Service Needed', p.serviceType, 'spVFService'],
+      ].map(([l,v,fid]) => `<div>
+        <label style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:9px;letter-spacing:.10em;text-transform:uppercase;color:#9CA3AF;display:block;margin-bottom:2px">${l}</label>
+        <input id="${fid}" type="text" value="${(v||'').replace(/"/g,'&quot;')}" placeholder="${l}…" style="width:100%;padding:6px 9px;border:1.5px solid #D7DBE0;border-radius:6px;font-size:12px;font-family:inherit;outline:none">
+      </div>`).join('')}
+      <div>
+        <label style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:9px;letter-spacing:.10em;text-transform:uppercase;color:#9CA3AF;display:block;margin-bottom:2px">Site Notes</label>
+        <textarea id="spVFNotes" rows="3" style="width:100%;padding:6px 9px;border:1.5px solid #D7DBE0;border-radius:6px;font-size:12px;font-family:inherit;outline:none;resize:vertical">${p.siteNotes || ''}</textarea>
+      </div>
+    </div>
+    <div style="background:${urgBg};border-radius:7px;padding:7px 10px;font-size:11px;color:${urgColor};margin-bottom:12px">Urgency: <strong>${(p.urgency||'medium').toUpperCase()}</strong></div>
+    <button onclick="spVoiceCreateLead()" style="width:100%;padding:10px;background:#C8102E;color:#fff;border:none;border-radius:8px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">📋 Create Lead from Voice Note</button>`;
+}
+
+function spVoiceCreateLead() {
+  const bizName = document.getElementById('spVFBiz')?.value.trim();
+  const address = document.getElementById('spVFAddr')?.value.trim();
+  const phone = document.getElementById('spVFPhone')?.value.trim();
+  const contact = document.getElementById('spVFContact')?.value.trim();
+  const hours = document.getElementById('spVFHours')?.value.trim();
+  const service = document.getElementById('spVFService')?.value.trim();
+  const notes = document.getElementById('spVFNotes')?.value.trim();
+  const rawTx = document.getElementById('spVoiceTranscript')?.value.trim();
+
+  if (!bizName && !address) { alert('Please fill in at least a business name or address.'); return; }
+
+  const siteNotes = [
+    hours ? `Hours: ${hours}` : null,
+    notes || null,
+    rawTx ? `[Voice Note]: ${rawTx.substring(0,400)}` : null,
+  ].filter(Boolean).join('\n');
+
+  const allRecs = typeof crmLoad === 'function' ? crmLoad('leads') : JSON.parse(localStorage.getItem('termac_leads') || '[]');
+  const id = 'lead_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
+  const newLead = {
+    id,
+    name: bizName || address || 'Voice Note Lead',
+    business: bizName || '',
+    address: address || '',
+    phone: phone || '',
+    email: '',
+    role: contact || 'prospect',
+    services: service ? [service] : [],
+    lifecycleStage: 'lead',
+    score: 5,
+    siteNotes,
+    notes: siteNotes,
+    lastContactDate: new Date().toISOString().slice(0,10),
+    source: 'AI Camera — Talk to Text',
+    assignedRep: (typeof _currentUser !== 'undefined' && _currentUser?.name) || '',
+    activityLog: [{
+      ts: Date.now(), type: 'note', icon: '🎙️',
+      title: 'Voice note captured in the field',
+      note: rawTx ? rawTx.substring(0, 300) : 'Voice note lead.',
+      who: (typeof _currentUser !== 'undefined' && _currentUser?.name) || 'Rep',
+    }],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+
+  allRecs.push(newLead);
+  if (typeof crmSave === 'function') crmSave('leads', allRecs);
+  else localStorage.setItem('termac_leads', JSON.stringify(allRecs));
+
+  spCloseCamera();
+  if (typeof spNav === 'function') {
+    spNav('leads');
+    setTimeout(() => { if (typeof spLoadIntelPanel === 'function') spLoadIntelPanel(id, 'leads'); }, 300);
+  }
+  if (typeof showToast === 'function') showToast('🎙️ Lead created from voice note!');
+}
+
+/* ══════════════════════════════════════
+   PRODUCT CATALOG — inline iframe/popup
+══════════════════════════════════════ */
+function spOpenCatalogInline() {
+  // Open catalog as side overlay inside sales portal by navigating to OS with catalog flag
+  // The OS will auto-open catalog and show back button to return
+  sessionStorage.setItem('trnReturnUrl', window.location.href);
+  sessionStorage.setItem('openOnLoad', 'catalog');
+  window.location.href = 'termac-os.html';
+}
+</script>
+
+<script>
+// Wire Field Lead Capture buttons in left rail to the camera modal
+function leadSetMode(mode) {
+  ['scan','voice','manual'].forEach(m => {
+    document.getElementById('leadMode-'+m).classList.toggle('active', m===mode);
+    document.getElementById('leadPanel-'+m).style.display = m===mode?'block':'none';
+  });
+}
+function leadScanTag() {
+  // Use the sales portal's tag scanner
+  if(typeof spOpenCamera === 'function') {
+    spOpenCamera('tag');
+  } else {
+    document.getElementById('leadTagFile').click();
+  }
+}
+function leadTagPhotoSelected(input) {
+  const file = input.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const preview = document.getElementById('leadTagPreview');
+    preview.style.display = 'block';
+    preview.innerHTML = '<img src="'+e.target.result+'" style="width:100%;border-radius:6px;max-height:120px;object-fit:cover">';
+    // Use the sales portal tag analyzer if available
+    if(typeof spCamAnalyzeTag === 'function') {
+      spOpenCamera('tag');
+    } else {
+      leadAnalyzeTagImage(e.target.result.split(',')[1], file.type||'image/jpeg');
+    }
+  };
+  reader.readAsDataURL(file);
+}
+async function leadAnalyzeTagImage(base64, mimeType) {
+  const result = document.getElementById('leadTagResult');
+  result.style.display = 'block';
+  result.innerHTML = '<div style="color:#F59E0B;font-size:11px">🤖 Reading tag…</div>';
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:400,
+        messages:[{role:'user',content:[
+          {type:'image',source:{type:'base64',media_type:mimeType,data:base64}},
+          {type:'text',text:'This is a fire protection or commercial kitchen service inspection tag. Extract: 1) Service company name, 2) Business/location name if visible, 3) Last inspection date, 4) Next inspection due date, 5) Service type (fire extinguisher, hood suppression, etc). Respond in JSON only: {"company":"","business":"","address":"","lastDate":"","nextDate":"","serviceType":""}'}
+        ]}]})
+    });
+    const data = await resp.json();
+    const text = data.content?.[0]?.text||'{}';
+    const parsed = JSON.parse(text.replace(/```json|```/g,'').trim());
+    
+    // Calculate 60-day-before follow-up date
+    let followUpDate = '';
+    if(parsed.nextDate) {
+      const next = new Date(parsed.nextDate);
+      if(!isNaN(next)) {
+        const fu = new Date(next.getTime() - 60*24*60*60*1000);
+        followUpDate = fu.toISOString().split('T')[0];
+      }
+    }
+    
+    result.innerHTML = `
+      <div style="background:#1E293B;border-radius:7px;padding:10px 12px;font-size:11px">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;color:#F59E0B;letter-spacing:.08em;margin-bottom:8px">📋 TAG SCANNED</div>
+        ${parsed.company?`<div style="color:#94A3B8">Competitor: <span style="color:#F87171;font-weight:700">${parsed.company}</span></div>`:''}
+        ${parsed.business?`<div style="color:#94A3B8">Business: <span style="color:#E2E8F0;font-weight:600">${parsed.business}</span></div>`:''}
+        ${parsed.serviceType?`<div style="color:#94A3B8">Service: <span style="color:#E2E8F0">${parsed.serviceType}</span></div>`:''}
+        ${parsed.nextDate?`<div style="color:#94A3B8">Next due: <span style="color:#FCD34D;font-weight:700">${parsed.nextDate}</span></div>`:''}
+        ${followUpDate?`<div style="color:#34D399;font-size:10px;margin-top:5px">⏰ Follow-up set: ${followUpDate} (60 days before expiry)</div>`:''}
+      </div>
+      <button class="lrail-btn" style="margin-top:8px" onclick="leadSubmitFromTag(${JSON.stringify(JSON.stringify({...parsed,followUpDate}))})">⚡ Send to Sales Rep</button>`;
+  } catch(e) {
+    result.innerHTML = '<div style="color:#EF4444;font-size:11px">Could not read tag — try better lighting.</div>';
+  }
+}
+
+function leadSubmitFromTag(dataStr) {
+  const parsed = JSON.parse(dataStr);
+  const tech = typeof getCurrentTech === 'function' ? getCurrentTech() : {name:'Field Tech'};
+  const lead = {
+    id: 'field_'+Date.now(),
+    source: 'Field Scan — Competitor Tag',
+    business: parsed.business||'Unknown (from tag)',
+    address: parsed.address||'',
+    services: [parsed.serviceType||'Fire Inspection'],
+    notes: `Competitor tag: ${parsed.company||'Unknown'}. Next due: ${parsed.nextDate||'Unknown'}. Scanned by ${tech.name}.`,
+    referredBy: tech.name,
+    followUpDate: parsed.followUpDate||'',
+    competitorTag: parsed.company||'',
+    inspectionExpiry: parsed.nextDate||'',
+    lifecycleStage: 'lead',
+    createdAt: Date.now(),
+    score: 8, // High value — known expiry date
+  };
+  // Route to nearest rep by territory
+  leadRouteToRep(lead);
+}
+
+function leadStartVoice() {
+  // Use the sales portal voice if available
+  if(typeof spOpenCamera === 'function') {
+    spOpenCamera('voice');
+    return;
+  }
+  const btn = document.getElementById('leadVoiceBtn');
+  const status = document.getElementById('leadVoiceStatus');
+  const transcript = document.getElementById('leadVoiceTranscript');
+  
+  if(!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+    status.textContent = '⚠️ Use Chrome for voice recording';
+    return;
+  }
+  const SR = window.SpeechRecognition||window.webkitSpeechRecognition;
+  const recog = new SR();
+  recog.continuous = true;
+  recog.interimResults = true;
+  recog.lang = 'en-US';
+  let accum = '';
+  
+  recog.onstart = function() {
+    btn.textContent = '⏹ Stop Recording';
+    btn.style.background = '#DC2626';
+    btn.onclick = function(){ recog.stop(); };
+    status.textContent = '🔴 Recording…';
+    transcript.style.display = 'block';
+  };
+  recog.onresult = function(e) {
+    let interim = '';
+    for(let i=e.resultIndex;i<e.results.length;i++) {
+      if(e.results[i].isFinal) accum += e.results[i][0].transcript+' ';
+      else interim = e.results[i][0].transcript;
+    }
+    transcript.textContent = accum + interim;
+  };
+  recog.onend = function() {
+    btn.textContent = '🎤 Start Recording';
+    btn.style.background = '#C8102E';
+    btn.onclick = leadStartVoice;
+    status.textContent = accum ? '✅ Recording complete' : 'No speech detected';
+    if(accum) {
+      document.getElementById('leadVoiceProcess').style.display = 'block';
+      window._leadVoiceText = accum;
+    }
+  };
+  recog.start();
+}
+
+async function leadProcessVoice() {
+  const text = window._leadVoiceText||document.getElementById('leadVoiceTranscript').textContent;
+  if(!text) return;
+  const btn = document.getElementById('leadVoiceProcess');
+  btn.textContent = '⚡ Parsing…';btn.disabled=true;
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:300,
+        messages:[{role:'user',content:`Parse this field voice note into a lead record. Extract business name, address, phone, service needs, and any notes about competitors or inspection tags. Return JSON only: {"business":"","address":"","phone":"","services":[],"competitor":"","notes":"","inspectionExpiry":""}
+
+Voice note: ${text}`}]})
+    });
+    const data = await resp.json();
+    const parsed = JSON.parse((data.content?.[0]?.text||'{}').replace(/```json|```/g,'').trim());
+    const tech = typeof getCurrentTech === 'function' ? getCurrentTech() : {name:'Field Tech'};
+    const lead = {
+      id:'field_'+Date.now(),source:'Field Voice — Tech Referral',
+      business:parsed.business||'Unknown',address:parsed.address||'',
+      phone:parsed.phone||'',services:parsed.services||[],
+      notes:parsed.notes+(` Referred by ${tech.name}.`),
+      competitorTag:parsed.competitor||'',
+      inspectionExpiry:parsed.inspectionExpiry||'',
+      referredBy:tech.name,lifecycleStage:'lead',
+      createdAt:Date.now(),score:7
+    };
+    if(parsed.inspectionExpiry) {
+      const next = new Date(parsed.inspectionExpiry);
+      if(!isNaN(next)) lead.followUpDate = new Date(next.getTime()-60*24*60*60*1000).toISOString().split('T')[0];
+    }
+    leadRouteToRep(lead);
+    btn.textContent='✅ Lead Sent!';
+  } catch(e) {
+    btn.textContent='⚡ Process Lead';btn.disabled=false;
+  }
+}
+
+function leadSubmitManual() {
+  const biz = document.getElementById('leadManBiz').value.trim();
+  if(!biz){alert('Business name required');return;}
+  const tech = typeof getCurrentTech === 'function' ? getCurrentTech() : {name:'Field Tech'};
+  const expiry = document.getElementById('leadManExpiry').value;
+  let followUpDate = '';
+  if(expiry) {
+    const next = new Date(expiry);
+    if(!isNaN(next)) followUpDate = new Date(next.getTime()-60*24*60*60*1000).toISOString().split('T')[0];
+  }
+  const lead = {
+    id:'field_'+Date.now(),source:'Field Manual — Tech Referral',
+    business:biz,address:document.getElementById('leadManAddr').value,
+    phone:'',services:[document.getElementById('leadManService').value].filter(Boolean),
+    competitorTag:document.getElementById('leadManCompetitor').value,
+    inspectionExpiry:expiry,followUpDate,
+    notes:`Competitor: ${document.getElementById('leadManCompetitor').value||'Unknown'}. Spotted by ${tech.name}.`,
+    referredBy:tech.name,lifecycleStage:'lead',createdAt:Date.now(),score:expiry?8:6
+  };
+  leadRouteToRep(lead);
+}
+
+// SALES REP TERRITORY MAP
+const LEAD_TERRITORY = {
+  'PA': {rep:'Marcus Williams',phone:'215-555-0101'},
+  'NJ': {rep:'Dana Kim',phone:'215-555-0102'},
+  'DE': {rep:'Ray Santos',phone:'215-555-0103'},
+  'MD': {rep:'Tony Ferraro',phone:'215-555-0104'},
+};
+
+function leadRouteToRep(lead) {
+  // Simple territory routing by address
+  const addr = (lead.address||'').toUpperCase();
+  let territory = 'PA'; // default
+  if(addr.includes(' NJ')||addr.includes(',NJ')) territory='NJ';
+  else if(addr.includes(' DE')||addr.includes(',DE')) territory='DE';
+  else if(addr.includes(' MD')||addr.includes(',MD')) territory='MD';
+  const rep = LEAD_TERRITORY[territory]||LEAD_TERRITORY.PA;
+  lead.assignedRep = rep.rep;
+  lead.territory = territory;
+  
+  // Save to termac_leads localStorage (same pool as sales portal)
+  const leads = JSON.parse(localStorage.getItem('termac_leads')||'[]');
+  leads.unshift(lead);
+  localStorage.setItem('termac_leads', JSON.stringify(leads));
+  
+  // Show confirmation
+  const conf = document.getElementById('leadConfirm');
+  conf.style.display = 'block';
+  const fuMsg = lead.followUpDate ? `<div style="color:#34D399;font-size:10px;margin-top:4px">⏰ Follow-up reminder set: ${lead.followUpDate}</div>` : '';
+  conf.innerHTML = `<div class="lrail-card green" style="margin-top:8px">
+    <div class="lrail-title green">✅ Lead Routed!</div>
+    <div class="lrail-body"><strong>${lead.business}</strong> sent to <strong>${rep.rep}</strong> (${territory} territory)${fuMsg}</div>
+  </div>`;
+  setTimeout(()=>{conf.style.display='none';}, 5000);
+  
+  // Clear form
+  ['leadManBiz','leadManAddr','leadManPhone','leadManExpiry'].forEach(id=>{
+    const el=document.getElementById(id);if(el)el.value='';
+  });
+  ['leadManService','leadManCompetitor'].forEach(id=>{
+    const el=document.getElementById(id);if(el)el.selectedIndex=0;
+  });
+}
+</script>
+
 </body><script>
 // ══════════════════════════════════════════════════════
 //  TECH PORTAL LEFT RAIL — AI Field Intelligence
