@@ -229,6 +229,7 @@ button{cursor:pointer}
     </button>
     <div class="trn-title" id="trnRoleTitle">DMS Dashboard</div>
     <div class="trn-spacer"></div>
+    <button class="trn-btn" onclick="dmsNav('knowledge')" id="dmsNavKnowledge" style="font-size:10px;padding:5px 10px;border-color:#F2B705;color:#F2B705">📚 Company Knowledge</button>
     <button class="trn-btn" onclick="window.open('user-manuals.html?role=dms','_blank')" style="font-size:10px;padding:5px 10px">? Help</button>
     <button class="trn-btn primary" onclick="sessionStorage.setItem('trnReturnUrl','dms-portal.html');window.location.href='employee-portal.html'">🏠 Employee Portal</button>
   </div>
@@ -476,6 +477,7 @@ function dmsRender(tab){
   const el = document.getElementById('dmsContent');
   if(tab==='leads') dmsRenderCallSheet(el);
   else if(tab==='employee') dmsRenderEmployee(el);
+  else if(tab==='knowledge') dmsRenderKnowledge(el);
 }
 
 // ── CALL SHEET ──
@@ -1536,7 +1538,7 @@ function dmsUpdateRail() {
   const hotEl = el('railHotQueue');
   if (hot.length > 0) {
     hotEl.innerHTML = hot.slice(0, 5).map(r =>
-      '<div class="dms-hot-item" onclick="dmsScrollToRow('' + (r.id||'') + '')">' +
+      '<div class="dms-hot-item" onclick="dmsScrollToRow(\'' + (r.id||'') + '\')">' +
       '<div class="dms-hot-biz">🔥 ' + escDms(r.bizName || r.businessName || r.business || 'Unknown') + '</div>' +
       '<div class="dms-hot-meta">' + escDms(r.phone || '') + (r.contact ? ' · ' + escDms(r.contact) : '') + '</div>' +
       '</div>'
@@ -1633,6 +1635,351 @@ function el(id) { return document.getElementById(id); }
 
 // Auto-refresh rail every 30 seconds
 setInterval(dmsUpdateRail, 30000);
+
+
+// ══════════════════════════════════════════════════════════════════════════
+// DMS COMPANY KNOWLEDGE & AI ADVISOR
+// ══════════════════════════════════════════════════════════════════════════
+
+const DMS_KNOWLEDGE = {
+  company: {
+    name: 'Termac Family of Companies',
+    founded: 'Family-owned and operated. Founded by the O\'Reilly family — passed down from their father to Sean O\'Reilly and Terence O\'Reilly. This is not a franchise or a corporate chain. Every decision is made by the owners, and every account relationship matters personally to the people running this business.',
+    elevator: 'Termac is a family-owned fire protection and commercial kitchen services company operating across Eastern PA, NJ, DE, MD, and DC. We protect commercial businesses through six specialized divisions — from fire extinguisher inspections to grease trap service to dish machine chemicals — giving clients a single trusted partner for all their compliance and service needs.',
+    differentiators: [
+      'Family-owned — you talk to real people, not a call center. Sean and Terence are directly involved.',
+      'Multi-service provider — one company, one invoice, one relationship for fire protection, hood filters, grease traps, and equipment.',
+      'Local — we know the AHJs, the inspection requirements, and the commercial kitchen landscape in your area.',
+      'Compliance-focused — we keep your business protected and on record. We show up, we document, we deliver.',
+      'No national chain friction — no upselling tiers, no corporate scripting. We quote what you need and do the work.'
+    ]
+  },
+  divisions: [
+    {
+      id: 'unipro',
+      name: 'UniPro Fire Protection',
+      tagline: 'Annual fire protection inspections and compliance',
+      what: 'UniPro handles fire extinguisher inspections, exit and emergency lighting, fire alarm panels, suppression systems, and sprinkler inspections. Annual compliance is legally required for virtually every commercial building. We issue the certificate, handle the paperwork, and keep clients on the right side of the AHJ.',
+      who: 'Any commercial building — restaurants, office buildings, retail, healthcare, schools, warehouses. If they have a fire extinguisher on the wall, they need annual service.',
+      nfpa: 'NFPA 10 (extinguishers), NFPA 101 (exit lighting), NFPA 72 (fire alarm), NFPA 25 (sprinklers)',
+      price: 'Annual inspection contracts. Extinguisher inspections typically range from a few hundred to a few thousand depending on unit count. Multi-service bundles available.',
+      crossSell: 'GTO (grease trap) and Filter Man (hood filters) for restaurants. Termac (dish machines) for commercial kitchens.'
+    },
+    {
+      id: 'quality3',
+      name: 'Quality III Fire Protection',
+      tagline: 'UniPro coverage for Delaware accounts',
+      what: 'Quality III is our Delaware-licensed fire protection division — same services as UniPro, licensed to operate in DE. Extinguishers, exit lighting, suppression, alarm inspection.',
+      who: 'Commercial accounts in Delaware.',
+      nfpa: 'Same NFPA standards as UniPro.',
+      price: 'Same structure as UniPro.',
+      crossSell: 'Same cross-sell as UniPro for DE accounts.'
+    },
+    {
+      id: 'gto',
+      name: 'GTO — Grease Trap Operations',
+      tagline: 'Grease trap pump-out and FOG compliance',
+      what: 'GTO pumps out commercial grease traps — the interceptors that keep fats, oils, and grease out of municipal sewer systems. Most municipalities require regular pump-outs (monthly to quarterly) and FOG compliance documentation. We service the trap, issue the FOG compliance certificate, and file the paperwork.',
+      who: 'Any restaurant, commercial kitchen, cafeteria, catering facility, food truck commissary. If they cook commercially, they likely have a grease trap requirement.',
+      nfpa: 'FOG (Fats, Oils, and Grease) regulations — municipal health department and water authority compliance.',
+      price: 'Monthly or quarterly service contracts. Priced by trap size and frequency.',
+      crossSell: 'UniPro/Quality III (extinguisher inspection). Filter Man (hood filters). Perfect bundle for full-service restaurants.'
+    },
+    {
+      id: 'filterman',
+      name: 'Filter Man',
+      tagline: 'Commercial hood filter exchange service',
+      what: 'Filter Man exchanges dirty commercial kitchen hood filters on a regular schedule — typically bi-weekly or monthly. Clean filters reduce fire risk, improve air quality, and keep kitchens compliant. We pick up dirty filters and replace them with clean ones. No washing, no hassle for the client.',
+      who: 'Commercial kitchens, restaurants, cafeterias, hotel kitchens — any facility with a commercial cooking hood.',
+      nfpa: 'Supports NFPA 96 compliance (commercial cooking ventilation).',
+      price: 'Monthly exchange contracts based on filter count and frequency.',
+      crossSell: 'GTO and UniPro are natural bundle partners for restaurant accounts.'
+    },
+    {
+      id: 'allpro',
+      name: 'AllPro Stainless Fabrication',
+      tagline: 'Custom stainless steel fabrication for commercial kitchens',
+      what: 'AllPro designs and fabricates custom stainless steel equipment — work tables, shelving, prep stations, custom hood structures, sinks — for commercial kitchens. This is a project-based division for renovation, build-out, or equipment replacement.',
+      who: 'Restaurants undergoing renovation, new commercial kitchen build-outs, facilities replacing worn equipment.',
+      nfpa: 'Custom hood work ties to NFPA 96 compliance.',
+      price: 'Project-based pricing — quoted per scope.',
+      crossSell: 'Any existing Termac account undergoing a kitchen renovation is an AllPro opportunity.'
+    },
+    {
+      id: 'termac',
+      name: 'Termac — Dish Machines & Chemicals',
+      tagline: 'Commercial dish machine service and chemical supply',
+      what: 'Termac (the original division) services commercial dish machines and supplies the chemicals that run them — sanitizers, degreasers, rinse aids. We keep commercial dishwashing systems operating correctly and ensure proper chemical concentration for health code compliance.',
+      who: 'Restaurants, hotels, cafeterias, healthcare dining — any commercial kitchen running a dish machine.',
+      nfpa: 'Health code (NSF/ANSI) compliance for sanitizer concentration.',
+      price: 'Chemical supply on contract. Machine service on a time-and-materials basis.',
+      crossSell: 'Any restaurant account is a Termac candidate. Pairs naturally with Filter Man and GTO for a full kitchen services bundle.'
+    }
+  ],
+  objections: [
+    {
+      id: 'have_company',
+      label: 'We already have a company',
+      response: `Completely understand — most businesses do. A few quick questions worth asking about your current provider: Are you receiving a certificate of inspection you can show an AHJ or insurance auditor? Is your provider also handling [other division relevant to account]? The reason we hear from a lot of companies is not that their current provider is terrible — it\'s that they\'re using three or four vendors for things we do under one roof. When was the last time you actually reviewed the relationship? We'd love just 10 minutes to show you what a comparison looks like.`,
+      followUps: [
+        'Who are you currently using? How long have you been with them?',
+        'Are you getting the compliance documentation you need after each visit?',
+        'Are you handling fire inspection, hood service, and grease trap with the same company or separate vendors?'
+      ],
+      tone: 'Respectful, curious, not aggressive. The goal is to create a reason to review — not to attack the current provider.'
+    },
+    {
+      id: 'not_good_time',
+      label: "Now isn\'t a good time",
+      response: `That\'s totally fair — I\'m not calling to take up your afternoon. What I\'d like to do is get on your radar for when the timing is right. Most of the businesses we work with have annual inspection contracts that renew on a cycle — the best time to talk is actually 60 to 90 days before that renewal, not the day it\'s due. Can I ask when your current fire inspection or service contract renews? That way I can put a note to reach back out at the right moment and not waste your time in between.`,
+      followUps: [
+        'When does your current inspection contract renew?',
+        'Is there a better time this week or next for a 10-minute call?',
+        'Would it help if I sent something brief first so you have context before we talk?'
+      ],
+      tone: 'Light, no pressure, leave the door wide open. The goal is a specific callback date or renewal window — not to push harder.'
+    },
+    {
+      id: 'send_info',
+      label: 'Send me some information via email',
+      response: `Absolutely — happy to send something over. Two quick things so I can send you something actually useful and not just a generic brochure: What services are you currently handling — fire inspection, hood maintenance, grease trap? And is the right person for this conversation you, or is there a facilities manager or operations person I should address it to? I\'ll send you a one-page overview with our divisions and pricing structure, and follow up in a few days to see if it landed. What\'s the best email?`,
+      followUps: [
+        'What services are you currently using — fire inspection, hood filters, grease trap?',
+        'Who is the right person to address the info to?',
+        'When would be a good time to follow up — end of this week or early next?'
+      ],
+      tone: 'Positive and professional. "Send me info" often means they want to end the call — your job is to ask two qualifying questions before you agree, confirm a follow-up time, and make the email more targeted than generic.'
+    }
+  ],
+  quickPitches: {
+    restaurant: 'Restaurants using us for fire inspection, hood filters, and grease trap service get one point of contact, one invoice, and one relationship for everything that keeps them compliant. That\'s the bundle most of our restaurant accounts use.',
+    office: 'Commercial office buildings need annual fire extinguisher inspection and exit lighting certification. It\'s a legal requirement — we make it simple, we do it right, and we issue the documentation you need for your records.',
+    healthcare: 'Healthcare facilities have stricter compliance requirements than most. We work with medical offices, assisted living, and hospital buildings across the region — we know the documentation standard and we deliver it.',
+    school: 'School districts need annual fire inspections across multiple buildings. We handle multi-building contracts efficiently and produce the compliance records your facilities director needs for district audits.',
+    newLead: 'Quick intro: I\'m calling from Termac Family of Companies. We\'re a local, family-owned business — we handle fire protection inspections, hood filter service, grease trap, and kitchen equipment for commercial businesses across the area. The reason I\'m reaching out is [lead source — permit pulled, referred by X, saw your business listed in our territory]. I have 60 seconds — is this a service you\'re currently handling?'
+  }
+};
+
+const DMS_AI_SYSTEM = `You are the Termac Company Knowledge Advisor — an AI assistant embedded in the DMS (Deal Management Specialist) portal for Termac Family of Companies.
+
+COMPANY BACKGROUND:
+Termac is a family-owned fire protection and commercial kitchen services company. It was founded by the O'Reilly family and passed down to Sean O'Reilly and Terence O'Reilly from their father. The company operates across Eastern PA, NJ, DE, MD, and DC through six divisions:
+- UniPro: Fire protection inspections (extinguishers, exit lighting, alarm, sprinkler) — NFPA 10, 72, 101, 25
+- Quality III: Same as UniPro but licensed for Delaware accounts
+- GTO: Grease trap pump-out and FOG compliance — monthly/quarterly restaurant service
+- Filter Man: Commercial hood filter exchange on regular schedule
+- AllPro: Custom stainless steel fabrication for commercial kitchens
+- Termac: Commercial dish machine service and chemical supply (sanitizers, degreasers, rinse aids)
+
+DIFFERENTIATORS:
+- Family-owned, not a franchise. Sean and Terence O'Reilly are directly involved.
+- Multi-service: one relationship, one invoice for multiple compliance needs
+- Local market knowledge — AHJs, inspection requirements, territory expertise
+- No national chain friction or upselling tiers
+
+TOP 3 OBJECTIONS AND HOW TO HANDLE THEM:
+1. "We already have a company" — Be curious, not combative. Ask qualifying questions. Goal: get them to review the relationship.
+2. "Now isn't a good time" — Get a specific date. Find out when their contract renews. Goal: a real callback time.
+3. "Send me some information" — Agree, but ask 2 qualifying questions first and confirm a follow-up time. Goal: make the email targeted and get a time to reconnect.
+
+YOUR ROLE:
+You help DMS reps answer questions about what Termac does, how to explain each division, how to handle objections, and how to pitch specific types of accounts. Be direct, practical, and give them words they can actually use on the phone. Keep responses conversational and usable — they're often on a call when they ask you.`;
+
+async function dmsCallAI(userMessage, conversationHistory) {
+  const API_PROXY = 'https://unipro-ai-proxy.tedscholl.workers.dev';
+  const messages = [...(conversationHistory || []), { role: 'user', content: userMessage }];
+  try {
+    const resp = await fetch(API_PROXY, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 600,
+        system: DMS_AI_SYSTEM,
+        messages
+      })
+    });
+    const data = await resp.json();
+    return data.content?.[0]?.text || 'No response received.';
+  } catch(e) {
+    return 'Connection error — check your internet and try again.';
+  }
+}
+
+var _dmsAIHistory = [];
+var _dmsAITyping = false;
+
+function dmsRenderKnowledge(el) {
+  el.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 340px;gap:16px;align-items:start;max-width:1400px">
+
+      <!-- LEFT: Reference Cards -->
+      <div>
+        <!-- Company Story -->
+        <div style="background:#1A1D21;border-radius:10px;padding:18px 20px;margin-bottom:12px;border-left:4px solid #F2B705">
+          <div style="font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:#F2B705;margin-bottom:8px">WHO WE ARE</div>
+          <div style="font-size:13px;color:#E5E7EB;line-height:1.6">${DMS_KNOWLEDGE.company.founded}</div>
+          <div style="margin-top:10px;font-size:13px;color:#9CA3AF;line-height:1.6;font-style:italic">"${DMS_KNOWLEDGE.company.elevator}"</div>
+        </div>
+
+        <!-- Differentiators -->
+        <div style="background:#fff;border:1.5px solid var(--line);border-radius:10px;padding:16px 20px;margin-bottom:12px">
+          <div style="font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink);margin-bottom:10px">⚡ WHY TERMAC — USE THESE ON CALLS</div>
+          ${DMS_KNOWLEDGE.company.differentiators.map((d,i) => `
+            <div style="display:flex;gap:10px;padding:7px 0;border-bottom:1px solid #F3F4F6">
+              <div style="background:#C8102E;color:#fff;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;flex-shrink:0;margin-top:1px">${i+1}</div>
+              <div style="font-size:12px;color:var(--ink);line-height:1.5">${d}</div>
+            </div>`).join('')}
+        </div>
+
+        <!-- Divisions Grid -->
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin-bottom:10px">THE SIX DIVISIONS</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+          ${DMS_KNOWLEDGE.divisions.map(d => `
+            <div style="background:#fff;border:1.5px solid var(--line);border-radius:10px;padding:14px 16px">
+              <div style="font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:14px;color:#C8102E;margin-bottom:2px">${d.name}</div>
+              <div style="font-size:11px;font-weight:700;color:var(--soft);margin-bottom:8px;text-transform:uppercase;letter-spacing:.04em">${d.tagline}</div>
+              <div style="font-size:12px;color:var(--ink);line-height:1.5;margin-bottom:6px">${d.what}</div>
+              <div style="background:#F9FAFB;border-radius:6px;padding:6px 8px;font-size:11px;color:#374151"><strong>Who to call:</strong> ${d.who}</div>
+              ${d.crossSell ? `<div style="font-size:11px;color:#059669;margin-top:6px;font-weight:600">↗ Bundle: ${d.crossSell}</div>` : ''}
+            </div>`).join('')}
+        </div>
+
+        <!-- Objection Handlers -->
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin-bottom:10px">TOP OBJECTIONS — WORD-FOR-WORD RESPONSES</div>
+        ${DMS_KNOWLEDGE.objections.map(o => `
+          <div style="background:#fff;border:1.5px solid var(--line);border-radius:10px;padding:16px 20px;margin-bottom:10px">
+            <div style="font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:15px;color:#C8102E;margin-bottom:10px">🗣 "${o.label}"</div>
+            <div style="background:#F9FAFB;border-radius:8px;padding:12px 14px;font-size:13px;color:var(--ink);line-height:1.6;margin-bottom:10px;border-left:3px solid #C8102E">${o.response}</div>
+            <div style="font-size:11px;font-weight:700;color:var(--soft);margin-bottom:6px;letter-spacing:.06em;text-transform:uppercase">Follow-Up Questions to Ask:</div>
+            ${o.followUps.map(f => `<div style="font-size:12px;color:#374151;padding:3px 0;padding-left:12px;border-left:2px solid var(--line)">• ${f}</div>`).join('')}
+            <div style="margin-top:8px;font-size:11px;color:#6B7280;font-style:italic">Tone: ${o.tone}</div>
+          </div>`).join('')}
+
+        <!-- Quick Pitches -->
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin-bottom:10px">QUICK PITCHES BY ACCOUNT TYPE</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px">
+          ${Object.entries(DMS_KNOWLEDGE.quickPitches).map(([k,v]) => `
+            <div style="background:#fff;border:1.5px solid var(--line);border-radius:8px;padding:12px 14px">
+              <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink);margin-bottom:6px">${k.charAt(0).toUpperCase()+k.slice(1)}</div>
+              <div style="font-size:12px;color:#374151;line-height:1.5">${v}</div>
+            </div>`).join('')}
+        </div>
+      </div>
+
+      <!-- RIGHT: AI Advisor Panel -->
+      <div style="position:sticky;top:66px">
+        <div style="background:#1A1D21;border-radius:12px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,.15)">
+          <div style="padding:14px 16px;border-bottom:1px solid #2A2E33;display:flex;align-items:center;gap:10px">
+            <div style="width:32px;height:32px;background:#C8102E;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">⚡</div>
+            <div>
+              <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:14px;color:#fff;letter-spacing:.06em">AI KNOWLEDGE ADVISOR</div>
+              <div style="font-size:10px;color:#4B5563">Ask anything — divisions, objections, pitches</div>
+            </div>
+            <button onclick="_dmsAIHistory=[];dmsRenderAIMessages()" style="margin-left:auto;background:none;border:1px solid #3A3E43;border-radius:5px;color:#6B7280;font-size:10px;padding:3px 8px;cursor:pointer;font-family:'Barlow Condensed',sans-serif;font-weight:700">Clear</button>
+          </div>
+
+          <!-- Quick prompts -->
+          <div style="padding:10px 12px;border-bottom:1px solid #111827;display:flex;flex-wrap:wrap;gap:5px">
+            ${[
+              'What does GTO do?',
+              'Explain Filter Man',
+              'Handle: we have a company',
+              'Handle: not a good time',
+              'Handle: send info',
+              'Pitch a restaurant',
+              'What makes us different?',
+              'Who are the owners?'
+            ].map(p => `<button onclick="dmsAIQuickAsk('${p}')" style="background:#111827;border:1px solid #2A2E33;border-radius:5px;color:#9CA3AF;font-size:10px;padding:3px 8px;cursor:pointer;font-family:'Barlow Condensed',sans-serif;font-weight:700;white-space:nowrap;transition:all .1s" onmouseover="this.style.borderColor='#C8102E';this.style.color='#fff'" onmouseout="this.style.borderColor='#2A2E33';this.style.color='#9CA3AF'">${p}</button>`).join('')}
+          </div>
+
+          <!-- Chat messages -->
+          <div id="dmsAIMessages" style="padding:12px;min-height:200px;max-height:420px;overflow-y:auto;display:flex;flex-direction:column;gap:10px">
+            <div style="text-align:center;padding:20px;color:#4B5563;font-size:12px">
+              <div style="font-size:24px;margin-bottom:8px">⚡</div>
+              Ask me anything about Termac — divisions, what to say on a call, how to handle an objection, or how to pitch a specific type of account.
+            </div>
+          </div>
+
+          <!-- Input -->
+          <div style="padding:10px 12px;border-top:1px solid #111827;display:flex;gap:8px">
+            <input id="dmsAIInput" type="text" placeholder="Ask about a division, objection, or pitch..."
+              style="flex:1;background:#111827;border:1px solid #2A2E33;border-radius:7px;color:#fff;padding:8px 10px;font-size:12px;font-family:inherit;outline:none"
+              onkeydown="if(event.key==='Enter')dmsAISubmit()"
+              onfocus="this.style.borderColor='#C8102E'" onblur="this.style.borderColor='#2A2E33'">
+            <button onclick="dmsAISubmit()" style="background:#C8102E;border:none;border-radius:7px;color:#fff;padding:8px 14px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12px;cursor:pointer;white-space:nowrap">Ask →</button>
+          </div>
+        </div>
+
+        <!-- Live reference card -->
+        <div style="background:#fff;border:1.5px solid var(--line);border-radius:10px;padding:14px 16px;margin-top:12px">
+          <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:8px">📞 OPENING LINE</div>
+          <div style="font-size:12px;color:var(--ink);line-height:1.6;font-style:italic">"${DMS_KNOWLEDGE.quickPitches.newLead}"</div>
+        </div>
+      </div>
+    </div>`;
+
+  // Init empty history
+  _dmsAIHistory = [];
+}
+
+function dmsRenderAIMessages() {
+  const el = document.getElementById('dmsAIMessages');
+  if (!el) return;
+  if (!_dmsAIHistory.length) {
+    el.innerHTML = '<div style="text-align:center;padding:20px;color:#4B5563;font-size:12px"><div style="font-size:24px;margin-bottom:8px">⚡</div>Ask me anything about Termac — divisions, what to say on a call, how to handle an objection, or how to pitch a specific type of account.</div>';
+    return;
+  }
+  el.innerHTML = _dmsAIHistory.map(m => {
+    const isUser = m.role === 'user';
+    return `<div style="display:flex;justify-content:${isUser?'flex-end':'flex-start'}">
+      <div style="max-width:85%;background:${isUser?'#C8102E':'#111827'};color:#fff;border-radius:${isUser?'12px 12px 2px 12px':'12px 12px 12px 2px'};padding:10px 13px;font-size:12px;line-height:1.6;white-space:pre-wrap">${m.content}</div>
+    </div>`;
+  }).join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+async function dmsAISubmit() {
+  const input = document.getElementById('dmsAIInput');
+  if (!input || !input.value.trim() || _dmsAITyping) return;
+  const msg = input.value.trim();
+  input.value = '';
+  await dmsAISend(msg);
+}
+
+async function dmsAIQuickAsk(prompt) {
+  if (_dmsAITyping) return;
+  await dmsAISend(prompt);
+}
+
+async function dmsAISend(msg) {
+  _dmsAITyping = true;
+  _dmsAIHistory.push({ role: 'user', content: msg });
+  dmsRenderAIMessages();
+
+  // Add typing indicator
+  const el = document.getElementById('dmsAIMessages');
+  if (el) {
+    const typing = document.createElement('div');
+    typing.id = 'dmsAITyping';
+    typing.style.cssText = 'display:flex;justify-content:flex-start';
+    typing.innerHTML = '<div style="background:#111827;color:#9CA3AF;border-radius:12px 12px 12px 2px;padding:10px 13px;font-size:12px">Thinking…</div>';
+    el.appendChild(typing);
+    el.scrollTop = el.scrollHeight;
+  }
+
+  // Build conversation for API (exclude typing from history sent)
+  const apiHistory = _dmsAIHistory.slice(0, -1).map(m => ({ role: m.role, content: m.content }));
+  const response = await dmsCallAI(msg, apiHistory);
+
+  // Remove typing indicator
+  const typingEl = document.getElementById('dmsAITyping');
+  if (typingEl) typingEl.remove();
+
+  _dmsAIHistory.push({ role: 'assistant', content: response });
+  _dmsAITyping = false;
+  dmsRenderAIMessages();
+}
 
 </script>
 </body>
