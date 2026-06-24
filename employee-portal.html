@@ -398,6 +398,19 @@ document.addEventListener('DOMContentLoaded', function() {
   window.CURRENT_USER_NAME = uname;
   localStorage.setItem('termac_current_user', uname);
 
+  // Seed demo leaderboard if empty (so it's never blank on first visit)
+  const existing = tsGet('scores') || {};
+  if (Object.keys(existing).length === 0) {
+    const demo = {
+      'Ted Scholl':      {totalPoints:740, totalCorrect:7, totalAnswered:8, streak:4, lastAnswered: new Date(Date.now()-86400000).toISOString().slice(0,10), fastAnswers:2, badges:['first_blood','hot_streak','speed_demon'], weeklyCompleted:1, correctByTopic:{1:3,2:2,4:2}},
+      'Chrystal Bush':   {totalPoints:620, totalCorrect:6, totalAnswered:7, streak:3, lastAnswered: new Date(Date.now()-86400000).toISOString().slice(0,10), fastAnswers:1, badges:['first_blood','hot_streak'], weeklyCompleted:0, correctByTopic:{2:3,3:3}},
+      'Lauren Canfield': {totalPoints:450, totalCorrect:4, totalAnswered:5, streak:2, lastAnswered: new Date(Date.now()-86400000).toISOString().slice(0,10), fastAnswers:0, badges:['first_blood'], weeklyCompleted:0, correctByTopic:{3:2,4:2}},
+      'Brad Fickes':     {totalPoints:380, totalCorrect:4, totalAnswered:4, streak:1, lastAnswered: new Date(Date.now()-86400000).toISOString().slice(0,10), fastAnswers:0, badges:['first_blood'], weeklyCompleted:0, correctByTopic:{1:2,2:2}},
+      'Dan Rini':        {totalPoints:250, totalCorrect:2, totalAnswered:3, streak:1, lastAnswered: new Date(Date.now()-86400000).toISOString().slice(0,10), fastAnswers:0, badges:['first_blood'], weeklyCompleted:0, correctByTopic:{4:2}},
+    };
+    tsSet('scores', demo);
+  }
+
   // Load trivia
   triviaLoadQuestion(false);
 
@@ -429,6 +442,20 @@ function getTriviaTopicForDay(dateStr) {
   const d = new Date(dateStr); const day = d.getDay();
   return {1:1,2:2,3:3,4:4,5:5}[day] || 3;
 }
+
+// Fallback question bank (used if AI proxy is unreachable)
+const FALLBACK_QUESTIONS = [
+  {question:'What NFPA standard governs portable fire extinguishers?',options:['A) NFPA 13','B) NFPA 10','C) NFPA 25','D) NFPA 17A'],correct:1,explanation:'NFPA 10 covers portable fire extinguishers — inspection, maintenance, and recharge requirements.',topic:'Fire & Safety Compliance',topicId:2},
+  {question:'How often must a portable fire extinguisher receive an annual inspection?',options:['A) Every 6 months','B) Every 2 years','C) Once per year','D) Every 5 years'],correct:2,explanation:'NFPA 10 requires a qualified person to inspect extinguishers at least once per year.',topic:'Fire & Safety Compliance',topicId:2},
+  {question:'Which type of fire extinguisher is best for a commercial kitchen grease fire?',options:['A) Class A water extinguisher','B) Class B CO₂ extinguisher','C) Class K wet chemical extinguisher','D) Class C dry chemical extinguisher'],correct:2,explanation:'Class K wet chemical extinguishers are specifically designed for commercial cooking equipment fires involving fats and oils.',topic:'Grease, Hood & Filter',topicId:4},
+  {question:'What does the acronym PASS stand for when using a fire extinguisher?',options:['A) Pull, Aim, Squeeze, Sweep','B) Push, Activate, Spray, Smother','C) Point, Arm, Secure, Spray','D) Pull, Assess, Signal, Sweep'],correct:0,explanation:'PASS: Pull the pin, Aim at the base, Squeeze the handle, Sweep side to side.',topic:'Fire & Safety Compliance',topicId:2},
+  {question:'In B2B sales, what is the primary goal of a discovery call?',options:['A) Close the deal immediately','B) Understand the prospect's needs and pain points','C) Present your full product catalog','D) Negotiate pricing'],correct:1,explanation:'Discovery calls are about listening and learning — understanding what the prospect needs before proposing solutions.',topic:'Sales & Negotiation',topicId:1},
+  {question:'How frequently should commercial hood filters typically be cleaned?',options:['A) Once per year','B) Monthly','C) Based on cooking volume — from weekly to quarterly','D) Every 5 years'],correct:2,explanation:'NFPA 96 specifies filter cleaning frequency based on cooking volume: monthly for high-volume, quarterly for low-volume operations.',topic:'Grease, Hood & Filter',topicId:4},
+  {question:'What is the capital of Australia?',options:['A) Sydney','B) Melbourne','C) Canberra','D) Brisbane'],correct:2,explanation:'Canberra is the capital of Australia — chosen as a compromise between rival cities Sydney and Melbourne.',topic:'General Knowledge',topicId:3},
+  {question:'Which element has the chemical symbol "Au"?',options:['A) Silver','B) Aluminum','C) Argon','D) Gold'],correct:3,explanation:'"Au" comes from the Latin word "Aurum," meaning gold.',topic:'General Knowledge',topicId:3},
+  {question:'FOG stands for what in commercial kitchen compliance?',options:['A) Fire, Oil, Gas','B) Fats, Oils, and Grease','C) Fuel, Oxygen, Gas','D) Filter, Oil, Grease'],correct:1,explanation:'FOG (Fats, Oils, and Grease) regulations govern how commercial kitchens must manage waste to prevent drain blockages and environmental damage.',topic:'Grease, Hood & Filter',topicId:4},
+  {question:'What objection-handling technique involves agreeing with the concern before redirecting?',options:['A) Hard close','B) Feel, Felt, Found','C) Direct denial','D) Boomerang method'],correct:1,explanation:'The "Feel, Felt, Found" technique: acknowledge the concern ("I understand how you feel"), show empathy ("others have felt that way"), then provide resolution ("what they found was...").',topic:'Sales & Negotiation',topicId:1},
+];
 
 async function triviaLoadQuestion(forceNew) {
   const today = new Date().toISOString().slice(0,10);
@@ -462,7 +489,12 @@ async function triviaLoadQuestion(forceNew) {
     _triviaCurrentQ = q;
     triviaRenderQuestion(q, today);
   } catch(e) {
-    document.getElementById('triviaBody').innerHTML = '<div style="padding:16px;color:var(--red);font-size:12px">Could not load question — check connection.<br><button onclick="triviaLoadQuestion(true)" style="margin-top:8px;padding:6px 14px;background:var(--red);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:11px;font-family:\'Barlow Condensed\',sans-serif;font-weight:700">Retry</button></div>';
+    // Proxy unreachable — use a local fallback question for today
+    const seed = new Date(today).getDate() % FALLBACK_QUESTIONS.length;
+    const q = Object.assign({}, FALLBACK_QUESTIONS[seed], {date: today, _fallback: true});
+    tsSet('q_' + today, q);
+    _triviaCurrentQ = q;
+    triviaRenderQuestion(q, today);
   }
 }
 
