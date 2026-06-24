@@ -1069,92 +1069,190 @@ document.addEventListener('DOMContentLoaded',function(){
 function hmRenderOrgChart(){
   const el=document.getElementById('hmOrgChartContent');
   if(!el)return;
-  const users=hmGetUsers().filter(u=>u.status==='Active');
 
   const divColors={'UniPro':'#C8102E','Quality III':'#1B5FA8','AllPro':'#065F46','Filter Man':'#0D7490','GTO':'#92400E','Termac':'#6D28D9','Corporate':'#374151'};
 
-  function node(u, borderColor, size){
-    const col=u.color||divColors[u.division]||'#6B7280';
-    const avSize=size==='lg'?44:size==='md'?36:28;
-    const avFont=size==='lg'?15:size==='md'?13:11;
-    const nameSize=size==='lg'?'14px':size==='md'?'13px':'12px';
-    return `<div style="background:#fff;border-radius:10px;border:1.5px solid var(--line);border-top:4px solid ${borderColor};padding:12px 14px;text-align:center;min-width:${size==='lg'?160:140}px;max-width:190px;box-shadow:0 1px 4px rgba(0,0,0,.08)">
-      <div style="width:${avSize}px;height:${avSize}px;border-radius:50%;background:${col};display:flex;align-items:center;justify-content:center;font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:${avFont}px;color:#fff;margin:0 auto 6px">${u.avatar||'??'}</div>
-      <div style="font-weight:700;font-size:${nameSize};color:var(--ink);margin-bottom:2px">${escH(u.name)}</div>
-      <div style="font-size:10px;color:var(--soft);font-weight:600;line-height:1.3">${escH(u.title||u.role)}</div>
-      ${u.division&&u.division!=='Corporate'?`<div style="display:inline-block;margin-top:4px;padding:1px 7px;border-radius:3px;font-size:9px;font-weight:700;background:${divColors[u.division]||'#E5E7EB'}22;color:${divColors[u.division]||'#6B7280'}">${escH(u.division)}</div>`:''}
+  // Load custom org data or build from HR users
+  let orgData = JSON.parse(localStorage.getItem('termac_orgchart') || 'null');
+  if(!orgData){
+    const users = hmGetUsers().filter(u=>u.status==='Active');
+    orgData = {
+      company: {name:'Termac Family of Companies', sub:'Eastern PA · NJ · DE · MD · DC'},
+      tiers: [
+        {id:'ownership',  label:'OWNERSHIP',           color:'#F2B705', cards: users.filter(u=>u.role==='owner').map(u=>({id:u.id,name:u.name,title:u.title||u.role,division:u.division,avatar:u.avatar,color:u.color}))},
+        {id:'executive',  label:'EXECUTIVE LEADERSHIP', color:'#374151', cards: users.filter(u=>u.role==='admin'&&['COO','VP','Chief','Vice'].some(k=>(u.title||'').includes(k))).map(u=>({id:u.id,name:u.name,title:u.title||u.role,division:u.division,avatar:u.avatar,color:u.color}))},
+        {id:'senior_mgmt',label:'SENIOR MANAGEMENT',   color:'#C8102E', cards: users.filter(u=>u.role==='admin'&&!['COO','VP','Chief','Vice'].some(k=>(u.title||'').includes(k))).map(u=>({id:u.id,name:u.name,title:u.title||u.role,division:u.division,avatar:u.avatar,color:u.color}))},
+        {id:'management', label:'MANAGEMENT',           color:'#1B5FA8', cards: users.filter(u=>u.role==='manager').map(u=>({id:u.id,name:u.name,title:u.title||u.role,division:u.division,avatar:u.avatar,color:u.color}))},
+        {id:'staff',      label:'STAFF',                color:'#6B7280', cards: users.filter(u=>u.role==='employee').map(u=>({id:u.id,name:u.name,title:u.title||u.role,division:u.division,avatar:u.avatar,color:u.color}))},
+      ]
+    };
+  }
+  window._orgData = orgData;
+
+  function saveOrg(){ localStorage.setItem('termac_orgchart', JSON.stringify(window._orgData)); }
+
+  function avatarInitials(name){ return (name||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase(); }
+  function avatarColor(name){ const c=['#C8102E','#1B5FA8','#065F46','#92400E','#6D28D9','#0D7490','#374151']; let h=0; for(let ch of(name||''))h=(h*31+ch.charCodeAt(0))&0xFFFF; return c[h%c.length]; }
+
+  function renderCard(card, tierId){
+    const col = card.color || divColors[card.division] || '#6B7280';
+    const av = card.avatar || avatarInitials(card.name);
+    return `<div class="org-card" draggable="true" data-id="${card.id}" data-tier="${tierId}"
+      ondragstart="orgDragStart(event)" ondragover="orgDragOver(event)" ondrop="orgDrop(event)" ondragend="orgDragEnd(event)"
+      style="background:#fff;border-radius:10px;border:1.5px solid var(--line);border-top:4px solid ${col};padding:12px 14px;text-align:center;min-width:150px;max-width:190px;cursor:grab;box-shadow:0 1px 4px rgba(0,0,0,.08);position:relative">
+      <button onclick="orgDeleteCard('${card.id}','${tierId}')" title="Remove" style="position:absolute;top:6px;right:6px;background:none;border:none;color:#D1D5DB;cursor:pointer;font-size:13px;line-height:1;padding:2px" onmouseover="this.style.color='#EF4444'" onmouseout="this.style.color='#D1D5DB'">✕</button>
+      <div style="width:40px;height:40px;border-radius:50%;background:${col};display:flex;align-items:center;justify-content:center;font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:14px;color:#fff;margin:0 auto 7px">${escH(av)}</div>
+      <div style="font-weight:700;font-size:13px;color:var(--ink);margin-bottom:2px">${escH(card.name||'New Person')}</div>
+      <div style="font-size:10px;color:var(--soft);line-height:1.3">${escH(card.title||'Title')}</div>
+      ${card.division?`<div style="display:inline-block;margin-top:4px;padding:1px 7px;border-radius:3px;font-size:9px;font-weight:700;background:${col}22;color:${col}">${escH(card.division)}</div>`:''}
+      <button onclick="orgEditCard('${card.id}','${tierId}')" style="display:block;width:100%;margin-top:8px;padding:3px 0;background:#F3F4F6;border:none;border-radius:5px;font-size:10px;font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:.06em;cursor:pointer;color:var(--soft)">✏️ EDIT</button>
     </div>`;
   }
 
-  function tier(label, usersArr, borderCol, size, cols){
-    if(!usersArr.length)return '';
-    return `<div style="margin-bottom:6px">
-      ${label?`<div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:9px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft);text-align:center;margin-bottom:10px">${label}</div>`:''}
-      <div style="display:flex;justify-content:center;gap:12px;flex-wrap:wrap">
-        ${usersArr.map(u=>`${node(u,borderCol,size)}`).join('')}
-      </div>
-    </div>`;
+  function renderTier(tier){
+    if(!tier.cards.length && tier.id !== 'staff') return `
+      <div style="display:flex;justify-content:center;margin:6px 0"><div style="width:2px;height:20px;background:#D7DBE0"></div></div>
+      <div class="org-tier" data-tier="${tier.id}" ondragover="orgDragOver(event)" ondrop="orgDrop(event)" style="margin-bottom:8px">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:9px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft);text-align:center;margin-bottom:10px">${tier.label}</div>
+        <div class="org-tier-cards" data-tier="${tier.id}" style="display:flex;justify-content:center;gap:12px;flex-wrap:wrap;min-height:60px;border:2px dashed #E5E7EB;border-radius:8px;padding:12px">
+          <div style="color:#9CA3AF;font-size:12px;align-self:center">Drop cards here or add new</div>
+        </div>
+        <div style="text-align:center;margin-top:8px"><button onclick="orgAddCard('${tier.id}')" style="padding:5px 14px;background:var(--red);color:#fff;border:none;border-radius:6px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;cursor:pointer">+ ADD PERSON</button></div>
+      </div>`;
+
+    return `
+      <div style="display:flex;justify-content:center;margin:6px 0"><div style="width:2px;height:20px;background:#D7DBE0"></div></div>
+      <div class="org-tier" data-tier="${tier.id}" style="margin-bottom:8px">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:9px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft);text-align:center;margin-bottom:10px">${tier.label}</div>
+        <div class="org-tier-cards" data-tier="${tier.id}" ondragover="orgDragOver(event)" ondrop="orgDrop(event)" style="display:flex;justify-content:center;gap:12px;flex-wrap:wrap;min-height:70px">
+          ${tier.cards.map(c=>renderCard(c,tier.id)).join('')}
+        </div>
+        <div style="text-align:center;margin-top:8px"><button onclick="orgAddCard('${tier.id}')" style="padding:5px 14px;background:var(--red);color:#fff;border:none;border-radius:6px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;cursor:pointer">+ ADD PERSON</button></div>
+      </div>`;
   }
 
-  function connector(){
-    return `<div style="display:flex;justify-content:center;margin:6px 0">
-      <div style="width:2px;height:20px;background:#D7DBE0"></div>
-    </div>`;
-  }
-
-  const owners  = users.filter(u=>u.role==='owner');
-  const execs   = users.filter(u=>u.role==='admin'&&['Chief Operating Officer','Vice President of Sales'].some(t=>u.title.includes(t.split(' ').slice(-1)[0])));
-  const mgmt    = users.filter(u=>u.role==='admin'&&!execs.includes(u));
-  const managers= users.filter(u=>u.role==='manager');
-  const staff   = users.filter(u=>u.role==='employee');
-
-  // Group staff by division for bottom section
-  const allDivs=[...new Set([...managers,...staff].map(u=>u.division).filter(Boolean))];
-
-  el.innerHTML=`
+  el.innerHTML = `
     <div style="display:flex;justify-content:flex-end;margin-bottom:16px;gap:8px">
-      <button class="hm-btn hm-btn-ghost" onclick="window.print()" style="font-size:11px">🖨️ Print Chart</button>
+      <button onclick="orgResetToHR()" style="padding:5px 14px;background:#F3F4F6;border:1.5px solid var(--line);border-radius:6px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;cursor:pointer;color:var(--soft)">↺ RESET FROM HR RECORDS</button>
+      <button onclick="window.print()" style="padding:5px 14px;background:#F3F4F6;border:1.5px solid var(--line);border-radius:6px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;cursor:pointer;color:var(--soft)">🖨️ PRINT</button>
     </div>
-
-    <!-- COMPANY -->
-    <div style="text-align:center;margin-bottom:6px">
-      <div style="display:inline-block;background:#1A1D21;border-radius:10px;padding:12px 24px;color:#fff">
+    <div style="text-align:center;margin-bottom:4px">
+      <div style="display:inline-block;background:#1A1D21;border-radius:10px;padding:12px 24px">
         <div style="font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:18px;letter-spacing:.08em;color:#F2B705">TERMAC FAMILY OF COMPANIES</div>
         <div style="font-size:11px;color:#6B7280;margin-top:2px">Eastern PA · NJ · DE · MD · DC</div>
       </div>
     </div>
+    ${orgData.tiers.map(t=>renderTier(t)).join('')}
 
-    ${owners.length?connector()+''+tier('OWNERSHIP',owners,'#F2B705','lg'):''}
-    ${execs.length?connector()+''+tier('EXECUTIVE LEADERSHIP',execs,'#374151','lg'):''}
-    ${mgmt.length?connector()+''+tier('SENIOR MANAGEMENT',mgmt,'#C8102E','md'):''}
-    ${managers.length?connector()+''+tier('MANAGEMENT',managers,'#1B5FA8','md'):''}
-    ${staff.length?connector()+''+tier('STAFF',staff,'#6B7280','sm'):''}
-
-    <div style="margin-top:24px;padding-top:16px;border-top:2px solid var(--line)">
-      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--soft);margin-bottom:14px">DIVISIONS</div>
-      ${allDivs.map(div=>{
-        const divMgrs=managers.filter(u=>u.division===div);
-        const divStaff=staff.filter(u=>u.division===div);
-        const all=[...divMgrs,...divStaff];
-        if(!all.length)return '';
-        const col=divColors[div]||'#6B7280';
-        return `<div style="background:#fff;border-radius:10px;border:1px solid var(--line);overflow:hidden;margin-bottom:10px">
-          <div style="padding:10px 16px;background:${col};display:flex;align-items:center;gap:8px">
-            <span style="font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:13px;color:#fff;text-transform:uppercase;letter-spacing:.08em">${escH(div)}</span>
-            <span style="background:rgba(255,255,255,.2);color:#fff;border-radius:99px;padding:1px 8px;font-size:10px;font-weight:700">${all.length} staff</span>
-          </div>
-          <div style="padding:12px 14px;display:flex;flex-wrap:wrap;gap:10px">
-            ${all.map(u=>`<div style="background:#F8F9FA;border-radius:8px;padding:10px 12px;border-left:3px solid ${col};min-width:130px;text-align:center">
-              <div style="width:30px;height:30px;border-radius:50%;background:${u.color||col};display:flex;align-items:center;justify-content:center;font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:11px;color:#fff;margin:0 auto 4px">${u.avatar||'??'}</div>
-              <div style="font-weight:700;font-size:12px">${escH(u.name)}</div>
-              <div style="font-size:10px;color:var(--soft)">${escH(u.title||'Staff')}</div>
-              ${divMgrs.includes(u)?'<div style="font-size:9px;background:#DBEAFE;color:#1E40AF;border-radius:3px;padding:1px 5px;margin-top:3px;display:inline-block;font-weight:700">MGR</div>':''}
-            </div>`).join('')}
-          </div>
-        </div>`;
-      }).join('')}
+    <!-- EDIT MODAL -->
+    <div id="orgModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:none;align-items:center;justify-content:center">
+      <div style="background:#fff;border-radius:12px;padding:24px;width:min(400px,94vw);box-shadow:0 12px 48px rgba(0,0,0,.2)">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:16px;margin-bottom:16px">Edit Card</div>
+        <label style="display:block;font-size:11px;font-weight:700;color:var(--soft);margin-bottom:4px">FULL NAME</label>
+        <input id="orgEditName" style="width:100%;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;margin-bottom:10px;font-size:13px">
+        <label style="display:block;font-size:11px;font-weight:700;color:var(--soft);margin-bottom:4px">TITLE / ROLE</label>
+        <input id="orgEditTitle" style="width:100%;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;margin-bottom:10px;font-size:13px">
+        <label style="display:block;font-size:11px;font-weight:700;color:var(--soft);margin-bottom:4px">DIVISION</label>
+        <select id="orgEditDiv" style="width:100%;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;margin-bottom:10px;font-size:13px">
+          <option value="">— None —</option>
+          <option>Corporate</option><option>UniPro</option><option>Quality III</option>
+          <option>AllPro</option><option>Filter Man</option><option>GTO</option><option>Termac</option>
+        </select>
+        <label style="display:block;font-size:11px;font-weight:700;color:var(--soft);margin-bottom:4px">AVATAR INITIALS (2 chars)</label>
+        <input id="orgEditAvatar" maxlength="2" style="width:80px;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;margin-bottom:16px;font-size:13px;text-transform:uppercase">
+        <div style="display:flex;gap:8px">
+          <button onclick="orgSaveEdit()" style="flex:1;padding:9px;background:var(--red);color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Save</button>
+          <button onclick="document.getElementById('orgModal').style.display='none'" style="flex:1;padding:9px;background:#F3F4F6;border:1.5px solid var(--line);border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Cancel</button>
+        </div>
+      </div>
     </div>
   `;
+
+  // ── DRAG AND DROP ──
+  window._orgDragId = null;
+  window._orgDragTier = null;
+
+  window.orgDragStart = function(e){
+    window._orgDragId = e.currentTarget.dataset.id;
+    window._orgDragTier = e.currentTarget.dataset.tier;
+    e.currentTarget.style.opacity = '0.4';
+    e.dataTransfer.effectAllowed = 'move';
+  };
+  window.orgDragEnd = function(e){ e.currentTarget.style.opacity = '1'; };
+  window.orgDragOver = function(e){ e.preventDefault(); e.dataTransfer.dropEffect='move'; };
+  window.orgDrop = function(e){
+    e.preventDefault();
+    const dropTier = e.currentTarget.dataset.tier || e.currentTarget.closest('[data-tier]')?.dataset.tier;
+    if(!dropTier || !window._orgDragId) return;
+    const srcTierObj = window._orgData.tiers.find(t=>t.id===window._orgDragTier);
+    const dstTierObj = window._orgData.tiers.find(t=>t.id===dropTier);
+    if(!srcTierObj || !dstTierObj) return;
+    const cardIdx = srcTierObj.cards.findIndex(c=>c.id===window._orgDragId);
+    if(cardIdx < 0) return;
+    const [card] = srcTierObj.cards.splice(cardIdx, 1);
+    // Drop before target card if dropping on a card
+    const targetCardEl = e.target.closest('.org-card');
+    if(targetCardEl && dstTierObj === srcTierObj){
+      const tIdx = dstTierObj.cards.findIndex(c=>c.id===targetCardEl.dataset.id);
+      dstTierObj.cards.splice(tIdx >= 0 ? tIdx : dstTierObj.cards.length, 0, card);
+    } else {
+      dstTierObj.cards.push(card);
+    }
+    saveOrg();
+    hmRenderOrgChart();
+  };
+
+  // ── EDIT ──
+  window._orgEditId = null;
+  window._orgEditTier = null;
+  window.orgEditCard = function(id, tierId){
+    const tier = window._orgData.tiers.find(t=>t.id===tierId);
+    const card = tier?.cards.find(c=>c.id===id);
+    if(!card) return;
+    window._orgEditId = id; window._orgEditTier = tierId;
+    document.getElementById('orgEditName').value = card.name||'';
+    document.getElementById('orgEditTitle').value = card.title||'';
+    document.getElementById('orgEditDiv').value = card.division||'';
+    document.getElementById('orgEditAvatar').value = card.avatar||avatarInitials(card.name);
+    document.getElementById('orgModal').style.display = 'flex';
+  };
+  window.orgSaveEdit = function(){
+    const tier = window._orgData.tiers.find(t=>t.id===window._orgEditTier);
+    const card = tier?.cards.find(c=>c.id===window._orgEditId);
+    if(!card) return;
+    card.name = document.getElementById('orgEditName').value.trim();
+    card.title = document.getElementById('orgEditTitle').value.trim();
+    card.division = document.getElementById('orgEditDiv').value;
+    card.avatar = document.getElementById('orgEditAvatar').value.toUpperCase() || avatarInitials(card.name);
+    card.color = divColors[card.division] || '#6B7280';
+    document.getElementById('orgModal').style.display = 'none';
+    saveOrg(); hmRenderOrgChart();
+  };
+
+  // ── ADD ──
+  window.orgAddCard = function(tierId){
+    const tier = window._orgData.tiers.find(t=>t.id===tierId);
+    if(!tier) return;
+    const newCard = {id:'org_'+Date.now(), name:'New Person', title:'Title', division:'', avatar:'NP', color:'#6B7280'};
+    tier.cards.push(newCard);
+    saveOrg(); hmRenderOrgChart();
+    setTimeout(()=>window.orgEditCard(newCard.id, tierId), 50);
+  };
+
+  // ── DELETE ──
+  window.orgDeleteCard = function(id, tierId){
+    const tier = window._orgData.tiers.find(t=>t.id===tierId);
+    if(!tier) return;
+    tier.cards = tier.cards.filter(c=>c.id!==id);
+    saveOrg(); hmRenderOrgChart();
+  };
+
+  // ── RESET ──
+  window.orgResetToHR = function(){
+    if(!confirm('Reset org chart from HR records? Custom changes will be lost.')) return;
+    localStorage.removeItem('termac_orgchart');
+    hmRenderOrgChart();
+  };
 }
 
 /* ══ JOB DESCRIPTIONS ════════════════════════════════════════════ */
