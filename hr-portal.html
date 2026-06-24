@@ -162,9 +162,16 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--ink);min-h
       <button class="hr-nav-btn" onclick="hrNav('calendar')"><span class="hr-nav-icon">🗓️</span><span class="hr-nav-label">Calendar</span></button>
       <button class="hr-nav-btn" onclick="hrNav('recognition')"><span class="hr-nav-icon">🤝</span><span class="hr-nav-label">Recognition</span></button>
       <button class="hr-nav-btn" onclick="hrNav('policies')"><span class="hr-nav-icon">📄</span><span class="hr-nav-label">Policies & Docs</span></button>
+      <!-- ── HR PORTAL link: always visible, prompts manager login if employee ── -->
+      <div class="hr-sidebar-divider"></div>
+      <button class="hr-nav-btn" id="hrPortalGateBtn" onclick="hrOpenManagerGate()">
+        <span class="hr-nav-icon">🔐</span>
+        <span class="hr-nav-label" style="font-weight:700">HR Portal</span>
+        <span style="font-size:9px;color:#4B5563;font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:.06em;text-transform:uppercase;margin-left:auto">MGR</span>
+      </button>
+
+      <!-- ── Manager nav: hidden until manager/admin logs in ── -->
       <div id="hrMgrNav" style="display:none">
-        <div class="hr-sidebar-divider"></div>
-        <div class="hr-sidebar-hdr">HR Management</div>
         <button class="hr-nav-btn" onclick="hrNav('employees')"><span class="hr-nav-icon">👥</span><span class="hr-nav-label">Employee Directory</span></button>
         <button class="hr-nav-btn" onclick="hrNav('approvals')"><span class="hr-nav-icon">✅</span><span class="hr-nav-label">Approvals Queue</span><span class="hr-nav-badge" id="hrBadge-approvals" style="display:none">0</span></button>
         <button class="hr-nav-btn" onclick="hrNav('reviews')"><span class="hr-nav-icon">⭐</span><span class="hr-nav-label">Performance Reviews</span><span class="hr-nav-badge" id="hrBadge-reviews" style="display:none">0</span></button>
@@ -257,6 +264,44 @@ function hrGoBack(){
   else window.location.href = 'employee-portal.html';
 }
 function hrLogout(){sessionStorage.removeItem('hrSession');_hrUser=null;document.getElementById('hrApp').style.display='none';document.getElementById('hrLogin').style.display='flex';document.getElementById('hrUserChip').style.display='none';document.getElementById('hrLogoutBtn').style.display='none';}
+function hrOpenManagerGate(){
+  // If already manager/admin, just go to employees page
+  if(_hrUser && (_hrUser.role==='manager'||_hrUser.role==='admin')){
+    hrNav('employees'); return;
+  }
+  // Show the gate modal
+  document.getElementById('hrGateErr').style.display='none';
+  document.getElementById('hrGateUser').value='';
+  document.getElementById('hrGatePass').value='';
+  document.getElementById('hrMgrGate').style.display='flex';
+  setTimeout(()=>document.getElementById('hrGateUser').focus(),100);
+}
+
+function hrGateLogin(){
+  const u = document.getElementById('hrGateUser').value.trim().toLowerCase();
+  const p = document.getElementById('hrGatePass').value;
+  const user = hrGetUsers().find(x=>x.username===u && x.password===p);
+  const errEl = document.getElementById('hrGateErr');
+  if(!user || user.role==='employee'){
+    errEl.style.display='block'; return;
+  }
+  errEl.style.display='none';
+  // Elevate session to this manager/admin
+  _hrUser = user;
+  sessionStorage.setItem('hrSession', JSON.stringify({id:user.id, ts:Date.now()}));
+  document.getElementById('hrMgrGate').style.display='none';
+  // Update nav chip
+  document.getElementById('hrNavAvatar').textContent=user.avatar;
+  document.getElementById('hrNavAvatar').style.background=user.color;
+  document.getElementById('hrNavName').textContent=user.name;
+  document.getElementById('hrNavRole').textContent=user.role.charAt(0).toUpperCase()+user.role.slice(1);
+  // Hide the gate button, show the full manager nav
+  const gateBtn = document.getElementById('hrPortalGateBtn');
+  if(gateBtn) gateBtn.style.display='none';
+  document.getElementById('hrMgrNav').style.display='block';
+  hrNav('employees');
+}
+
 function hrCheckSession(){
   const s=sessionStorage.getItem('hrSession');if(!s)return false;
   try{const d=JSON.parse(s);if(Date.now()-d.ts>8*3600000){sessionStorage.removeItem('hrSession');return false;}
@@ -275,7 +320,11 @@ function hrShowApp(){
   var _retUrl = sessionStorage.getItem('trnReturnUrl');
   var _backBtn = document.getElementById('hrBackBtn');
   if (_backBtn) _backBtn.style.display = _retUrl ? 'block' : 'none';
-  if(_hrUser.role==='manager'||_hrUser.role==='admin')document.getElementById('hrMgrNav').style.display='block';
+  if(_hrUser.role==='manager'||_hrUser.role==='admin'){
+    document.getElementById('hrMgrNav').style.display='block';
+    var gateBtn=document.getElementById('hrPortalGateBtn');
+    if(gateBtn) gateBtn.style.display='none';
+  }
   hrNav('dashboard');
 }
 
@@ -703,5 +752,19 @@ document.addEventListener('DOMContentLoaded',function(){
   document.documentElement.style.visibility = 'visible';
 });
 </script>
+
+<!-- ── Manager Login Gate Modal ── -->
+<div id="hrMgrGate" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9000;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:14px;padding:32px 28px;width:min(380px,94vw);box-shadow:0 8px 40px rgba(0,0,0,.3)">
+    <div style="font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:22px;letter-spacing:.08em;text-transform:uppercase;color:#1A1D21;margin-bottom:4px">HR Portal <span style="color:#C8102E">Access</span></div>
+    <div style="font-size:12px;color:#5A616B;margin-bottom:20px">Manager or Admin credentials required</div>
+    <div id="hrGateErr" style="display:none;background:#FEE2E2;color:#991B1B;border-radius:6px;padding:8px 12px;font-size:12px;margin-bottom:12px">Invalid credentials or insufficient role.</div>
+    <input class="hr-login-input" id="hrGateUser" type="text" placeholder="firstname.lastname" autocomplete="username" style="margin-bottom:10px">
+    <input class="hr-login-input" id="hrGatePass" type="password" placeholder="Password" onkeydown="if(event.key==='Enter')hrGateLogin()" style="margin-bottom:16px">
+    <button onclick="hrGateLogin()" style="width:100%;padding:11px;background:#C8102E;color:#fff;border:none;border-radius:8px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;margin-bottom:8px">Sign In to HR Portal</button>
+    <button onclick="document.getElementById('hrMgrGate').style.display='none'" style="width:100%;padding:8px;background:none;color:#5A616B;border:1.5px solid #D7DBE0;border-radius:8px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Cancel</button>
+    <div style="text-align:center;margin-top:12px;font-size:11px;color:#9CA3AF">Manager: <strong>chrystal.bush</strong> / Admin: <strong>ted.scholl</strong></div>
+  </div>
+</div>
 </body>
 </html>
