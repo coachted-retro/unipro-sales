@@ -116,6 +116,11 @@ button{cursor:pointer}
 .trn-btn:hover{border-color:#C8102E;color:#fff}
 .trn-btn.primary{background:#C8102E;border-color:#C8102E;color:#fff}
 .trn-btn.primary:hover{background:#A30D25;border-color:#A30D25}
+
+/* ── Call history filter buttons ── */
+.rcpFltBtn{padding:4px 10px;border-radius:5px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;border:1.5px solid var(--line);background:#fff;color:var(--ink);transition:all .1s}
+.rcpFltBtn:hover{border-color:#7C3AED;color:#7C3AED}
+.rcpFltActive{background:#7C3AED!important;border-color:#7C3AED!important;color:#fff!important}
 </style>
 </head>
 <body>
@@ -295,19 +300,25 @@ function rcpRenderCallLog(el){
         <button class="rcp-btn rcp-btn-ghost" onclick="rcpClearForm()">Clear</button>
       </div>
     </div>
-    <!-- TODAY'S CALL LOG -->
+    <!-- CALL HISTORY LOG -->
     <div class="rcp-card">
-      <div class="rcp-card-title">Today's Calls <span style="color:var(--ink);font-size:12px;font-weight:700">${callLog.length}</span></div>
-      <div id="rcpCallLogList">
-        ${callLog.length===0
-          ? '<div style="color:var(--soft);font-size:13px;text-align:center;padding:20px">No calls logged yet today.</div>'
-          : [...callLog].reverse().map(c=>`
-            <div class="rcp-log-item ${c.type==='Complaint'?'complaint':''}">
-              <div class="rcp-log-time">${new Date(c.ts).toLocaleTimeString()} · ${escH(c.loggedBy||'')}</div>
-              <div class="rcp-log-caller">${escH(c.name||'Unknown')} ${c.company?'— '+escH(c.company):''}</div>
-              <div class="rcp-log-detail">${escH(c.type||'')} · Routed to: ${escH(c.routeTo||'—')} · ${escH(c.urgency||'Normal')}</div>
-              ${c.notes?`<div style="font-size:12px;color:var(--soft);margin-top:4px">${escH(c.notes)}</div>`:''}
-            </div>`).join('')}
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+        <div class="rcp-card-title" style="margin-bottom:0">📋 Call History <span id="rcpHistCount" style="color:var(--ink);font-size:12px;font-weight:700">${rcpFilteredCalls(callLog,'today').length}</span></div>
+        <div style="display:flex;gap:5px;flex-wrap:wrap" id="rcpFilterBtns">
+          <button id="rcpFlt-today"  onclick="rcpSetFilter('today')"  class="rcpFltBtn rcpFltActive">Today</button>
+          <button id="rcpFlt-week"   onclick="rcpSetFilter('week')"   class="rcpFltBtn">Week</button>
+          <button id="rcpFlt-month"  onclick="rcpSetFilter('month')"  class="rcpFltBtn">Month</button>
+          <button id="rcpFlt-all"    onclick="rcpSetFilter('all')"    class="rcpFltBtn">All</button>
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;margin-bottom:10px;align-items:center">
+        <span style="font-size:11px;color:var(--soft)">Custom:</span>
+        <input type="date" id="rcpDateFrom" style="padding:4px 8px;border:1.5px solid var(--line);border-radius:5px;font-size:11px;flex:1" onchange="rcpSetFilter('custom')">
+        <span style="font-size:11px;color:var(--soft)">→</span>
+        <input type="date" id="rcpDateTo" style="padding:4px 8px;border:1.5px solid var(--line);border-radius:5px;font-size:11px;flex:1" onchange="rcpSetFilter('custom')">
+      </div>
+      <div id="rcpCallLogList" style="overflow-y:auto;max-height:400px">
+        ${(()=>{const f=rcpFilteredCalls(callLog,'today');return f.length===0?'<div style="color:var(--soft);font-size:13px;text-align:center;padding:20px">No calls logged yet today.</div>':[...f].reverse().map(c=>rcpCallCard(c)).join('');})()}
       </div>
     </div>
   </div>`;
@@ -538,7 +549,63 @@ document.addEventListener('DOMContentLoaded',()=>{
 (function() {
   var RETURN_KEY = 'trnReturnUrl';
 
-  // Store where we came from so Employee Portal overlay can send us back
+  // Store where we came from so Employee Portal overlay can send us
+// ── Call log helpers ──
+var _rcpFilter = 'today';
+
+function rcpCallCard(c) {
+  var d = new Date(c.ts);
+  var dateStr = d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
+  var timeStr = d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+  return '<div class="rcp-log-item '+(c.type==='Complaint'?'complaint':'')+'">' +
+    '<div class="rcp-log-time">'+dateStr+' '+timeStr+' · '+escH(c.loggedBy||'')+'</div>' +
+    '<div class="rcp-log-caller">'+escH(c.name||'Unknown')+(c.company?' — '+escH(c.company):'')+'</div>' +
+    '<div class="rcp-log-detail">'+escH(c.type||'')+' · Routed to: '+escH(c.routeTo||'—')+' · '+escH(c.urgency||'Normal')+'</div>' +
+    (c.notes?'<div style="font-size:12px;color:var(--soft);margin-top:4px">'+escH(c.notes)+'</div>':'')+
+    '</div>';
+}
+
+function rcpFilteredCalls(log, filter) {
+  var now = new Date();
+  var todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  var weekStart  = todayStart - (now.getDay() * 86400000);
+  var monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  if (filter === 'today')  return log.filter(c => c.ts >= todayStart);
+  if (filter === 'week')   return log.filter(c => c.ts >= weekStart);
+  if (filter === 'month')  return log.filter(c => c.ts >= monthStart);
+  if (filter === 'custom') {
+    var from = document.getElementById('rcpDateFrom');
+    var to   = document.getElementById('rcpDateTo');
+    var fromTs = from && from.value ? new Date(from.value).getTime() : 0;
+    var toTs   = to   && to.value   ? new Date(to.value).getTime() + 86399999 : Date.now();
+    return log.filter(c => c.ts >= fromTs && c.ts <= toTs);
+  }
+  return log; // 'all'
+}
+
+function rcpSetFilter(filter) {
+  _rcpFilter = filter;
+  // Update button styles
+  ['today','week','month','all'].forEach(function(f) {
+    var btn = document.getElementById('rcpFlt-'+f);
+    if (!btn) return;
+    if (f === filter) btn.classList.add('rcpFltActive');
+    else btn.classList.remove('rcpFltActive');
+  });
+  // Re-render the list
+  var allCalls = JSON.parse(localStorage.getItem('termac_rcp_calls')||'[]');
+  var filtered = rcpFilteredCalls(allCalls, filter);
+  var countEl = document.getElementById('rcpHistCount');
+  if (countEl) countEl.textContent = filtered.length;
+  var listEl = document.getElementById('rcpCallLogList');
+  if (!listEl) return;
+  if (filtered.length === 0) {
+    listEl.innerHTML = '<div style="color:var(--soft);font-size:13px;text-align:center;padding:20px">No calls in this period.</div>';
+  } else {
+    listEl.innerHTML = [...filtered].reverse().map(rcpCallCard).join('');
+  }
+}
+ back
   window.trnNavigateTo = function(url) {
     sessionStorage.setItem(RETURN_KEY, window.location.href);
     window.location.href = url;
