@@ -969,6 +969,39 @@ function initWarehouse() {
 // ════════════════════════════════════════════════════════════════════════════
 // HELPERS
 // ════════════════════════════════════════════════════════════════════════════
+
+// HTML escape helper (used throughout new WMS intelligence code)
+function escH(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// Unified inventory loader — merges all 3 warehouses into flat {id: qoh} map
+// The existing stock objects use {onHand: N} — we normalise to a simple number
+function loadInventory() {
+  const t = loadWH(WH_TERMAC_KEY) || {};
+  const u = loadWH(WH_UNIPRO_KEY) || {};
+  const a = loadWH(WH_ALLPRO_KEY) || {};
+  const merged = {};
+  [t, u, a].forEach(wh => {
+    Object.keys(wh).forEach(id => {
+      const v = wh[id];
+      merged[id] = typeof v === 'number' ? v : (v && typeof v.onHand !== 'undefined' ? v.onHand : 0);
+    });
+  });
+  return merged;
+}
+
+// Save QOH back to correct warehouse after edits
+function saveInventoryQOH(itemId, qty) {
+  const whKey = TERMAC_WH_PRODUCTS.find(p=>p.id===itemId) ? WH_TERMAC_KEY
+              : UNIPRO_WH_PRODUCTS.find(p=>p.id===itemId) ? WH_UNIPRO_KEY
+              : WH_ALLPRO_KEY;
+  const stock = loadWH(whKey) || {};
+  if (!stock[itemId]) stock[itemId] = {onHand:0,txns:[]};
+  if (typeof stock[itemId] === 'object') stock[itemId].onHand = qty;
+  else stock[itemId] = {onHand:qty,txns:[]};
+  saveWH(whKey, stock);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 function daysSupply(stock, pid) {
   const txns = (stock[pid] && stock[pid].txns) ? stock[pid].txns : [];
   const cutoff = Date.now() - 30*24*3600*1000;
@@ -1055,6 +1088,7 @@ function switchWHTab(name) {
   if (name === 'unipro')   renderUniproTab();
   if (name === 'allpro')   renderAllproTab();
   if (name === 'reorders') renderReorderQueue();
+  setTimeout(function(){ if(typeof rlUpdateRail==='function') rlUpdateRail(); }, 150);
 }
 
 // ── REQUISITION HELPERS ───────────────────────────────────────────────────
@@ -2367,12 +2401,8 @@ document.addEventListener('DOMContentLoaded', function() {
   setTimeout(rlUpdateRail, 800);
 });
 
-// Refresh rail whenever tab switches
-const _origSwitchWHTab = switchWHTab;
-function switchWHTab(name) {
-  _origSwitchWHTab(name);
-  setTimeout(rlUpdateRail, 100);
-}
+// Refresh rail whenever tab switches — hook via post-render callback
+const _whRailRefresh = function(name) { setTimeout(rlUpdateRail, 150); };
 
 // Also refresh on page load
 setTimeout(rlUpdateRail, 500);
