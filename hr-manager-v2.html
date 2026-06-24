@@ -1247,6 +1247,27 @@ const HM_ROLES = [
 var _hmJDActive = null;
 var _hmJDSaved = {};
 
+// Map role IDs to their pre-built Word doc filenames in the repo
+const HM_JD_DOCX = {
+  'sales_rep':      'JD-Sales-Representative.docx',
+  'dms_rep':        'JD-DMS-Telemarketer.docx',
+  'receptionist':   'JD-Receptionist.docx',
+  'tech_unipro':    'JD-Field-Technician.docx',
+  'tech_gto':       'JD-GTO-Technician.docx',
+  'tech_filterman': 'JD-FilterMan-Technician.docx',
+  'fabricator':     'JD-Stainless-Fabricator.docx',
+  'scheduler':      'JD-Service-Scheduler.docx',
+  'dispatcher':     'JD-Field-Dispatcher.docx',
+  'office_mgr':     'JD-Office-Manager.docx',
+  'warehouse':      'JD-Warehouse-Associate.docx',
+  'driver':         'JD-Delivery-Driver.docx',
+  'hr_manager':     'JD-HR-Manager.docx',
+  'acct_ops_mgr':   'JD-Sr-Account-Ops-Manager.docx',
+  'branch_mgr':     'JD-Division-Manager.docx',
+};
+
+const DOCX_BASE = 'https://coachted-retro.github.io/unipro-sales/termac-docs/';
+
 function hmRenderJobDesc(){
   const el=document.getElementById('hmJDContent');
   if(!el)return;
@@ -1298,11 +1319,25 @@ function hmOpenJD(roleId){
         <button class="hm-ai-btn" id="hmJDGenBtn" onclick="hmGenerateJD('${roleId}')">⚡ AI Generate</button>
         <button class="hm-btn hm-btn-ghost" onclick="hmSaveJD('${roleId}')">💾 Save</button>
         <button class="hm-btn hm-btn-ghost" onclick="hmExportJD('${roleId}')">📄 Export PDF</button>
+        ${HM_JD_DOCX['${roleId}'] ? '<a class="hm-btn hm-btn-ghost" href="'+DOCX_BASE+HM_JD_DOCX['${roleId}']+'" download style="text-decoration:none">📥 Download Word</a>' : ''}
       </div>
     </div>
     <div style="font-size:11px;color:var(--soft);margin-bottom:8px">Edit directly below after generating. Changes auto-save on blur.</div>
     <div id="hmJDBody" class="hm-jd-body" contenteditable="true" onblur="hmAutoSaveJD('${roleId}',this)">${saved ? saved.replace(/</g,'&lt;') : '<span style="color:#9CA3AF">Click ⚡ AI Generate to create this job description, or type directly here…</span>'}</div>
+
+    <!-- Document Upload Section -->
+    <div style="margin-top:16px;border-top:1px solid var(--line);padding-top:14px">
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:10px">📎 Attached Documents</div>
+      <div id="hmJDDocs-${roleId}"></div>
+      <label style="cursor:pointer;display:inline-flex;align-items:center;gap:6px;background:var(--bg);border:1.5px dashed var(--line);border-radius:7px;padding:8px 14px;font-size:12px;color:var(--soft);margin-top:6px" 
+        onmouseover="this.style.borderColor='var(--red)';this.style.color='var(--red)'" 
+        onmouseout="this.style.borderColor='var(--line)';this.style.color='var(--soft)'">
+        <input type="file" multiple accept=".pdf,.doc,.docx,.txt,.png,.jpg,.xlsx" style="display:none" onchange="hmUploadDocs('${roleId}',this)">
+        📎 Attach Files — PDF, Word, Images, Spreadsheets
+      </label>
+    </div>
   `;
+  hmRenderJDDocs('${roleId}');
 }
 
 async function hmGenerateJD(roleId){
@@ -1494,10 +1529,24 @@ function hmOpenPolicy(polId){
         <button class="hm-ai-btn" id="hmPolGenBtn" onclick="hmGeneratePolicy('${polId}')">⚡ AI Generate</button>
         <button class="hm-btn hm-btn-ghost" onclick="hmSavePolicy('${polId}')">💾 Save</button>
         <button class="hm-btn hm-btn-ghost" onclick="hmExportPolicy('${polId}')">📄 Export PDF</button>
+        ${HM_POLICY_DOCX['${polId}'] ? '<a class="hm-btn hm-btn-ghost" href="'+DOCX_BASE+HM_POLICY_DOCX['${polId}']+'" download style="text-decoration:none">📥 Download Word</a>' : ''}
       </div>
     </div>
     <div id="hmPolBody" class="hm-jd-body" contenteditable="true" onblur="hmAutoSavePolicy('${polId}',this)">${saved?saved.replace(/</g,'&lt;'):'<span style="color:#9CA3AF">Click ⚡ AI Generate to draft this policy…</span>'}</div>
-  `;
+
+    <!-- Document Upload Section -->
+    <div style="margin-top:16px;border-top:1px solid var(--line);padding-top:14px">
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:10px">📎 Attached Documents</div>
+      <div id="hmPolDocs-${polId}"></div>
+      <label style="cursor:pointer;display:inline-flex;align-items:center;gap:6px;background:var(--bg);border:1.5px dashed var(--line);border-radius:7px;padding:8px 14px;font-size:12px;color:var(--soft);margin-top:6px"
+        onmouseover="this.style.borderColor='var(--red)';this.style.color='var(--red)'"
+        onmouseout="this.style.borderColor='var(--line)';this.style.color='var(--soft)'">
+        <input type="file" multiple accept=".pdf,.doc,.docx,.txt,.png,.jpg,.xlsx" style="display:none" onchange="hmUploadDocs('${polId}',this)">
+        📎 Attach Files — PDF, Word, Images, Spreadsheets
+      </label>
+    </div>
+  \`;
+  hmRenderJDDocs('${polId}');
 }
 
 async function hmGeneratePolicy(polId){
@@ -1612,6 +1661,108 @@ function hmExportPolicy(polId){
   w.document.close();
 }
 
+
+
+// ── POLICY DOCX MAP ──────────────────────────────────────────
+const HM_POLICY_DOCX = {
+  'handbook_intro':  'Policy-Handbook-Introduction.docx',
+  'at_will':         'Policy-At-Will-Employment.docx',
+  'equal_opp':       'Policy-Equal-Opportunity.docx',
+  'drug_free':       'Policy-Drug-Free-Workplace.docx',
+  'vehicle':         'Policy-Company-Vehicle.docx',
+  'safety_osha':     'Policy-Safety-OSHA.docx',
+  'nfpa_compliance': 'Policy-NFPA-Compliance.docx',
+  'pto':             'Policy-PTO-Sick-Vacation.docx',
+  'confidentiality': 'Policy-Confidentiality.docx',
+  'disciplinary':    'Policy-Progressive-Discipline.docx',
+};
+
+// ── DOCUMENT UPLOAD & STORAGE ────────────────────────────────
+// Stores base64 encoded files in localStorage per role/policy
+const HM_DOCS_KEY = 'termac_hr_docs';
+
+function hmLoadDocs(entityId) {
+  try { return JSON.parse(localStorage.getItem(HM_DOCS_KEY+'_'+entityId)||'[]'); } catch(e) { return []; }
+}
+function hmSaveDocs(entityId, docs) {
+  localStorage.setItem(HM_DOCS_KEY+'_'+entityId, JSON.stringify(docs));
+}
+
+function hmUploadDocs(entityId, input) {
+  const files = Array.from(input.files);
+  if(!files.length) return;
+  const docs = hmLoadDocs(entityId);
+  let loaded = 0;
+  files.forEach(file => {
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      docs.push({
+        name: file.name,
+        type: file.type,
+        size: file.size,
+        data: e.target.result,
+        uploadedAt: new Date().toISOString(),
+        uploadedBy: 'HR Manager'
+      });
+      loaded++;
+      if(loaded === files.length) {
+        hmSaveDocs(entityId, docs);
+        hmRenderJDDocs(entityId);
+        hmToast(files.length + ' file' + (files.length>1?'s':'') + ' attached ✓');
+      }
+    };
+    reader.readAsDataURL(file);
+  });
+  input.value = '';
+}
+
+function hmRenderJDDocs(entityId) {
+  const el = document.getElementById('hmJDDocs-'+entityId) || document.getElementById('hmPolDocs-'+entityId);
+  if(!el) return;
+  const docs = hmLoadDocs(entityId);
+  if(!docs.length) { el.innerHTML = '<div style="font-size:11px;color:var(--soft);margin-bottom:6px">No documents attached yet.</div>'; return; }
+
+  el.innerHTML = docs.map(function(doc, i) {
+    const isImage = doc.type && doc.type.startsWith('image/');
+    const isPDF = doc.type === 'application/pdf';
+    const isWord = doc.name.endsWith('.docx') || doc.name.endsWith('.doc');
+    const icon = isPDF ? '📄' : isWord ? '📝' : isImage ? '🖼️' : '📎';
+    const sizeKB = Math.round(doc.size/1024);
+    const date = new Date(doc.uploadedAt).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+    return '<div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:8px 12px;margin-bottom:6px;gap:8px">'
+      + '<div style="display:flex;align-items:center;gap:8px;min-width:0;flex:1">'
+      + '<span style="font-size:18px">'+icon+'</span>'
+      + '<div style="min-width:0">'
+      + '<div style="font-size:12px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+escH(doc.name)+'</div>'
+      + '<div style="font-size:10px;color:var(--soft)">'+sizeKB+'KB · Uploaded '+date+'</div>'
+      + '</div></div>'
+      + '<div style="display:flex;gap:6px;flex-shrink:0">'
+      + '<a href="'+doc.data+'" download="'+escH(doc.name)+'" style="background:var(--navy);color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:10px;font-family:Barlow Condensed,sans-serif;font-weight:700;text-decoration:none;cursor:pointer">⬇ Download</a>'
+      + '<button onclick="hmDeleteDoc(\''+entityId+'\','+i+')" style="background:none;border:1px solid #EF4444;color:#EF4444;border-radius:5px;padding:4px 8px;font-size:10px;cursor:pointer;font-weight:700">✕</button>'
+      + '</div></div>';
+  }).join('');
+}
+
+function hmDeleteDoc(entityId, index) {
+  if(!confirm('Remove this attachment?')) return;
+  const docs = hmLoadDocs(entityId);
+  docs.splice(index, 1);
+  hmSaveDocs(entityId, docs);
+  hmRenderJDDocs(entityId);
+}
+
+// Also render docs for policies
+function hmRenderPolDocs(polId) {
+  const el = document.getElementById('hmPolDocs-'+polId);
+  if(!el) return;
+  const docs = hmLoadDocs(polId);
+  if(!docs.length) { el.innerHTML='<div style="font-size:11px;color:var(--soft);margin-bottom:6px">No documents attached yet.</div>'; return; }
+  // Reuse same render logic
+  const tempId = 'hmJDDocs-'+polId+'_temp';
+  el.id = 'hmJDDocs-'+polId;
+  hmRenderJDDocs(polId);
+  el.id = 'hmPolDocs-'+polId;
+}
+
+
 </script>
-</body>
-</html>
