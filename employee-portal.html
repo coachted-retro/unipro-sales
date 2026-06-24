@@ -116,6 +116,19 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--ink);min-h
 .trivia-timer{font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:28px;color:var(--red);min-width:36px;text-align:center}
 .trivia-streak{font-size:12px;color:var(--soft);font-weight:600}
 
+/* ── WEEKLY QUIZ ── */
+.weekly-q{font-size:13px;font-weight:700;color:var(--ink);margin-bottom:10px;line-height:1.5}
+.weekly-opts{display:flex;flex-direction:column;gap:6px;margin-bottom:8px}
+.weekly-opt{padding:9px 13px;border:1.5px solid var(--line);border-radius:7px;background:#FAFBFC;font-size:12px;font-family:'Barlow',sans-serif;cursor:pointer;text-align:left;transition:all .12s;color:var(--ink)}
+.weekly-opt:hover{border-color:var(--red)}
+.weekly-opt.correct{border-color:#059669;background:#D1FAE5;color:#065F46;font-weight:700}
+.weekly-opt.wrong{border-color:var(--red);background:#FEE2E2;color:#991B1B}
+.weekly-submit{background:var(--red);color:#fff;border:none;border-radius:7px;padding:9px 16px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;margin-top:8px;width:100%}
+.weekly-progress{display:flex;gap:4px;margin-bottom:12px}
+.weekly-pip{height:4px;flex:1;border-radius:2px;background:var(--line);transition:background .2s}
+.weekly-pip.done{background:var(--green)}
+.weekly-pip.current{background:var(--red)}
+
 /* ── HR LOCKED SECTION ── */
 .ep-hr-locked{background:linear-gradient(135deg,#1A1D21,#1F2937);border-radius:10px;padding:18px;margin:14px;text-align:center}
 .ep-hr-locked-icon{font-size:32px;margin-bottom:8px}
@@ -264,6 +277,20 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--ink);min-h
         </div>
         <div class="ep-card-body" id="epNewsFeed" style="padding:0 18px">
           <!-- News rendered by JS -->
+        </div>
+      </div>
+
+      <!-- Weekly Challenge -->
+      <div class="ep-card">
+        <div class="ep-card-hdr" style="background:#1A1D21">
+          <div>
+            <div style="font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:13px;letter-spacing:.12em;text-transform:uppercase;color:#F2B705">🏆 Weekly Challenge</div>
+            <div id="weeklyLabel" style="font-size:10px;color:#6B7280;font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:.06em;text-transform:uppercase;margin-top:2px">5 questions · Loading…</div>
+          </div>
+          <div style="font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:11px;color:#4B5563;letter-spacing:.06em;text-transform:uppercase">150 pts each</div>
+        </div>
+        <div class="ep-card-body" id="weeklyBody" style="padding:14px 18px">
+          <div style="text-align:center;padding:16px;color:var(--soft);font-size:13px">Loading this week's challenge…</div>
         </div>
       </div>
 
@@ -420,6 +447,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // News
   renderNews();
+
+  // Weekly challenge
+  weeklyLoadChallenge();
 
   document.documentElement.style.visibility = 'visible';
 });
@@ -665,6 +695,157 @@ function badgesRender() {
   }).join('');
 }
 
+
+/* ══ WEEKLY CHALLENGE ════════════════════════════════ */
+// Fallback weekly questions if proxy unreachable
+const FALLBACK_WEEKLY = {
+  topic: 'Fire & Safety Compliance',
+  topicId: 2,
+  questions: [
+    {question:'What does NFPA stand for?', options:['A) National Fire Protection Association','B) National Fire Prevention Agency','C) North American Fire Protection Authority','D) National Federal Protection Agency'], correct:0, explanation:'NFPA stands for National Fire Protection Association — the organization that publishes fire safety codes and standards.'},
+    {question:'How often must a fire extinguisher be hydrostatically tested?', options:['A) Every year','B) Every 3 years','C) Every 5 or 12 years depending on type','D) Every 10 years for all types'], correct:2, explanation:'NFPA 10 specifies hydrostatic testing intervals: every 5 years for CO₂ and wet chemical, every 12 years for stored-pressure dry chemical extinguishers.'},
+    {question:'What temperature rating is required for a Class K fire extinguisher hood nozzle?', options:['A) 100°F','B) 212°F','C) 360°F','D) 500°F'], correct:2, explanation:'NFPA 17A requires Class K nozzles to be rated for temperatures up to 360°F to handle commercial cooking fires safely.'},
+    {question:'NFPA 96 covers which type of commercial kitchen system?', options:['A) Sprinkler systems','B) Ventilation control and fire protection of commercial cooking operations','C) Fire alarm systems','D) Portable extinguisher placement'], correct:1, explanation:'NFPA 96 specifically covers ventilation control and fire protection for commercial cooking operations, including hood systems and suppression.'},
+    {question:'What is the minimum distance a fire extinguisher must be mounted from the floor per NFPA 10?', options:['A) 2 inches','B) 4 inches','C) 6 inches','D) 12 inches'], correct:2, explanation:'NFPA 10 requires extinguishers to be mounted so the handle is no higher than 5 feet and the bottom is no lower than 4 inches from the floor.'},
+  ]
+};
+
+function weeklyGetMonday() {
+  const now = new Date();
+  const day = now.getDay();
+  const offset = day === 0 ? -6 : 1 - day;
+  const monday = new Date(now);
+  monday.setDate(now.getDate() + offset);
+  return monday;
+}
+
+async function weeklyLoadChallenge() {
+  const el = document.getElementById('weeklyBody');
+  if (!el) return;
+  const monday = weeklyGetMonday();
+  const weekKey = 'weekly_' + monday.toISOString().slice(0,10);
+  const lbl = document.getElementById('weeklyLabel');
+  if (lbl) lbl.textContent = '5 questions · Week of ' + monday.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+
+  const cached = tsGet(weekKey);
+  const myWeekly = tsGet(weekKey + '_my') || {answered:[], score:0};
+
+  if (cached) { weeklyRender(cached, myWeekly, weekKey); return; }
+
+  el.innerHTML = '<div style="text-align:center;padding:20px;color:var(--soft);font-size:13px">⏳ Generating this week's challenge…</div>';
+
+  const monday2 = weeklyGetMonday();
+  const weekNum = Math.floor((monday2 - new Date(monday2.getFullYear(),0,1)) / 604800000);
+  const topicId = (weekNum % 5) + 1;
+  const topic = TRIVIA_TOPICS[topicId];
+
+  try {
+    const resp = await fetch(TRIVIA_PROXY, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        model:'claude-sonnet-4-6', max_tokens:1200,
+        messages:[{role:'user', content:
+          'Generate a weekly challenge with exactly 5 trivia questions about ' + topic.prompt + '. ' +
+          'Return ONLY valid JSON (no markdown, no backticks): ' +
+          '{"topic":"' + topic.name + '","questions":[{"question":"...","options":["A) ...","B) ...","C) ...","D) ..."],"correct":0,"explanation":"..."},{"question":"...","options":["A) ...","B) ...","C) ...","D) ..."],"correct":0,"explanation":"..."},{"question":"...","options":["A) ...","B) ...","C) ...","D) ..."],"correct":0,"explanation":"..."},{"question":"...","options":["A) ...","B) ...","C) ...","D) ..."],"correct":0,"explanation":"..."},{"question":"...","options":["A) ...","B) ...","C) ...","D) ..."],"correct":0,"explanation":"..."}]}. ' +
+          'Make the questions progressively harder. Question 5 should be genuinely challenging.'
+        }]
+      })
+    });
+    const data = await resp.json();
+    const raw = data.content[0].text.replace(/```json|```/g,'').trim();
+    const challenge = JSON.parse(raw);
+    challenge.topicId = topicId;
+    tsSet(weekKey, challenge);
+    weeklyRender(challenge, myWeekly, weekKey);
+  } catch(e) {
+    // Fallback
+    const fallback = Object.assign({}, FALLBACK_WEEKLY, {topicId:2});
+    tsSet(weekKey, fallback);
+    weeklyRender(fallback, myWeekly, weekKey);
+  }
+}
+
+function weeklyRender(challenge, myWeekly, weekKey) {
+  const el = document.getElementById('weeklyBody');
+  if (!el) return;
+  const answered = myWeekly.answered || [];
+  const total = (challenge.questions||[]).length;
+  const allDone = answered.length >= total;
+
+  if (allDone) {
+    const score = myWeekly.score || 0;
+    el.innerHTML =
+      '<div style="text-align:center;padding:14px">' +
+      '<div style="font-size:32px;margin-bottom:8px">' + (score===total?'🏆':score>=3?'🎖':'📋') + '</div>' +
+      '<div style="font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:22px">' + score + '/' + total + ' correct</div>' +
+      '<div style="font-size:12px;color:var(--soft);margin-top:4px">' + challenge.topic + ' · ' + (score===total?'Perfect score! 🎉':score>=3?'Nice work!':'Keep practicing!') + '</div>' +
+      '<div style="font-size:11px;color:#9CA3AF;margin-top:6px">New challenge drops Monday</div>' +
+      '</div>';
+    return;
+  }
+
+  const nextQ = answered.length;
+  const q = challenge.questions[nextQ];
+
+  // Progress pips
+  const pips = Array.from({length:total},(_,i) =>
+    `<div class="weekly-pip ${i < nextQ ? 'done' : i === nextQ ? 'current' : ''}"></div>`
+  ).join('');
+
+  el.innerHTML =
+    '<div class="weekly-progress">' + pips + '</div>' +
+    '<div style="font-size:10px;color:var(--soft);font-weight:700;font-family:'Barlow Condensed',sans-serif;letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px">Q' + (nextQ+1) + ' of ' + total + ' · ' + challenge.topic + '</div>' +
+    '<div class="weekly-q">' + q.question + '</div>' +
+    '<div class="weekly-opts">' +
+    q.options.map((opt,i) =>
+      `<button class="weekly-opt" onclick="weeklyAnswer(${i},'${weekKey}')">${opt}</button>`
+    ).join('') +
+    '</div>' +
+    '<div id="weeklyFeedback"></div>';
+}
+
+function weeklyAnswer(idx, weekKey) {
+  const challenge = tsGet(weekKey);
+  const myWeekly = tsGet(weekKey + '_my') || {answered:[], score:0};
+  const nextQ = myWeekly.answered.length;
+  const q = challenge.questions[nextQ];
+  const isCorrect = parseInt(idx) === q.correct;
+
+  document.querySelectorAll('.weekly-opt').forEach(b => b.disabled = true);
+  document.querySelectorAll('.weekly-opt')[q.correct].classList.add('correct');
+  if (!isCorrect) document.querySelectorAll('.weekly-opt')[idx].classList.add('wrong');
+
+  document.getElementById('weeklyFeedback').innerHTML =
+    '<div style="font-size:11px;padding:8px 10px;border-radius:6px;margin-top:8px;background:' + (isCorrect?'#D1FAE5':'#FEE2E2') + ';color:' + (isCorrect?'#065F46':'#991B1B') + '">' +
+    (isCorrect ? '✅ Correct! ' : '❌ ' + q.options[q.correct] + '. ') + (q.explanation||'') + '</div>' +
+    '<button class="weekly-submit" onclick="weeklyNext('' + weekKey + '')">' +
+    (nextQ + 1 < challenge.questions.length ? 'Next Question →' : 'See Results') + '</button>';
+
+  myWeekly.answered.push(parseInt(idx));
+  if (isCorrect) myWeekly.score = (myWeekly.score||0) + 1;
+  tsSet(weekKey + '_my', myWeekly);
+
+  if (isCorrect) {
+    const s = getMyScore();
+    s.totalPoints = (s.totalPoints||0) + 150;
+    if (!s.correctByTopic) s.correctByTopic = {};
+    s.correctByTopic[challenge.topicId] = (s.correctByTopic[challenge.topicId]||0) + 1;
+    if (nextQ + 1 >= challenge.questions.length) {
+      s.weeklyCompleted = (s.weeklyCompleted||0) + 1;
+    }
+    saveMyScore(s);
+    triviaCheckBadges(s);
+    lbRender('week');
+    badgesRender();
+  }
+}
+
+function weeklyNext(weekKey) {
+  const challenge = tsGet(weekKey);
+  const myWeekly = tsGet(weekKey + '_my') || {answered:[], score:0};
+  weeklyRender(challenge, myWeekly, weekKey);
+}
 /* ══ NEWS ══════════════════════════════════════════════ */
 function renderNews() {
   // Combine stored announcements from HR portal with default company news
