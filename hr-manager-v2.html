@@ -554,7 +554,7 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--ink);min-h
             <option value="5">5 candidates</option>
             <option value="10" selected>10 candidates</option>
             <option value="15">15 candidates</option>
-            <option value="20">20 candidates</option>
+            <option value="15">15 candidates</option>
           </select>
         </div>
       </div>
@@ -4012,19 +4012,38 @@ Return ONLY a valid JSON array. No markdown, no explanation, no backticks.`;
   try {
     const resp = await fetch('https://unipro-ai-proxy.tedscholl.workers.dev', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:4000,
+      body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:6000,
         messages:[{role:'user', content:prompt}]})
     });
     const data = await resp.json();
     const text = data.content?.[0]?.text || '[]';
-    const clean = text.replace(/```json|```/g,'').trim();
-    _harvestResults = JSON.parse(clean);
+    // Robust JSON extraction — find the array even if surrounded by text
+    let clean = text.replace(/```json|```/g,'').trim();
+    // Extract just the JSON array if there's surrounding text
+    const arrMatch = clean.match(/\[[\s\S]*\]/);
+    if (arrMatch) clean = arrMatch[0];
+    // Fix common JSON issues: trailing commas, unterminated strings
+    try {
+      _harvestResults = JSON.parse(clean);
+    } catch(parseErr) {
+      // Try to recover truncated JSON by finding last complete object
+      const lastComplete = clean.lastIndexOf('},');
+      if (lastComplete > 0) {
+        try {
+          _harvestResults = JSON.parse(clean.substring(0, lastComplete+1) + ']');
+        } catch(e2) {
+          throw new Error('JSON parse failed: ' + parseErr.message);
+        }
+      } else { throw parseErr; }
+    }
 
+    if (!_harvestResults.length) throw new Error('No candidates returned');
     status.innerHTML = `✅ Harvested <strong>${_harvestResults.length} candidates</strong> — review below and add to pipeline`;
     renderHarvestPreview();
-    document.getElementById('harvestAddAllBtn').style.display = '';
+    const addAllBtn = document.getElementById('harvestAddAllBtn');
+    if (addAllBtn) addAllBtn.style.display = '';
   } catch(e) {
-    status.innerHTML = '<span style="color:#EF4444">❌ Error — check AI proxy connection</span>';
+    status.innerHTML = '<span style="color:#EF4444">❌ ' + (e.message||'Error — check AI proxy connection') + '. Try fewer candidates or try again.</span>';
     console.error(e);
   }
   btn.disabled = false; btn.textContent = '🔍 Harvest Candidates';
