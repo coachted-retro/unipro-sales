@@ -102,6 +102,22 @@ body{font-family:Barlow,sans-serif;background:var(--bg);color:var(--ink);font-si
 .prog-bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;width:80px}
 .prog-fill{height:100%;border-radius:3px;background:var(--green);transition:width .3s}
 .prog-fill.warn{background:var(--amber)}.prog-fill.danger{background:var(--red)}
+
+/* ── WMS AI ── */
+.wms-ai-btn{background:none;border:1.5px solid #0E7490;color:#0E7490;border-radius:6px;padding:7px 10px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;text-align:left;transition:all .15s}
+.wms-ai-btn:hover{opacity:.8}
+.wms-ai-output{background:#0F172A;border-radius:8px;padding:12px;font-size:12px;color:#E2E8F0;line-height:1.6;margin-top:4px}
+/* ── COGS table ── */
+.cogs-editable{background:transparent;border:1px solid transparent;border-radius:4px;padding:3px 6px;width:80px;text-align:right;color:inherit;font-size:12px}
+.cogs-editable:focus{border-color:var(--gold);outline:none;background:#1E293B}
+.margin-good{color:#1E7B3C;font-weight:700}
+.margin-warn{color:#D97706;font-weight:700}
+.margin-bad{color:#C8102E;font-weight:700}
+/* ── Variance ── */
+.var-alert-card{background:#fff;border:1.5px solid var(--line);border-radius:10px;padding:14px;border-left:4px solid #C8102E}
+.var-alert-card.warn{border-left-color:#D97706}
+.var-alert-card.info{border-left-color:#1E40AF}
+.var-alert-card.good{border-left-color:#1E7B3C}
 </style>
 </head>
 <body>
@@ -126,6 +142,9 @@ body{font-family:Barlow,sans-serif;background:var(--bg);color:var(--ink);font-si
   <button class="tab-btn" onclick="switchWHTab('allpro')">⚙️ AllPro — Fabrication</button>
   <button class="tab-btn" onclick="switchWHTab('reorders')">🚨 Reorder Queue</button>
   <button class="tab-btn" onclick="switchWHTab('requisitions')">📋 Requisitions</button>
+  <button class="tab-btn" onclick="switchWHTab('cogs')">💰 COGS &amp; Margins</button>
+  <button class="tab-btn" onclick="switchWHTab('variance')">📊 Variance &amp; Leaks</button>
+  <button class="tab-btn" onclick="switchWHTab('wms_ai')">🤖 WMS Intelligence</button>
 </div>
 
 <div class="content">
@@ -501,6 +520,168 @@ body{font-family:Barlow,sans-serif;background:var(--bg);color:var(--ink);font-si
   </div>
 </div>
 
+<!-- ════════════════════════════════════════════════════════════
+     COGS & MARGINS TAB
+════════════════════════════════════════════════════════════ -->
+<div class="content" id="tab-cogs-content" style="display:none">
+  <div class="card">
+    <div class="card-hdr" style="flex-wrap:wrap;gap:8px">
+      <div>
+        <div class="card-title">💰 COGS & Margin Tracker</div>
+        <div style="font-size:12px;color:var(--soft)">Unit cost, sell price, and margin per SKU across all three warehouses. Edit any cell to update.</div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <select id="cogsWarehouseFilter" onchange="renderCOGS()" style="background:var(--navy);color:#fff;border:1px solid #334155;border-radius:6px;padding:6px 10px;font-size:12px">
+          <option value="all">All Warehouses</option>
+          <option value="termac">🧴 Termac</option>
+          <option value="unipro">🔥 UniPro</option>
+          <option value="allpro">⚙️ AllPro</option>
+        </select>
+        <select id="cogsCatFilter" onchange="renderCOGS()" style="background:var(--navy);color:#fff;border:1px solid #334155;border-radius:6px;padding:6px 10px;font-size:12px">
+          <option value="all">All Categories</option>
+        </select>
+        <button onclick="exportCOGS()" style="background:#1E3A5F;color:#fff;border:1px solid #334155;border-radius:6px;padding:6px 14px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;cursor:pointer">📥 Export CSV</button>
+      </div>
+    </div>
+
+    <!-- Summary KPIs -->
+    <div id="cogsKPIs" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;padding:14px 0;border-bottom:1px solid var(--line);margin-bottom:14px"></div>
+
+    <!-- Table -->
+    <div style="overflow-x:auto">
+      <table class="inv-table" id="cogsTable">
+        <thead><tr>
+          <th>Warehouse</th><th>Category</th><th>SKU / Item</th>
+          <th style="text-align:right">Unit Cost ($)</th>
+          <th style="text-align:right">Sell Price ($)</th>
+          <th style="text-align:right">Margin %</th>
+          <th style="text-align:right">QOH</th>
+          <th style="text-align:right">Inventory Value</th>
+          <th style="text-align:right">At-Risk Value</th>
+        </tr></thead>
+        <tbody id="cogsTableBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════
+     VARIANCE & LEAKS TAB
+════════════════════════════════════════════════════════════ -->
+<div class="content" id="tab-variance-content" style="display:none">
+  <div class="card">
+    <div class="card-hdr">
+      <div>
+        <div class="card-title">📊 Variance & Revenue Leak Detector</div>
+        <div style="font-size:12px;color:var(--soft)">Shrinkage, pricing mismatches, slow-movers, and cost anomalies — AI flags what needs attention</div>
+      </div>
+      <button onclick="runVarianceAnalysis()" style="background:var(--gold);color:#1A1D21;border:none;border-radius:6px;padding:8px 16px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;cursor:pointer;letter-spacing:.06em">⚡ Run Analysis</button>
+    </div>
+
+    <!-- Leak summary cards -->
+    <div id="varianceAlerts" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;margin-bottom:18px"></div>
+
+    <!-- Detail table -->
+    <div id="varianceDetail"></div>
+
+    <!-- AI Narrative -->
+    <div id="varianceAI" style="display:none;background:#0F172A;border-radius:10px;padding:16px;margin-top:16px">
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.12em;color:#F59E0B;margin-bottom:10px">⚡ AI COST INTELLIGENCE</div>
+      <div id="varianceAIText" style="font-size:13px;color:#E2E8F0;line-height:1.6"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════
+     WMS AI INTELLIGENCE TAB
+════════════════════════════════════════════════════════════ -->
+<div class="content" id="tab-wmsai-content" style="display:none">
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:16px">
+
+    <!-- TERMAC WAREHOUSE AI -->
+    <div class="card" style="border-top:3px solid #0E7490">
+      <div class="card-hdr">
+        <div>
+          <div class="card-title" style="color:#0E7490">🧴 Termac Warehouse AI</div>
+          <div style="font-size:11px;color:var(--soft)">Chemicals · Cleaners · Paper · Dish Machine Supplies</div>
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--soft);margin-bottom:10px">
+        <strong>Key procedures:</strong> FIFO chemical rotation · NSF handling · Concentration lot tracking · Vendor consolidation opportunities · Seasonal demand spikes (summer sanitizer, winter deicers)
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px">
+        <button onclick="wmsAIAction('termac','reorder')" class="wms-ai-btn">📦 Reorder Intelligence</button>
+        <button onclick="wmsAIAction('termac','procedures')" class="wms-ai-btn">📋 Procedure Recommendations</button>
+        <button onclick="wmsAIAction('termac','vendor')" class="wms-ai-btn">🤝 Vendor Consolidation Scan</button>
+        <button onclick="wmsAIAction('termac','expiry')" class="wms-ai-btn">⏰ Expiry & Rotation Check</button>
+        <button onclick="wmsAIAction('termac','seasonal')" class="wms-ai-btn">📈 Seasonal Demand Forecast</button>
+      </div>
+      <div id="wmsAI-termac" class="wms-ai-output" style="display:none"></div>
+    </div>
+
+    <!-- UNIPRO WAREHOUSE AI -->
+    <div class="card" style="border-top:3px solid #C8102E">
+      <div class="card-hdr">
+        <div>
+          <div class="card-title" style="color:#C8102E">🔥 UniPro / Quality III AI</div>
+          <div style="font-size:11px;color:var(--soft)">Fire Extinguishers · Suppression Parts · Pipe & Fittings</div>
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--soft);margin-bottom:10px">
+        <strong>Key procedures:</strong> Serialized unit tracking · Swap pool management · Hydrostatic test cycle tracking · NFPA 10 compliance parts kitting · Agent refill scheduling
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px">
+        <button onclick="wmsAIAction('unipro','reorder')" class="wms-ai-btn" style="border-color:#C8102E;color:#C8102E">📦 Reorder Intelligence</button>
+        <button onclick="wmsAIAction('unipro','swap_pool')" class="wms-ai-btn" style="border-color:#C8102E;color:#C8102E">🔄 Swap Pool Status</button>
+        <button onclick="wmsAIAction('unipro','hydro')" class="wms-ai-btn" style="border-color:#C8102E;color:#C8102E">🧪 Hydro Test Cycle Alerts</button>
+        <button onclick="wmsAIAction('unipro','kitting')" class="wms-ai-btn" style="border-color:#C8102E;color:#C8102E">🎯 Job Kitting Optimizer</button>
+        <button onclick="wmsAIAction('unipro','procedures')" class="wms-ai-btn" style="border-color:#C8102E;color:#C8102E">📋 Procedure Recommendations</button>
+      </div>
+      <div id="wmsAI-unipro" class="wms-ai-output" style="display:none"></div>
+    </div>
+
+    <!-- ALLPRO WAREHOUSE AI -->
+    <div class="card" style="border-top:3px solid #1A4731">
+      <div class="card-hdr">
+        <div>
+          <div class="card-title" style="color:#1A4731">⚙️ AllPro Fabrication AI</div>
+          <div style="font-size:11px;color:var(--soft)">Sheet Stock · Formed Components · Fasteners & Hardware</div>
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--soft);margin-bottom:10px">
+        <strong>Key procedures:</strong> Sheet stock FIFO by gauge · Cut optimization to minimize offcuts · NSF compliance per job · Weld wire and consumables tracking · Fabrication lead time management
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px">
+        <button onclick="wmsAIAction('allpro','reorder')" class="wms-ai-btn" style="border-color:#1A4731;color:#1A4731">📦 Reorder Intelligence</button>
+        <button onclick="wmsAIAction('allpro','cut_waste')" class="wms-ai-btn" style="border-color:#1A4731;color:#1A4731">✂️ Cut Waste Analysis</button>
+        <button onclick="wmsAIAction('allpro','nsf')" class="wms-ai-btn" style="border-color:#1A4731;color:#1A4731">✅ NSF Compliance Check</button>
+        <button onclick="wmsAIAction('allpro','lead_time')" class="wms-ai-btn" style="border-color:#1A4731;color:#1A4731">⏱️ Lead Time Optimizer</button>
+        <button onclick="wmsAIAction('allpro','procedures')" class="wms-ai-btn" style="border-color:#1A4731;color:#1A4731">📋 Procedure Recommendations</button>
+      </div>
+      <div id="wmsAI-allpro" class="wms-ai-output" style="display:none"></div>
+    </div>
+  </div>
+
+  <!-- AI Chat Assistant -->
+  <div class="card" style="border-top:3px solid var(--gold)">
+    <div class="card-hdr">
+      <div>
+        <div class="card-title">🤖 WMS AI Assistant</div>
+        <div style="font-size:12px;color:var(--soft)">Ask anything about inventory, reordering, procedures, or cost control across all three warehouses</div>
+      </div>
+    </div>
+    <div id="wmsAIChatMsgs" style="background:#0F172A;border-radius:8px;padding:12px;min-height:120px;max-height:280px;overflow-y:auto;margin-bottom:10px;font-size:13px;color:#E2E8F0;line-height:1.5">
+      <div style="color:#94A3B8">👋 I know all three Termac warehouses — Termac chemicals, UniPro fire protection, and AllPro fabrication. Ask me about reorder timing, procedure improvements, cost control, vendor options, or anything else.</div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <input id="wmsAIChatInput" placeholder="Ask about inventory, procedures, costs, vendors…" onkeydown="if(event.key==='Enter')wmsAIChat()"
+        style="flex:1;background:#1E293B;border:1px solid #334155;border-radius:6px;color:#F8FAFC;font-size:13px;padding:8px 12px;outline:none">
+      <button onclick="wmsAIChat()" style="background:var(--gold);color:#1A1D21;border:none;border-radius:6px;padding:8px 16px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;cursor:pointer">Send</button>
+    </div>
+  </div>
+</div>
+
+
 <script>
 // ════════════════════════════════════════════════════════════════════════════
 // STORAGE KEYS
@@ -714,8 +895,14 @@ function fmt(n) { return Number(n||0).toLocaleString(undefined,{minimumFractionD
 // TAB SWITCHING
 // ════════════════════════════════════════════════════════════════════════════
 function switchWHTab(name) {
+  // Hide all content panels (both old .tab-panel and new named content divs)
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  // Hide new named panels
+  ['cogs','variance','wmsai'].forEach(t => {
+    const el = document.getElementById('tab-'+t+'-content');
+    if(el) el.style.display='none';
+  });
   // Handle requisitions which uses its own content div (outside .content)
   document.getElementById('tab-requisitions-content').style.display = 'none';
   document.querySelector('.content').style.display = '';
@@ -726,6 +913,25 @@ function switchWHTab(name) {
     renderRequisitionsTab();
     return;
   }
+  // New panels
+  if (name === 'cogs') {
+    document.getElementById('tab-cogs-content').style.display = '';
+    document.querySelector('.content').style.display = 'none';
+    event.currentTarget.classList.add('active');
+    renderCOGS(); return;
+  }
+  if (name === 'variance') {
+    document.getElementById('tab-variance-content').style.display = '';
+    document.querySelector('.content').style.display = 'none';
+    event.currentTarget.classList.add('active');
+    renderVariance(); return;
+  }
+  if (name === 'wms_ai') {
+    document.getElementById('tab-wmsai-content').style.display = '';
+    document.querySelector('.content').style.display = 'none';
+    event.currentTarget.classList.add('active'); return;
+  }
+
   document.getElementById('tab-'+name).classList.add('active');
   event.currentTarget.classList.add('active');
   if (name === 'termac')   renderTermacTab();
@@ -1466,6 +1672,393 @@ document.addEventListener('click', e => {
 // ════════════════════════════════════════════════════════════════════════════
 initWarehouse();
 renderTermacTab();
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// COGS DATA — unit costs and sell prices per SKU
+// ════════════════════════════════════════════════════════════════════════════
+const COGS_DEFAULTS = {
+  // Termac chemicals
+  'DETE01':{cost:8.50,sell:18.00},'DETE04':{cost:28.00,sell:62.00},'DETE05':{cost:34.00,sell:75.00},
+  'RINSE01':{cost:7.00,sell:16.00},'RINSE04':{cost:24.00,sell:54.00},
+  'SANI01':{cost:6.50,sell:15.00},'SANI04':{cost:22.00,sell:50.00},
+  'DESC01':{cost:9.00,sell:20.00},'DESC04':{cost:30.00,sell:68.00},
+  'DEGREASE':{cost:22.00,sell:48.00},'GREASE':{cost:18.00,sell:40.00},'OVEN':{cost:20.00,sell:44.00},
+  'FLOORS':{cost:14.00,sell:30.00},'ALLPURP':{cost:12.00,sell:26.00},'BLEACH':{cost:10.00,sell:22.00},
+  'PINK100':{cost:15.00,sell:32.00},'DAWN100':{cost:16.00,sell:35.00},'DUMPD':{cost:18.00,sell:40.00},
+  'HANDSOA':{cost:12.00,sell:26.00},'FOAMSAN':{cost:14.00,sell:30.00},'GELSAN':{cost:11.00,sell:24.00},
+  'TOWELS8':{cost:28.00,sell:58.00},'TOWELS79':{cost:32.00,sell:68.00},
+  'TISSUE':{cost:22.00,sell:46.00},'NAPKINS':{cost:14.00,sell:30.00},
+  'TRASHLN':{cost:18.00,sell:38.00},'TRASHSM':{cost:12.00,sell:26.00},
+  'GLOVES':{cost:16.00,sell:34.00},'SALT50':{cost:6.00,sell:14.00},
+  // UniPro fire protection
+  'EXT_25ABC':{cost:18.00,sell:45.00},'EXT_5ABC':{cost:24.00,sell:58.00},
+  'EXT_10ABC':{cost:32.00,sell:78.00},'EXT_20ABC':{cost:52.00,sell:125.00},
+  'EXT_KCLASS':{cost:85.00,sell:195.00},
+  'SWP_25ABC':{cost:14.00,sell:35.00},'SWP_5ABC':{cost:18.00,sell:45.00},
+  'SWP_10ABC':{cost:24.00,sell:58.00},'SWP_20ABC':{cost:38.00,sell:92.00},'SWP_KCLS':{cost:65.00,sell:150.00},
+  'FUS_LINK':{cost:1.20,sell:3.50},'CO2_CART':{cost:8.00,sell:22.00},
+  'NOZZLE':{cost:12.00,sell:32.00},'ACTCORD':{cost:4.00,sell:12.00},
+  'PULLSTAT':{cost:18.00,sell:48.00},'TANKAG':{cost:95.00,sell:220.00},
+  'PULLPIN':{cost:0.35,sell:1.25},'TAMPEAL':{cost:2.50,sell:8.00},
+  'HYDROCLR':{cost:3.00,sell:8.50},'INSPCTN':{cost:2.00,sell:6.00},
+  'HOSEBND':{cost:1.50,sell:4.50},'WALLHNG':{cost:3.50,sell:9.00},
+  'CAPMTL':{cost:0.80,sell:2.50},'CAPRUB':{cost:0.60,sell:2.00},
+  'GASORIG':{cost:1.20,sell:3.75},'SIPHONT':{cost:2.80,sell:8.00},
+  'CI_12STR':{cost:8.00,sell:22.00},'CI_34STR':{cost:10.00,sell:28.00},
+  'CI_1STR':{cost:14.00,sell:38.00},'CI_125STR':{cost:18.00,sell:48.00},
+  'CI_ELBOW':{cost:12.00,sell:32.00},'CI_TEE':{cost:14.00,sell:36.00},
+  'CI_COUP':{cost:10.00,sell:28.00},'CI_NIP':{cost:8.00,sell:22.00},
+  'CH_12STR':{cost:12.00,sell:32.00},'CH_34STR':{cost:15.00,sell:40.00},'CH_FTGS':{cost:18.00,sell:48.00},
+  'ELIGHT':{cost:28.00,sell:72.00},'EXITSGN':{cost:22.00,sell:58.00},'EBATT':{cost:4.50,sell:12.00},
+  // AllPro sheet stock
+  'SS22_4896':{cost:42.00,sell:95.00},'SS18_4896':{cost:58.00,sell:130.00},
+  'SS16_4896':{cost:72.00,sell:162.00},'SS14_4896':{cost:90.00,sell:200.00},
+};
+
+const WH_COGS_KEY = 'termac_wh_cogs';
+
+function loadCOGS() {
+  try { return JSON.parse(localStorage.getItem(WH_COGS_KEY)||'{}'); } catch(e) { return {}; }
+}
+function saveCOGS(data) {
+  localStorage.setItem(WH_COGS_KEY, JSON.stringify(data));
+}
+function getCOGS(id) {
+  const saved = loadCOGS();
+  return saved[id] || COGS_DEFAULTS[id] || {cost:0, sell:0};
+}
+function setCOGS(id, field, val) {
+  const data = loadCOGS();
+  if(!data[id]) data[id] = {...(COGS_DEFAULTS[id]||{cost:0,sell:0})};
+  data[id][field] = parseFloat(val)||0;
+  saveCOGS(data);
+  renderCOGS();
+}
+
+function renderCOGS() {
+  const wFilter = document.getElementById('cogsWarehouseFilter')?.value||'all';
+  const cFilter = document.getElementById('cogsCatFilter')?.value||'all';
+
+  const allProducts = [
+    ...TERMAC_WH_PRODUCTS.map(p=>({...p, wh:'termac', whLabel:'Termac'})),
+    ...UNIPRO_WH_PRODUCTS.map(p=>({...p, wh:'unipro', whLabel:'UniPro'})),
+    ...(ALLPRO_WH_PRODUCTS||[]).map(p=>({...p, wh:'allpro', whLabel:'AllPro'})),
+  ];
+
+  // Populate category filter
+  const catSel = document.getElementById('cogsCatFilter');
+  if(catSel) {
+    const cats = [...new Set(allProducts.map(p=>p.cat))].sort();
+    const cur = catSel.value;
+    catSel.innerHTML = '<option value="all">All Categories</option>' + cats.map(c=>`<option value="${c}" ${c===cur?'selected':''}>${c}</option>`).join('');
+  }
+
+  const filtered = allProducts.filter(p =>
+    (wFilter==='all'||p.wh===wFilter) &&
+    (cFilter==='all'||p.cat===cFilter)
+  );
+
+  const inv = loadInventory();
+
+  let totalCost=0, totalSell=0, totalRisk=0, zeroMargin=0, lowMargin=0;
+  const rows = filtered.map(p => {
+    const c = getCOGS(p.id);
+    const qoh = inv[p.id]||0;
+    const margin = c.sell>0 ? Math.round(((c.sell-c.cost)/c.sell)*100) : 0;
+    const invVal = (c.cost*qoh).toFixed(2);
+    const riskVal = qoh<=p.reorderPt ? (c.cost*qoh).toFixed(2) : '0.00';
+    totalCost += c.cost*qoh;
+    totalSell += c.sell*qoh;
+    if(margin===0) zeroMargin++;
+    if(margin>0&&margin<20) lowMargin++;
+    if(qoh<=p.reorderPt) totalRisk += c.cost*qoh;
+    const mClass = margin>=40?'margin-good':margin>=20?'margin-warn':'margin-bad';
+    return `<tr>
+      <td><span style="font-size:10px;background:${p.wh==='termac'?'#E0F2FE':p.wh==='unipro'?'#FEE2E2':'#DCFCE7'};color:${p.wh==='termac'?'#0E7490':p.wh==='unipro'?'#991B1B':'#1A4731'};border-radius:4px;padding:2px 7px;font-weight:700">${p.whLabel}</span></td>
+      <td style="font-size:11px;color:var(--soft)">${p.cat}</td>
+      <td><strong>${escH(p.name)}</strong> <span style="font-size:10px;color:var(--soft)">${p.id}</span></td>
+      <td style="text-align:right"><input class="cogs-editable" type="number" step="0.01" value="${c.cost.toFixed(2)}" onchange="setCOGS('${p.id}','cost',this.value)" onblur="setCOGS('${p.id}','cost',this.value)"></td>
+      <td style="text-align:right"><input class="cogs-editable" type="number" step="0.01" value="${c.sell.toFixed(2)}" onchange="setCOGS('${p.id}','sell',this.value)" onblur="setCOGS('${p.id}','sell',this.value)"></td>
+      <td style="text-align:right"><span class="${mClass}">${margin}%</span></td>
+      <td style="text-align:right">${qoh} ${p.unit}</td>
+      <td style="text-align:right">$${invVal}</td>
+      <td style="text-align:right;color:${parseFloat(riskVal)>0?'#C8102E':'var(--soft)'}">$${riskVal}</td>
+    </tr>`;
+  });
+
+  document.getElementById('cogsTableBody').innerHTML = rows.join('');
+
+  // KPIs
+  const grossMargin = totalSell>0 ? Math.round(((totalSell-totalCost)/totalSell)*100) : 0;
+  document.getElementById('cogsKPIs').innerHTML = [
+    {label:'Total Inventory Value', val:'$'+totalCost.toFixed(0), color:'#1E40AF'},
+    {label:'Total at Sell Value', val:'$'+totalSell.toFixed(0), color:'#1A4731'},
+    {label:'Overall Gross Margin', val:grossMargin+'%', color:grossMargin>=40?'#1A4731':grossMargin>=25?'#D97706':'#C8102E'},
+    {label:'At-Risk Inventory $', val:'$'+totalRisk.toFixed(0), color:'#C8102E'},
+    {label:'Zero-Margin SKUs', val:zeroMargin, color:zeroMargin>0?'#C8102E':'#1A4731'},
+    {label:'Low-Margin SKUs (<20%)', val:lowMargin, color:lowMargin>0?'#D97706':'#1A4731'},
+  ].map(k=>`<div style="background:var(--panel);border:1.5px solid var(--line);border-radius:8px;padding:12px 14px">
+    <div style="font-size:10px;color:var(--soft);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">${k.label}</div>
+    <div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:22px;color:${k.color}">${k.val}</div>
+  </div>`).join('');
+}
+
+function exportCOGS() {
+  const rows = [['Warehouse','Category','SKU','Item','Unit Cost','Sell Price','Margin %','QOH','Inventory Value']];
+  const inv = loadInventory();
+  [...TERMAC_WH_PRODUCTS.map(p=>({...p,wh:'Termac'})),...UNIPRO_WH_PRODUCTS.map(p=>({...p,wh:'UniPro'})),...(ALLPRO_WH_PRODUCTS||[]).map(p=>({...p,wh:'AllPro'}))].forEach(p=>{
+    const c=getCOGS(p.id); const qoh=inv[p.id]||0;
+    const margin=c.sell>0?Math.round(((c.sell-c.cost)/c.sell)*100):0;
+    rows.push([p.wh,p.cat,p.id,p.name,c.cost.toFixed(2),c.sell.toFixed(2),margin+'%',qoh,(c.cost*qoh).toFixed(2)]);
+  });
+  const csv=rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n');
+  const a=document.createElement('a');a.href='data:text/csv,'+encodeURIComponent(csv);a.download='termac-cogs.csv';a.click();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// VARIANCE & LEAK DETECTOR
+// ════════════════════════════════════════════════════════════════════════════
+function renderVariance() {
+  const inv = loadInventory();
+  const allProducts = [
+    ...TERMAC_WH_PRODUCTS.map(p=>({...p,wh:'Termac'})),
+    ...UNIPRO_WH_PRODUCTS.map(p=>({...p,wh:'UniPro'})),
+    ...(ALLPRO_WH_PRODUCTS||[]).map(p=>({...p,wh:'AllPro'})),
+  ];
+
+  const issues = [];
+
+  allProducts.forEach(p => {
+    const c = getCOGS(p.id);
+    const qoh = inv[p.id]||0;
+    const margin = c.sell>0 ? ((c.sell-c.cost)/c.sell)*100 : 0;
+
+    // Zero margin
+    if(c.cost>0 && c.sell===0) issues.push({type:'error', cat:'Pricing Gap', item:p.name, wh:p.wh, detail:'No sell price set — billing at cost or below', value:'$'+c.cost.toFixed(2)+' cost'});
+    // Negative margin
+    else if(c.sell>0 && c.sell<c.cost) issues.push({type:'error', cat:'Pricing Below Cost', item:p.name, wh:p.wh, detail:`Selling at $${c.sell.toFixed(2)} vs cost $${c.cost.toFixed(2)}`, value:'-$'+(c.cost-c.sell).toFixed(2)+'/unit'});
+    // Low margin
+    else if(margin>0 && margin<20 && c.cost>0) issues.push({type:'warn', cat:'Low Margin', item:p.name, wh:p.wh, detail:`${Math.round(margin)}% margin — below 20% threshold`, value:'$'+c.sell.toFixed(2)+' sell'});
+    // Overstocked (QOH > 3x reorder qty)
+    if(qoh > p.reorderQty*3) issues.push({type:'warn', cat:'Overstock', item:p.name, wh:p.wh, detail:`QOH ${qoh} ${p.unit} is ${Math.round(qoh/p.reorderQty)}x reorder qty — capital tied up`, value:'$'+(c.cost*qoh).toFixed(0)+' tied'});
+    // Zero stock non-flagged
+    if(qoh===0 && p.reorderPt>0) issues.push({type:'error', cat:'Stockout', item:p.name, wh:p.wh, detail:'Zero on hand — below reorder point', value:'Needs '+p.reorderQty+' '+p.unit});
+  });
+
+  const alertsEl = document.getElementById('varianceAlerts');
+  const detailEl = document.getElementById('varianceDetail');
+
+  const counts = {error:issues.filter(i=>i.type==='error').length, warn:issues.filter(i=>i.type==='warn').length};
+  alertsEl.innerHTML = [
+    {label:'Pricing Gaps / Below Cost', val:issues.filter(i=>i.cat==='Pricing Gap'||i.cat==='Pricing Below Cost').length, cls:''},
+    {label:'Low Margin SKUs (<20%)', val:issues.filter(i=>i.cat==='Low Margin').length, cls:'warn'},
+    {label:'Overstock — Capital at Risk', val:issues.filter(i=>i.cat==='Overstock').length, cls:'warn'},
+    {label:'Stockouts', val:issues.filter(i=>i.cat==='Stockout').length, cls:''},
+  ].map(a=>`<div class="var-alert-card ${a.cls}" style="${a.val===0?'border-left-color:#1E7B3C':''}">
+    <div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:28px;color:${a.val===0?'#1E7B3C':'#C8102E'}">${a.val}</div>
+    <div style="font-size:12px;color:var(--soft);margin-top:2px">${a.label}</div>
+  </div>`).join('');
+
+  if(!issues.length) {
+    detailEl.innerHTML='<div style="text-align:center;padding:40px;color:var(--soft)">✅ No cost or revenue leaks detected</div>';
+    return;
+  }
+
+  const byType = {};
+  issues.forEach(i=>{ if(!byType[i.cat]) byType[i.cat]=[]; byType[i.cat].push(i); });
+
+  detailEl.innerHTML = Object.entries(byType).map(([cat,items])=>`
+    <div style="margin-bottom:16px">
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;letter-spacing:.08em;color:var(--soft);text-transform:uppercase;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid var(--line)">${cat} (${items.length})</div>
+      ${items.map(i=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 10px;border-radius:6px;background:var(--panel);margin-bottom:4px;gap:8px">
+        <div style="flex:1">
+          <span style="font-size:10px;background:${i.wh==='Termac'?'#E0F2FE':i.wh==='UniPro'?'#FEE2E2':'#DCFCE7'};color:${i.wh==='Termac'?'#0E7490':i.wh==='UniPro'?'#991B1B':'#1A4731'};border-radius:4px;padding:1px 6px;font-weight:700;margin-right:6px;font-size:9px">${i.wh}</span>
+          <strong style="font-size:13px">${escH(i.item)}</strong>
+          <span style="font-size:11px;color:var(--soft);margin-left:8px">${escH(i.detail)}</span>
+        </div>
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;color:#C8102E;white-space:nowrap">${escH(i.value)}</div>
+      </div>`).join('')}
+    </div>`).join('');
+}
+
+async function runVarianceAnalysis() {
+  renderVariance();
+  const inv = loadInventory();
+  const allP = [...TERMAC_WH_PRODUCTS,...UNIPRO_WH_PRODUCTS,...(ALLPRO_WH_PRODUCTS||[])];
+  const zeroMargin = allP.filter(p=>{ const c=getCOGS(p.id); return c.cost>0&&c.sell===0; }).map(p=>p.name);
+  const lowMargin = allP.filter(p=>{ const c=getCOGS(p.id); return c.sell>0&&((c.sell-c.cost)/c.sell)<0.2; }).length;
+  const overstock = allP.filter(p=>(inv[p.id]||0)>p.reorderQty*3).map(p=>p.name);
+  const stockout = allP.filter(p=>(inv[p.id]||0)===0&&p.reorderPt>0).length;
+
+  const aiEl = document.getElementById('varianceAI');
+  const aiText = document.getElementById('varianceAIText');
+  aiEl.style.display='block';
+  aiText.innerHTML='<span style="color:#F59E0B">⟳ Analyzing…</span>';
+
+  try {
+    const resp = await fetch('https://unipro-ai-proxy.tedscholl.workers.dev',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:600,
+        messages:[{role:'user',content:`You are a warehouse cost intelligence analyst for Termac Family of Companies, a fire protection and commercial kitchen services company with three warehouses (Termac chemicals/supplies, UniPro fire protection parts, AllPro stainless fabrication).
+
+Current issues found:
+- ${zeroMargin.length} SKUs with no sell price set: ${zeroMargin.slice(0,5).join(', ')}${zeroMargin.length>5?'…':''}
+- ${lowMargin} SKUs with margin below 20%
+- ${overstock.length} overstocked items tying up capital: ${overstock.slice(0,3).join(', ')}${overstock.length>3?'…':''}
+- ${stockout} stockouts
+
+Write a concise (4-5 sentences) warehouse manager briefing: what the biggest financial risk is right now, what to fix first, and one specific action recommendation for each warehouse type. Be direct and specific.`}]})
+    });
+    const data = await resp.json();
+    aiText.innerHTML = (data.content?.[0]?.text||'').split('\n').join('<br>');
+  } catch(e) {
+    aiText.innerHTML = '<span style="color:#6B7280">AI analysis unavailable</span>';
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// REORDER NOTIFICATIONS — auto-check on load and every 10 minutes
+// ════════════════════════════════════════════════════════════════════════════
+function checkReorderAlerts() {
+  const inv = loadInventory();
+  const alerts = [];
+  [...TERMAC_WH_PRODUCTS,...UNIPRO_WH_PRODUCTS,...(ALLPRO_WH_PRODUCTS||[])].forEach(p=>{
+    const qoh = inv[p.id]||0;
+    if(qoh <= p.reorderPt) {
+      const urgency = qoh===0 ? 'STOCKOUT' : qoh<=Math.floor(p.reorderPt/2) ? 'CRITICAL' : 'LOW';
+      alerts.push({id:p.id, name:p.name, qoh, reorderPt:p.reorderPt, reorderQty:p.reorderQty, urgency, unit:p.unit});
+    }
+  });
+
+  // Update badge on reorders tab
+  const reorderBtn = document.querySelector('[onclick*="reorders"]');
+  if(reorderBtn) {
+    const count = alerts.length;
+    reorderBtn.innerHTML = count>0
+      ? `🚨 Reorder Queue <span style="background:#C8102E;color:#fff;border-radius:99px;padding:1px 7px;font-size:10px;margin-left:4px">${count}</span>`
+      : '🚨 Reorder Queue';
+  }
+
+  // Store for reorder tab to use
+  window._reorderAlerts = alerts;
+
+  // Show toast if new critical stockouts
+  const criticals = alerts.filter(a=>a.urgency==='STOCKOUT').length;
+  if(criticals>0 && !window._lastStockoutCount) {
+    showToast(`⚠️ ${criticals} stockout${criticals>1?'s':''} require immediate reorder`, 'error');
+  }
+  window._lastStockoutCount = criticals;
+}
+
+function showToast(msg, type='info') {
+  const t=document.createElement('div');
+  t.style.cssText=`position:fixed;bottom:24px;right:24px;background:${type==='error'?'#C8102E':'#1A4731'};color:#fff;padding:12px 20px;border-radius:8px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:14px;z-index:9999;box-shadow:0 4px 20px rgba(0,0,0,.3)`;
+  t.textContent=msg;document.body.appendChild(t);
+  setTimeout(()=>t.remove(),5000);
+}
+
+// Check on load and every 10 minutes
+setTimeout(checkReorderAlerts, 1000);
+setInterval(checkReorderAlerts, 600000);
+
+// ════════════════════════════════════════════════════════════════════════════
+// WMS AI INTELLIGENCE
+// ════════════════════════════════════════════════════════════════════════════
+const WMS_AI_PROMPTS = {
+  termac: {
+    reorder: 'You are a warehouse AI for Termac chemicals/supplies warehouse. Analyze the current reorder queue and recommend priorities. Focus on: dish machine chemicals (highest velocity), seasonal demand patterns, vendor consolidation to reduce delivery costs. Be specific, max 150 words.',
+    procedures: 'Recommend 5 specific operational procedures for the Termac chemicals/supplies warehouse. Cover: FIFO rotation for chemicals, NSF compliance for food-safe products, lot tracking, spill containment, and delivery verification. Be actionable, max 200 words.',
+    vendor: 'For Termac\'s chemicals and supplies warehouse, identify 3 vendor consolidation opportunities based on these categories: dish machine chemicals, cleaning chemicals, paper products, hand soaps, water treatment. Recommend which product lines could be sourced from fewer vendors to reduce complexity and improve pricing leverage. Max 150 words.',
+    expiry: 'Provide a checklist and schedule for chemical expiry and rotation management in a commercial cleaning products warehouse. Include FIFO protocol, max shelf life guidelines for common categories (detergents, sanitizers, degreasers), and what to do with near-expiry stock. Max 200 words.',
+    seasonal: 'For a commercial kitchen chemical supply warehouse serving restaurants in the Mid-Atlantic (PA/NJ/DE/MD), forecast seasonal demand patterns quarterly. Cover: summer health inspection pressure, holiday demand spikes, winter dish machine chemical usage changes. Provide specific stock recommendations. Max 200 words.',
+  },
+  unipro: {
+    reorder: 'You are a warehouse AI for UniPro fire protection parts warehouse. Analyze inventory for a fire extinguisher and hood suppression service company. Identify which items (extinguisher sizes, suppression parts, pipe/fittings) are most critical to keep above par, considering NFPA 10 annual inspection season peaks. Max 150 words.',
+    swap_pool: 'Recommend a swap pool management strategy for a fire extinguisher service company. Cover: minimum swap unit counts by size (2.5lb, 5lb, 10lb, 20lb, K-Class), rotation procedure for recharged units, hydrostatic test tracking for 6-year and 12-year cycles, and how to flag units approaching test dates. Max 200 words.',
+    hydro: 'Create a hydrostatic testing cycle management procedure for a fire extinguisher warehouse. Include: how to tag units due for 6-year internal maintenance, 12-year hydrostatic test, what documentation to maintain, how to remove units from swap pool during testing, and how to log test results in the inventory system. Max 200 words.',
+    kitting: 'Recommend a job kitting optimization process for a UniPro fire protection warehouse. A tech runs 8-12 stops per day across mixed services (extinguisher inspection, hood suppression, sprinkler check). How should the warehouse kit per job type vs. stocking the van? Include recommended van stock lists by service type. Max 200 words.',
+    procedures: 'Recommend 5 specific warehouse procedures for UniPro fire protection parts. Cover: serialized unit tracking, NFPA compliance parts segregation, agent refill scheduling, pipe and fittings organization, and receiving inspection for new extinguisher units. Be actionable and specific. Max 200 words.',
+  },
+  allpro: {
+    reorder: 'You are a warehouse AI for AllPro stainless steel fabrication warehouse. Analyze stock levels for sheet stock (16ga, 18ga, 22ga stainless), formed components, and hardware. Recommend reorder priorities based on lead times for stainless (typically 2-4 weeks), job backlog considerations, and minimum viable stock levels. Max 150 words.',
+    cut_waste: 'Design a cut waste reduction program for a stainless steel fabrication shop. Include: nested cutting approach for sheet optimization, offcut cataloging and reuse procedures, scrap weight tracking, and monthly waste percentage targets. Quantify expected savings for a shop using 50-100 sheets/month. Max 200 words.',
+    nsf: 'Create an NSF compliance checklist for a stainless steel commercial kitchen fabrication warehouse and shop floor. Cover: approved 300-series alloy verification on receiving, weld quality standards for food-contact surfaces, surface finish requirements (Ra 32 or smoother), documentation required per job, and what triggers a compliance failure. Max 200 words.',
+    lead_time: 'Recommend a lead time optimization strategy for a custom stainless fabrication operation. Cover: how to build a standard job backlog buffer, when to stock common formed components vs. fabricate to order, how to communicate realistic timelines to the sales team, and how to handle rush jobs without disrupting the schedule. Max 200 words.',
+    procedures: 'Recommend 5 specific warehouse procedures for AllPro stainless fabrication. Cover: sheet stock FIFO by gauge and date received, offcut storage and reuse, consumables (weld wire, grinding discs) par levels, receiving inspection for dimensional accuracy, and finished goods staging before delivery. Be actionable and specific. Max 200 words.',
+  },
+};
+
+async function wmsAIAction(warehouse, action) {
+  const outputEl = document.getElementById('wmsAI-'+warehouse);
+  if(!outputEl) return;
+  outputEl.style.display='block';
+  outputEl.innerHTML='<span style="color:#F59E0B">⟳ Thinking…</span>';
+
+  const prompt = WMS_AI_PROMPTS[warehouse]?.[action]||'Provide warehouse recommendations.';
+  const inv = loadInventory();
+  const products = warehouse==='termac'?TERMAC_WH_PRODUCTS:warehouse==='unipro'?UNIPRO_WH_PRODUCTS:(ALLPRO_WH_PRODUCTS||[]);
+  const lowStock = products.filter(p=>(inv[p.id]||0)<=p.reorderPt).map(p=>`${p.name}: ${inv[p.id]||0} ${p.unit} (reorder at ${p.reorderPt})`).join(', ')||'None currently low';
+
+  try {
+    const resp = await fetch('https://unipro-ai-proxy.tedscholl.workers.dev',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:500,
+        messages:[{role:'user',content:prompt+'\n\nCurrent low stock items: '+lowStock}]})
+    });
+    const data = await resp.json();
+    outputEl.innerHTML = (data.content?.[0]?.text||'').split('\n\n').join('</p><p>').split('\n').join('<br>').replace(/[*][*](.*?)[*][*]/g,'<strong>$1</strong>');
+  } catch(e) {
+    outputEl.innerHTML='<span style="color:#6B7280">Connection error — try again</span>';
+  }
+}
+
+var _wmsAIChatHistory = [];
+async function wmsAIChat() {
+  const input = document.getElementById('wmsAIChatInput');
+  const msgs = document.getElementById('wmsAIChatMsgs');
+  const q = input.value.trim();
+  if(!q) return;
+  input.value='';
+
+  const uDiv=document.createElement('div');
+  uDiv.style.cssText='background:#1E293B;border-radius:6px;padding:8px 10px;margin-bottom:6px;font-size:12px';
+  uDiv.innerHTML='<strong style="color:var(--gold)">You:</strong> '+escH(q);
+  msgs.appendChild(uDiv);
+
+  const think=document.createElement('div');
+  think.style.cssText='color:#F59E0B;font-size:12px;margin-bottom:6px';
+  think.textContent='⟳ Thinking…';
+  msgs.appendChild(think);
+  msgs.scrollTop=msgs.scrollHeight;
+
+  _wmsAIChatHistory.push({role:'user',content:q});
+
+  const inv = loadInventory();
+  const alerts = window._reorderAlerts||[];
+  const context = `You are the WMS AI assistant for Termac Family of Companies, managing three warehouses:
+1. Termac: dish machine chemicals, cleaning chemicals, paper products, hand soaps, water treatment
+2. UniPro/Quality III: fire extinguishers (new + swap pool), hood suppression parts, pipe/fittings, extinguisher service parts, emergency lighting
+3. AllPro: stainless steel sheet stock (14-22ga), formed components, hardware
+
+Current reorder alerts: ${alerts.length} items at or below reorder point.
+Be concise, specific, and actionable. Max 3-4 sentences unless asked for more detail.`;
+
+  try {
+    const resp = await fetch('https://unipro-ai-proxy.tedscholl.workers.dev',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:400,system:context,
+        messages:_wmsAIChatHistory.slice(-8)})
+    });
+    const data = await resp.json();
+    const reply = data.content?.[0]?.text||'Sorry, no response.';
+    _wmsAIChatHistory.push({role:'assistant',content:reply});
+    think.style.cssText='background:#0F172A;border-radius:6px;padding:8px 10px;margin-bottom:6px;font-size:12px;color:#E2E8F0;line-height:1.5';
+    think.innerHTML='<strong style="color:#94A3B8">WMS AI:</strong> '+reply.split('\n').join('<br>');
+  } catch(e) {
+    think.textContent='Connection error — try again';
+  }
+  msgs.scrollTop=msgs.scrollHeight;
+}
+
 </script>
-</body>
-</html>
