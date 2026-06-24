@@ -264,6 +264,17 @@ body.rail-open .rail-overlay{display:block}
 .sp-search-biz{font-weight:700;font-size:14px;color:var(--ink)}
 .sp-search-sub{font-size:12px;color:var(--soft);margin-top:2px}
 .sp-record-type{display:inline-block;padding:1px 8px;border-radius:4px;font-size:10px;font-weight:700;font-family:'Barlow Condensed',sans-serif;text-transform:uppercase;letter-spacing:.04em;margin-left:6px}
+
+/* ── AI Camera Modal ── */
+#spCamModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9000;align-items:center;justify-content:center}
+#spCamBox{background:#fff;border-radius:14px;width:min(480px,95vw);max-height:90vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,.25)}
+#spCamHeader{background:#1A1D21;border-radius:14px 14px 0 0;padding:14px 18px;display:flex;align-items:center;justify-content:space-between}
+.sp-cam-zone{border:2px dashed var(--blue);border-radius:12px;padding:28px 20px;text-align:center;cursor:pointer;transition:background .15s;background:#EFF6FF;margin:16px}
+.sp-cam-zone:hover{background:#DBEAFE}
+.sp-cam-result{display:none;background:#F0FDF4;border:1.5px solid #86EFAC;border-radius:10px;padding:16px;margin:0 16px 16px;font-size:13px;color:var(--ink);line-height:1.6}
+.sp-cam-thinking{display:none;text-align:center;padding:20px;color:var(--orange);font-size:13px}
+.sp-cam-preview{display:none;text-align:center;margin:0 16px 12px}
+.sp-cam-preview img{max-width:100%;max-height:200px;border-radius:8px;border:2px solid var(--blue)}
 </style>
 
 
@@ -347,6 +358,8 @@ body.rail-open .rail-overlay{display:block}
         <button class="sp-tab"        id="spTab-opportunities" onclick="spNav('opportunities')">💼 Opportunities</button>
         <button class="sp-tab"        id="spTab-accounts"     onclick="spNav('accounts')">🏢 Accounts</button>
       </div>
+      <!-- AI Camera -->
+      <button onclick="spOpenCamera()" style="background:none;border:1.5px solid #3A3E43;border-radius:7px;color:#9CA3AF;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;padding:5px 12px;cursor:pointer;white-space:nowrap;flex-shrink:0;transition:border-color .12s,color .12s" onmouseover="this.style.borderColor='var(--red)';this.style.color='#fff'" onmouseout="this.style.borderColor='#3A3E43';this.style.color='#9CA3AF'">📷 AI Camera</button>
       <!-- Universal Search -->
       <div class="sp-unisearch-wrap">
         <span style="font-size:14px">🔍</span>
@@ -1883,6 +1896,157 @@ if (document.readyState === 'loading') {
 
 })();
 
+</script>
+
+<!-- ══ AI CAMERA MODAL ══ -->
+<div id="spCamModal" onclick="if(event.target===this)spCloseCamera()">
+  <div id="spCamBox">
+    <div id="spCamHeader">
+      <div>
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:15px;letter-spacing:.10em;text-transform:uppercase;color:#F2B705">📷 AI Camera</div>
+        <div style="font-size:11px;color:#6B7280;margin-top:2px">Scan equipment, tags, or sites — get instant AI analysis + referral opportunity</div>
+      </div>
+      <button onclick="spCloseCamera()" style="background:none;border:none;color:#6B7280;font-size:20px;cursor:pointer">✕</button>
+    </div>
+
+    <!-- Camera zone -->
+    <div class="sp-cam-zone" onclick="document.getElementById('spCamCapture').click()">
+      <div style="font-size:40px;margin-bottom:8px">📷</div>
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:16px;color:var(--blue);margin-bottom:4px">Tap to Open Camera</div>
+      <div style="font-size:12px;color:var(--soft)">Take a photo of equipment, a tag, or a site</div>
+    </div>
+    <input type="file" id="spCamCapture" accept="image/*" capture="environment" style="display:none" onchange="spCamAnalyze(this)">
+
+    <div style="text-align:center;margin:0 0 10px;color:var(--soft);font-size:12px">— or upload from photos —</div>
+    <div style="padding:0 16px 14px">
+      <label style="display:flex;align-items:center;justify-content:center;gap:6px;padding:9px;background:#fff;border:1.5px solid var(--line);border-radius:8px;cursor:pointer;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;color:var(--soft);letter-spacing:.04em">
+        🖼️ Upload Photo
+        <input type="file" id="spCamUpload" accept="image/*" style="display:none" onchange="spCamAnalyze(this)">
+      </label>
+    </div>
+
+    <div class="sp-cam-preview" id="spCamPreview"><img id="spCamPreviewImg" alt=""></div>
+    <div class="sp-cam-thinking" id="spCamThinking">🤖 Analyzing with AI — one moment…</div>
+
+    <div class="sp-cam-result" id="spCamResult">
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px;color:#166534;margin-bottom:8px" id="spCamResultTitle">AI Analysis</div>
+      <div id="spCamResultBody"></div>
+      <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
+        <button onclick="spCamCreateLead()" style="padding:8px 14px;background:var(--red);color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">📋 Create Lead from This</button>
+        <button onclick="spCamClear()" style="padding:8px 14px;background:#fff;border:1.5px solid var(--line);border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;color:var(--soft);cursor:pointer">Clear</button>
+      </div>
+    </div>
+
+    <!-- Use cases -->
+    <div style="padding:14px 16px;border-top:1px solid var(--line)">
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin-bottom:10px">What the AI Camera Can Do</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        ${['🔴 Suppression System — Identify type, service date, violations','🟡 Expiry Tags — Read service dates from any compliance tag','🟠 Hood & Filters — Spot grease buildup, filter condition','🔵 Dish Machines — Identify machine model, chemical needs','🟢 Grease Traps — Assess condition from visible indicators','⚡ Cross-Sell — AI flags which Termac services apply'].map(t=>`<div style="background:#F8F9FA;border-radius:6px;padding:8px 10px;font-size:11px;color:var(--ink)">${t}</div>`).join('')}
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ══ AI CAMERA — SALES PORTAL ══ */
+var _spCamB64 = null;
+var _spCamContext = '';
+
+function spOpenCamera() {
+  document.getElementById('spCamModal').style.display = 'flex';
+}
+function spCloseCamera() {
+  document.getElementById('spCamModal').style.display = 'none';
+}
+function spCamClear() {
+  _spCamB64 = null; _spCamContext = '';
+  document.getElementById('spCamPreview').style.display = 'none';
+  document.getElementById('spCamResult').style.display = 'none';
+  document.getElementById('spCamThinking').style.display = 'none';
+  document.getElementById('spCamCapture').value = '';
+  document.getElementById('spCamUpload').value = '';
+}
+
+async function spCamAnalyze(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    _spCamB64 = e.target.result.split(',')[1];
+
+    // Show preview
+    const prev = document.getElementById('spCamPreview');
+    const img  = document.getElementById('spCamPreviewImg');
+    prev.style.display = 'block';
+    img.src = e.target.result;
+
+    document.getElementById('spCamResult').style.display = 'none';
+    document.getElementById('spCamThinking').style.display = 'block';
+
+    const prompt = `You are a Termac sales intelligence assistant. A sales rep has taken a photo in the field.
+
+Analyze this image and provide:
+1. **What you see** — equipment type, brand, condition, any visible tags or labels
+2. **Key observations** — service dates, expiry, deficiencies, compliance issues, or violations
+3. **Sales opportunity** — is this a cross-sell or referral opportunity? Be specific about which Termac service applies:
+   - UniPro / Quality III: fire suppression systems, fire extinguishers, sprinklers, fire alarms
+   - Filter Man: hood filter exchange service
+   - GTO: grease trap cleaning & maintenance
+   - ALLPro: stainless steel fabrication
+   - Termac: commercial dish machines, chemicals & supplies
+4. **Recommended next step** — what should the rep say or do right now?
+
+Be concise, field-practical, and direct. Format with bold headers.`;
+
+    const AI_PROXY = 'https://unipro-ai-proxy.tedscholl.workers.dev';
+    try {
+      const res = await fetch(AI_PROXY, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 600,
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'image', source: { type: 'base64', media_type: file.type || 'image/jpeg', data: _spCamB64 }},
+              { type: 'text', text: prompt }
+            ]
+          }]
+        })
+      });
+      const data = await res.json();
+      const text = (data.content || []).map(c => c.text || '').join('') || 'No response received.';
+      _spCamContext = text;
+      document.getElementById('spCamResultBody').innerHTML =
+        text.replace(/
+/g, '<br>')
+            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+      document.getElementById('spCamResultTitle').textContent = '🤖 AI Analysis';
+      document.getElementById('spCamResult').style.display = 'block';
+    } catch(err) {
+      document.getElementById('spCamResultBody').innerHTML =
+        '<span style="color:var(--red)">Could not reach AI — check connection and try again.</span>';
+      document.getElementById('spCamResult').style.display = 'block';
+    }
+    document.getElementById('spCamThinking').style.display = 'none';
+  };
+  reader.readAsDataURL(file);
+}
+
+function spCamCreateLead() {
+  // Pre-fill add modal with camera context as notes
+  if (typeof spOpenAdd === 'function') {
+    spCloseCamera();
+    spOpenAdd(_spTab || 'leads');
+    setTimeout(() => {
+      const notesEl = document.getElementById('spf_notes') || document.getElementById('spf_siteNotes');
+      if (notesEl && _spCamContext) {
+        notesEl.value = '[AI Camera] ' + _spCamContext.replace(/<[^>]+>/g, '').substring(0, 500);
+      }
+    }, 300);
+  }
+}
 </script>
 </body>
 </html>
