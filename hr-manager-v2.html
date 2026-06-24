@@ -428,6 +428,15 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--ink);min-h
         </div>
 
         <div class="hm-kanban" id="hmTalentKanban"></div>
+
+        <!-- Analytics Dashboard -->
+        <div style="margin-top:24px;border-top:1px solid var(--line);padding-top:20px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+            <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:14px;letter-spacing:.06em;text-transform:uppercase">📊 Pipeline Intelligence</div>
+            <button onclick="hmRenderTalentAnalytics()" style="background:none;border:1px solid var(--line);border-radius:5px;padding:4px 10px;font-size:11px;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:700">↻ Refresh</button>
+          </div>
+          <div id="hmTalentAnalytics"></div>
+        </div>
       </div>
 
       <!-- PAYROLL -->
@@ -628,6 +637,34 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--ink);min-h
   </div>
 </div>
 
+
+<!-- SCREENING MODAL — send/preview -->
+<div class="hm-modal-bg" id="hmScreeningModal">
+  <div class="hm-modal" style="max-width:640px">
+    <div class="hm-modal-hdr">
+      <div class="hm-modal-title" id="screeningModalTitle">📋 Pre-Interview Screening</div>
+      <button onclick="document.getElementById('hmScreeningModal').classList.remove('open')" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--soft)">✕</button>
+    </div>
+    <div class="hm-modal-body" style="padding:16px">
+      <div id="screeningModalContent"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;padding:14px 20px;border-top:1px solid var(--line)" id="screeningModalFooter"></div>
+  </div>
+</div>
+
+<!-- SCREENING RESULTS MODAL -->
+<div class="hm-modal-bg" id="hmScreeningResultsModal">
+  <div class="hm-modal" style="max-width:680px">
+    <div class="hm-modal-hdr">
+      <div class="hm-modal-title" id="screeningResultsTitle">📊 Screening Results</div>
+      <button onclick="document.getElementById('hmScreeningResultsModal').classList.remove('open')" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--soft)">✕</button>
+    </div>
+    <div class="hm-modal-body" style="padding:16px;max-height:75vh;overflow-y:auto" id="screeningResultsBody"></div>
+    <div style="display:flex;justify-content:flex-end;padding:14px 20px;border-top:1px solid var(--line)">
+      <button onclick="document.getElementById('hmScreeningResultsModal').classList.remove('open')" class="hm-btn hm-btn-ghost">Close</button>
+    </div>
+  </div>
+</div>
 <div id="hmToast"></div>
 
 <script>
@@ -4205,6 +4242,8 @@ function hmRenderTalent() {
 
   const countEl = document.getElementById('talentCount');
   if (countEl) countEl.textContent = candidates.length + ' candidates';
+  // Refresh analytics after render
+  setTimeout(hmRenderTalentAnalytics, 50);
 
   const stages = TALENT_STAGES.filter(s => s !== 'Rejected');
   kanban.innerHTML = `<div style="display:flex;gap:10px;min-width:${stages.length * 220}px">` +
@@ -4263,10 +4302,46 @@ function hmOpenCandidate(id) {
   if (!c) return;
 
   document.getElementById('candidateModalTitle').textContent = c.name;
+  // Screening status
+  const screening = c.screening || {};
+  const screenSent = screening.sentAt;
+  const screenDone = screening.completedAt;
+  const screenScore = screening.aiScore;
+
+  const screeningSection = `
+    <div style="margin-top:14px;padding:12px;border-radius:8px;border:1.5px solid ${screenDone?'#166534':screenSent?'#92400E':'var(--line)'}; background:${screenDone?'#F0FDF4':screenSent?'#FFFBEB':'var(--bg)'}">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${screenDone?'10px':'0'}">
+        <div>
+          <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:${screenDone?'#166534':screenSent?'#92400E':'var(--soft)'}">
+            ${screenDone?'✅ Screening Complete':screenSent?'⏳ Screening Sent — Awaiting Response':'📋 Pre-Interview Screening'}
+          </div>
+          ${screenSent?`<div style="font-size:10px;color:var(--soft);margin-top:2px">Sent ${new Date(screening.sentAt).toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}</div>`:''}
+          ${screenDone?`<div style="font-size:10px;color:#166534;margin-top:2px">Completed ${new Date(screening.completedAt).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</div>`:''}
+        </div>
+        <div style="display:flex;gap:6px;align-items:center">
+          ${screenScore ? `<div style="text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:28px;color:${screenScore>=80?'#166534':screenScore>=60?'#92400E':'#DC2626'}">${screenScore}</div><div style="font-size:9px;color:var(--soft);margin-top:-2px">AI SCORE</div></div>` : ''}
+          ${!screenDone ? `<button onclick="hmSendScreening('${id}')" class="hm-btn" style="background:#1E40AF;color:#fff;border-color:#1E40AF;font-size:11px">${screenSent?'🔄 Resend':'📤 Send Screening'}</button>` : ''}
+          ${screenDone ? `<button onclick="hmViewScreeningResults('${id}')" class="hm-btn hm-btn-ghost" style="font-size:11px">📊 View Results</button>` : ''}
+        </div>
+      </div>
+      ${screenDone && screening.summary ? `<div style="font-size:12px;color:#166534;margin-top:6px;font-style:italic">${escH(screening.summary)}</div>` : ''}
+      ${screenDone && screening.recommendation ? `<div style="margin-top:6px;padding:6px 10px;border-radius:5px;background:${screening.recommendation==='Strong Hire'?'#166534':screening.recommendation==='Hire'?'#1E40AF':screening.recommendation==='Maybe'?'#92400E':'#7F1D1D'};color:#fff;font-size:11px;font-weight:700;display:inline-block">${escH(screening.recommendation)}</div>` : ''}
+    </div>`;
+
+  // AI Intelligence Panel
+  const aiPanel = `
+    <div style="margin-top:10px;padding:10px 12px;border-radius:8px;background:#0F1114;border:1px solid #1E293B">
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#475569;margin-bottom:8px">🤖 AI Recruiter Intelligence</div>
+      <div id="candidateAIPanel-${id}" style="font-size:11px;color:#94A3B8;line-height:1.5">${c.aiIntel || '<span style="color:#475569">Click below to generate AI interview prep, red flags, and salary benchmarks</span>'}</div>
+      <button onclick="hmGenerateCandidateIntel('${id}')" style="margin-top:8px;background:none;border:1px solid #334155;color:#93C5FD;border-radius:5px;padding:4px 12px;font-size:10px;font-family:Barlow Condensed,sans-serif;font-weight:700;cursor:pointer;letter-spacing:.06em;text-transform:uppercase">⚡ ${c.aiIntel?'Refresh':'Generate'} AI Intel</button>
+    </div>`;
+
   document.getElementById('candidateModalBody').innerHTML = `
-    <div style="padding:16px">
+    <div style="padding:16px;max-height:70vh;overflow-y:auto">
       ${renderCandidateCard(c)}
-      <div style="margin-top:14px">
+      ${screeningSection}
+      ${aiPanel}
+      <div style="margin-top:12px">
         <label style="font-size:11px;color:var(--soft);display:block;margin-bottom:4px">Pipeline Stage</label>
         <select id="candidateStageSelect" style="width:100%;padding:8px;border:1.5px solid var(--line);border-radius:6px;font-size:13px">
           ${TALENT_STAGES.map(s => `<option ${c.stage===s?'selected':''}>${s}</option>`).join('')}
@@ -4283,7 +4358,7 @@ function hmOpenCandidate(id) {
     <div style="display:flex;gap:8px">
       ${c.phone ? `<a href="tel:${escH(c.phone)}" class="hm-btn hm-btn-ghost">📞 Call</a>` : ''}
       ${c.email ? `<a href="mailto:${escH(c.email)}" class="hm-btn hm-btn-ghost">✉️ Email</a>` : ''}
-      <button onclick="hmSaveCandidate('${id}')" class="hm-btn" style="background:#1A4731;color:#fff;border-color:#1A4731">💾 Save Changes</button>
+      <button onclick="hmSaveCandidate('${id}')" class="hm-btn" style="background:#1A4731;color:#fff;border-color:#1A4731">💾 Save</button>
     </div>`;
 
   document.getElementById('hmCandidateModal').classList.add('open');
@@ -4319,6 +4394,480 @@ function hmOpenNewCandidate() {
   hrSave('candidates', candidates);
   hmToast('Candidate added ✓');
   hmRenderTalent(); hmUpdateRail();
+}
+
+
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// PRE-INTERVIEW SCREENING SYSTEM
+// ════════════════════════════════════════════════════════════════════════════
+
+// Role-specific question banks
+const SCREENING_QUESTIONS = {
+  'Fire Protection Tech': [
+    {q:'What NFPA codes are you most familiar with, and how have you applied them in the field?', type:'text', weight:20},
+    {q:'You arrive at a customer site and find a fire extinguisher with the pressure gauge in the red. Walk me through exactly what you do.', type:'text', weight:25},
+    {q:'What types of fire suppression systems have you inspected or serviced?', type:'text', weight:15},
+    {q:'Do you hold any NICET certifications? If yes, what level and in which discipline?', type:'text', weight:20},
+    {q:'How comfortable are you working at heights or in confined spaces?', type:'scale', weight:10},
+    {q:'Describe a situation where you had to explain a compliance issue to a customer who was resistant.', type:'text', weight:10},
+  ],
+  'GTO Service Tech': [
+    {q:'Describe your experience servicing commercial grease traps and interceptors.', type:'text', weight:25},
+    {q:'What municipal pretreatment regulations have you worked under? Which states?', type:'text', weight:20},
+    {q:'How do you handle a situation where a trap is severely overloaded and poses a backup risk?', type:'text', weight:15},
+    {q:'Are you comfortable operating vacuum/pump trucks? What equipment have you run?', type:'text', weight:20},
+    {q:'How do you approach documentation — manifests, service reports, FOG certificates?', type:'text', weight:10},
+    {q:'Rate your comfort level with early morning or weekend service routes.', type:'scale', weight:10},
+  ],
+  'Sales Representative': [
+    {q:'Walk me through how you would prospect a new commercial restaurant account from cold to close.', type:'text', weight:25},
+    {q:'A prospect says "we already have a vendor." What do you say next?', type:'text', weight:20},
+    {q:'What is your average deal size and monthly new business quota in your current role?', type:'text', weight:15},
+    {q:'How familiar are you with fire protection or commercial kitchen services?', type:'text', weight:15},
+    {q:'Describe your territory management approach — how do you organize your week?', type:'text', weight:15},
+    {q:'What CRM tools have you used? How disciplined are you with logging activity?', type:'text', weight:10},
+  ],
+  'DMS Telemarketer': [
+    {q:'How many outbound calls do you typically make per day in your current role?', type:'text', weight:20},
+    {q:'A business owner says "I\'m not interested" immediately. What do you say?', type:'text', weight:25},
+    {q:'Describe your experience with cold call scripts — do you follow them strictly or adapt?', type:'text', weight:15},
+    {q:'Have you used a CRM or dialer software? Which ones?', type:'text', weight:10},
+    {q:'Rate your comfort level with high-volume cold calling (50+ calls/day).', type:'scale', weight:20},
+    {q:'What is your typical call-to-appointment conversion rate?', type:'text', weight:10},
+  ],
+  'Stainless Fabricator': [
+    {q:'What types of stainless steel fabrication have you done? Commercial kitchen, food processing, other?', type:'text', weight:25},
+    {q:'Are you certified in any welding processes (MIG, TIG, stick)? What materials?', type:'text', weight:25},
+    {q:'Can you read technical drawings and fabrication specs? Describe your experience.', type:'text', weight:20},
+    {q:'What finishing techniques are you familiar with — grinding, polishing, passivation?', type:'text', weight:15},
+    {q:'Describe a custom fabrication project you built from spec to installation.', type:'text', weight:15},
+  ],
+  'Delivery Driver': [
+    {q:'What class CDL do you hold and what endorsements?', type:'text', weight:25},
+    {q:'How many years of commercial driving experience do you have? Any accidents or violations in the last 3 years?', type:'text', weight:25},
+    {q:'Are you comfortable with early morning routes and route optimization?', type:'text', weight:15},
+    {q:'Describe your experience with proof of delivery documentation and customer interaction.', type:'text', weight:20},
+    {q:'Rate your comfort level with physically demanding delivery work (lift 50+ lbs regularly).', type:'scale', weight:15},
+  ],
+  'Field Dispatcher': [
+    {q:'Describe your experience dispatching field technicians or drivers. What software have you used?', type:'text', weight:25},
+    {q:'Three techs are running late, two new emergency calls come in, and a customer is demanding an ETA. Walk me through how you handle it.', type:'text', weight:30},
+    {q:'How do you prioritize emergency calls versus scheduled service when resources are limited?', type:'text', weight:20},
+    {q:'Rate your ability to stay calm and communicate clearly under high-pressure situations.', type:'scale', weight:15},
+    {q:'What experience do you have with route optimization and territory management?', type:'text', weight:10},
+  ],
+  'Service Scheduler': [
+    {q:'Describe your experience with scheduling software and calendar management for field service teams.', type:'text', weight:25},
+    {q:'How do you handle a day where three techs call out sick and 20 jobs are on the board?', type:'text', weight:25},
+    {q:'What strategies do you use to minimize drive time and maximize technician productivity?', type:'text', weight:20},
+    {q:'How do you communicate schedule changes to both techs and customers professionally?', type:'text', weight:20},
+    {q:'Rate your ability to manage multiple priorities simultaneously.', type:'scale', weight:10},
+  ],
+  'Warehouse Associate': [
+    {q:'Describe your warehouse experience — receiving, put-away, pick/pack, cycle counts.', type:'text', weight:25},
+    {q:'Have you used warehouse management software or barcode scanners? Which systems?', type:'text', weight:20},
+    {q:'Are you forklift certified? What equipment have you operated?', type:'text', weight:20},
+    {q:'How do you ensure accuracy when picking orders under time pressure?', type:'text', weight:20},
+    {q:'Rate your comfort level with physically demanding warehouse work across a full shift.', type:'scale', weight:15},
+  ],
+  'Office Manager': [
+    {q:'Describe your experience managing office operations, vendor relationships, and administrative workflows.', type:'text', weight:25},
+    {q:'What accounting or invoicing software have you used? QuickBooks, NetSuite, other?', type:'text', weight:20},
+    {q:'How have you handled accounts receivable follow-up and collections professionally?', type:'text', weight:20},
+    {q:'Describe a situation where you had to implement a new process or system in an office environment.', type:'text', weight:20},
+    {q:'How do you manage competing priorities when supporting multiple departments?', type:'text', weight:15},
+  ],
+};
+
+// Default questions for roles not in the bank
+const DEFAULT_QUESTIONS = [
+  {q:'Describe your relevant experience for this role and what drew you to apply.', type:'text', weight:30},
+  {q:'What is your greatest professional strength and how does it apply here?', type:'text', weight:20},
+  {q:'Describe a challenging situation at work and how you resolved it.', type:'text', weight:25},
+  {q:'What are your salary expectations for this position?', type:'text', weight:10},
+  {q:'How soon are you available to start?', type:'text', weight:15},
+];
+
+var _screeningCandidateId = null;
+var _screeningQuestions = [];
+
+// ── SEND SCREENING ───────────────────────────────────────────────────────────
+async function hmSendScreening(candidateId) {
+  const candidates = hrLoad('candidates');
+  const c = candidates.find(x => x.id === candidateId);
+  if (!c) return;
+
+  _screeningCandidateId = candidateId;
+
+  // Get role-specific questions
+  _screeningQuestions = SCREENING_QUESTIONS[c.role] || DEFAULT_QUESTIONS;
+
+  // Show preview modal
+  document.getElementById('screeningModalTitle').textContent = `📋 Screening — ${c.name}`;
+  document.getElementById('screeningModalContent').innerHTML = `
+    <div style="margin-bottom:14px">
+      <div style="font-size:13px;font-weight:700;margin-bottom:4px">${escH(c.name)} · ${escH(c.role)}</div>
+      <div style="font-size:11px;color:var(--soft)">${escH(c.email||'No email on file')} ${c.phone ? '· '+escH(c.phone) : ''}</div>
+    </div>
+    <div style="padding:10px 14px;background:#EEF2FF;border-radius:8px;margin-bottom:14px;font-size:12px;color:#3730A3">
+      <strong>How it works:</strong> A unique screening link is generated for this candidate. They complete ${_screeningQuestions.length} role-specific questions, and AI scores their responses 0–100 with a hire recommendation and detailed analysis. Results appear on their card instantly.
+    </div>
+    <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:8px">Screening Questions (${_screeningQuestions.length})</div>
+    ${_screeningQuestions.map((q,i) => `
+      <div style="padding:8px 10px;border:1px solid var(--line);border-radius:6px;margin-bottom:5px;background:#fff">
+        <div style="font-size:12px;font-weight:600;margin-bottom:2px">${i+1}. ${escH(q.q)}</div>
+        <div style="font-size:10px;color:var(--soft)">${q.type==='scale'?'1–5 Rating':'Open response'} · Weight: ${q.weight}%</div>
+      </div>`).join('')}
+    <div style="margin-top:12px;padding:10px;background:#FFF7ED;border-radius:6px;font-size:11px;color:#92400E">
+      📧 <strong>In production with Azure/Brevo:</strong> This sends an email to ${escH(c.email||'the candidate')} with a unique link. For demo, we'll simulate the candidate completing the screening now.
+    </div>`;
+
+  document.getElementById('screeningModalFooter').innerHTML = `
+    <button onclick="document.getElementById('hmScreeningModal').classList.remove('open')" class="hm-btn hm-btn-ghost">Cancel</button>
+    <div style="display:flex;gap:8px">
+      <button onclick="hmSimulateScreeningComplete('${candidateId}')" class="hm-btn hm-btn-ghost">🎭 Simulate Response (Demo)</button>
+      <button onclick="hmMarkScreeningSent('${candidateId}')" class="hm-btn" style="background:#1E40AF;color:#fff;border-color:#1E40AF">📤 Mark as Sent</button>
+    </div>`;
+
+  document.getElementById('hmScreeningModal').classList.add('open');
+}
+
+function hmMarkScreeningSent(candidateId) {
+  const candidates = hrLoad('candidates');
+  const idx = candidates.findIndex(x => x.id === candidateId);
+  if (idx < 0) return;
+  candidates[idx].screening = candidates[idx].screening || {};
+  candidates[idx].screening.sentAt = Date.now();
+  candidates[idx].screening.questions = _screeningQuestions;
+  if (candidates[idx].stage === 'Sourced') candidates[idx].stage = 'Screening';
+  hrSave('candidates', candidates);
+  document.getElementById('hmScreeningModal').classList.remove('open');
+  document.getElementById('hmCandidateModal').classList.remove('open');
+  hmToast(`📤 Screening sent to ${candidates[idx].name}`);
+  hmRenderTalent();
+}
+
+// ── SIMULATE CANDIDATE COMPLETING SCREENING ──────────────────────────────────
+async function hmSimulateScreeningComplete(candidateId) {
+  const candidates = hrLoad('candidates');
+  const c = candidates.find(x => x.id === candidateId);
+  if (!c) return;
+
+  document.getElementById('screeningModalContent').innerHTML = `
+    <div style="text-align:center;padding:30px">
+      <div style="font-size:32px;margin-bottom:12px">🤖</div>
+      <div style="font-weight:700;margin-bottom:8px">Simulating candidate responses + AI scoring…</div>
+      <div style="font-size:12px;color:var(--soft)">Claude is generating realistic responses for ${escH(c.name)} and scoring them</div>
+    </div>`;
+  document.getElementById('screeningModalFooter').innerHTML = '';
+
+  const questions = _screeningQuestions.length ? _screeningQuestions : (SCREENING_QUESTIONS[c.role] || DEFAULT_QUESTIONS);
+
+  const prompt = `You are simulating a job candidate completing a pre-interview screening questionnaire.
+
+Candidate: ${c.name}
+Role: ${c.role}
+Experience: ${c.experienceYears || c.experience_years || 3} years
+Current employer: ${c.currentEmployer || c.current_employer || 'Unknown'}
+Certifications: ${(c.certifications||[]).join(', ') || 'None listed'}
+Candidate notes: ${c.notes || ''}
+
+Generate realistic responses to these screening questions, as if you are this candidate writing naturally (not perfect, conversational). Then score each response and provide an overall AI assessment.
+
+Questions:
+${questions.map((q,i) => `${i+1}. [${q.type==='scale'?'SCALE 1-5':'OPEN TEXT'}] ${q.q} (weight: ${q.weight}%)`).join('
+')}
+
+Return ONLY a JSON object:
+{
+  "responses": [{"question": "...", "answer": "...", "score": 0-100, "note": "one-line evaluator note"}],
+  "overall_score": 0-100,
+  "recommendation": "Strong Hire" | "Hire" | "Maybe" | "No Hire",
+  "summary": "2-3 sentence overall assessment",
+  "strengths": ["strength1", "strength2", "strength3"],
+  "concerns": ["concern1", "concern2"],
+  "interview_questions": ["3 suggested follow-up questions based on the responses"]
+}`;
+
+  try {
+    const resp = await fetch('https://unipro-ai-proxy.tedscholl.workers.dev', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({model:'claude-sonnet-4-6', max_tokens:3000,
+        messages:[{role:'user', content:prompt}]})
+    });
+    const data = await resp.json();
+    const raw = data.content?.[0]?.text || '{}';
+    const result = JSON.parse(raw.replace(/```json|```/g,'').trim());
+
+    // Save to candidate record
+    const idx = candidates.findIndex(x => x.id === candidateId);
+    candidates[idx].screening = {
+      sentAt: candidates[idx].screening?.sentAt || Date.now(),
+      completedAt: Date.now(),
+      questions: questions,
+      responses: result.responses,
+      aiScore: result.overall_score,
+      recommendation: result.recommendation,
+      summary: result.summary,
+      strengths: result.strengths,
+      concerns: result.concerns,
+      interviewQuestions: result.interview_questions,
+    };
+    // Auto-advance stage
+    if (candidates[idx].stage === 'Sourced' || candidates[idx].stage === 'Screening') {
+      candidates[idx].stage = result.overall_score >= 70 ? 'Interview' : 'Screening';
+    }
+    hrSave('candidates', candidates);
+
+    // Show results
+    renderScreeningResults(candidateId, candidates[idx].screening);
+    hmRenderTalent();
+  } catch(e) {
+    document.getElementById('screeningModalContent').innerHTML = `<div style="color:#EF4444;padding:20px">❌ Error scoring responses: ${e.message}</div>`;
+    console.error(e);
+  }
+}
+
+function renderScreeningResults(candidateId, s) {
+  const scoreColor = s.aiScore >= 80 ? '#166534' : s.aiScore >= 60 ? '#92400E' : '#DC2626';
+  const recColors = {'Strong Hire':'#166534','Hire':'#1E40AF','Maybe':'#92400E','No Hire':'#7F1D1D'};
+
+  document.getElementById('screeningModalContent').innerHTML = `
+    <div style="display:flex;align-items:center;gap:20px;margin-bottom:16px;padding:14px;background:#F8FAFC;border-radius:10px">
+      <div style="text-align:center;min-width:70px">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:48px;color:${scoreColor};line-height:1">${s.aiScore}</div>
+        <div style="font-size:10px;color:var(--soft);font-weight:700;letter-spacing:.08em">AI SCORE</div>
+      </div>
+      <div style="flex:1">
+        <div style="display:inline-block;padding:3px 14px;border-radius:20px;background:${recColors[s.recommendation]||'#374151'};color:#fff;font-weight:800;font-size:13px;margin-bottom:8px">${escH(s.recommendation)}</div>
+        <div style="font-size:12px;color:var(--ink);font-style:italic">${escH(s.summary)}</div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+      <div style="padding:10px;background:#F0FDF4;border-radius:8px">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#166534;margin-bottom:6px">✅ Strengths</div>
+        ${(s.strengths||[]).map(str=>`<div style="font-size:11px;margin-bottom:3px">• ${escH(str)}</div>`).join('')}
+      </div>
+      <div style="padding:10px;background:#FEF2F2;border-radius:8px">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#DC2626;margin-bottom:6px">⚠️ Concerns</div>
+        ${(s.concerns||[]).map(c=>`<div style="font-size:11px;margin-bottom:3px">• ${escH(c)}</div>`).join('')}
+      </div>
+    </div>
+
+    ${s.interviewQuestions?.length ? `
+    <div style="padding:10px;background:#EEF2FF;border-radius:8px;margin-bottom:14px">
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#3730A3;margin-bottom:6px">💬 Suggested Interview Questions</div>
+      ${s.interviewQuestions.map((q,i)=>`<div style="font-size:11px;margin-bottom:4px"><strong>${i+1}.</strong> ${escH(q)}</div>`).join('')}
+    </div>` : ''}
+
+    <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:8px">Response Detail</div>
+    ${(s.responses||[]).map((r,i) => `
+      <div style="border:1px solid var(--line);border-radius:7px;padding:10px;margin-bottom:7px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:5px">
+          <div style="font-size:11px;font-weight:700;flex:1;padding-right:10px">${i+1}. ${escH(r.question)}</div>
+          <span style="background:${r.score>=80?'#166534':r.score>=60?'#92400E':'#DC2626'};color:#fff;border-radius:10px;padding:1px 8px;font-size:10px;font-weight:700;flex-shrink:0">${r.score}</span>
+        </div>
+        <div style="font-size:12px;color:#374151;margin-bottom:4px;font-style:italic">"${escH(r.answer)}"</div>
+        <div style="font-size:10px;color:var(--soft)">${escH(r.note||'')}</div>
+      </div>`).join('')}`;
+
+  document.getElementById('screeningModalFooter').innerHTML = `
+    <button onclick="document.getElementById('hmScreeningModal').classList.remove('open');document.getElementById('hmCandidateModal').classList.remove('open')" class="hm-btn hm-btn-ghost">Done</button>
+    <button onclick="hmOpenCandidate('${candidateId}');document.getElementById('hmScreeningModal').classList.remove('open')" class="hm-btn" style="background:#1A4731;color:#fff;border-color:#1A4731">View Candidate Card</button>`;
+}
+
+function hmViewScreeningResults(candidateId) {
+  const candidates = hrLoad('candidates');
+  const c = candidates.find(x => x.id === candidateId);
+  if (!c?.screening) return;
+  _screeningCandidateId = candidateId;
+  _screeningQuestions = c.screening.questions || [];
+  document.getElementById('screeningModalTitle').textContent = `📊 Screening — ${c.name}`;
+  renderScreeningResults(candidateId, c.screening);
+  document.getElementById('hmScreeningModal').classList.add('open');
+}
+
+// ── AI CANDIDATE INTELLIGENCE ─────────────────────────────────────────────────
+async function hmGenerateCandidateIntel(candidateId) {
+  const candidates = hrLoad('candidates');
+  const c = candidates.find(x => x.id === candidateId);
+  if (!c) return;
+
+  const el = document.getElementById('candidateAIPanel-'+candidateId);
+  if (el) el.innerHTML = '<span style="color:#93C5FD">⏳ Generating intelligence report…</span>';
+
+  const prompt = `You are a senior recruiter and talent intelligence analyst for Termac Family of Companies.
+
+Analyze this candidate for the ${c.role} role and provide a brief but high-value intelligence report.
+
+Candidate:
+- Name: ${c.name}
+- Role: ${c.role}
+- Location: ${c.location}
+- Experience: ${c.experienceYears||c.experience_years||'?'} years
+- Current: ${c.currentTitle||c.current_title||'?'} at ${c.currentEmployer||c.current_employer||'?'}
+- Certifications: ${(c.certifications||[]).join(', ')||'None'}
+- Skills: ${(c.skills||[]).join(', ')||'None'}
+- Education: ${c.education||'Unknown'}
+- Availability: ${c.availability||'Unknown'}
+- Salary target: ${c.salaryExpectation||c.salary_expectation||'Unknown'}
+- Notes: ${c.notes||'None'}
+- Screening score: ${c.screening?.aiScore ? c.screening.aiScore+'/100' : 'Not screened yet'}
+
+Return a JSON object:
+{
+  "market_value": "realistic salary range for this person in Eastern PA/NJ market",
+  "our_offer_position": "below market / at market / above market based on their target",
+  "red_flags": ["any concerns based on their profile"],
+  "green_flags": ["standout positives"],
+  "competitor_risk": "likelihood they are being recruited by competitors (low/medium/high) and why",
+  "interview_angle": "the single most important thing to probe in the interview",
+  "close_strategy": "how to sell Termac to this specific candidate based on their profile",
+  "urgency": "how fast to move and why"
+}`;
+
+  try {
+    const resp = await fetch('https://unipro-ai-proxy.tedscholl.workers.dev', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({model:'claude-sonnet-4-6', max_tokens:800,
+        messages:[{role:'user', content:prompt}]})
+    });
+    const data = await resp.json();
+    const raw = data.content?.[0]?.text||'{}';
+    const intel = JSON.parse(raw.replace(/```json|```/g,'').trim());
+
+    const intelHtml = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">
+        <div><span style="color:#475569">Market Value:</span> <strong style="color:#93C5FD">${escH(intel.market_value||'—')}</strong></div>
+        <div><span style="color:#475569">Our Position:</span> <strong style="color:${intel.our_offer_position?.includes('below')?'#34D399':intel.our_offer_position?.includes('above')?'#F87171':'#93C5FD'}">${escH(intel.our_offer_position||'—')}</strong></div>
+        <div><span style="color:#475569">Competitor Risk:</span> <strong style="color:#FBBF24">${escH(intel.competitor_risk?.split(' ')[0]||'—')}</strong></div>
+        <div><span style="color:#475569">Urgency:</span> <strong style="color:#F87171">${escH(intel.urgency?.split(' ').slice(0,3).join(' ')||'—')}</strong></div>
+      </div>
+      ${intel.green_flags?.length ? `<div style="color:#34D399;font-size:10px;margin-bottom:4px">✅ ${intel.green_flags.join(' · ')}</div>` : ''}
+      ${intel.red_flags?.length ? `<div style="color:#F87171;font-size:10px;margin-bottom:4px">⚠️ ${intel.red_flags.join(' · ')}</div>` : ''}
+      <div style="color:#CBD5E1;font-size:10px;margin-bottom:3px">🎯 <strong>Interview:</strong> ${escH(intel.interview_angle||'—')}</div>
+      <div style="color:#CBD5E1;font-size:10px">💬 <strong>Close:</strong> ${escH(intel.close_strategy||'—')}</div>`;
+
+    // Save to candidate
+    const idx = candidates.findIndex(x => x.id === candidateId);
+    candidates[idx].aiIntel = intelHtml;
+    candidates[idx].aiIntelRaw = intel;
+    hrSave('candidates', candidates);
+
+    if (el) el.innerHTML = intelHtml;
+  } catch(e) {
+    if (el) el.innerHTML = '<span style="color:#EF4444">Intelligence generation failed</span>';
+  }
+}
+
+// ── TALENT ANALYTICS DASHBOARD ────────────────────────────────────────────────
+function hmRenderTalentAnalytics() {
+  const candidates = hrLoad('candidates');
+  const el = document.getElementById('hmTalentAnalytics');
+  if (!el || !candidates.length) return;
+
+  // Stage distribution
+  const stageCounts = {};
+  TALENT_STAGES.forEach(s => stageCounts[s] = candidates.filter(c=>c.stage===s).length);
+
+  // Score distribution
+  const scored = candidates.filter(c=>c.screening?.aiScore);
+  const avgScore = scored.length ? Math.round(scored.reduce((a,c)=>a+c.screening.aiScore,0)/scored.length) : 0;
+
+  // Funnel rates
+  const total = candidates.length;
+  const screened = candidates.filter(c=>c.screening?.completedAt).length;
+  const interviewing = (stageCounts['Interview']||0) + (stageCounts['Offer']||0) + (stageCounts['Hired']||0);
+  const hired = stageCounts['Hired']||0;
+
+  // Role breakdown
+  const roles = {};
+  candidates.forEach(c=>{ roles[c.role||'Unknown']=(roles[c.role||'Unknown']||0)+1; });
+
+  // Recommendation breakdown
+  const recs = {};
+  candidates.filter(c=>c.screening?.recommendation).forEach(c=>{
+    const r = c.screening.recommendation;
+    recs[r] = (recs[r]||0)+1;
+  });
+
+  el.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:10px;margin-bottom:16px">
+      <div style="background:#fff;border-radius:8px;padding:12px;text-align:center;border-top:3px solid #1E40AF;box-shadow:0 1px 3px rgba(0,0,0,.06)">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:28px;color:#1E40AF">${total}</div>
+        <div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase">Total</div>
+      </div>
+      <div style="background:#fff;border-radius:8px;padding:12px;text-align:center;border-top:3px solid #92400E;box-shadow:0 1px 3px rgba(0,0,0,.06)">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:28px;color:#92400E">${screened}</div>
+        <div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase">Screened</div>
+      </div>
+      <div style="background:#fff;border-radius:8px;padding:12px;text-align:center;border-top:3px solid #5B21B6;box-shadow:0 1px 3px rgba(0,0,0,.06)">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:28px;color:#5B21B6">${interviewing}</div>
+        <div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase">Interviewing</div>
+      </div>
+      <div style="background:#fff;border-radius:8px;padding:12px;text-align:center;border-top:3px solid #166534;box-shadow:0 1px 3px rgba(0,0,0,.06)">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:28px;color:#166534">${hired}</div>
+        <div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase">Hired</div>
+      </div>
+      <div style="background:#fff;border-radius:8px;padding:12px;text-align:center;border-top:3px solid var(--gold);box-shadow:0 1px 3px rgba(0,0,0,.06)">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:28px;color:var(--gold)">${avgScore||'—'}</div>
+        <div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase">Avg Score</div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">
+      <!-- Funnel chart -->
+      <div style="background:#fff;border-radius:10px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.06)">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:10px">Pipeline Funnel</div>
+        ${TALENT_STAGES.filter(s=>s!=='Rejected').map(s=>{
+          const count = stageCounts[s]||0;
+          const pct = total ? Math.round(count/total*100) : 0;
+          const color = STAGE_COLORS[s]||'#374151';
+          return `<div style="margin-bottom:6px">
+            <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px">
+              <span style="font-weight:600">${s}</span><span style="color:var(--soft)">${count} (${pct}%)</span>
+            </div>
+            <div style="background:#F1F5F9;border-radius:4px;height:8px">
+              <div style="background:${color};height:8px;border-radius:4px;width:${pct}%;transition:width .5s"></div>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+
+      <!-- Recommendation breakdown -->
+      <div style="background:#fff;border-radius:10px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.06)">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:10px">AI Recommendations</div>
+        ${screened === 0
+          ? '<div style="font-size:12px;color:var(--soft);text-align:center;padding:20px 0">No screenings completed yet</div>'
+          : ['Strong Hire','Hire','Maybe','No Hire'].map(rec => {
+              const count = recs[rec]||0;
+              const pct = screened ? Math.round(count/screened*100) : 0;
+              const colors = {'Strong Hire':'#166534','Hire':'#1E40AF','Maybe':'#92400E','No Hire':'#7F1D1D'};
+              return count > 0 ? `<div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
+                <div style="background:${colors[rec]};color:#fff;border-radius:4px;padding:2px 8px;font-size:10px;font-weight:800;min-width:80px;text-align:center">${rec}</div>
+                <div style="flex:1;background:#F1F5F9;border-radius:4px;height:8px">
+                  <div style="background:${colors[rec]};height:8px;border-radius:4px;width:${pct}%"></div>
+                </div>
+                <span style="font-size:11px;font-weight:700;min-width:24px">${count}</span>
+              </div>` : '';
+            }).join('')}
+      </div>
+    </div>
+
+    <!-- Role breakdown -->
+    <div style="background:#fff;border-radius:10px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.06)">
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:10px">Pipeline by Role</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px">
+        ${Object.entries(roles).sort((a,b)=>b[1]-a[1]).map(([role,count])=>`
+          <div style="display:flex;align-items:center;gap:6px;background:#F8F9FA;border-radius:6px;padding:5px 10px">
+            <span style="font-size:12px;font-weight:700">${escH(role)}</span>
+            <span style="background:#1E40AF;color:#fff;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700">${count}</span>
+          </div>`).join('')}
+      </div>
+    </div>`;
 }
 
 
