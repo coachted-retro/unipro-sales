@@ -325,6 +325,21 @@ function dmsRenderCallSheet(el){
   let filtered = data;
   if(q) filtered = filtered.filter(r=>JSON.stringify(r).toLowerCase().includes(q));
   if(statusF) filtered = filtered.filter(r=>(r.status||'')=== statusF);
+  // Sort: due callbacks first, then by last updated
+  const nowTs = Date.now();
+  filtered.sort((a, b) => {
+    const aDue = a.dmsCallbackScheduled && a.dmsCallbackTs && a.dmsCallbackTs <= nowTs + 300000;
+    const bDue = b.dmsCallbackScheduled && b.dmsCallbackTs && b.dmsCallbackTs <= nowTs + 300000;
+    if (aDue && !bDue) return -1;
+    if (!aDue && bDue) return 1;
+    // Then: upcoming callbacks sorted by soonest
+    const aUpcoming = a.dmsCallbackScheduled && a.dmsCallbackTs;
+    const bUpcoming = b.dmsCallbackScheduled && b.dmsCallbackTs;
+    if (aUpcoming && bUpcoming) return a.dmsCallbackTs - b.dmsCallbackTs;
+    if (aUpcoming && !bUpcoming) return -1;
+    if (!aUpcoming && bUpcoming) return 1;
+    return (b.updated||0) - (a.updated||0);
+  });
   filtered = filtered.slice(0,50);
 
   el.innerHTML = `
@@ -404,21 +419,7 @@ function dmsCallRow(r, today){
   const escOpts = ['','Sales Rep','Scheduling','Dispatch','Manager']
     .map(o=>`<option value="${o}">${escH(o)||'Escalate…'}</option>`).join('');
 
-  // Callback scheduler — only shown when outcome is callback
-  const isCallback = r.status==='callback';
-  const cbScheduler = isCallback ? `
-    <div class="dms-callback-block" id="dmsCallbackBlock_${r.id}">
-      <div style="font-size:10px;font-weight:700;color:#0D7490;letter-spacing:.04em;text-transform:uppercase;margin-bottom:4px">📅 Schedule Callback</div>
-      <div style="display:flex;gap:4px;flex-wrap:wrap">
-        <input type="date" id="dmsCbDate_${r.id}" value="${escH(r.dmsCallbackDate||'')}"
-          style="padding:4px 6px;border:1.5px solid #0D7490;border-radius:5px;font-size:11px;flex:1;min-width:110px"
-          onchange="dmsScheduleCallback('${r.id}')">
-        <input type="time" id="dmsCbTime_${r.id}" value="${escH(r.dmsCallbackTime||'09:00')}"
-          style="padding:4px 6px;border:1.5px solid #0D7490;border-radius:5px;font-size:11px;width:80px"
-          onchange="dmsScheduleCallback('${r.id}')">
-      </div>
-      ${r.dmsCallbackScheduled ? `<div style="font-size:10px;color:#059669;margin-top:3px;font-weight:600">✓ Queued for ${escH(r.dmsCallbackDate)} at ${escH(r.dmsCallbackTime)}</div>` : ''}
-    </div>` : '';
+  const cbScheduler = ''; // callback scheduling now via modal popup
 
   // Decision maker contact block
   const dmBlock = `
@@ -462,12 +463,10 @@ function dmsCallRow(r, today){
           <input type="checkbox" ${r.dmsDmOnCall?'checked':''} onchange="dmsSaveField('${r.id}','dmsDmOnCall',this.checked)" style="accent-color:var(--green)">
           DM on call
         </label>
-        <label style="font-size:10px;color:var(--soft);display:flex;align-items:center;gap:3px">
-          Best time:
-          <input type="text" value="${escH(r.dmsBestTime||'')}" placeholder="e.g. 9–11am"
-            style="padding:1px 5px;border:1px solid var(--line);border-radius:4px;font-size:10px;width:70px"
-            onblur="dmsSaveField('${r.id}','dmsBestTime',this.value)">
-        </label>
+        <button onclick="dmsOpenCallbackPicker('${r.id}',this)" 
+          style="padding:2px 8px;border:1.5px solid ${r.dmsCallbackScheduled?'#0D7490':'var(--line)'};border-radius:5px;font-size:10px;font-weight:700;font-family:'Barlow Condensed',sans-serif;letter-spacing:.04em;background:${r.dmsCallbackScheduled?'#EFF9FB':'#fff'};color:${r.dmsCallbackScheduled?'#0D7490':'var(--soft)'};cursor:pointer;white-space:nowrap">
+          ${r.dmsCallbackScheduled ? '📅 ' + escH(r.dmsCallbackDate) + ' ' + escH(r.dmsCallbackTime) : '📅 Schedule Callback'}
+        </button>
       </div>
     </td>
     <td style="width:90px;text-align:center">
@@ -713,6 +712,228 @@ document.addEventListener('DOMContentLoaded',()=>{
     }
   };
 })();
+</script>
+
+<!-- ══ CALLBACK SCHEDULER MODAL ══ -->
+<div id="dmsCallbackModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9000;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:14px;padding:24px;width:min(380px,94vw);box-shadow:0 8px 40px rgba(0,0,0,.22)">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
+      <div>
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:16px;letter-spacing:.08em;text-transform:uppercase;color:#1A1D21">📅 Schedule Callback</div>
+        <div style="font-size:12px;color:#6B7280;margin-top:2px" id="dmsCallbackBizName">—</div>
+      </div>
+      <button onclick="dmsCloseCallbackPicker()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#6B7280">✕</button>
+    </div>
+
+    <!-- Quick-pick buttons -->
+    <div style="margin-bottom:16px">
+      <div style="font-size:10px;font-weight:700;color:#6B7280;letter-spacing:.10em;text-transform:uppercase;margin-bottom:8px">Quick Pick</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap" id="dmsQuickPicks"></div>
+    </div>
+
+    <!-- Manual date + time -->
+    <div style="margin-bottom:16px">
+      <div style="font-size:10px;font-weight:700;color:#6B7280;letter-spacing:.10em;text-transform:uppercase;margin-bottom:8px">Date &amp; Time</div>
+      <div style="display:flex;gap:8px">
+        <input type="date" id="dmsModalCbDate" 
+          style="flex:2;padding:8px 10px;border:1.5px solid #D1D5DB;border-radius:8px;font-size:13px;outline:none"
+          onchange="dmsModalPreview()">
+        <input type="time" id="dmsModalCbTime" value="09:00"
+          style="flex:1;padding:8px 10px;border:1.5px solid #D1D5DB;border-radius:8px;font-size:13px;outline:none"
+          onchange="dmsModalPreview()">
+      </div>
+    </div>
+
+    <!-- Note for the callback -->
+    <div style="margin-bottom:16px">
+      <div style="font-size:10px;font-weight:700;color:#6B7280;letter-spacing:.10em;text-transform:uppercase;margin-bottom:8px">Callback Note <span style="font-weight:400;text-transform:none">(optional)</span></div>
+      <input type="text" id="dmsModalCbNote" placeholder='e.g. "Call back Friday, ask for Mike"'
+        style="width:100%;padding:8px 10px;border:1.5px solid #D1D5DB;border-radius:8px;font-size:12px;box-sizing:border-box;outline:none">
+    </div>
+
+    <!-- Preview -->
+    <div id="dmsCallbackPreview" style="display:none;background:#EFF9FB;border:1.5px solid #0D7490;border-radius:8px;padding:10px 12px;margin-bottom:16px;font-size:12px;color:#0D7490;font-weight:600"></div>
+
+    <!-- Confirm -->
+    <button onclick="dmsConfirmCallback()"
+      style="width:100%;padding:12px;background:#0D7490;color:#fff;border:none;border-radius:8px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">
+      ✓ Queue Callback
+    </button>
+    <button id="dmsClearCallbackBtn" onclick="dmsClearCallback()" 
+      style="display:none;width:100%;margin-top:8px;padding:8px;background:none;border:1.5px solid #EF4444;border-radius:8px;color:#EF4444;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">
+      ✕ Clear Scheduled Callback
+    </button>
+  </div>
+</div>
+
+<script>
+/* ══ CALLBACK SCHEDULER MODAL ══ */
+var _dmsCbTargetId = null;
+
+function dmsOpenCallbackPicker(id, triggerBtn) {
+  _dmsCbTargetId = id;
+  const data = crmLoad('dms_coldcall');
+  const r = data.find(x => x.id === id);
+  if (!r) return;
+
+  // Set business name
+  document.getElementById('dmsCallbackBizName').textContent = r.business || r.name || '—';
+
+  // Pre-fill existing values
+  document.getElementById('dmsModalCbDate').value = r.dmsCallbackDate || '';
+  document.getElementById('dmsModalCbTime').value = r.dmsCallbackTime || '09:00';
+  document.getElementById('dmsModalCbNote').value = r.dmsCallbackNote || '';
+
+  // Show/hide clear button
+  document.getElementById('dmsClearCallbackBtn').style.display = r.dmsCallbackScheduled ? 'block' : 'none';
+
+  // Build quick-pick buttons
+  const qp = document.getElementById('dmsQuickPicks');
+  const now = new Date();
+  const picks = [];
+
+  // Today (later today)
+  const today = new Date(now); today.setHours(14, 0, 0, 0);
+  if (today > now) picks.push({ label: 'Later Today', date: fmtDate(today), time: '14:00' });
+
+  // Tomorrow same time
+  const tmr = new Date(now); tmr.setDate(tmr.getDate() + 1); tmr.setHours(9, 0, 0, 0);
+  picks.push({ label: 'Tomorrow 9am', date: fmtDate(tmr), time: '09:00' });
+
+  // Next business day name (e.g. "Friday")
+  const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const fullDays = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  // Find next Friday
+  const fri = new Date(now);
+  const daysToFri = (5 - fri.getDay() + 7) % 7 || 7;
+  fri.setDate(fri.getDate() + daysToFri); fri.setHours(9, 0, 0, 0);
+  picks.push({ label: 'Friday 9am', date: fmtDate(fri), time: '09:00' });
+
+  // Next Monday
+  const mon = new Date(now);
+  const daysToMon = (1 - mon.getDay() + 7) % 7 || 7;
+  mon.setDate(mon.getDate() + daysToMon); mon.setHours(9, 0, 0, 0);
+  picks.push({ label: 'Next Monday', date: fmtDate(mon), time: '09:00' });
+
+  // In 2 weeks
+  const twoWk = new Date(now); twoWk.setDate(twoWk.getDate() + 14); twoWk.setHours(9, 0, 0, 0);
+  picks.push({ label: 'In 2 Weeks', date: fmtDate(twoWk), time: '09:00' });
+
+  qp.innerHTML = picks.map(p =>
+    `<button onclick="dmsQuickPick('${p.date}','${p.time}')"
+      style="padding:5px 10px;border:1.5px solid #D1D5DB;border-radius:6px;background:#fff;font-size:11px;font-weight:700;font-family:'Barlow Condensed',sans-serif;letter-spacing:.04em;cursor:pointer;transition:all .1s"
+      onmouseover="this.style.borderColor='#0D7490';this.style.color='#0D7490'"
+      onmouseout="this.style.borderColor='#D1D5DB';this.style.color=''">${p.label}</button>`
+  ).join('');
+
+  // Show modal
+  const modal = document.getElementById('dmsCallbackModal');
+  modal.style.display = 'flex';
+  dmsModalPreview();
+}
+
+function dmsQuickPick(date, time) {
+  document.getElementById('dmsModalCbDate').value = date;
+  document.getElementById('dmsModalCbTime').value = time;
+  dmsModalPreview();
+}
+
+function fmtDate(d) {
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
+
+function fmtDateDisplay(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr + 'T00:00:00');
+  return d.toLocaleDateString('en-US', {weekday:'long', month:'short', day:'numeric'});
+}
+
+function fmtTimeDisplay(timeStr) {
+  if (!timeStr) return '';
+  const [h, m] = timeStr.split(':').map(Number);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 || 12;
+  return h12 + ':' + String(m).padStart(2,'0') + ' ' + ampm;
+}
+
+function dmsModalPreview() {
+  const date = document.getElementById('dmsModalCbDate').value;
+  const time = document.getElementById('dmsModalCbTime').value;
+  const preview = document.getElementById('dmsCallbackPreview');
+  if (date) {
+    preview.style.display = 'block';
+    preview.textContent = '📅 Queued for ' + fmtDateDisplay(date) + ' at ' + fmtTimeDisplay(time);
+  } else {
+    preview.style.display = 'none';
+  }
+}
+
+function dmsConfirmCallback() {
+  const id   = _dmsCbTargetId;
+  const date = document.getElementById('dmsModalCbDate').value;
+  const time = document.getElementById('dmsModalCbTime').value || '09:00';
+  const note = document.getElementById('dmsModalCbNote').value.trim();
+  if (!date) { alert('Please select a callback date.'); return; }
+
+  const data = crmLoad('dms_coldcall');
+  const r = data.find(x => x.id === id);
+  if (!r) return;
+
+  r.dmsCallbackDate      = date;
+  r.dmsCallbackTime      = time;
+  r.dmsCallbackNote      = note;
+  r.dmsCallbackScheduled = true;
+  r.dmsCallbackTs        = new Date(date + 'T' + time).getTime();
+  r.status               = 'callback';
+  r.updated              = Date.now();
+  crmSave('dms_coldcall', data);
+
+  dmsCloseCallbackPicker();
+  dmsToast('📅 Callback queued — ' + fmtDateDisplay(date) + ' at ' + fmtTimeDisplay(time));
+
+  // Refresh the row button to show new date
+  dmsRender('leads');
+
+  // Check if anything is due now
+  dmsCheckCallbacksDue();
+}
+
+function dmsClearCallback() {
+  const id = _dmsCbTargetId;
+  const data = crmLoad('dms_coldcall');
+  const r = data.find(x => x.id === id);
+  if (!r) return;
+  r.dmsCallbackScheduled = false;
+  r.dmsCallbackDate = '';
+  r.dmsCallbackTime = '';
+  r.dmsCallbackNote = '';
+  r.dmsCallbackTs   = null;
+  if (r.status === 'callback') r.status = '';
+  r.updated = Date.now();
+  crmSave('dms_coldcall', data);
+  dmsCloseCallbackPicker();
+  dmsToast('Callback cleared');
+  dmsRender('leads');
+}
+
+function dmsCloseCallbackPicker() {
+  document.getElementById('dmsCallbackModal').style.display = 'none';
+  _dmsCbTargetId = null;
+}
+
+// Close on backdrop click
+document.getElementById('dmsCallbackModal').addEventListener('click', function(e) {
+  if (e.target === this) dmsCloseCallbackPicker();
+});
+
+/* ══ QUEUE LOGIC: callbacks due bubble to top of list ══ */
+// Override the filtered list sort to put due callbacks first
+const _origDmsRenderCS = dmsRenderCallSheet;
+function dmsRenderCallSheet(el) {
+  _origDmsRenderCS(el);
+  // After render, check for dues
+  dmsCheckCallbacksDue();
+}
 </script>
 </body>
 </html>
