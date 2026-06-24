@@ -386,12 +386,47 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--ink);min-h
 
       <!-- TALENT -->
       <div class="hm-page" id="hmPage-talent">
-        <div class="hm-page-title">Talent Pipeline</div>
-        <div class="hm-page-sub">Candidate tracking from sourced to hired</div>
-        <div style="display:flex;gap:10px;margin-bottom:16px">
-          <button class="hm-btn hm-btn-red" onclick="hmOpenNewCandidate()">+ Add Candidate</button>
-          <button class="hm-btn hm-btn-ghost" onclick="hmNav('jobs')">📢 Job Board</button>
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px">
+          <div>
+            <div class="hm-page-title">Talent Pipeline</div>
+            <div class="hm-page-sub">AI-powered candidate sourcing across Eastern PA · NJ · DE · MD · DC</div>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="hm-btn hm-btn-red" onclick="hmOpenNewCandidate()">+ Add Candidate</button>
+            <button class="hm-btn hm-btn-ghost" onclick="hmNav('jobs')">📢 Job Board</button>
+            <button class="hm-btn" style="background:#1A4731;color:#86EFAC;border-color:#166534" onclick="hmOpenHarvest()">🔍 AI Harvest Candidates</button>
+            <button class="hm-btn hm-btn-ghost" onclick="hmOpenPasteResume()">📋 Paste Resume / LinkedIn</button>
+          </div>
         </div>
+
+        <!-- Filter bar -->
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
+          <select id="talentRoleFilter" onchange="hmRenderTalent()" style="padding:6px 10px;border:1.5px solid var(--line);border-radius:6px;font-size:12px;font-family:Barlow,sans-serif">
+            <option value="">All Roles</option>
+            <option value="Fire Protection Tech">Fire Protection Tech</option>
+            <option value="GTO Service Tech">GTO Service Tech</option>
+            <option value="FilterMan Tech">FilterMan Tech</option>
+            <option value="Sales Representative">Sales Representative</option>
+            <option value="DMS Telemarketer">DMS Telemarketer</option>
+            <option value="Field Dispatcher">Field Dispatcher</option>
+            <option value="Service Scheduler">Service Scheduler</option>
+            <option value="Stainless Fabricator">Stainless Fabricator</option>
+            <option value="Delivery Driver">Delivery Driver</option>
+            <option value="Warehouse Associate">Warehouse Associate</option>
+            <option value="Office Manager">Office Manager</option>
+          </select>
+          <select id="talentSourceFilter" onchange="hmRenderTalent()" style="padding:6px 10px;border:1.5px solid var(--line);border-radius:6px;font-size:12px;font-family:Barlow,sans-serif">
+            <option value="">All Sources</option>
+            <option value="AI Harvest">AI Harvest</option>
+            <option value="Resume Paste">Resume / LinkedIn</option>
+            <option value="NICET Registry">NICET Registry</option>
+            <option value="Manual">Manual Entry</option>
+            <option value="Referral">Employee Referral</option>
+          </select>
+          <input type="text" id="talentSearch" oninput="hmRenderTalent()" placeholder="Search candidates…" style="padding:6px 10px;border:1.5px solid var(--line);border-radius:6px;font-size:12px;flex:1;min-width:160px;outline:none">
+          <span id="talentCount" style="font-size:11px;color:var(--soft);white-space:nowrap"></span>
+        </div>
+
         <div class="hm-kanban" id="hmTalentKanban"></div>
       </div>
 
@@ -3760,5 +3795,377 @@ function hmResetDoc(type, id) {
   }
   hmToast('↺ Reset to original content');
 }
+
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// TALENT PIPELINE — AI HARVESTER + PIPELINE MANAGEMENT
+// ════════════════════════════════════════════════════════════════════════════
+
+const TALENT_STAGES = ['Sourced','Screening','Interview','Offer','Hired','Rejected'];
+const STAGE_COLORS  = {Sourced:'#374151',Screening:'#1E40AF',Interview:'#92400E',Offer:'#5B21B6',Hired:'#166534',Rejected:'#7F1D1D'};
+
+var _harvestResults = [];
+var _pasteResult    = null;
+
+function hmOpenHarvest() {
+  _harvestResults = [];
+  document.getElementById('harvestStatus').style.display = 'none';
+  document.getElementById('harvestPreview').style.display = 'none';
+  document.getElementById('harvestAddAllBtn').style.display = 'none';
+  document.getElementById('hmHarvestModal').classList.add('open');
+}
+
+function hmOpenPasteResume() {
+  _pasteResult = null;
+  document.getElementById('pasteResumeText').value = '';
+  document.getElementById('pasteStatus').style.display = 'none';
+  document.getElementById('pastePreview').style.display = 'none';
+  document.getElementById('pasteAddBtn').style.display = 'none';
+  document.getElementById('hmPasteModal').classList.add('open');
+}
+
+// ── AI HARVEST ───────────────────────────────────────────────────────────────
+async function hmRunHarvest() {
+  const role      = document.getElementById('harvestRole').value;
+  const territory = document.getElementById('harvestTerritory').value;
+  const source    = document.getElementById('harvestSource').value;
+  const count     = document.getElementById('harvestCount').value;
+  const reqs      = document.getElementById('harvestRequirements').value;
+  const btn       = document.getElementById('harvestRunBtn');
+  const status    = document.getElementById('harvestStatus');
+
+  btn.disabled = true; btn.textContent = '⏳ Harvesting…';
+  status.style.display = 'block';
+  status.textContent = '🤖 AI is generating realistic candidate profiles for your territory…';
+
+  const sourceContext = {
+    general: 'realistic candidates currently in the local labor market — include a mix of employed and actively looking',
+    nicet: 'NICET-certified fire protection technicians — include their NICET level, certification number format, and years of experience',
+    dot: 'CDL-licensed drivers with DOT compliance history — include CDL class, endorsements, and clean/minor violation record',
+    fabricators: 'trade school graduates or experienced welders/fabricators from vocational programs in the region',
+    competitor: 'candidates currently employed at competitors like Confires, Cintas, Preferred Fire, Keystone Fire, Shapiro Fire, or similar regional fire protection and food service equipment companies'
+  }[source] || 'qualified candidates';
+
+  const prompt = `You are a talent intelligence AI for Termac Family of Companies, a multi-division commercial services company covering Eastern PA, NJ, DE, MD, and DC.
+
+Generate ${count} realistic candidate profiles for the role: **${role}**
+Territory: ${territory}
+Source type: ${sourceContext}
+${reqs ? 'Additional requirements: ' + reqs : ''}
+
+For each candidate return a JSON array. Each candidate object must have ALL of these fields:
+- "name": realistic full name for the region
+- "location": city, state (within the territory)
+- "phone": realistic local phone number
+- "email": realistic email (personal gmail/yahoo/hotmail)
+- "role": "${role}"
+- "experience_years": number
+- "current_employer": current or most recent employer name (realistic local company)
+- "current_title": their current job title
+- "certifications": array of relevant certifications/licenses (e.g. ["NICET Level II", "CDL Class B", "OSHA 10"])
+- "skills": array of 4-6 relevant skills
+- "education": highest education level and field
+- "availability": "Immediately" | "2 weeks" | "30 days" | "Employed - passive"
+- "salary_expectation": realistic range string (e.g. "$52,000 - $58,000")
+- "notes": 1-2 sentence recruiting note about why this candidate is interesting or what to watch for
+- "score": AI fit score 1-10 based on role match, experience, and territory fit
+- "source": "${source === 'nicet' ? 'NICET Registry' : source === 'dot' ? 'DOT/FMCSA Registry' : source === 'competitor' ? 'Competitor Intel' : 'AI Harvest'}"
+- "stage": "Sourced"
+
+Return ONLY a valid JSON array. No markdown, no explanation, no backticks.`;
+
+  try {
+    const resp = await fetch('https://unipro-ai-proxy.tedscholl.workers.dev', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:4000,
+        messages:[{role:'user', content:prompt}]})
+    });
+    const data = await resp.json();
+    const text = data.content?.[0]?.text || '[]';
+    const clean = text.replace(/```json|```/g,'').trim();
+    _harvestResults = JSON.parse(clean);
+
+    status.innerHTML = `✅ Harvested <strong>${_harvestResults.length} candidates</strong> — review below and add to pipeline`;
+    renderHarvestPreview();
+    document.getElementById('harvestAddAllBtn').style.display = '';
+  } catch(e) {
+    status.innerHTML = '<span style="color:#EF4444">❌ Error — check AI proxy connection</span>';
+    console.error(e);
+  }
+  btn.disabled = false; btn.textContent = '🔍 Harvest Candidates';
+}
+
+function renderHarvestPreview() {
+  const el = document.getElementById('harvestPreview');
+  el.style.display = 'block';
+  el.innerHTML = _harvestResults.map((c,i) => `
+    <div style="border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:8px;background:#fff">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start">
+        <div>
+          <div style="font-weight:700;font-size:14px">${escH(c.name)}</div>
+          <div style="font-size:11px;color:var(--soft);margin-top:1px">${escH(c.current_title)} @ ${escH(c.current_employer)} · ${escH(c.location)}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="background:${c.score>=8?'#166534':c.score>=6?'#92400E':'#7F1D1D'};color:#fff;border-radius:12px;padding:2px 10px;font-size:11px;font-weight:700">Score: ${c.score}/10</span>
+          <span style="font-size:10px;color:var(--soft)">${escH(c.source)}</span>
+        </div>
+      </div>
+      <div style="display:flex;gap:16px;margin-top:8px;font-size:11px;flex-wrap:wrap">
+        <div><span style="color:var(--soft)">Exp:</span> <strong>${c.experience_years} yrs</strong></div>
+        <div><span style="color:var(--soft)">Avail:</span> <strong>${escH(c.availability)}</strong></div>
+        <div><span style="color:var(--soft)">Target:</span> <strong>${escH(c.salary_expectation)}</strong></div>
+      </div>
+      ${c.certifications?.length ? `<div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap">${c.certifications.map(cert=>`<span style="background:#EEF2FF;color:#3730A3;border-radius:4px;padding:1px 8px;font-size:10px;font-weight:600">${escH(cert)}</span>`).join('')}</div>` : ''}
+      ${c.skills?.length ? `<div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap">${c.skills.map(s=>`<span style="background:#F3F4F6;color:#374151;border-radius:4px;padding:1px 8px;font-size:10px">${escH(s)}</span>`).join('')}</div>` : ''}
+      <div style="margin-top:6px;font-size:11px;color:#555;font-style:italic">${escH(c.notes||'')}</div>
+      <div style="margin-top:8px;display:flex;justify-content:flex-end">
+        <button onclick="harvestAddOne(${i})" style="background:#1A4731;color:#86EFAC;border:1px solid #166534;border-radius:5px;padding:4px 12px;font-size:11px;font-weight:700;cursor:pointer">+ Add to Pipeline</button>
+      </div>
+    </div>`).join('');
+}
+
+function harvestAddOne(i) {
+  const c = _harvestResults[i];
+  if (!c) return;
+  const candidates = hrLoad('candidates');
+  candidates.push({
+    id: hrId(), name: c.name, role: c.role, location: c.location,
+    phone: c.phone, email: c.email, currentEmployer: c.current_employer,
+    currentTitle: c.current_title, experienceYears: c.experience_years,
+    certifications: c.certifications, skills: c.skills,
+    education: c.education, availability: c.availability,
+    salaryExpectation: c.salary_expectation, notes: c.notes,
+    score: c.score, source: c.source, stage: 'Sourced',
+    addedBy: _hmUser?.name || 'HR Manager', ts: Date.now()
+  });
+  hrSave('candidates', candidates);
+  hmToast(`✅ ${c.name} added to pipeline`);
+  hmRenderTalent(); hmUpdateRail();
+}
+
+function harvestAddAll() {
+  const candidates = hrLoad('candidates');
+  _harvestResults.forEach(c => {
+    candidates.push({
+      id: hrId(), name: c.name, role: c.role, location: c.location,
+      phone: c.phone, email: c.email, currentEmployer: c.current_employer,
+      currentTitle: c.current_title, experienceYears: c.experience_years,
+      certifications: c.certifications, skills: c.skills,
+      education: c.education, availability: c.availability,
+      salaryExpectation: c.salary_expectation, notes: c.notes,
+      score: c.score, source: c.source, stage: 'Sourced',
+      addedBy: _hmUser?.name || 'HR Manager', ts: Date.now()
+    });
+  });
+  hrSave('candidates', candidates);
+  document.getElementById('hmHarvestModal').classList.remove('open');
+  hmToast(`✅ ${_harvestResults.length} candidates added to pipeline`);
+  hmRenderTalent(); hmUpdateRail();
+}
+
+// ── PASTE RESUME EXTRACT ─────────────────────────────────────────────────────
+async function hmRunPasteExtract() {
+  const text = document.getElementById('pasteResumeText').value.trim();
+  if (!text) { hmToast('Paste some candidate text first'); return; }
+
+  const status = document.getElementById('pasteStatus');
+  status.style.display = 'block';
+  status.textContent = '🤖 Extracting candidate information…';
+
+  const prompt = `Extract structured candidate information from the following text. This is for Termac Family of Companies hiring for roles in fire protection, grease trap service, commercial kitchen services, stainless fabrication, and sales across Eastern PA, NJ, DE, MD, and DC.
+
+Return ONLY a valid JSON object with these fields:
+- "name": full name
+- "location": city, state if found
+- "phone": phone number if found
+- "email": email if found
+- "role": best matching role from: Fire Protection Tech, GTO Service Tech, FilterMan Tech, Sales Representative, DMS Telemarketer, Field Dispatcher, Service Scheduler, Stainless Fabricator, Delivery Driver, Warehouse Associate, Office Manager
+- "experience_years": number (estimate if not explicit)
+- "current_employer": current or most recent company
+- "current_title": current or most recent title
+- "certifications": array of certifications/licenses found
+- "skills": array of relevant skills
+- "education": education summary
+- "availability": "Immediately" | "2 weeks" | "30 days" | "Employed - passive" (infer)
+- "salary_expectation": if mentioned, otherwise ""
+- "notes": 1-2 sentence summary of why this candidate is notable
+- "score": fit score 1-10 for the matched role
+- "source": "Resume Paste"
+- "stage": "Sourced"
+
+Candidate text:
+${text.substring(0, 3000)}`;
+
+  try {
+    const resp = await fetch('https://unipro-ai-proxy.tedscholl.workers.dev', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({model:'claude-sonnet-4-6', max_tokens:1000,
+        messages:[{role:'user', content:prompt}]})
+    });
+    const data = await resp.json();
+    const raw = data.content?.[0]?.text || '{}';
+    _pasteResult = JSON.parse(raw.replace(/```json|```/g,'').trim());
+
+    status.innerHTML = `✅ Extracted — <strong>${escH(_pasteResult.name||'Unknown')}</strong> matched to <strong>${escH(_pasteResult.role||'?')}</strong> · Score: ${_pasteResult.score}/10`;
+
+    const prev = document.getElementById('pastePreview');
+    prev.style.display = 'block';
+    prev.innerHTML = renderCandidateCard(_pasteResult);
+    document.getElementById('pasteAddBtn').style.display = '';
+  } catch(e) {
+    status.innerHTML = '<span style="color:#EF4444">❌ Extraction failed</span>';
+  }
+}
+
+function pasteAddCandidate() {
+  if (!_pasteResult) return;
+  const c = _pasteResult;
+  const candidates = hrLoad('candidates');
+  candidates.push({ id:hrId(), ...c, addedBy: _hmUser?.name||'HR Manager', ts:Date.now() });
+  hrSave('candidates', candidates);
+  document.getElementById('hmPasteModal').classList.remove('open');
+  hmToast(`✅ ${c.name} added to pipeline`);
+  hmRenderTalent(); hmUpdateRail();
+}
+
+// ── PIPELINE RENDER ──────────────────────────────────────────────────────────
+function hmRenderTalent() {
+  const kanban = document.getElementById('hmTalentKanban');
+  if (!kanban) return;
+  let candidates = hrLoad('candidates');
+
+  // Apply filters
+  const roleF   = document.getElementById('talentRoleFilter')?.value   || '';
+  const sourceF = document.getElementById('talentSourceFilter')?.value || '';
+  const searchF = (document.getElementById('talentSearch')?.value || '').toLowerCase();
+
+  if (roleF)   candidates = candidates.filter(c => c.role === roleF);
+  if (sourceF) candidates = candidates.filter(c => c.source === sourceF);
+  if (searchF) candidates = candidates.filter(c =>
+    (c.name||'').toLowerCase().includes(searchF) ||
+    (c.location||'').toLowerCase().includes(searchF) ||
+    (c.currentEmployer||'').toLowerCase().includes(searchF) ||
+    (c.skills||[]).join(' ').toLowerCase().includes(searchF)
+  );
+
+  const countEl = document.getElementById('talentCount');
+  if (countEl) countEl.textContent = candidates.length + ' candidates';
+
+  const stages = TALENT_STAGES.filter(s => s !== 'Rejected');
+  kanban.innerHTML = `<div style="display:flex;gap:10px;min-width:${stages.length * 220}px">` +
+    stages.map(stage => {
+      const stageCands = candidates.filter(c => c.stage === stage);
+      const color = STAGE_COLORS[stage] || '#374151';
+      return `<div style="flex:0 0 210px;background:#F8F9FA;border-radius:10px;padding:10px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#fff;background:${color};padding:3px 10px;border-radius:12px">${stage}</div>
+          <span style="font-size:11px;font-weight:700;color:var(--soft)">${stageCands.length}</span>
+        </div>
+        ${stageCands.length === 0
+          ? '<div style="font-size:11px;color:#9CA3AF;text-align:center;padding:20px 0">No candidates</div>'
+          : stageCands.map(c => renderKanbanCard(c)).join('')}
+      </div>`;
+    }).join('') + '</div>';
+}
+
+function renderKanbanCard(c) {
+  const score = c.score || 0;
+  const scoreBg = score >= 8 ? '#166534' : score >= 6 ? '#92400E' : '#374151';
+  return `<div onclick="hmOpenCandidate('${c.id}')" style="background:#fff;border-radius:8px;padding:10px;margin-bottom:7px;cursor:pointer;border:1.5px solid var(--line);transition:border-color .15s" onmouseover="this.style.borderColor='var(--red)'" onmouseout="this.style.borderColor='var(--line)'">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start">
+      <div style="font-weight:700;font-size:13px;line-height:1.2">${escH(c.name)}</div>
+      ${score ? `<span style="background:${scoreBg};color:#fff;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;flex-shrink:0">${score}</span>` : ''}
+    </div>
+    <div style="font-size:10px;color:var(--soft);margin-top:2px">${escH(c.role||'')}</div>
+    <div style="font-size:10px;color:var(--soft)">${escH(c.location||'')} ${c.experienceYears ? '· '+c.experienceYears+'yr' : ''}</div>
+    ${c.certifications?.length ? `<div style="margin-top:5px;display:flex;gap:3px;flex-wrap:wrap">${(c.certifications||[]).slice(0,2).map(cert=>`<span style="background:#EEF2FF;color:#3730A3;border-radius:3px;padding:1px 5px;font-size:9px;font-weight:600">${escH(cert)}</span>`).join('')}</div>` : ''}
+    <div style="margin-top:5px;font-size:10px;color:#6B7280">${escH(c.availability||'')} ${c.source ? '· '+c.source : ''}</div>
+  </div>`;
+}
+
+function renderCandidateCard(c) {
+  return `<div style="border:1px solid var(--line);border-radius:8px;padding:14px;background:#fff">
+    <div style="font-weight:700;font-size:16px">${escH(c.name||'')}</div>
+    <div style="font-size:12px;color:var(--soft);margin-top:2px">${escH(c.current_title||c.currentTitle||'')} @ ${escH(c.current_employer||c.currentEmployer||'')} · ${escH(c.location||'')}</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px;font-size:12px">
+      <div><span style="color:var(--soft)">📞</span> ${escH(c.phone||'—')}</div>
+      <div><span style="color:var(--soft)">✉️</span> ${escH(c.email||'—')}</div>
+      <div><span style="color:var(--soft)">⏱️</span> ${c.experience_years||c.experienceYears||0} years experience</div>
+      <div><span style="color:var(--soft)">📅</span> Available: ${escH(c.availability||'—')}</div>
+      <div><span style="color:var(--soft)">💰</span> ${escH(c.salary_expectation||c.salaryExpectation||'—')}</div>
+      <div><span style="color:var(--soft)">🎓</span> ${escH(c.education||'—')}</div>
+    </div>
+    ${(c.certifications||[]).length ? `<div style="margin-top:8px;display:flex;gap:4px;flex-wrap:wrap">${(c.certifications||[]).map(cert=>`<span style="background:#EEF2FF;color:#3730A3;border-radius:4px;padding:2px 8px;font-size:11px;font-weight:600">${escH(cert)}</span>`).join('')}</div>` : ''}
+    ${(c.skills||[]).length ? `<div style="margin-top:5px;display:flex;gap:4px;flex-wrap:wrap">${(c.skills||[]).map(s=>`<span style="background:#F3F4F6;color:#374151;border-radius:4px;padding:2px 8px;font-size:11px">${escH(s)}</span>`).join('')}</div>` : ''}
+    ${c.notes ? `<div style="margin-top:8px;font-size:12px;color:#555;font-style:italic">${escH(c.notes)}</div>` : ''}
+  </div>`;
+}
+
+// ── CANDIDATE DETAIL VIEW ────────────────────────────────────────────────────
+function hmOpenCandidate(id) {
+  const candidates = hrLoad('candidates');
+  const c = candidates.find(x => x.id === id);
+  if (!c) return;
+
+  document.getElementById('candidateModalTitle').textContent = c.name;
+  document.getElementById('candidateModalBody').innerHTML = `
+    <div style="padding:16px">
+      ${renderCandidateCard(c)}
+      <div style="margin-top:14px">
+        <label style="font-size:11px;color:var(--soft);display:block;margin-bottom:4px">Pipeline Stage</label>
+        <select id="candidateStageSelect" style="width:100%;padding:8px;border:1.5px solid var(--line);border-radius:6px;font-size:13px">
+          ${TALENT_STAGES.map(s => `<option ${c.stage===s?'selected':''}>${s}</option>`).join('')}
+        </select>
+      </div>
+      <div style="margin-top:10px">
+        <label style="font-size:11px;color:var(--soft);display:block;margin-bottom:4px">Recruiter Notes</label>
+        <textarea id="candidateNotes" rows="3" style="width:100%;padding:8px;border:1.5px solid var(--line);border-radius:6px;font-size:12px;resize:vertical;outline:none">${escH(c.recruiterNotes||'')}</textarea>
+      </div>
+    </div>`;
+
+  document.getElementById('candidateModalFooter').innerHTML = `
+    <button onclick="hmDeleteCandidate('${id}')" class="hm-btn" style="color:#EF4444;border-color:#EF4444;background:none">🗑 Remove</button>
+    <div style="display:flex;gap:8px">
+      ${c.phone ? `<a href="tel:${escH(c.phone)}" class="hm-btn hm-btn-ghost">📞 Call</a>` : ''}
+      ${c.email ? `<a href="mailto:${escH(c.email)}" class="hm-btn hm-btn-ghost">✉️ Email</a>` : ''}
+      <button onclick="hmSaveCandidate('${id}')" class="hm-btn" style="background:#1A4731;color:#fff;border-color:#1A4731">💾 Save Changes</button>
+    </div>`;
+
+  document.getElementById('hmCandidateModal').classList.add('open');
+}
+
+function hmSaveCandidate(id) {
+  const candidates = hrLoad('candidates');
+  const idx = candidates.findIndex(x => x.id === id);
+  if (idx < 0) return;
+  candidates[idx].stage = document.getElementById('candidateStageSelect').value;
+  candidates[idx].recruiterNotes = document.getElementById('candidateNotes').value;
+  hrSave('candidates', candidates);
+  document.getElementById('hmCandidateModal').classList.remove('open');
+  hmToast('Candidate updated ✓');
+  hmRenderTalent(); hmUpdateRail();
+}
+
+function hmDeleteCandidate(id) {
+  if (!confirm('Remove this candidate from the pipeline?')) return;
+  const candidates = hrLoad('candidates').filter(x => x.id !== id);
+  hrSave('candidates', candidates);
+  document.getElementById('hmCandidateModal').classList.remove('open');
+  hmToast('Candidate removed');
+  hmRenderTalent(); hmUpdateRail();
+}
+
+function hmOpenNewCandidate() {
+  const name = prompt('Candidate name:'); if (!name) return;
+  const role = prompt('Role (e.g. Fire Protection Tech):') || '';
+  const candidates = hrLoad('candidates');
+  candidates.push({id:hrId(), name, role, stage:'Sourced', source:'Manual',
+    addedBy:_hmUser?.name||'HR Manager', ts:Date.now()});
+  hrSave('candidates', candidates);
+  hmToast('Candidate added ✓');
+  hmRenderTalent(); hmUpdateRail();
+}
+
 
 </script>
