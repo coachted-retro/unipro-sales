@@ -1128,31 +1128,130 @@ function hmRenderOnboarding(){
     return (today-start)/86400000<=90&&(today-start)/86400000>=0;
   });
   if(!newHires.length){el.innerHTML='<div style="text-align:center;padding:30px;color:var(--soft)">No active onboarding — new hires appear here within their first 90 days</div>';return;}
-  const phases=['Paperwork & Setup','Safety & Compliance Training','Role-Specific Training','Systems & Tools','30-Day Check-In'];
-  el.innerHTML=newHires.map(u=>{
-    const ob=hrLoadObj('onboard_'+u.id,{});
-    const totalItems=phases.length*5;
-    const done=Object.values(ob).filter(Boolean).length;
-    const pct=Math.round(done/totalItems*100);
-    const daysSince=Math.round((today-new Date(u.startDate))/86400000);
+
+  // Phase definitions with per-item tasks
+  const PHASES = [
+    { name:'Paperwork & Setup', icon:'📄', items:[
+      'I-9 Employment Eligibility Verification completed',
+      'W-4 Federal Tax Withholding form submitted',
+      'Direct deposit enrollment form submitted',
+      'Emergency contact information on file',
+      'Employee handbook signed and acknowledged',
+    ]},
+    { name:'Safety & Compliance Training', icon:'🧯', items:[
+      'OSHA 10 / General Safety orientation completed',
+      'NFPA fire safety overview reviewed',
+      'First Aid / CPR / AED certification scheduled',
+      'PPE training completed — equipment issued',
+      '<a href="compliance-forms.html" target="_blank" style="color:var(--red);font-weight:600">Compliance Form Generator walkthrough completed →</a>',
+    ]},
+    { name:'Role-Specific Training', icon:'🎓', items:[
+      'Division overview and service standards reviewed',
+      'Learning Center assigned modules started',
+      'Job Description reviewed and signed',
+      'Field ride-along or shadow shift scheduled',
+      'Role-specific tools and equipment walkthrough done',
+    ]},
+    { name:'Systems & Tools', icon:'💻', items:[
+      'Termac One portal access confirmed',
+      'Tech Portal / role portal walkthrough completed',
+      'Company vehicle / equipment assignment documented',
+      'Territory and route briefing completed',
+      'Communication tools and protocols reviewed',
+    ]},
+    { name:'30-Day Check-In', icon:'⭐', items:[
+      '30-day performance check-in meeting held',
+      'Questions and concerns addressed',
+      'Goal-setting conversation completed',
+      'Schedule and availability confirmed',
+      '30-day sign-off by manager on file',
+    ]},
+  ];
+
+  el.innerHTML = newHires.map(u => {
+    const ob = hrLoadObj('onboard_'+u.id, {});
+    const totalItems = PHASES.reduce((s,p)=>s+p.items.length,0);
+    const done = Object.values(ob).filter(Boolean).length;
+    const pct = Math.round(done/totalItems*100);
+    const daysSince = Math.round((today-new Date(u.startDate))/86400000);
+    const isOpen = ob._open === true;
+
     return `<div class="hm-card" style="margin-bottom:12px">
       <div class="hm-card-body">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:10px">
+        <!-- Header row -->
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:10px;cursor:pointer" onclick="hmToggleOnboard('${u.id}')">
           <div style="display:flex;align-items:center;gap:12px">
             <div class="hm-emp-avatar" style="background:${u.color}">${u.avatar}</div>
-            <div><div style="font-weight:700;font-size:14px">${escH(u.name)}</div>
-            <div style="font-size:12px;color:var(--soft)">${escH(u.title||'')} · Day ${daysSince} of 90</div></div>
+            <div>
+              <div style="font-weight:700;font-size:14px">${escH(u.name)}</div>
+              <div style="font-size:12px;color:var(--soft)">${escH(u.title||'')} · Day ${daysSince} of 90 · ${escH(u.division||'')}</div>
+            </div>
           </div>
-          <div style="font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:22px;color:${pct>=75?'var(--green)':pct>=40?'var(--yellow)':'var(--red)'}">${pct}%</div>
+          <div style="display:flex;align-items:center;gap:12px">
+            <div style="font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:22px;color:${pct>=75?'var(--green)':pct>=40?'var(--yellow)':'var(--red)'}">${pct}%</div>
+            <div style="font-size:18px;color:var(--soft)">${isOpen?'▲':'▼'}</div>
+          </div>
         </div>
-        <div style="height:8px;background:#F3F4F6;border-radius:4px;overflow:hidden">
+        <!-- Progress bar -->
+        <div style="height:8px;background:#F3F4F6;border-radius:4px;overflow:hidden;margin-bottom:6px">
           <div style="height:100%;background:${pct>=75?'var(--green)':pct>=40?'var(--yellow)':'var(--red)'};width:${pct}%;border-radius:4px;transition:width .3s"></div>
         </div>
-        <div style="font-size:11px;color:var(--soft);margin-top:6px">${done} of ${totalItems} items complete</div>
+        <div style="font-size:11px;color:var(--soft);margin-bottom:${isOpen?'16px':'0'}">${done} of ${totalItems} items complete · Click to ${isOpen?'collapse':'expand'}</div>
+
+        <!-- Expandable checklist -->
+        <div id="hmObDetail-${u.id}" style="display:${isOpen?'block':'none'}">
+          ${PHASES.map((phase,pi)=>{
+            const phaseItems = phase.items;
+            const phaseDone = phaseItems.filter((_,ii)=>ob[pi+'_'+ii]).length;
+            const phaseComplete = phaseDone===phaseItems.length;
+            return `<div style="margin-bottom:16px">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                <span style="font-size:16px">${phase.icon}</span>
+                <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:${phaseComplete?'var(--green)':'var(--ink)'}">${phase.name}</div>
+                <div style="margin-left:auto;font-size:10px;font-weight:700;color:${phaseComplete?'var(--green)':'var(--soft)'};">${phaseDone}/${phaseItems.length}${phaseComplete?' ✓':''}</div>
+              </div>
+              ${phaseItems.map((item,ii)=>`
+                <label style="display:flex;align-items:flex-start;gap:8px;padding:7px 10px;border-radius:6px;cursor:pointer;margin-bottom:3px;background:${ob[pi+'_'+ii]?'#F0FDF4':'#F9FAFB'};border:1px solid ${ob[pi+'_'+ii]?'#BBF7D0':'var(--line)'}">
+                  <input type="checkbox" ${ob[pi+'_'+ii]?'checked':''} onchange="hmToggleOnboardItem('${u.id}',${pi},${ii},this.checked)" style="margin-top:2px;flex-shrink:0">
+                  <span style="font-size:12px;color:${ob[pi+'_'+ii]?'var(--green)':'var(--ink)'};${ob[pi+'_'+ii]?'text-decoration:line-through;opacity:.7':''}">${item}</span>
+                </label>`).join('')}
+            </div>`;
+          }).join('')}
+          <div style="display:flex;gap:8px;margin-top:8px;padding-top:12px;border-top:1px solid var(--line)">
+            <button class="hm-btn hm-btn-ghost hm-btn-sm" onclick="hmPrintOnboard('${u.id}')">🖨️ Print Checklist</button>
+            ${pct===100?`<div style="background:#D1FAE5;border-radius:7px;padding:6px 14px;font-size:12px;font-weight:700;color:#065F46">🎉 Onboarding Complete!</div>`:''}
+          </div>
+        </div>
       </div>
     </div>`;
   }).join('');
 }
+
+function hmToggleOnboard(uid){
+  const ob=hrLoadObj('onboard_'+uid,{});
+  ob._open = !ob._open;
+  hrSaveObj('onboard_'+uid,ob);
+  hmRenderOnboarding();
+}
+
+function hmToggleOnboardItem(uid,pi,ii,checked){
+  const ob=hrLoadObj('onboard_'+uid,{});
+  ob[pi+'_'+ii]=checked;
+  hrSaveObj('onboard_'+uid,ob);
+  // Re-render just the progress without collapsing
+  hmRenderOnboarding();
+}
+
+function hmPrintOnboard(uid){
+  const user=hmGetUsers().find(u=>u.id===uid);
+  if(!user)return;
+  window.open('compliance-forms.html','_blank');
+  hmToast('Opening compliance forms for '+user.name);
+}
+
+// hrLoadObj / hrSaveObj helpers if not already defined
+function hrLoadObj(key,def){ try{return JSON.parse(localStorage.getItem('termac_hr_'+key)||'null')||def;}catch(e){return def;} }
+function hrSaveObj(key,val){ try{localStorage.setItem('termac_hr_'+key,JSON.stringify(val));}catch(e){} }
 
 // ── TALENT ──
 function hmRenderTalent(){
