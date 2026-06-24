@@ -5074,12 +5074,29 @@ function renderReferralCard() {
   var card = document.getElementById('referralCard');
   if (!card) return;
   var t = getCurrentTech();
-  var r = t.referrals || { submitted:0, converted:0, single:0, bundled:0, bonusEarned:0, bonusEligible:true, satPct:0 };
+
+  // Merge live localStorage data with demo TECHS data
+  var techReferrals = JSON.parse(localStorage.getItem('termac_tech_referrals')||'{}');
+  var lsData = techReferrals[t.name] || null;
+  var baseR = t.referrals || { submitted:0, converted:0, single:0, bundled:0, bonusEarned:0, bonusEligible:true, satPct:0 };
+
+  // If localStorage has live data, merge it on top of demo data
+  var r = lsData ? {
+    submitted: (baseR.submitted||0) + (lsData.submitted||0),
+    converted: (baseR.converted||0) + (lsData.converted||0),
+    single:    (baseR.single||0)    + (lsData.single||0),
+    bundled:   (baseR.bundled||0)   + (lsData.bundled||0),
+    bonusEarned: (baseR.bonusEarned||0) + (lsData.pendingBonus||0),
+    bonusEligible: baseR.bonusEligible,
+    satPct: baseR.satPct,
+    liveHistory: lsData.history || []
+  } : baseR;
+
   var satPct = r.satPct || Math.round(t.satisfaction * 20);
   var eligible = satPct >= 85;
   var satColor = satPct >= 90 ? 'green' : satPct >= 85 ? 'amber' : 'red';
   var singleEarnings = r.single * 10;
-  var bundledEarnings = r.bundled * 25;
+  var bundledEarnings = r.bundled * 20;
   var totalEarned = singleEarnings + bundledEarnings;
   var pendingBonus = eligible ? totalEarned : 0;
   var convRate = r.submitted > 0 ? Math.round((r.converted / r.submitted) * 100) : 0;
@@ -5113,14 +5130,35 @@ function renderReferralCard() {
     + '</div>';
 
   html += '<div class="referral-breakdown">'
-    + '<div class="referral-breakdown-item"><div><div class="referral-breakdown-label">Single-Service ($10 each)</div></div><div class="referral-breakdown-val money">$' + (eligible?singleEarnings:0) + '</div></div>'
-    + '<div class="referral-breakdown-item"><div><div class="referral-breakdown-label">Bundled-Service ($25 each)</div></div><div class="referral-breakdown-val money">$' + (eligible?bundledEarnings:0) + '</div></div>'
+    + '<div class="referral-breakdown-item"><div><div class="referral-breakdown-label">Single-Service Conversions ($10 each)</div></div><div class="referral-breakdown-val money">$' + (eligible?singleEarnings:0) + '</div></div>'
+    + '<div class="referral-breakdown-item"><div><div class="referral-breakdown-label">Bundled-Service Conversions ($20 each)</div></div><div class="referral-breakdown-val money">$' + (eligible?bundledEarnings:0) + '</div></div>'
+    + '<div class="referral-breakdown-item" style="background:#FEF9E7"><div><div class="referral-breakdown-label">⚠️ Submitted (Pending Conversion)</div></div><div class="referral-breakdown-val amber">' + Math.max(0,(r.submitted||0)-(r.converted||0)) + ' leads</div></div>'
     + '<div class="referral-breakdown-item"><div><div class="referral-breakdown-label">Paid Out This Quarter</div></div><div class="referral-breakdown-val money">$' + (eligible?Math.floor(pendingBonus*.6):0) + '</div></div>'
     + '<div class="referral-breakdown-item"><div><div class="referral-breakdown-label">Pending Payment</div></div><div class="referral-breakdown-val amber">$' + (eligible?Math.ceil(pendingBonus*.4):0) + '</div></div>'
+    + '<div class="referral-breakdown-item" style="background:#EAFAF1;font-weight:700"><div><div class="referral-breakdown-label" style="color:#1A7A4A;font-weight:700">✅ Conversion Rate</div></div><div class="referral-breakdown-val money">' + convRate + '%</div></div>'
     + '</div>';
 
-  if (history.length > 0) {
-    html += '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.5px;text-transform:uppercase;color:var(--soft);margin-bottom:8px;border-bottom:1px solid var(--line);padding-bottom:4px;">Recent Referrals</div>';
+  // Show live referrals from localStorage first, then demo history
+  var liveHist = r.liveHistory || [];
+  if (liveHist.length > 0 || history.length > 0) {
+    html += '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.5px;text-transform:uppercase;color:var(--soft);margin-bottom:8px;border-bottom:1px solid var(--line);padding-bottom:4px;">Referral History</div>';
+    // Live entries first
+    liveHist.slice(0,5).forEach(function(h) {
+      var isConverted = h.status === 'converted';
+      var dateStr = h.convertedAt ? new Date(h.convertedAt).toLocaleDateString('en-US',{month:'short',day:'numeric'})
+                  : h.submittedAt ? new Date(h.submittedAt).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '—';
+      var bonusAmt = isConverted && eligible ? '+$'+(h.bonus||10) : '';
+      html += '<div class="referral-history-row" style="background:' + (isConverted?'#F0FDF4':'#FFFBEB') + ';border-radius:6px;padding:8px 10px;margin-bottom:4px">'
+        + '<div><div class="referral-history-biz">' + (h.business||'Unknown') + '</div>'
+        + '<div class="referral-history-div">' + (h.source||'Field Referral') + ' · ' + dateStr + (h.competitorTag?' · 🏷️ '+h.competitorTag:'') + '</div>'
+        + (h.followUpDate ? '<div style="font-size:10px;color:#059669">⏰ Rep follow-up: ' + h.followUpDate + '</div>' : '')
+        + '</div>'
+        + '<div style="display:flex;align-items:center;gap:8px;">'
+        + '<span class="referral-history-status ' + (isConverted?'converted':'pending') + '">' + (isConverted?'CONVERTED':'PENDING') + '</span>'
+        + (bonusAmt ? '<span class="referral-history-bonus">' + bonusAmt + '</span>' : '')
+        + '</div></div>';
+    });
+    // Demo history entries
     history.forEach(function(h) {
       html += '<div class="referral-history-row"><div><div class="referral-history-biz">' + h.biz + '</div><div class="referral-history-div">' + h.div + ' · ' + h.date + '</div></div>'
         + '<div style="display:flex;align-items:center;gap:10px;">'
@@ -5131,7 +5169,7 @@ function renderReferralCard() {
   }
 
   html += '<div class="referral-cta" style="margin-top:14px;">'
-    + '<div class="referral-cta-text">Found a referral — on-site or out in the field? Scan the tag or enter the business info. Routes to the territory rep instantly, with a 60-day pre-expiration follow-up if there\'s an expiry date. $10 single service · $25 bundled.</div>'
+    + '<div class="referral-cta-text">⚠️ <strong>Bonus qualifier:</strong> referrals must convert to a sale to count. $10 single service · $20 bundled. Scan competitor tags in the Field Lead Capture section — 60-day follow-up auto-set.</div>'
     + '<button class="referral-cta-btn" data-action="log-referral" onclick="openLeadModal()">+ Log Referral</button>'
     + '</div>';
 
@@ -6113,6 +6151,29 @@ function leadRouteToRep(lead) {
   const leads = JSON.parse(localStorage.getItem('termac_leads')||'[]');
   leads.unshift(lead);
   localStorage.setItem('termac_leads', JSON.stringify(leads));
+
+  // Track submission in tech referral metrics
+  const techReferrals = JSON.parse(localStorage.getItem('termac_tech_referrals')||'{}');
+  const tname = lead.referredBy||'Unknown';
+  if(!techReferrals[tname]) techReferrals[tname] = {submitted:0,converted:0,single:0,bundled:0,bonusEarned:0,pendingBonus:0,history:[]};
+  techReferrals[tname].submitted = (techReferrals[tname].submitted||0)+1;
+  techReferrals[tname].history = techReferrals[tname].history||[];
+  techReferrals[tname].history.unshift({
+    id:lead.id, business:lead.business, services:lead.services||[],
+    submittedAt:Date.now(), source:lead.source||'Field Referral',
+    competitorTag:lead.competitorTag||'', followUpDate:lead.followUpDate||'',
+    status:'pending', bonus:0
+  });
+  localStorage.setItem('termac_tech_referrals', JSON.stringify(techReferrals));
+
+  // Update live TECHS array if in same session
+  if(typeof getCurrentTech === 'function') {
+    const t = getCurrentTech();
+    if(t && t.referrals) {
+      t.referrals.submitted = (t.referrals.submitted||0)+1;
+      if(typeof renderReferralCard==='function') renderReferralCard();
+    }
+  }
   
   // Show confirmation
   const conf = document.getElementById('leadConfirm');

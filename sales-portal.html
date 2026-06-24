@@ -1273,6 +1273,52 @@ function spSetStage(id, tab, newStage, selectEl) {
       localStorage.setItem('termac_scheduler_queue', JSON.stringify(schedQ));
     }
     spToast('🎉 Account created — Scheduler notified!');
+
+    // ── TECH REFERRAL CONVERSION TRACKING ──
+    // If this lead was referred by a field tech, credit their conversion
+    if (r.referredBy || r.source && r.source.includes('Field')) {
+      const techName = r.referredBy || '';
+      const isBundled = (r.services||[]).length > 1;
+      const bonusPer = isBundled ? 20 : 10; // $10 single, $20 bundled
+
+      // Update tech referral record in localStorage
+      const techReferrals = JSON.parse(localStorage.getItem('termac_tech_referrals')||'{}');
+      if (!techReferrals[techName]) {
+        techReferrals[techName] = { submitted:0, converted:0, single:0, bundled:0, bonusEarned:0, pendingBonus:0, history:[] };
+      }
+      const tr = techReferrals[techName];
+      tr.converted = (tr.converted||0) + 1;
+      if(isBundled) tr.bundled = (tr.bundled||0) + 1;
+      else tr.single = (tr.single||0) + 1;
+      tr.pendingBonus = (tr.pendingBonus||0) + bonusPer;
+      tr.history = tr.history || [];
+      tr.history.unshift({
+        id: r.id,
+        business: r.business||r.name||'Unknown',
+        services: r.services||[],
+        convertedAt: Date.now(),
+        convertedBy: _spRep.name,
+        bonus: bonusPer,
+        isBundled: isBundled,
+        source: r.source||'Field Referral',
+        status: 'converted'
+      });
+      localStorage.setItem('termac_tech_referrals', JSON.stringify(techReferrals));
+
+      // Also update the TECHS array in tech portal if same browser session
+      if (window.TECHS) {
+        const tech = window.TECHS.find(t => t.name === techName);
+        if (tech) {
+          if (!tech.referrals) tech.referrals = { submitted:0, converted:0, single:0, bundled:0, bonusEarned:0, bonusEligible:true };
+          tech.referrals.converted = (tech.referrals.converted||0) + 1;
+          if(isBundled) tech.referrals.bundled = (tech.referrals.bundled||0)+1;
+          else tech.referrals.single = (tech.referrals.single||0)+1;
+          tech.referrals.bonusEarned = (tech.referrals.bonusEarned||0) + bonusPer;
+        }
+      }
+
+      spToast('💰 Referral converted — ' + techName + ' earns +$' + bonusPer + ' bonus!');
+    }
   }
 
   r.lifecycleStage = newStage;
