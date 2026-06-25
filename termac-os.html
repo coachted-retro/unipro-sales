@@ -11859,6 +11859,9 @@ const HARVEST_FOOD_LICENSE_KEYWORDS = ['food', 'restaurant', 'catering', 'eating
 function harvestLoadLog(){ try{ return JSON.parse(localStorage.getItem('termac_harvest_log')||'[]'); }catch(e){ return []; } }
 function harvestSaveLog(log){ localStorage.setItem('termac_harvest_log', JSON.stringify(log)); }
 
+// Weekly auto-clean runs silently on load — removes blank/TBD junk records older than 7 days
+try { weeklyAutoClean(); } catch(e) {}
+
 function harvestSetStatus(msg) {
   const banner = document.getElementById('harvestStatusBanner');
   const mgrStatus = document.getElementById('mgrHarvestStatus');
@@ -27572,6 +27575,41 @@ function findDuplicates() {
     .map(([key, records]) => ({ key, records }));
 }
 
+function purgeJunkRecords(silent) {
+  const JUNK_NAMES = ['owner tbd','owner - tbd','owner – tbd','administrator tbd','administrator - tbd',
+    'administrator – tbd','tbd','unknown','n/a','na','none','test','','null','undefined'];
+  const pools = ['leads','dms_coldcall','contacts'];
+  let totalRemoved = 0;
+  pools.forEach(pool => {
+    const recs = crmLoad(pool) || [];
+    const clean = recs.filter(r => {
+      const biz = (r.business || r.name || '').toLowerCase().trim();
+      return biz.length >= 3 && !JUNK_NAMES.includes(biz) && !biz.match(/^(owner|admin|administrator|manager|contact|tbd|unknown|n\/a)\s*(tbd|-)?$/i);
+    });
+    if (clean.length < recs.length) {
+      crmSave(pool, clean);
+      totalRemoved += recs.length - clean.length;
+    }
+  });
+  if (!silent) {
+    alert(`✅ Purged ${totalRemoved} junk record${totalRemoved===1?'':'s'} (blank names, Owner TBD, Administrator TBD, etc.) from leads and call list.`);
+    renderDuplicatePanel();
+    if (typeof renderCRMView === 'function') renderCRMView();
+  }
+  return totalRemoved;
+}
+
+function weeklyAutoClean() {
+  const WEEK_KEY = 'termac_last_auto_clean';
+  const last = parseInt(localStorage.getItem(WEEK_KEY)||'0');
+  const now = Date.now();
+  const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
+  if (now - last < SEVEN_DAYS) return;
+  const removed = purgeJunkRecords(true);
+  localStorage.setItem(WEEK_KEY, now.toString());
+  if (removed > 0) console.log('[Termac] Weekly auto-clean: removed ' + removed + ' junk records');
+}
+
 function renderDuplicatePanel() {
   const el = document.getElementById('mgrDuplicatePanel');
   if (!el) return;
@@ -27585,7 +27623,10 @@ function renderDuplicatePanel() {
   }
   el.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:6px">
     <div style="font-size:11px;color:var(--soft)">${dupes.length} group${dupes.length>1?'s':''} · ${dismissed.length} dismissed</div>
-    ${dismissed.length ? `<button onclick="localStorage.removeItem('mgr_dismissed_dupes');renderDuplicatePanel()" style="background:none;border:1px solid var(--line);border-radius:4px;padding:3px 10px;font-size:10px;cursor:pointer;color:var(--soft)">↩ Reset dismissed</button>` : ''}
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <button onclick="purgeJunkRecords(false)" style="background:#DC2626;color:#fff;border:none;border-radius:4px;padding:3px 10px;font-size:10px;font-weight:700;cursor:pointer">🗑 Purge TBD / Blank Names</button>
+      ${dismissed.length ? `<button onclick="localStorage.removeItem('mgr_dismissed_dupes');renderDuplicatePanel()" style="background:none;border:1px solid var(--line);border-radius:4px;padding:3px 10px;font-size:10px;cursor:pointer;color:var(--soft)">↩ Reset dismissed</button>` : ''}
+    </div>
   </div>` +
   dupes.slice(0, 12).map(({key, records}) => {
     const tabColors = { leads:'#C8102E', contacts:'#1B5FA8', accounts:'#1E7B3C' };
