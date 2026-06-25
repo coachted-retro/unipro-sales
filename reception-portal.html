@@ -297,6 +297,7 @@ button{cursor:pointer}
       <div id="rcpPanel-incoming" class="rcp-content"></div>
       <div id="rcpPanel-coldcalls" style="display:none"></div>
       <div id="rcpPanel-crm" style="display:none"></div>
+      <div id="rcpPanel-deficiency" style="display:none"></div>
 
     </div><!-- /right main -->
   </div><!-- /split -->
@@ -375,15 +376,87 @@ function rcpSwitchTab(tab){
   document.querySelectorAll('.rcp-tab').forEach(t=>t.classList.remove('active'));
   const activeTab = document.getElementById('rcpTab-'+tab);
   if(activeTab) activeTab.classList.add('active');
-  ['incoming','coldcalls','crm'].forEach(p=>{
+  ['incoming','coldcalls','crm','deficiency'].forEach(p=>{
     const panel=document.getElementById('rcpPanel-'+p);
     if(panel) panel.style.display=(p===tab?'block':'none');
   });
   if(tab==='incoming') rcpRenderCallLog(document.getElementById('rcpPanel-incoming'));
   else if(tab==='coldcalls') rcpRenderColdCalls();
   else if(tab==='crm') rcpRenderAllCRM();
+  else if(tab==='deficiency') rcpRenderDeficiencyQueue();
 }
 
+function rcpUpdateDefBadge() {
+  const queue = JSON.parse(localStorage.getItem('termac_deficiency_queue')||'[]');
+  const pending = queue.filter(d=>d.status==='pending').length;
+  const badge = document.getElementById('rcpDefBadge');
+  if (badge) { badge.textContent=pending; badge.style.display=pending>0?'inline':'none'; }
+}
+
+function rcpRenderDeficiencyQueue() {
+  const panel = document.getElementById('rcpPanel-deficiency');
+  if (!panel) return;
+  const queue = JSON.parse(localStorage.getItem('termac_deficiency_queue')||'[]');
+  rcpUpdateDefBadge();
+  const sevColor = { critical:'#C8102E', major:'#D97706', minor:'#4B5563' };
+  const statusLabel = { pending:'Pending Lexi Action', fix_now:'Fix Now', return_visit:'Return Visit Scheduled', resolved:'Resolved' };
+  let html = '<div style="padding:16px">';
+  html += '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:18px;letter-spacing:.06em;text-transform:uppercase;color:#C8102E;margin-bottom:4px">Deficiency Queue</div>';
+  html += '<div style="font-size:12px;color:#999;margin-bottom:16px">Flagged by field techs. Build quote then choose Fix Now or Return Visit.</div>';
+  if (!queue.length) {
+    html += '<div style="text-align:center;padding:40px;color:#666;font-family:Barlow Condensed,sans-serif">No deficiencies in queue</div>';
+  } else {
+    queue.forEach(function(d,i) {
+      const sev = d.severity||'minor';
+      const color = sevColor[sev]||'#4B5563';
+      const isPending = d.status==='pending';
+      html += '<div style="background:#1a1a1a;border:1.5px solid '+(isPending&&sev!=='minor'?'#C8102E':'#2a2a2a')+';border-radius:10px;padding:16px;margin-bottom:12px;font-family:Barlow Condensed,sans-serif">';
+      html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">';
+      html += '<div><span style="background:'+color+';color:#fff;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;margin-right:8px">'+(d.sevLabel||sev.toUpperCase())+'</span>';
+      html += '<span style="font-size:11px;color:#999">'+(d.createdDate||'')+' '+(d.createdTime||'')+'</span></div>';
+      html += '<span style="font-size:11px;color:'+(isPending?'#f87171':'#4ade80')+'">'+(statusLabel[d.status]||d.status)+'</span></div>';
+      html += '<div style="font-weight:700;font-size:15px;color:#fff;margin-bottom:2px">'+(d.account||'')+'</div>';
+      html += '<div style="font-size:11px;color:#999;margin-bottom:8px">'+(d.address||'')+' | Tech: '+(d.techName||'')+'</div>';
+      html += '<div style="font-size:12px;color:#ccc;margin-bottom:4px"><b>Equipment:</b> '+(d.equipment||'')+'</div>';
+      html += '<div style="font-size:12px;color:#ccc;margin-bottom:12px"><b>Issue:</b> '+(d.description||'')+'</div>';
+      if (isPending) {
+        html += '<div style="display:flex;gap:8px">';
+        html += '<button onclick="rcpDefAction('+i+','fix_now')" style="flex:1;background:#1E7B3C;color:#fff;border:none;border-radius:7px;padding:9px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;cursor:pointer">FIX NOW<br><span style="font-weight:400;font-size:10px">Tech fixes on this visit</span></button>';
+        html += '<button onclick="rcpDefAction('+i+','return_visit')" style="flex:1;background:#1B5FA8;color:#fff;border:none;border-radius:7px;padding:9px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;cursor:pointer">RETURN VISIT<br><span style="font-weight:400;font-size:10px">Schedule new WO</span></button>';
+        html += '<button onclick="rcpDefAction('+i+','resolved')" style="flex:1;background:#374151;color:#ccc;border:none;border-radius:7px;padding:9px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;cursor:pointer">RESOLVED<br><span style="font-weight:400;font-size:10px">Mark closed</span></button>';
+        html += '</div>';
+      } else {
+        html += '<div style="font-size:11px;color:#4ade80">Action: '+(d.lexiNotes||d.status)+'</div>';
+      }
+      html += '</div>';
+    });
+  }
+  html += '</div>';
+  panel.innerHTML = html;
+}
+
+function rcpDefAction(idx, action) {
+  const queue = JSON.parse(localStorage.getItem('termac_deficiency_queue')||'[]');
+  if (!queue[idx]) return;
+  queue[idx].status = action;
+  queue[idx].lexiNotes = action==='fix_now' ? 'Lexi authorized fix now' : action==='return_visit' ? 'Return visit WO created' : 'Marked resolved';
+  queue[idx].actionTs = Date.now();
+  if (action === 'return_visit') {
+    const d = queue[idx];
+    try {
+      const scheduled = JSON.parse(localStorage.getItem('termac_scheduled_jobs')||'[]');
+      scheduled.unshift({ id:'def_return_'+Date.now(), accountId:d.accountId||'', account:d.account,
+        address:d.address, division:'UniPro', serviceType:'Deficiency Return Visit - '+d.equipment,
+        serviceKey:'deficiency_return', scheduledDate:'TBD - Needs Scheduling',
+        scheduledTs:Date.now(), status:'unassigned', techName:null,
+        notes:d.description+' (Deficiency logged by '+d.techName+')',
+        generatedTs:Date.now(), isDeficiencyReturn:true });
+      localStorage.setItem('termac_scheduled_jobs', JSON.stringify(scheduled));
+    } catch(e) {}
+  }
+  localStorage.setItem('termac_deficiency_queue', JSON.stringify(queue));
+  rcpRenderDeficiencyQueue();
+}
 
 function rcpRenderCallLog(el){
   const callLog = JSON.parse(localStorage.getItem('termac_crm_rcp_calls')||'[]');

@@ -3730,43 +3730,61 @@ function logDeficiency(jobId) {
 function saveDeficiency() {
   const equip = document.getElementById('def_equip')?.value.trim();
   const desc  = document.getElementById('def_desc')?.value.trim();
-  const sev   = document.getElementById('def_severity')?.value;
+  const sev   = document.getElementById('def_severity')?.value || 'minor';
   if (!equip || !desc) { alert('Please fill in equipment and description.'); return; }
 
-  const jobId = document.getElementById('defModal').dataset.jobId;
-  const job   = JOBS.find(j => j.id === jobId);
+  const jobId    = document.getElementById('defModal').dataset.jobId;
+  const job      = JOBS.find(j => j.id === jobId);
+  const acctName = job?.account || 'Unknown';
+  const techName = 'Tech';
+  const sevLabel = { critical:'CRITICAL', major:'MAJOR', minor:'Minor' }[sev] || sev;
+  const isHigh   = sev !== 'minor';
 
   // Log to CRM account record
   try {
     const accounts = JSON.parse(localStorage.getItem('crm_accounts') || '[]');
-    const acct = accounts.find(a => a.name === (job?.account || ''));
+    const acct = accounts.find(a => a.name === acctName);
     if (acct) {
       if (!acct.activityLog) acct.activityLog = [];
-      acct.activityLog.push({
-        ts: Date.now(), type:'tech', icon:'⚠️',
-        title: `Deficiency Flagged — ${sev}`,
-        note: `${equip}: ${desc}`,
-        who: 'Tech'
-      });
+      acct.activityLog.unshift({ ts: Date.now(), type:'tech', icon:'\u26a0\ufe0f',
+        title:'Deficiency Flagged [' + sevLabel + ']', note: equip+': '+desc, who: techName });
       acct.openDeficiencies = (acct.openDeficiencies || 0) + 1;
       localStorage.setItem('crm_accounts', JSON.stringify(accounts));
     }
-    // Also add to office queue (localStorage key: officeQueue)
+  } catch(e) {}
+
+  // Write to office queue
+  try {
     const queue = JSON.parse(localStorage.getItem('officeQueue') || '[]');
-    queue.push({
-      type: 'deficiency', ts: Date.now(), account: job?.account || 'Unknown',
-      address: job?.addr || '', equipment: equip, description: desc,
-      severity: sev, needsQuote: sev !== 'minor'
-    });
-    localStorage.setItem('officeQueue', JSON.stringify(queue));
-  } catch(e) { console.log('Deficiency storage:', e); }
+    queue.unshift({ type:'deficiency', ts:Date.now(), account:acctName,
+      address:job?.addr||'', equipment:equip, description:desc, severity:sev,
+      techName, jobId:jobId||'', needsQuote:isHigh, status:'pending', lexiAction:null });
+    localStorage.setItem('officeQueue', JSON.stringify(queue.slice(0,200)));
+  } catch(e) {}
+
+  // Notify Lexi via termac-notify.js
+  if (typeof notifyOnDeficiency === 'function') {
+    notifyOnDeficiency({ account:acctName, address:job?.addr||'', techName,
+      jobId:jobId||'', equipment:equip, description:desc, severity:sev, photoUrl:'' });
+  }
 
   document.getElementById('defModal').style.display = 'none';
-  alert(`✅ Deficiency logged.\n${sev !== 'minor' ? 'Quote request sent to office queue.' : 'Flagged for next visit.'}`);
-  // Clear fields
+
+  // Confirm modal
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9998;display:flex;align-items:center;justify-content:center';
+  overlay.innerHTML = '<div style="background:#1a1a1a;border:2px solid '+(isHigh?'#C8102E':'#2a6b2a')+';border-radius:14px;padding:28px 32px;max-width:360px;text-align:center;font-family:Barlow Condensed,sans-serif">'
+    +'<div style="font-size:32px;margin-bottom:10px">'+(isHigh?'\ud83d\udea8':'\u26a0\ufe0f')+'</div>'
+    +'<div style="font-weight:800;font-size:18px;color:'+(isHigh?'#C8102E':'#4ade80')+';margin-bottom:8px">DEFICIENCY LOGGED</div>'
+    +'<div style="font-size:13px;color:#ccc;margin-bottom:4px"><b>'+acctName+'</b></div>'
+    +'<div style="font-size:12px;color:#999;margin-bottom:14px">'+equip+' \u2014 '+sevLabel+'</div>'
+    +(isHigh?'<div style="font-size:12px;color:#f87171;margin-bottom:14px;line-height:1.5">\ud83d\udd14 <b>Lexi has been notified.</b><br>She will determine Fix Now or Return Visit.</div>'
+            :'<div style="font-size:12px;color:#86efac;margin-bottom:14px">Logged to office queue for next visit.</div>')
+    +'<button onclick="this.closest(\'[style*=fixed]\').remove()" style="background:#C8102E;color:#fff;border:none;border-radius:8px;padding:10px 28px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;letter-spacing:.08em;cursor:pointer">GOT IT</button>'
+    +'</div>';
+  document.body.appendChild(overlay);
   ['def_equip','def_desc'].forEach(id => { const el=document.getElementById(id); if(el) el.value=''; });
 }
-
 function viewInvoice(jobId) {
   // Pull last completed invoice for this job
   const job = JOBS.find(j => j.id === jobId);
@@ -5095,19 +5113,58 @@ function markEnroute() {
 function markOnSite() {
   var btn = document.getElementById('btnOnSite');
   btn.textContent = '📍 On Site — Clocked In'; btn.style.background = '#1A7A4A'; btn.disabled = true;
-  // Stamp on-site time — used for labor cost calc at WO close
   var jobId = _briefData ? _briefData.jobId : null;
   var ts = Date.now();
   sessionStorage.setItem('tp_onsite_ts', ts);
   if (jobId) sessionStorage.setItem('tp_onsite_job', jobId);
-  // Update job record immediately if it exists
   try {
     var jobs = JSON.parse(localStorage.getItem('unipro_jobs')||'[]');
     var jidx = jobs.findIndex(function(j){ return j.id === jobId || j.briefJobId === jobId; });
     if (jidx !== -1) { jobs[jidx].onSiteAt = ts; localStorage.setItem('unipro_jobs', JSON.stringify(jobs)); }
   } catch(e) {}
+  // Poll warehouse_ready to see if kit is staged for this job
+  _checkWarehouseReady(jobId);
+  if (window._whReadyInterval) clearInterval(window._whReadyInterval);
+  window._whReadyInterval = setInterval(function() { _checkWarehouseReady(jobId); }, 60000);
 }
 
+function _checkWarehouseReady(jobId) {
+  if (!jobId) return;
+  try {
+    var whReady = JSON.parse(localStorage.getItem('termac_warehouse_ready')||'{}');
+    var kit = null;
+    Object.values(whReady).forEach(function(k) {
+      if ((k.jobId === jobId || k.reqId === jobId) && k.status === 'ready' && !k.techAcknowledged) kit = k;
+    });
+    if (kit) {
+      if (document.getElementById('whReadyBanner')) return;
+      var banner = document.createElement('div');
+      banner.id = 'whReadyBanner';
+      banner.style.cssText = 'position:fixed;top:70px;left:50%;transform:translateX(-50%);background:#1E7B3C;color:#fff;border-radius:10px;padding:14px 22px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:14px;z-index:9000;box-shadow:0 4px 24px rgba(0,0,0,.4);max-width:420px;width:92%;text-align:center;border:2px solid #4ade80';
+      var itemList = kit.items && kit.items.length ? kit.items.join(', ') : 'Kit';
+      banner.innerHTML = '✅ WAREHOUSE KIT PULLED & READY<br>'
+        +'<span style="font-weight:600;font-size:12px">'+itemList+'</span><br>'
+        +'<span style="font-weight:400;font-size:11px;opacity:.85">Pulled by '+kit.pulledBy+' · '+kit.timeStr+'</span><br>'
+        +'<button onclick="_ackWarehouseReady(\''+kit.jobId+'\')"; style="margin-top:8px;background:#fff;color:#1E7B3C;border:none;border-radius:6px;padding:6px 18px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;cursor:pointer">GOT IT — PICKED UP</button>';
+      document.body.appendChild(banner);
+    }
+  } catch(e) {}
+}
+
+function _ackWarehouseReady(jobId) {
+  try {
+    var whReady = JSON.parse(localStorage.getItem('termac_warehouse_ready')||'{}');
+    Object.keys(whReady).forEach(function(k) {
+      if (whReady[k].jobId === jobId || whReady[k].reqId === jobId) {
+        whReady[k].techAcknowledged = true; whReady[k].ackedAt = Date.now();
+      }
+    });
+    localStorage.setItem('termac_warehouse_ready', JSON.stringify(whReady));
+  } catch(e) {}
+  var b = document.getElementById('whReadyBanner');
+  if (b) b.remove();
+  if (window._whReadyInterval) { clearInterval(window._whReadyInterval); window._whReadyInterval = null; }
+}
 function openWorkOrderFromBrief() {
   if (!_briefData) return;
   var jobId = 'brief-'+(Date.now().toString(36));

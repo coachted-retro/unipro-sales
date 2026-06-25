@@ -144,6 +144,7 @@ body{font-family:Barlow,sans-serif;background:var(--bg);color:var(--ink);font-si
 .var-alert-card.good{border-left-color:#1E7B3C}
 </style>
 <script src="termac-lifecycle.js"></script>
+<script src="termac-notify.js"></script>
 </head>
 <body>
 
@@ -1379,6 +1380,40 @@ function confirmKit() {
   req.kittedBy = 'Warehouse Manager';
   req.kittedAt = Date.now();
   saveReqs(reqs);
+
+  // ══ NOTIFY TECH: Pulled & Ready (bidirectional handshake) ════════════════════════════════
+  const pulledItems = (req.items||[]).filter((_,i)=>{const c=document.getElementById('kitChk_'+i); return c&&c.checked;}).map(it=>it.qty+'x '+it.name);
+  // Write to shared warehouse_ready store for tech portal to poll
+  try {
+    const whReady = JSON.parse(localStorage.getItem('termac_warehouse_ready')||'{}');
+    whReady[req.id] = {
+      jobId:    req.jobId || req.id,
+      reqId:    req.id,
+      account:  req.accountName,
+      techName: req.techName || '',
+      division: req.division || '',
+      items:    pulledItems,
+      pulledBy: 'Warehouse',
+      ts:       Date.now(),
+      timeStr:  new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}),
+      status:   'ready',
+      techAcknowledged: false,
+    };
+    localStorage.setItem('termac_warehouse_ready', JSON.stringify(whReady));
+  } catch(e) {}
+  // Call notify engine if loaded
+  if (typeof notifyWarehousePulled === 'function') {
+    notifyWarehousePulled({ jobId: req.jobId||req.id, account: req.accountName,
+      techName: req.techName||'Tech', items: pulledItems, pulledBy:'Warehouse' });
+  }
+  // Show green banner in warehouse portal
+  const wb = document.createElement('div');
+  wb.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#1E7B3C;color:#fff;border-radius:10px;padding:12px 22px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:14px;z-index:9999;box-shadow:0 4px 20px rgba(0,0,0,.3);text-align:center;max-width:380px';
+  wb.innerHTML = '✅ KIT PULLED & READY<br><span style="font-weight:500;font-size:12px">'+req.accountName+' · Tech notified in portal</span>';
+  document.body.appendChild(wb);
+  setTimeout(()=>wb.style.opacity='0',4000);
+  setTimeout(()=>wb.remove(),4500);
+
   closeModal('kitModal');
   renderRequisitionsTab();
 }

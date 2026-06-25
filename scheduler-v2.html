@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <script src="termac-intelligence.js"></script>
+<script src="termac-notify.js"></script>
 <link rel="icon" type="image/png" href="termac-one-logo.png">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>UniPro — Scheduler Dashboard</title>
@@ -1104,12 +1105,65 @@ function confirmSchedule(){
   CALL_LOG.push({date:today,accountId:selectedAccount.id,result:'scheduled',ts:Date.now()});
   try{ localStorage.setItem('unipro_calls', JSON.stringify(CALL_LOG)); }catch(e){}
 
+  // ══ CUSTOMER CONFIRMATION (Brevo-ready stub) ══════════════════════════════════════
+  if (typeof notifyCustomerConfirmation === 'function') {
+    notifyCustomerConfirmation({
+      account:       selectedAccount.name || selectedAccount.business,
+      contactName:   selectedAccount.contact || selectedAccount.gc || '',
+      contactEmail:  selectedAccount.email || '',
+      contactPhone:  selectedAccount.phone || '',
+      serviceType:   newJob.serviceType,
+      division:      selectedAccount.division || 'UniPro',
+      scheduledDate: newJob.date,
+      scheduledTime: newJob.time,
+      techName:      (function(){
+        var t = (TECHS||[]).find(function(t){ return t.id===newJob.techId; });
+        return t ? t.name : '';
+      })(),
+      address:       newJob.addr || selectedAccount.addr || '',
+      notes:         selectedAccount.accessNotes || selectedAccount.notes || '',
+    });
+  } else {
+    // Fallback: log confirmation attempt to localStorage
+    try {
+      var clog = JSON.parse(localStorage.getItem('termac_customer_confirms')||'[]');
+      clog.unshift({ ts:Date.now(), account:selectedAccount.name,
+        email:selectedAccount.email||'', phone:selectedAccount.phone||'',
+        scheduledDate:newJob.date, scheduledTime:newJob.time,
+        serviceType:newJob.serviceType, status:'logged_no_brevo' });
+      localStorage.setItem('termac_customer_confirms', JSON.stringify(clog.slice(0,500)));
+    } catch(e) {}
+  }
+
+  // ══ AUTO-GENERATE RECURRING SCHEDULE CADENCE (Loop 9) ════════════════════
+  if (window.TermacIntelligence && typeof window.TermacIntelligence.generateScheduledJobs === 'function') {
+    var acctForSchedule = Object.assign({}, selectedAccount, {
+      serviceTypes: _resolveServiceKeys(selectedAccount),
+      firstServiceDate: newJob.date,
+    });
+    window.TermacIntelligence.generateScheduledJobs(acctForSchedule, 52);
+  }
+
   closeAI();
   renderCallList();
   renderDaySchedule(new Date());
   renderCalendar();
   updateMetrics();
   updateMapPins();
+}
+
+// Map account services to SERVICE_INTERVALS keys
+function _resolveServiceKeys(account) {
+  var keys = [];
+  var div = (account.division||'').toLowerCase();
+  var svc = (account.serviceType||account.services||'').toString().toLowerCase();
+  if (div.includes('gto') || svc.includes('grease')) keys.push('gto_monthly');
+  if (div.includes('filter') || svc.includes('filter')) keys.push('filter_monthly');
+  if (svc.includes('suppression') && (svc.includes('semi') || svc.includes('biannual'))) keys.push('fire_suppression_semiannual');
+  else if (svc.includes('suppression')) keys.push('suppression_semiannual');
+  if (svc.includes('extinguisher')) keys.push('fire_extinguisher_annual');
+  if (svc.includes('emergency') || svc.includes('light')) keys.push('emergency_lights_annual');
+  return keys.length ? keys : ['fire_extinguisher_annual']; // default
 }
 
 function closeAI(){

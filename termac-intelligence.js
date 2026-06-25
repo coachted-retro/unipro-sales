@@ -976,6 +976,10 @@
     // Loop 8 — FTFR
     detectFTFRCallback:      tiDetectFTFRCallback,
     scanAllFTFR:             tiScanAllFTFR,
+    // Loop 9 — Scheduling Cadence
+    generateScheduledJobs:   tiGenerateScheduledJobs,
+    scanUpcomingRenewals:    tiScanUpcomingRenewals,
+    SERVICE_INTERVALS,
     // Notifications
     notify:                  tiNotify,
     getNotifications:        tiGetNotifications,
@@ -987,6 +991,139 @@
     VERSION: '1.1.0'
   };
 
-  tiLog('v1.0.0 loaded — 7 intelligence loops ready');
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  LOOP 9 — AUTOMATED SCHEDULING CADENCE
+  //  On account creation (or manual trigger), calculates all future service
+  //  dates based on division + service type + NFPA/contract interval.
+  //  Writes jobs to termac_scheduled_jobs for scheduler to assign tech.
+  //  Supports UniPro fire (NFPA), Filter Man, GTO intervals.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  const SERVICE_INTERVALS = {
+    // UniPro / Fire — NFPA mandated
+    'fire_suppression_semiannual': { days: 182, label: 'Hood Suppression Semi-Annual', division: 'UniPro', nfpa: 'NFPA 96' },
+    'fire_extinguisher_annual':    { days: 365, label: 'Fire Extinguisher Annual',      division: 'UniPro', nfpa: 'NFPA 10' },
+    'emergency_lights_annual':     { days: 365, label: 'Emergency Lighting Annual',     division: 'UniPro', nfpa: 'NFPA 101' },
+    'suppression_annual':          { days: 365, label: 'Suppression System Annual',     division: 'UniPro', nfpa: 'NFPA 25' },
+    'suppression_semiannual':      { days: 182, label: 'Suppression System Semi-Annual',division: 'UniPro', nfpa: 'NFPA 25' },
+    // Filter Man — hood filter exchange
+    'filter_weekly':               { days:   7, label: 'Filter Exchange Weekly',         division: 'Filter Man', nfpa: null },
+    'filter_biweekly':             { days:  14, label: 'Filter Exchange Bi-Weekly',      division: 'Filter Man', nfpa: null },
+    'filter_monthly':              { days:  28, label: 'Filter Exchange Monthly',        division: 'Filter Man', nfpa: null },
+    'filter_6week':                { days:  42, label: 'Filter Exchange 6-Week',         division: 'Filter Man', nfpa: null },
+    // GTO — grease trap pump-out
+    'gto_monthly':                 { days:  30, label: 'Grease Trap Monthly',            division: 'GTO', nfpa: null },
+    'gto_bimonthly':               { days:  60, label: 'Grease Trap Bi-Monthly',         division: 'GTO', nfpa: null },
+    'gto_quarterly':               { days:  90, label: 'Grease Trap Quarterly',          division: 'GTO', nfpa: null },
+    'gto_semiannual':              { days: 182, label: 'Grease Trap Semi-Annual',        division: 'GTO', nfpa: null },
+  };
+
+  /**
+   * Generate recurring scheduled jobs for an account based on its service types.
+   * @param {Object} account  — CRM account record
+   * @param {number} weeksAhead — how many weeks forward to generate (default 52 = 1 year)
+   */
+  function tiGenerateScheduledJobs(account, weeksAhead) {
+    if (!account || !account.id) return [];
+    const horizon = (weeksAhead || 52) * 7; // days ahead
+    const now     = Date.now();
+    const services = account.serviceTypes || account.services || [];
+    const generated = [];
+
+    services.forEach(svcKey => {
+      const interval = SERVICE_INTERVALS[svcKey];
+      if (!interval) return;
+
+      // Start from account's firstServiceDate or today
+      let cursor = account.firstServiceDate
+        ? new Date(account.firstServiceDate).getTime()
+        : now;
+
+      // Walk forward generating jobs until horizon
+      while (cursor <= now + horizon * 86400000) {
+        if (cursor >= now - 86400000) { // don't re-generate past jobs (allow 1 day buffer)
+          const jobDate = new Date(cursor);
+          const jobId   = 'sched_' + account.id + '_' + svcKey + '_' + cursor;
+
+          generated.push({
+            id:          jobId,
+            accountId:   account.id,
+            account:     account.name || account.business,
+            address:     account.address || account.addr || '',
+            division:    interval.division,
+            serviceType: interval.label,
+            serviceKey:  svcKey,
+            nfpa:        interval.nfpa,
+            scheduledDate: jobDate.toLocaleDateString('en-US', { weekday:'short', year:'numeric', month:'short', day:'numeric' }),
+            scheduledTs: cursor,
+            status:      'unassigned', // unassigned | assigned | confirmed | complete
+            techName:    null,
+            techId:      null,
+            notes:       account.accessNotes || account.notes || '',
+            contact:     account.contact || account.gc || '',
+            phone:       account.phone || '',
+            email:       account.email || '',
+            generatedTs: now,
+            interval:    interval.days,
+          });
+        }
+        cursor += interval.days * 86400000;
+      }
+    });
+
+    // Persist to termac_scheduled_jobs
+    try {
+      const existing = JSON.parse(localStorage.getItem('termac_scheduled_jobs') || '[]');
+      // Remove old generated jobs for this account to avoid duplicates
+      const filtered = existing.filter(j => j.accountId !== account.id || !j.id.startsWith('sched_'));
+      const merged   = [...filtered, ...generated];
+      // Sort by scheduled date
+      merged.sort((a,b) => (a.scheduledTs||0) - (b.scheduledTs||0));
+      localStorage.setItem('termac_scheduled_jobs', JSON.stringify(merged));
+      tiLog('Loop9: Generated ' + generated.length + ' jobs for ' + account.name);
+    } catch(e) { tiLog('Loop9 storage error: ' + e); }
+
+    // Intelligence signal to manager dashboard
+    if (generated.length > 0) {
+      tiNotify({
+        type:   'schedule_generated',
+        icon:   '\ud83d\udcc5',
+        title:  'Recurring Schedule Set — ' + (account.name || account.business),
+        body:   generated.length + ' jobs auto-generated \u00b7 Awaiting tech assignment',
+        target: 'scheduler',
+        urgent: false,
+      });
+    }
+
+    return generated;
+  }
+
+  /**
+   * Scan all accounts and flag any whose next service date is within 14 days
+   * but not yet scheduled. Fires a scheduler alert.
+   */
+  function tiScanUpcomingRenewals() {
+    const jobs    = JSON.parse(localStorage.getItem('termac_scheduled_jobs') || '[]');
+    const horizon = Date.now() + 14 * 86400000;
+    const alerts  = jobs.filter(j =>
+      j.scheduledTs && j.scheduledTs <= horizon &&
+      j.scheduledTs >= Date.now() &&
+      j.status === 'unassigned'
+    );
+    alerts.forEach(j => {
+      tiNotify({
+        type:   'renewal_due',
+        icon:   '\u23f0',
+        title:  'Unassigned Job Due \u2014 ' + j.account,
+        body:   j.serviceType + ' \u00b7 ' + j.scheduledDate + ' \u00b7 Needs tech assignment',
+        target: 'scheduler',
+        urgent: true,
+      });
+    });
+    return alerts;
+  }
+
+  tiLog('v1.1.0 loaded — 9 intelligence loops ready');
 
 })(typeof window !== 'undefined' ? window : global);

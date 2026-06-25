@@ -359,3 +359,227 @@ function _showUrgentToast(type, company) {
     document.head.appendChild(s);
   }
 })();
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  DEFICIENCY → LEXI NOTIFICATION
+//  Called by tech-portal saveDeficiency() when a deficiency is flagged.
+//  Severity 'critical' or 'major' → high-priority Lexi alert + email.
+//  Severity 'minor' → low-priority queue entry only.
+//  Lexi can respond Fix Now (pushes task to tech real-time) or Return Visit
+//  (auto-creates new WO in scheduler queue).
+// ══════════════════════════════════════════════════════════════════════════════
+function notifyOnDeficiency({ account, address, techName, jobId, equipment, description, severity, photoUrl }) {
+  const isHigh  = severity === 'critical' || severity === 'major';
+  const sevLabel = { critical:'CRITICAL', major:'MAJOR', minor:'Minor' }[severity] || severity;
+  const ts       = Date.now();
+  const timeStr  = new Date().toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' });
+  const dateStr  = new Date().toLocaleDateString('en-US');
+
+  // ── Write to Lexi's deficiency queue (reception-portal reads this) ─────────
+  try {
+    const dq = JSON.parse(localStorage.getItem('termac_deficiency_queue') || '[]');
+    dq.unshift({
+      id:          'def_' + ts,
+      ts,
+      jobId:       jobId  || '',
+      account:     account || 'Unknown',
+      address:     address || '',
+      techName:    techName || 'Tech',
+      equipment:   equipment || '',
+      description: description || '',
+      severity,
+      sevLabel,
+      photoUrl:    photoUrl || '',
+      status:      'pending',   // pending | fix_now | return_visit | resolved
+      lexiNotes:   '',
+      createdDate: dateStr,
+      createdTime: timeStr,
+    });
+    localStorage.setItem('termac_deficiency_queue', JSON.stringify(dq.slice(0, 200)));
+  } catch(e) {}
+
+  // ── In-app notification (always) ──────────────────────────────────────────
+  _storeInAppNotif({
+    type:      isHigh ? 'deficiency_urgent' : 'deficiency_minor',
+    icon:      isHigh ? '🚨' : '⚠️',
+    urgent:    isHigh,
+    title:     `${isHigh ? '🚨 ' : ''}Deficiency [${sevLabel}] — ${account}`,
+    body:      `${equipment}: ${description} · Tech: ${techName} · ${timeStr}`,
+    recipient: 'Office — Lexi Cranfield',
+  });
+
+  // ── Email Lexi for critical/major only ────────────────────────────────────
+  if (isHigh) {
+    const lexi   = NOTIF_STAFF['Office — Lexi Cranfield'];
+    const subject = encodeURIComponent(`🚨 ${sevLabel} DEFICIENCY — ${account} | Quote Required`);
+    const body = encodeURIComponent([
+      'Lexi,',
+      '',
+      `A ${sevLabel} deficiency has been flagged in the field and requires an immediate quote.`,
+      '',
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+      'DEFICIENCY DETAILS',
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+      `Account:     ${account}`,
+      `Address:     ${address || '—'}`,
+      `Tech:        ${techName}`,
+      `Equipment:   ${equipment}`,
+      `Description: ${description}`,
+      `Severity:    ${sevLabel}`,
+      `Time:        ${dateStr} @ ${timeStr}`,
+      '',
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+      'NEXT STEPS',
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+      '1. Build the remediation quote.',
+      '2. Determine: Can the tech fix it now (parts on truck)?',
+      '   → Fix Now: Contact the tech directly to authorize.',
+      '   → Return Visit: Create a new WO in the scheduler.',
+      '',
+      'View deficiency queue in Termac One Reception Portal:',
+      'https://coachted-retro.github.io/unipro-sales/reception-portal.html',
+      '',
+      '— Termac One | Deficiency Alert System',
+    ].join('\n'));
+
+    window.open(`mailto:${lexi.email}?cc=tscholl@termac.com&subject=${subject}&body=${body}`, '_blank');
+
+    // Toast
+    const t = document.createElement('div');
+    t.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%) translateY(0);background:#7C0B1E;color:#fff;border-radius:10px;padding:14px 22px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:14px;letter-spacing:.04em;z-index:9999;box-shadow:0 4px 24px rgba(0,0,0,.4);max-width:400px;text-align:center;animation:notifSlideUp .3s ease';
+    t.innerHTML = `🚨 DEFICIENCY ALERT SENT TO LEXI<br><span style="font-weight:600;font-size:12px">${sevLabel} — ${account}</span><br><span style="font-weight:400;font-size:11px;opacity:.9">${equipment} · Quote required</span>`;
+    document.body.appendChild(t);
+    setTimeout(() => t.style.opacity = '0', 5000);
+    setTimeout(() => t.remove(), 5500);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  WAREHOUSE → TECH "PULLED & READY" NOTIFICATION  (bidirectional handshake)
+//  Called by warehouse-portal when a kit is confirmed pulled.
+//  Writes to termac_warehouse_ready so tech portal can poll and display banner.
+// ══════════════════════════════════════════════════════════════════════════════
+function notifyWarehousePulled({ jobId, account, techName, items, pulledBy }) {
+  const ts      = Date.now();
+  const timeStr = new Date().toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' });
+
+  // ── Write to shared ready store ───────────────────────────────────────────
+  try {
+    const ready = JSON.parse(localStorage.getItem('termac_warehouse_ready') || '{}');
+    ready[jobId] = {
+      jobId, account, techName, items: items || [], pulledBy: pulledBy || 'Warehouse',
+      ts, timeStr, status: 'ready', techAcknowledged: false,
+    };
+    localStorage.setItem('termac_warehouse_ready', JSON.stringify(ready));
+  } catch(e) {}
+
+  // ── In-app notification ───────────────────────────────────────────────────
+  _storeInAppNotif({
+    type:      'warehouse_ready',
+    icon:      '✅',
+    urgent:    false,
+    title:     `Kit Ready — ${account}`,
+    body:      `${items && items.length ? items.join(', ') : 'Parts pulled'} · ${timeStr} · By: ${pulledBy || 'Warehouse'}`,
+    recipient: techName || 'Tech',
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  CUSTOMER APPOINTMENT CONFIRMATION  (Brevo-ready stub)
+//  Called by scheduler when a job is confirmed/scheduled.
+//  Logs the send attempt. When BREVO_API_KEY is set, sends via Brevo.
+//  Until then: mailto fallback + localStorage log.
+// ══════════════════════════════════════════════════════════════════════════════
+const BREVO_API_KEY = ''; // Set this when Brevo is live
+
+function notifyCustomerConfirmation({ account, contactName, contactEmail, contactPhone, serviceType, division, scheduledDate, scheduledTime, techName, address, notes }) {
+  const ts      = Date.now();
+  const dateStr = new Date().toLocaleDateString('en-US');
+  const timeStr = new Date().toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' });
+
+  const subject = `Your ${division || 'Termac'} Service Appointment — ${scheduledDate}`;
+  const bodyLines = [
+    `Dear ${contactName || 'Valued Customer'},`,
+    '',
+    `Thank you for choosing ${division || 'Termac Family of Companies'}.`,
+    `This is your appointment confirmation for the following service:`,
+    '',
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+    'APPOINTMENT DETAILS',
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+    `Account:      ${account}`,
+    `Address:      ${address || '—'}`,
+    `Service:      ${serviceType || 'Scheduled Service'}`,
+    `Date:         ${scheduledDate}`,
+    `Time:         ${scheduledTime || 'Morning'}`,
+    techName ? `Technician:   ${techName}` : '',
+    '',
+    notes ? `Notes: ${notes}` : '',
+    '',
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+    'QUESTIONS?',
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+    'Call us: (267) 421-6336',
+    'Email:   tscholl@termac.com',
+    '',
+    'Thank you for your business.',
+    '— Termac Family of Companies',
+  ].filter(l => l !== null);
+
+  const bodyText = bodyLines.join('\n');
+
+  // ── Log the send attempt to localStorage ─────────────────────────────────
+  try {
+    const log = JSON.parse(localStorage.getItem('termac_customer_confirms') || '[]');
+    log.unshift({
+      id:            'conf_' + ts,
+      ts, dateStr, timeStr,
+      account, contactName, contactEmail, contactPhone,
+      serviceType, division, scheduledDate, scheduledTime, techName,
+      subject,
+      method:        BREVO_API_KEY ? 'brevo' : 'mailto',
+      status:        'sent',
+    });
+    localStorage.setItem('termac_customer_confirms', JSON.stringify(log.slice(0, 500)));
+  } catch(e) {}
+
+  // ── Brevo send (when key is live) ─────────────────────────────────────────
+  if (BREVO_API_KEY && contactEmail) {
+    fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: { 'api-key': BREVO_API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sender:  { name: 'Termac Family of Companies', email: 'noreply@termac.com' },
+        to:      [{ email: contactEmail, name: contactName || account }],
+        subject,
+        textContent: bodyText,
+      }),
+    }).catch(() => {}); // Fail silently — mailto fallback always fires too
+  }
+
+  // ── mailto fallback (always opens so confirmation is never silent) ─────────
+  if (contactEmail) {
+    const mailTo  = encodeURIComponent(contactEmail);
+    const mailSub = encodeURIComponent(subject);
+    const mailBod = encodeURIComponent(bodyText);
+    window.open(`mailto:${mailTo}?subject=${mailSub}&body=${mailBod}`, '_blank');
+  }
+
+  // ── In-app notification ───────────────────────────────────────────────────
+  _storeInAppNotif({
+    type:      'customer_confirmed',
+    icon:      '📧',
+    urgent:    false,
+    title:     `Confirmation Sent — ${account}`,
+    body:      `${serviceType} · ${scheduledDate} ${scheduledTime || ''} · To: ${contactEmail || contactPhone || 'on file'}`,
+    recipient: 'Scheduler',
+  });
+
+  // Toast
+  const t = document.createElement('div');
+  t.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#1E7B3C;color:#fff;border-radius:10px;padding:12px 20px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;letter-spacing:.04em;z-index:9999;box-shadow:0 4px 24px rgba(0,0,0,.3);max-width:380px;text-align:center;animation:notifSlideUp .3s ease';
+  t.innerHTML = `📧 Confirmation Sent to Customer<br><span style="font-weight:500;font-size:11px">${account} · ${scheduledDate}</span>`;
+  document.body.appendChild(t);
+  setTimeout(() => t.style.opacity = '0', 4000);
+  setTimeout(() => t.remove(), 4500);
+}
