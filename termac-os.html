@@ -20137,6 +20137,20 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
   } else {
+    // Check if sv_preload has a rep user (coming from sales portal survey launch)
+    var _svRaw = sessionStorage.getItem('sv_preload');
+    if (_svRaw && sessionStorage.getItem('openOnLoad') === 'survey') {
+      try {
+        var _svP = JSON.parse(_svRaw);
+        if (_svP && _svP.repUser) {
+          _currentUser = _svP.repUser;
+          sessionStorage.setItem('termacUser', JSON.stringify(_svP.repUser));
+          applyRoleAccess(_svP.repUser);
+          renderWelcomeBadge(_svP.repUser);
+        }
+      } catch(sve) {}
+    }
+    if (!_currentUser) {
     // DEMO MODE — auto-login as Ted Scholl (Manager)
     // Remove this block when Azure SSO is live
     const demoUser = {
@@ -20149,6 +20163,7 @@ document.addEventListener('DOMContentLoaded', () => {
     _currentUser = demoUser;
     sessionStorage.setItem('termacUser', JSON.stringify(demoUser));
     sessionStorage.setItem('termac_mgr_unlocked', '1');
+    }
     sessionStorage.setItem('termac_mgr_name', 'Ted Scholl');
     applyRoleAccess(demoUser);
     renderWelcomeBadge(demoUser);
@@ -20207,6 +20222,33 @@ document.addEventListener('DOMContentLoaded', () => {
     } else if (openOnLoad === 'mgr') {
       if(typeof openOverlay==='function') openOverlay('mgr');
       _showPage();
+    } else if (openOnLoad === 'survey') {
+      // Survey launch from sales portal — open survey overlay, then show page
+      setTimeout(function() {
+        try {
+          var _sp = sessionStorage.getItem('sv_preload');
+          sessionStorage.removeItem('sv_preload');
+          if (_sp) {
+            var _pd = JSON.parse(_sp);
+            if (_pd && _pd.accountId && typeof openSiteSurvey === 'function') {
+              openSiteSurvey(_pd.accountId);
+            } else if (_pd && typeof svState !== 'undefined') {
+              svState.accountId = null;
+              svState.bizName = (_pd && _pd.bizName) || '';
+              svState.accountType = (_pd && _pd.accountType) || null;
+              svState.selectedServices = [];
+              svState.visitType = null;
+              svState.currentStep = 0;
+              svState.surveyData = {};
+              var _el = document.getElementById('svBizName');
+              if (_el) _el.textContent = svState.bizName || 'New Account';
+              var _ov = document.getElementById('svOverlay');
+              if (_ov) _ov.classList.add('open');
+            }
+          }
+        } catch(se) { console.warn('survey openOnLoad error:', se); }
+        _showPage();
+      }, 400);
     } else if (openOnLoad === 'catalog') {
       if(typeof openCatalog==='function') openCatalog();
       const _retUrl = sessionStorage.getItem('trnReturnUrl');
