@@ -1133,6 +1133,10 @@ body.rail-open .rail-overlay{display:block}
   </div>
   <div style="font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:#9CA3AF;margin-bottom:6px">Field Tech &amp; Driver Portals</div>
   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px">
+    <a target="_blank" href="van-inventory.html" style="display:flex;align-items:center;gap:10px;background:var(--bg);border-radius:9px;padding:12px 16px;text-decoration:none;color:var(--ink);border:1.5px solid var(--line);overflow:hidden;transition:border-color .12s" onmouseover="this.style.borderColor='var(--green)'" onmouseout="this.style.borderColor='var(--line)'">
+      <span style="font-size:24px">🚐</span>
+      <div><strong style="display:block;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:14px">Van Inventory</strong><span style="color:var(--soft);font-size:12px">Pre-route load list, stock levels &amp; resupply</span></div>
+    </a>
     <a target="_blank" href="tech-portal-standalone.html" style="display:flex;align-items:center;gap:10px;background:var(--bg);border-radius:9px;padding:12px 16px;text-decoration:none;color:var(--ink);border:1.5px solid var(--line);overflow:hidden;transition:border-color .12s" onmouseover="this.style.borderColor='var(--red)'" onmouseout="this.style.borderColor='var(--line)'">
       <span style="font-size:24px">🔧</span>
       <div><strong style="display:block;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:14px">UniPro Tech Portal</strong><span style="color:var(--soft);font-size:12px">UniPro / Quality III jobs, work orders &amp; compliance</span></div>
@@ -3933,6 +3937,20 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
           <button onclick="openGoogleMapsHarvest()" style="background:#0F9D58;color:#fff;border:none;border-radius:8px;padding:10px 6px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">🌎 Maps</button>
         </div>
         <div id="mgrHarvestStatus2" style="display:none;background:#FFF8E6;border-radius:8px;padding:8px 12px;font-size:12px;color:#5A4A00"></div>
+      </div>
+    </div>
+
+    <!-- Service Exception Log -->
+    <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:14px;margin-bottom:14px">
+      <div onclick="mgrToggle('exceptions')" style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none;padding-bottom:8px">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft)">
+          ⚠️ Service Exceptions
+          <span id="exBadge" style="display:none;background:#DC2626;color:#fff;border-radius:99px;padding:1px 7px;font-size:9px;font-weight:800;margin-left:6px">0</span>
+        </div>
+        <span id="cs-icon-exceptions" style="color:var(--soft);font-size:14px">▾</span>
+      </div>
+      <div id="cs-body-exceptions">
+        <div id="exceptionPanelBody" style="font-size:12px;color:#6B7280">Loading…</div>
       </div>
     </div>
 
@@ -11810,6 +11828,73 @@ function harvestSaveLog(log){ localStorage.setItem('termac_harvest_log', JSON.st
 
 // Weekly auto-clean runs silently on load — removes blank/TBD junk records older than 7 days
 try { weeklyAutoClean(); } catch(e) {}
+
+
+// ── SERVICE EXCEPTION PANEL ──────────────────────────────────────────────────
+function renderExceptionPanel() {
+  const body = document.getElementById('exceptionPanelBody');
+  const badge = document.getElementById('exBadge');
+  if (!body) return;
+  
+  let exceptions = [];
+  try { exceptions = JSON.parse(localStorage.getItem('termac_exceptions') || '[]'); } catch(e) {}
+  
+  const open = exceptions.filter(e => !e.resolved);
+  if (badge) {
+    badge.style.display = open.length ? 'inline' : 'none';
+    badge.textContent = open.length;
+  }
+  
+  if (!exceptions.length) {
+    body.innerHTML = '<div style="color:var(--green);font-size:11px;font-weight:600;padding:8px 0">✅ No service exceptions on record</div>';
+    return;
+  }
+  
+  const typeColors = {
+    no_answer:'#DC2626', refused:'#DC2626', access:'#D97706', partial:'#D97706',
+    safety:'#DC2626', not_ready:'#D97706', rescheduled:'#1B5FA8', parts_needed:'#6D28D9'
+  };
+  
+  body.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <div style="font-size:11px;color:var(--soft)">${open.length} open · ${exceptions.length - open.length} resolved</div>
+      <button onclick="clearResolvedExceptions()" style="background:none;border:1px solid var(--line);border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer;color:var(--soft)">Clear resolved</button>
+    </div>` +
+  exceptions.slice(0,15).map(ex => `
+    <div style="background:${ex.resolved ? '#F9FAFB' : '#FEF2F2'};border-radius:8px;border-left:3px solid ${ex.resolved ? '#D1D5DB' : (typeColors[ex.typeKey]||'#DC2626')};padding:10px 12px;margin-bottom:8px;opacity:${ex.resolved ? '.65' : '1'}">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px">${ex.typeIcon} ${ex.accountName}</div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <span style="font-size:10px;color:#6B7280">${ex.date}</span>
+          ${!ex.resolved ? `<button onclick="resolveException('${ex.id}')" style="background:#1E7B3C;color:#fff;border:none;border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700;cursor:pointer">✓ Resolve</button>` : '<span style="font-size:10px;color:#6B7280">Resolved</span>'}
+        </div>
+      </div>
+      <div style="font-size:11px;color:#6B7280;margin-bottom:3px">${ex.typeLabel} · ${ex.division || ''} · ${ex.techName}</div>
+      <div style="font-size:12px;color:#374151">${ex.notes}</div>
+      ${ex.rescheduleDate ? `<div style="font-size:11px;color:#D97706;margin-top:4px;font-weight:600">📅 Reschedule: ${ex.rescheduleDate}</div>` : ''}
+      ${ex.photoDataUrl ? `<img src="${ex.photoDataUrl}" style="width:100%;max-height:120px;object-fit:cover;border-radius:6px;margin-top:6px" alt="Exception photo">` : ''}
+    </div>`).join('') +
+  (exceptions.length > 15 ? `<div style="font-size:11px;color:var(--soft);text-align:center;padding:6px">${exceptions.length - 15} older records not shown</div>` : '');
+}
+
+function resolveException(id) {
+  try {
+    const exceptions = JSON.parse(localStorage.getItem('termac_exceptions') || '[]');
+    const ex = exceptions.find(e => e.id === id);
+    if (ex) { ex.resolved = true; ex.resolvedAt = Date.now(); ex.resolvedBy = _currentUser?.name || 'Manager'; }
+    localStorage.setItem('termac_exceptions', JSON.stringify(exceptions));
+    renderExceptionPanel();
+  } catch(e) {}
+}
+
+function clearResolvedExceptions() {
+  try {
+    const exceptions = JSON.parse(localStorage.getItem('termac_exceptions') || '[]');
+    const open = exceptions.filter(e => !e.resolved);
+    localStorage.setItem('termac_exceptions', JSON.stringify(open));
+    renderExceptionPanel();
+  } catch(e) {}
+}
 
 function harvestSetStatus(msg) {
   const banner = document.getElementById('harvestStatusBanner');
@@ -21979,6 +22064,7 @@ setInterval(() => {
   if (document.getElementById('ovMgr')?.classList.contains('open')) {
     refreshManagerDashboard();
     laborRenderDashboard();
+  renderExceptionPanel();
   }
 }, 5 * 60 * 1000);
 
@@ -30618,7 +30704,161 @@ const DRIP_CAMPAIGNS = {
         `, r.assignedRep)
       }
     ]
+  },
+
+  // ── CERT EXPIRATION OUTREACH ────────────────────────────────────────────
+
+  // 21. Fire suppression cert expiring in 60 days → customer alert
+  cert_expiring_60d: {
+    label: 'Cert Expiring — 60-Day Customer Alert',
+    tab: ['accounts'],
+    trigger: r => {
+      if (!r.certStatus?.expiryDate) return false;
+      const exp = new Date(r.certStatus.expiryDate).getTime();
+      const daysOut = (exp - Date.now()) / 86400000;
+      return daysOut > 0 && daysOut <= 60 && daysOut > 30;
+    },
+    exit: r => {
+      if (!r.certStatus?.expiryDate) return true;
+      const exp = new Date(r.certStatus.expiryDate).getTime();
+      return (exp - Date.now()) / 86400000 > 60;
+    },
+    emails: [{
+      delay: 0,
+      to: r => r.email || r.contactEmail || '',
+      subject: r => `Your Fire & Life Safety Certificate Expires ${r.certStatus?.expiryDate} — Schedule Now`,
+      html: r => dripWrap(`
+        <p>Hi${r.contact ? ' ' + r.contact.split(' ')[0] : ''},</p>
+        <p>This is a courtesy reminder that your <strong>fire & life safety inspection certificate</strong> for
+        <strong>${r.business || r.name}</strong> is scheduled to expire on
+        <strong>${r.certStatus?.expiryDate}</strong> — approximately 60 days from today.</p>
+        <p>Staying current with your certificate ensures:</p>
+        <ul style="margin:0 0 14px;padding-left:18px;line-height:2">
+          <li>Continued compliance with NFPA and local AHJ requirements</li>
+          <li>No interruption to your AHJ/Brycer inspection status</li>
+          <li>Full liability protection for your business</li>
+        </ul>
+        <p>Scheduling now gives us time to complete your inspection, address any deficiencies,
+        and issue your renewed certificate well before the deadline.</p>
+        <a href="tel:2674216336" class="cta">📅 Schedule Your Inspection — Call 267-421-6336</a>
+        <hr class="divider">
+        <div class="sig">
+          <strong>Ted Scholl</strong><br>
+          Senior Account Manager — UniPro / Universal Fire Protection<br>
+          Termac Family of Companies<br>
+          tscholl@termac.com · 267-421-6336
+        </div>`, r.assignedRep)
+    }, {
+      delay: 7,
+      to: r => r.email || r.contactEmail || '',
+      subject: r => `Still Time — Fire Certificate Renewal for ${r.business || r.name}`,
+      html: r => dripWrap(`
+        <p>Hi${r.contact ? ' ' + r.contact.split(' ')[0] : ''},</p>
+        <p>I wanted to follow up on the renewal of your fire & life safety certificate expiring
+        <strong>${r.certStatus?.expiryDate}</strong>. We still have time to get your inspection
+        scheduled and your certificate renewed without any compliance gap.</p>
+        <p>Our team is already familiar with your property at ${r.address || r.city || 'your location'} —
+        we can have your inspection completed and certificate issued efficiently.</p>
+        <p>Reply to this email or call me directly — I'll get you on the schedule today.</p>
+        <a href="tel:2674216336" class="cta">Call Ted: 267-421-6336</a>
+        <hr class="divider">
+        <div class="sig">
+          <strong>Ted Scholl</strong> · UniPro / Universal Fire Protection<br>
+          tscholl@termac.com · 267-421-6336
+        </div>`, r.assignedRep)
+    }]
+  },
+
+  // 22. Cert expiring in 30 days → urgent customer follow-up
+  cert_expiring_30d: {
+    label: 'Cert Expiring — 30-Day URGENT Alert',
+    tab: ['accounts'],
+    trigger: r => {
+      if (!r.certStatus?.expiryDate) return false;
+      const exp = new Date(r.certStatus.expiryDate).getTime();
+      const daysOut = (exp - Date.now()) / 86400000;
+      return daysOut > 0 && daysOut <= 30;
+    },
+    exit: r => {
+      if (!r.certStatus?.expiryDate) return true;
+      return new Date(r.certStatus.expiryDate).getTime() < Date.now();
+    },
+    emails: [{
+      delay: 0,
+      to: r => r.email || r.contactEmail || '',
+      subject: r => `URGENT: Fire Certificate Expires in 30 Days — ${r.business || r.name}`,
+      html: r => dripWrap(`
+        <div class="badge">⚠️ URGENT — 30 DAYS REMAINING</div>
+        <p>Hi${r.contact ? ' ' + r.contact.split(' ')[0] : ''},</p>
+        <p>Your fire & life safety inspection certificate for <strong>${r.business || r.name}</strong>
+        expires on <strong>${r.certStatus?.expiryDate}</strong> — just 30 days away.</p>
+        <p><strong>Operating without a current certificate carries real risk:</strong></p>
+        <ul style="margin:0 0 14px;padding-left:18px;line-height:2">
+          <li>AHJ / Brycer compliance flags and potential fines</li>
+          <li>Insurance coverage disputes in the event of a claim</li>
+          <li>Potential operational disruption pending inspection</li>
+        </ul>
+        <p>I need to hear from you today to guarantee we can complete your inspection
+        and renew your certificate before the expiration date.</p>
+        <a href="tel:2674216336" class="cta">🚨 Call Ted Now: 267-421-6336</a>
+        <hr class="divider">
+        <div class="sig">
+          <strong>Ted Scholl</strong> · UniPro / Universal Fire Protection<br>
+          tscholl@termac.com · 267-421-6336
+        </div>`, r.assignedRep)
+    }, {
+      delay: 10,
+      to: r => r.email || r.contactEmail || '',
+      subject: r => `20 Days Left — Certificate Renewal Required: ${r.business || r.name}`,
+      html: r => dripWrap(`
+        <div class="badge">⚠️ 20 DAYS REMAINING</div>
+        <p>Hi${r.contact ? ' ' + r.contact.split(' ')[0] : ''},</p>
+        <p>We have 20 days before your fire certificate expires on <strong>${r.certStatus?.expiryDate}</strong>.
+        I haven't been able to reach you yet — please call me or reply to this email so we can
+        get your inspection on the calendar immediately.</p>
+        <p>This is my direct line: <strong>267-421-6336</strong>. If you've already made arrangements
+        with another provider, please let me know so I can update your account.</p>
+        <a href="tel:2674216336" class="cta">Call 267-421-6336</a>
+        <hr class="divider">
+        <div class="sig">
+          <strong>Ted Scholl</strong> · UniPro / Universal Fire Protection<br>
+          tscholl@termac.com · 267-421-6336
+        </div>`, r.assignedRep)
+    }]
+  },
+
+  // 23. Cert expired — internal manager flag + lapsed customer win-back
+  cert_expired: {
+    label: 'Cert Expired — Lapsed Account Win-Back',
+    tab: ['accounts'],
+    trigger: r => {
+      if (!r.certStatus?.expiryDate) return false;
+      return new Date(r.certStatus.expiryDate).getTime() < Date.now();
+    },
+    exit: r => r.certStatus?.issuedDate && new Date(r.certStatus.issuedDate).getTime() > new Date(r.certStatus?.expiryDate || 0).getTime(),
+    internal: false,
+    emails: [{
+      delay: 0,
+      to: r => r.email || r.contactEmail || '',
+      subject: r => `Your Fire Certificate Has Expired — ${r.business || r.name}`,
+      html: r => dripWrap(`
+        <div class="badge">⛔ CERTIFICATE EXPIRED</div>
+        <p>Hi${r.contact ? ' ' + r.contact.split(' ')[0] : ''},</p>
+        <p>Our records show that the fire & life safety inspection certificate for
+        <strong>${r.business || r.name}</strong> expired on <strong>${r.certStatus?.expiryDate}</strong>.</p>
+        <p>We want to help you get back into compliance as quickly as possible.
+        We can typically schedule an inspection within 2–3 business days and issue
+        your renewed certificate upon successful completion.</p>
+        <p>Please contact me today — the sooner we act, the sooner you're covered.</p>
+        <a href="tel:2674216336" class="cta">Schedule Now: 267-421-6336</a>
+        <hr class="divider">
+        <div class="sig">
+          <strong>Ted Scholl</strong> · UniPro / Universal Fire Protection<br>
+          tscholl@termac.com · 267-421-6336
+        </div>`, r.assignedRep)
+    }]
   }
+
 };
 
 // ── DRIP ENGINE ───────────────────────────────────────────────────────────
