@@ -502,6 +502,7 @@ body.rail-open .rail-overlay{display:block}
       <button onclick="spOpenCatalogInline()" style="background:none;border:1.5px solid #3A3E43;border-radius:7px;color:#9CA3AF;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;padding:5px 12px;cursor:pointer;white-space:nowrap;flex-shrink:0;transition:border-color .12s,color .12s" onmouseover="this.style.borderColor='#F2B705';this.style.color='#F2B705'" onmouseout="this.style.borderColor='#3A3E43';this.style.color='#9CA3AF'">🧪 Catalog</button>
       <!-- Customer Visit -->
       <button onclick="spOpenVisitModal(null)" style="background:none;border:1.5px solid #3A3E43;border-radius:7px;color:#9CA3AF;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;padding:5px 12px;cursor:pointer;white-space:nowrap;flex-shrink:0;transition:border-color .12s,color .12s" onmouseover="this.style.borderColor='#059669';this.style.color='#059669'" onmouseout="this.style.borderColor='#3A3E43';this.style.color='#9CA3AF'">📍 Visit</button>
+      <button onclick="spOpenQuickSurveyModal()" style="background:none;border:1.5px solid #3A3E43;border-radius:7px;color:#9CA3AF;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;padding:5px 12px;cursor:pointer;white-space:nowrap;flex-shrink:0;transition:border-color .12s,color .12s" onmouseover="this.style.borderColor='#C8102E';this.style.color='#C8102E'" onmouseout="this.style.borderColor='#3A3E43';this.style.color='#9CA3AF'">🔬 Survey</button>
       <!-- Universal Search -->
       <div class="sp-unisearch-wrap">
         <span style="font-size:14px">🔍</span>
@@ -576,6 +577,12 @@ body.rail-open .rail-overlay{display:block}
         <div id="siAiNBA" style="display:none"></div>
         <div id="siAiCallTime" style="display:none;margin-top:8px;font-size:11px;color:#6B7280"></div>
         <div id="siAiObjections" style="display:none;margin-top:8px"></div>
+      </div>
+
+      <!-- 3.5 CROSS-SELL INTEL -->
+      <div class="si-section" id="siCrossSell" style="display:none">
+        <div class="si-label">🔗 CROSS-SELL INTEL</div>
+        <div id="siCrossSellBody" class="si-text"></div>
       </div>
 
       <!-- 4. TALK TRACKS -->
@@ -981,6 +988,8 @@ function spRecordCard(r, tab) {
         </select>
       </div>
     </div>
+    ${spCardApptBadge(r, tab)}
+    ${spCardSurveyBtn(r, tab)}
   </div>`;
 }
 
@@ -1059,7 +1068,273 @@ function spShowDayAppts(d, yr, mo) {
   </div>`).join('');
 }
 
-function spOpenApptModal() { spToast('Appointment scheduling — coming soon'); }
+function spOpenApptModal(accountId, tab) {
+  // Build a mini modal for date/time/notes appointment entry
+  var existing = null;
+  if (accountId) {
+    var data = crmLoad('leads');
+    existing = data.find(function(x){ return x.id === accountId; });
+  }
+  var today = new Date().toISOString().slice(0,10);
+  var bizName = existing ? (existing.business || existing.name || '') : '';
+
+  // Remove any old modal
+  var old = document.getElementById('spApptPickerModal');
+  if (old) old.remove();
+
+  var modal = document.createElement('div');
+  modal.id = 'spApptPickerModal';
+  modal.dataset.accountId = accountId || '';
+  modal.dataset.tab = tab || 'contacts';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:5000;display:flex;align-items:center;justify-content:center;padding:20px';
+  modal.innerHTML = '<div style="background:#fff;border-radius:14px;width:min(440px,96vw);box-shadow:0 16px 48px rgba(0,0,0,.3);overflow:hidden">'
+    + '<div style="background:#1A1D21;padding:16px 20px;display:flex;align-items:center;justify-content:space-between">'
+      + '<div>'
+        + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:16px;color:#fff;letter-spacing:.08em;text-transform:uppercase">📅 Schedule Appointment</div>'
+        + (bizName ? '<div style="font-size:12px;color:#9CA3AF;margin-top:2px">' + escH(bizName) + '</div>' : '')
+      + '</div>'
+      + '<button onclick="spCloseApptModal()" style="background:none;border:1.5px solid #3A3E43;border-radius:6px;color:#9CA3AF;padding:4px 10px;font-size:12px;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:700">✕</button>'
+    + '</div>'
+    + '<div style="padding:20px;display:flex;flex-direction:column;gap:14px">'
+      + '<div><label style="font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#5A616B;display:block;margin-bottom:5px">Account / Business</label>'
+        + '<input id="apptBizField" value="' + escH(bizName) + '" placeholder="Business name or address..." style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 12px;font-family:Barlow,sans-serif;font-size:13px;outline:none"></div>'
+      + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'
+        + '<div><label style="font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#5A616B;display:block;margin-bottom:5px">Date *</label>'
+          + '<input type="date" id="apptDateField" value="' + today + '" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 12px;font-family:Barlow,sans-serif;font-size:13px;outline:none"></div>'
+        + '<div><label style="font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#5A616B;display:block;margin-bottom:5px">Time</label>'
+          + '<input type="time" id="apptTimeField" value="09:00" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 12px;font-family:Barlow,sans-serif;font-size:13px;outline:none"></div>'
+      + '</div>'
+      + '<div><label style="font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#5A616B;display:block;margin-bottom:5px">Notes (optional)</label>'
+        + '<textarea id="apptNotesField" rows="2" placeholder="What to cover, directions, contact name..." style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 12px;font-family:Barlow,sans-serif;font-size:13px;outline:none;resize:none"></textarea></div>'
+      + '<div style="display:flex;gap:10px;justify-content:flex-end">'
+        + '<button onclick="spCloseApptModal()" style="background:#F3F4F6;color:#6B7280;border:none;border-radius:8px;padding:9px 18px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;cursor:pointer;letter-spacing:.06em;text-transform:uppercase">Cancel</button>'
+        + '<button onclick="spSaveApptFromModal()" style="background:#C8102E;color:#fff;border:none;border-radius:8px;padding:9px 18px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;cursor:pointer;letter-spacing:.06em;text-transform:uppercase">📅 Save Appointment</button>'
+      + '</div>'
+    + '</div>'
+  + '</div>';
+  document.body.appendChild(modal);
+}
+
+// ── CARD STAGE-AWARE BADGE/BUTTON HELPERS ──────────────────────────────────
+function spLaunchSurveyFromSearchEl(rid) {
+  spLaunchSurveyFromSearch(rid);
+}
+
+
+function spLaunchSurveyFromCardEl(btn) {
+  var card = btn.closest('[data-id]');
+  var id  = card ? card.dataset.id : '';
+  var tab = card ? card.dataset.tab : 'contacts';
+  spLaunchSurveyFromCard(id, tab);
+}
+
+function spOpenApptModalById(btn) {
+  var card = btn.closest('[data-id]');
+  var id  = card ? card.dataset.id : '';
+  var tab = card ? card.dataset.tab : 'contacts';
+  spOpenApptModal(id, tab);
+}
+
+function spCardApptBadge(r, tab) {
+  if (r.lifecycleStage !== 'appointment' || !r.appointmentDate) return '';
+  var timeStr = r.appointmentTime ? ' at ' + r.appointmentTime : '';
+  return '<div style="background:#EDE9FE;border-radius:7px;padding:7px 10px;margin-top:8px;display:flex;align-items:center;justify-content:space-between;font-size:12px">'
+    + '<span>📅 <strong>' + escH(r.appointmentDate + timeStr) + '</strong></span>'
+    + '<button onclick="event.stopPropagation();spOpenApptModalById(this)" style="background:none;border:1px solid #7C3AED;color:#7C3AED;border-radius:5px;padding:2px 8px;font-size:10px;font-family:Barlow Condensed,sans-serif;font-weight:700;cursor:pointer">Reschedule</button>'
+    + '</div>';
+}
+
+function spCardSurveyBtn(r, tab) {
+  if (r.lifecycleStage !== 'appointment' && r.lifecycleStage !== 'site_visit') return '';
+  return '<div style="margin-top:8px">'
+    + '<button onclick="event.stopPropagation();spLaunchSurveyFromCardEl(this)" '
+    + 'style="background:#C8102E;color:#fff;border:none;border-radius:7px;padding:8px 16px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;width:100%">'
+    + '🔬 Start Site Survey →</button>'
+    + '</div>';
+}
+
+
+// ── LAUNCH SURVEY FROM CARD ────────────────────────────────────────────────
+function spLaunchSurveyFromCard(id, tab) {
+  var data = crmLoad('leads');
+  var r = data.find(function(x){ return x.id === id; });
+  if (!r) { spToast('Record not found'); return; }
+
+  // Advance stage to site_visit if still at appointment
+  if (r.lifecycleStage === 'appointment') {
+    r.lifecycleStage = 'site_visit';
+    r.activityLog = r.activityLog || [];
+    r.activityLog.push({ ts:Date.now(), type:'system', icon:'🔬', title:'Site survey started', who:_spRep.name });
+    crmSave('leads', data);
+  }
+
+  // Store survey context in sessionStorage for termac-os.html to pick up
+  sessionStorage.setItem('sv_preload', JSON.stringify({
+    accountId: r.id,
+    bizName:   r.business || r.name || '',
+    address:   r.address || '',
+    contact:   r.contact || r.name || '',
+    phone:     r.phone || '',
+    services:  r.services || [],
+    source:    'sales_portal',
+    returnTo:  'sales-portal.html',
+  }));
+
+  // Open survey in termac-os.html
+  window.open('termac-os.html#survey', '_blank');
+  spToast('🔬 Opening survey — ' + (r.business || r.name));
+}
+
+// ── QUICK SURVEY SEARCH MODAL ─────────────────────────────────────────────
+function spOpenQuickSurveyModal() {
+  var old = document.getElementById('spQuickSurveyModal');
+  if (old) old.remove();
+
+  // Build searchable account list
+  var leads = crmLoad('leads');
+  var accounts = crmLoad('accounts');
+  var all = leads.concat(accounts);
+
+  var modal = document.createElement('div');
+  modal.id = 'spQuickSurveyModal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:5000;display:flex;align-items:flex-start;justify-content:center;padding:60px 20px 20px';
+  modal.innerHTML = '<div style="background:#fff;border-radius:14px;width:min(560px,96vw);box-shadow:0 16px 48px rgba(0,0,0,.35);overflow:hidden">'
+    + '<div style="background:#1A1D21;padding:16px 20px;display:flex;align-items:center;justify-content:space-between">'
+      + '<div>'
+        + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:16px;color:#fff;letter-spacing:.08em;text-transform:uppercase">🔬 Start Site Survey</div>'
+        + '<div style="font-size:11px;color:#9CA3AF;margin-top:2px">Search by name, address, or phone — or start a cold call from scratch</div>'
+      + '</div>'
+      + '<button onclick="spCloseQuickSurveyModal()" style="background:none;border:1.5px solid #3A3E43;border-radius:6px;color:#9CA3AF;padding:4px 10px;font-size:12px;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:700">✕</button>'
+    + '</div>'
+    + '<div style="padding:16px">'
+      + '<input id="surveySearchInput" placeholder="Search business name, address, phone..." onkeyup="spSurveySearch()" style="width:100%;border:1.5px solid #D7DBE0;border-radius:8px;padding:10px 14px;font-family:Barlow,sans-serif;font-size:14px;outline:none;margin-bottom:12px">'
+      + '<div id="surveySearchResults" style="max-height:280px;overflow-y:auto"></div>'
+      + '<div style="border-top:1px solid #E5E7EB;margin-top:12px;padding-top:12px">'
+        + '<button onclick="spStartColdCallSurvey()" style="width:100%;background:#1A1D21;color:#fff;border:none;border-radius:8px;padding:10px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">📍 Cold Call — Start from Scratch</button>'
+      + '</div>'
+    + '</div>'
+  + '</div>';
+
+  // Store all records for search
+  modal._allRecords = all;
+  document.body.appendChild(modal);
+
+  // Initial render
+  spSurveySearch();
+  document.getElementById('surveySearchInput').focus();
+}
+
+function spSurveySearch() {
+  var q = (document.getElementById('surveySearchInput')?.value || '').toLowerCase().trim();
+  var modal = document.getElementById('spQuickSurveyModal');
+  var all = modal ? modal._allRecords : [];
+  var results = document.getElementById('surveySearchResults');
+  if (!results) return;
+
+  var filtered = q.length >= 1
+    ? all.filter(function(r) {
+        var haystack = ((r.business||'')+(r.name||'')+(r.address||'')+(r.phone||'')).toLowerCase();
+        return haystack.includes(q);
+      })
+    : all.slice(0, 8);
+
+  if (!filtered.length) {
+    results.innerHTML = '<div style="text-align:center;padding:20px;color:#9CA3AF;font-size:13px">No matches — try a different search or start from scratch below.</div>';
+    return;
+  }
+
+  results.innerHTML = '';
+  filtered.slice(0,10).forEach(function(r) {
+    var stage = r.lifecycleStage || r.status || '';
+    var svcs = (r.services||[]).slice(0,3).join(', ');
+    var div = document.createElement('div');
+    div.style.cssText = 'padding:10px 12px;border-radius:8px;cursor:pointer;border:1.5px solid #E5E7EB;margin-bottom:6px;transition:border-color .12s';
+    div.innerHTML = '<div style="font-weight:700;font-size:13px;color:#1A1D21">' + escH(r.business||r.name||'Account')
+      + (stage ? ' <span style="font-size:10px;color:#6B7280">· ' + escH(stage) + '</span>' : '') + '</div>'
+      + (r.address ? '<div style="font-size:11px;color:#6B7280;margin-top:2px">📍 ' + escH(r.address) + '</div>' : '')
+      + (svcs ? '<div style="font-size:11px;color:#6B7280">Services: ' + escH(svcs) + '</div>' : '');
+    div.addEventListener('mouseover', function(){ this.style.borderColor = '#C8102E'; });
+    div.addEventListener('mouseout',  function(){ this.style.borderColor = '#E5E7EB'; });
+    (function(id){ div.addEventListener('click', function(){ spLaunchSurveyFromSearch(id); }); })(r.id);
+    results.appendChild(div);
+  });
+}
+
+function spLaunchSurveyFromSearch(id) {
+  document.getElementById('spQuickSurveyModal')?.remove();
+  spLaunchSurveyFromCard(id, 'contacts');
+}
+
+function spStartColdCallSurvey() {
+  document.getElementById('spQuickSurveyModal')?.remove();
+  sessionStorage.setItem('sv_preload', JSON.stringify({
+    accountId: null,
+    bizName:   '',
+    address:   '',
+    contact:   '',
+    phone:     '',
+    services:  [],
+    source:    'cold_call',
+    returnTo:  'sales-portal.html',
+  }));
+  window.open('termac-os.html#survey', '_blank');
+  spToast('🔬 Starting cold call survey...');
+}
+
+
+function spCloseQuickSurveyModal(){ var m=document.getElementById('spQuickSurveyModal'); if(m) m.remove(); }
+
+function spCloseApptModal(){ var m=document.getElementById('spApptPickerModal'); if(m) m.remove(); }
+function spSaveApptFromModal() {
+  var modal = document.getElementById('spApptPickerModal');
+  var aid = modal ? modal.dataset.accountId : '';
+  var tab = modal ? modal.dataset.tab : 'contacts';
+  spSaveAppt(aid, tab);
+}
+
+function spSaveAppt(accountId, tab) {
+  var date  = document.getElementById('apptDateField')?.value;
+  var time  = document.getElementById('apptTimeField')?.value || '';
+  var biz   = (document.getElementById('apptBizField')?.value || '').trim();
+  var notes = (document.getElementById('apptNotesField')?.value || '').trim();
+  if (!date) { alert('Please pick a date.'); return; }
+
+  // Save to appointments store
+  var appts = crmLoad('appointments') || [];
+  var newAppt = {
+    id:       'a_' + Date.now(),
+    accountId: accountId || null,
+    title:    biz || 'Appointment',
+    business: biz,
+    date:     date,
+    time:     time,
+    notes:    notes,
+    rep:      _spRep.name,
+    createdAt: Date.now(),
+    type:     'appointment',
+  };
+  appts.push(newAppt);
+  crmSave('appointments', appts);
+
+  // If we have an account ID, update the lead/contact record
+  if (accountId) {
+    var data = crmLoad('leads');
+    var r = data.find(function(x){ return x.id === accountId; });
+    if (r) {
+      r.appointmentDate = date;
+      r.appointmentTime = time;
+      r.appointmentNotes = notes;
+      r.lifecycleStage = 'appointment';
+      r.activityLog = r.activityLog || [];
+      r.activityLog.push({ ts:Date.now(), type:'system', icon:'📅', title:'Appointment scheduled — ' + date + (time?' at '+time:''), who:_spRep.name });
+      crmSave('leads', data);
+    }
+  }
+
+  spCloseApptModal();
+  spToast('📅 Appointment saved — ' + date + (time ? ' at ' + time : ''));
+  if (tab) spNav(tab);
+}
 
 // ══════════════════════════════════════════════════════
 //  PLAN MY DAY
@@ -1422,6 +1697,16 @@ function spSetStage(id, tab, newStage, selectEl) {
     localStorage.setItem('termac_mgr_disq_queue', JSON.stringify(q));
   }
 
+  // Appointment Set: fire calendar picker immediately
+  if (newStage === 'appointment') {
+    setTimeout(function(){ spOpenApptModal(id, tab); }, 80);
+  }
+
+  // Site Visit: show confirmation — Start Survey button will appear on card
+  if (newStage === 'site_visit') {
+    spToast('📋 Site Visit stage set — use Start Survey on the card to begin');
+  }
+
   // Survey stage: open survey if available
   if (newStage === 'survey') {
     spToast('Survey stage set — open the main platform to run the survey');
@@ -1498,6 +1783,9 @@ function spSetStage(id, tab, newStage, selectEl) {
   const idx = data.findIndex(x => x.id === id);
   if (idx > -1) data[idx] = r; else data.push(r);
   crmSave('leads', data);
+
+  // ── UPSELL TRACKING: credit rep for closing cross-sell gaps ────────────
+  spTrackUpsellAction(r, oldStage, newStage);
   spToast('✅ ' + (SP_STAGES[newStage]?.label || newStage));
   spRenderCRM(tab);
 }
@@ -1616,6 +1904,9 @@ function spRenderGoals() {
     }).join('')}
     </div>
   </div>`;
+
+  // Upsell leaderboard — appended after main goals template
+  el.innerHTML += '<div class="sp-card" style="margin-top:18px">' + spRenderUpsellLeaderboard() + '</div>';
 }
 
 function spEditGoals() {
@@ -3172,6 +3463,9 @@ function spLoadIntelPanel(id, tab) {
   // Talk Tracks by service
   spBuildTalkTracks(r);
 
+  // Cross-sell intel
+  spBuildCrossSellIntel(r);
+
   // Reset chat context
   window._siCurrentRecord = r;
   window._siCurrentTab = tab;
@@ -3244,6 +3538,367 @@ const TALK_TRACKS = {
   'Dish Machine': { headline:'Termac Service', lines:['Chemical dispensing issues are the #1 cause of failed health inspections.','We monitor concentration levels — not just make deliveries.','One call covers chemicals, supplies, and service — all Termac.'] },
 };
 
+// ── UPSELL TRACKING ENGINE ─────────────────────────────────────────────────
+var UPSELL_TRACK_KEY = 'termac_upsell_tracking';
+
+function spGetUpsellData() {
+  try { return JSON.parse(localStorage.getItem(UPSELL_TRACK_KEY) || '{}'); } catch(e) { return {}; }
+}
+function spSaveUpsellData(d) {
+  try { localStorage.setItem(UPSELL_TRACK_KEY, JSON.stringify(d)); } catch(e) {}
+}
+
+// Called whenever a rep takes action on a record. Detects if they closed gaps or ignored them.
+function spTrackUpsellAction(r, oldStage, newStage) {
+  if (!_spRep || !_spRep.name) return;
+  var rep = _spRep.name;
+  var gaps = typeof spGetCrossSellGaps === 'function' ? spGetCrossSellGaps(r) : [];
+  if (!gaps.length) return; // no gaps to track
+
+  var data = spGetUpsellData();
+  if (!data[rep]) data[rep] = { presented:0, accepted:0, ignored:0, services:[], ignored_list:[], history:[] };
+  var rd = data[rep];
+
+  // When a deal moves to accepted/active, check if services now include any gap items
+  if (newStage === 'accepted' || newStage === 'active' || newStage === 'onboarding') {
+    var has = (r.services||[]).map(function(s){ return s.toLowerCase().replace(/[^a-z0-9]/g,''); });
+    var closedGaps = gaps.filter(function(g){ return has.includes(g.svc); });
+    var openGaps   = gaps.filter(function(g){ return !has.includes(g.svc); });
+
+    closedGaps.forEach(function(g) {
+      rd.accepted++;
+      rd.presented++;
+      rd.services.push(g.svc);
+      rd.history.unshift({ ts:Date.now(), type:'accepted', svc:g.svc, account:r.business||r.name||'Account', rep:rep });
+    });
+    openGaps.forEach(function(g) {
+      rd.ignored++;
+      rd.presented++;
+      rd.ignored_list.push(g.svc);
+      rd.history.unshift({ ts:Date.now(), type:'ignored', svc:g.svc, account:r.business||r.name||'Account', rep:rep });
+    });
+
+    // Trim history to last 50
+    rd.history = rd.history.slice(0,50);
+    data[rep] = rd;
+    spSaveUpsellData(data);
+  }
+}
+
+// Called when rep edits a record and adds a service that was in the gap list
+function spTrackServiceAdded(r, newServices, oldServices) {
+  if (!_spRep || !_spRep.name) return;
+  var rep = _spRep.name;
+  var gaps = typeof spGetCrossSellGaps === 'function' ? spGetCrossSellGaps(r) : [];
+  if (!gaps.length) return;
+
+  var gapSvcs = gaps.map(function(g){ return g.svc; });
+  var oldHas = (oldServices||[]).map(function(s){ return s.toLowerCase().replace(/[^a-z0-9]/g,''); });
+  var newHas = (newServices||[]).map(function(s){ return s.toLowerCase().replace(/[^a-z0-9]/g,''); });
+
+  var added = newHas.filter(function(s){ return !oldHas.includes(s) && gapSvcs.includes(s); });
+  if (!added.length) return;
+
+  var data = spGetUpsellData();
+  if (!data[rep]) data[rep] = { presented:0, accepted:0, ignored:0, services:[], ignored_list:[], history:[] };
+
+  added.forEach(function(svc) {
+    data[rep].accepted++;
+    data[rep].presented++;
+    data[rep].services.push(svc);
+    data[rep].history.unshift({ ts:Date.now(), type:'accepted', svc:svc, account:r.business||r.name||'Account', rep:rep });
+  });
+  data[rep].history = data[rep].history.slice(0,50);
+  spSaveUpsellData(data);
+}
+
+// ── UPSELL LEADERBOARD — renders in Goals tab ───────────────────────────────
+function spRenderUpsellLeaderboard() {
+  var data = spGetUpsellData();
+  var all = crmLoad('leads');
+  var reps = Object.keys(SP_REPS);
+
+  // Build stats per rep including from CRM data
+  var repStats = reps.map(function(repName) {
+    var rd = data[repName] || { accepted:0, ignored:0, presented:0, history:[] };
+
+    // Also scan CRM for active accounts this rep closed with multiple services (organic signal)
+    var repAccts = all.filter(function(r){
+      return (r.assignedRep||r.ownedBy||r.createdBy||'') === repName
+        && ['active','onboarding','close'].includes(r.lifecycleStage||'');
+    });
+    var multiSvcCount = repAccts.filter(function(r){ return (r.services||[]).length >= 2; }).length;
+    var totalAccts    = repAccts.length;
+    var acceptRate    = rd.presented > 0 ? Math.round((rd.accepted / rd.presented) * 100) : null;
+
+    return { name:repName, accepted:rd.accepted, ignored:rd.ignored, presented:rd.presented,
+             acceptRate:acceptRate, multiSvcCount:multiSvcCount, totalAccts:totalAccts, history:rd.history };
+  }).filter(function(r){ return r.totalAccts > 0 || r.presented > 0; });
+
+  repStats.sort(function(a,b) {
+    var aRate = a.acceptRate !== null ? a.acceptRate : -1;
+    var bRate = b.acceptRate !== null ? b.acceptRate : -1;
+    return bRate - aRate;
+  });
+
+  if (!repStats.length) {
+    return '<div style="text-align:center;padding:32px;color:var(--soft)">No upsell data yet. The tracking engine activates as reps move accounts through stages with cross-sell gaps.</div>';
+  }
+
+  var html = '<div style="margin-bottom:20px">'
+    + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:18px;margin-bottom:4px">🎯 Upsell Performance — Rep Leaderboard</div>'
+    + '<div style="font-size:12px;color:var(--soft)">Tracks cross-sell recommendations shown vs accepted per rep. Reps who act on intel score higher; order-takers who ignore gaps score lower.</div>'
+  + '</div>';
+
+  html += repStats.map(function(r, i) {
+    var rateColor = r.acceptRate === null ? '#9CA3AF' : r.acceptRate >= 70 ? '#1E7B3C' : r.acceptRate >= 40 ? '#D97706' : '#C8102E';
+    var rateBg    = r.acceptRate === null ? '#F3F4F6' : r.acceptRate >= 70 ? '#DCFCE7' : r.acceptRate >= 40 ? '#FEF3C7' : '#FEE2E2';
+    var rateLabel = r.acceptRate === null ? 'No data yet' : r.acceptRate + '% acceptance';
+    var tier = r.acceptRate === null ? '' : r.acceptRate >= 70 ? '🏆 Upsell Champion' : r.acceptRate >= 40 ? '📈 Building Habits' : '⚠️ Order Taker';
+    var medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i+1) + '.';
+
+    // Recent history
+    var recentHtml = '';
+    if (r.history && r.history.length) {
+      recentHtml = '<div style="margin-top:8px;border-top:1px solid var(--line);padding-top:8px">'
+        + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--soft);margin-bottom:4px">Recent Activity</div>'
+        + r.history.slice(0,4).map(function(h) {
+            var icon = h.type === 'accepted' ? '✅' : '⚠️';
+            var svcLabel = UPSELL_PITCHES[h.svc] ? UPSELL_PITCHES[h.svc].label.replace(/[🔥💧🏭🔧🧴]/g,'').trim() : h.svc;
+            return '<div style="font-size:11px;color:var(--soft);padding:2px 0">'
+              + icon + ' ' + escH(h.account) + ' — ' + escH(svcLabel)
+              + ' <span style="color:#D1D5DB">(' + new Date(h.ts).toLocaleDateString('en-US',{month:'short',day:'numeric'}) + ')</span>'
+            + '</div>';
+          }).join('')
+      + '</div>';
+    }
+
+    return '<div style="background:#fff;border:1.5px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:10px">'
+      + '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px">'
+        + '<div>'
+          + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">'
+            + '<span style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:18px">' + medal + '</span>'
+            + '<span style="font-weight:700;font-size:14px">' + escH(r.name) + '</span>'
+            + (tier ? '<span style="font-size:11px;color:' + rateColor + ';font-weight:600">' + tier + '</span>' : '')
+          + '</div>'
+          + '<div style="display:flex;gap:16px;font-size:12px;color:var(--soft)">'
+            + '<span>✅ ' + r.accepted + ' accepted</span>'
+            + '<span>⚠️ ' + r.ignored + ' ignored</span>'
+            + '<span>📋 ' + r.totalAccts + ' active accounts</span>'
+            + '<span>🔗 ' + r.multiSvcCount + ' multi-service</span>'
+          + '</div>'
+        + '</div>'
+        + '<div style="text-align:center;background:' + rateBg + ';border-radius:8px;padding:8px 14px;flex-shrink:0">'
+          + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:22px;color:' + rateColor + '">'
+            + (r.acceptRate !== null ? r.acceptRate + '%' : '—') + '</div>'
+          + '<div style="font-size:10px;color:' + rateColor + ';font-weight:600">' + rateLabel + '</div>'
+        + '</div>'
+      + '</div>'
+      + recentHtml
+    + '</div>';
+  }).join('');
+
+  return html;
+}
+
+
+// ── CROSS-SELL INTELLIGENCE ENGINE ────────────────────────────────────────
+// Business-type service patterns: what similar businesses in the area use
+var BUSINESS_TYPE_PATTERNS = {
+  restaurant:     { typical: ['unipro','filterman','gto'],          allPro: true,  termac: true  },
+  diner:          { typical: ['unipro','filterman','gto'],          allPro: false, termac: true  },
+  hotel:          { typical: ['unipro','quality3'],                 allPro: false, termac: false },
+  'food hall':    { typical: ['unipro','filterman','gto','termac'], allPro: true,  termac: true  },
+  school:         { typical: ['unipro','quality3'],                 allPro: false, termac: false },
+  hospital:       { typical: ['unipro','quality3'],                 allPro: false, termac: false },
+  'senior':       { typical: ['unipro','quality3'],                 allPro: false, termac: false },
+  'nursing':      { typical: ['unipro','quality3'],                 allPro: false, termac: false },
+  office:         { typical: ['unipro'],                            allPro: false, termac: false },
+  warehouse:      { typical: ['unipro'],                            allPro: false, termac: false },
+  catering:       { typical: ['unipro','filterman','gto'],          allPro: false, termac: true  },
+  bar:            { typical: ['unipro','filterman','gto'],          allPro: false, termac: false },
+  bakery:         { typical: ['unipro','filterman'],                allPro: false, termac: true  },
+};
+
+// Service display labels and pitch lines for upsell
+var UPSELL_PITCHES = {
+  unipro:    { label:'🔥 UniPro — Fire Protection', pitch:'Required by code. Extinguisher inspection, hood suppression, exit lighting — any food service facility needs all three. Similar accounts in your ZIP run annual UniPro inspections.', urgency:'high' },
+  quality3:  { label:'🔥 Quality III — DE Fire', pitch:'If this account is in Delaware, Quality III handles all fire compliance. Same service, local coverage.', urgency:'medium' },
+  filterman: { label:'🏭 Filter Man — Hood Filters', pitch:'Commercial kitchens with hood systems need filter exchange on a schedule. Monthly or bi-weekly is standard — and they are usually already paying someone else.', urgency:'high' },
+  gto:       { label:'💧 GTO — Grease Trap', pitch:'FOG (fats, oils, grease) compliance is enforced locally. Restaurants that do not pump regularly face fines and emergency calls. Most similar accounts in the area are on a quarterly GTO schedule.', urgency:'high' },
+  allpro:    { label:'🔧 AllPro — Stainless Fab', pitch:'Renovation or expansion? AllPro handles custom hood fabrication, shelving, worktables, and stainless install. Great time to mention when they are talking about kitchen changes.', urgency:'low' },
+  termac:    { label:'🧴 Termac — Dish Machine & Chemicals', pitch:'Chemical dispensing is the #1 reason restaurants fail health inspections. Termac monitors concentration levels and covers supplies in one program.', urgency:'medium' },
+};
+
+// Cross-sell gap rules — same logic as termac-intelligence.js Loop 2
+function spGetCrossSellGaps(r) {
+  var has = (r.services || []).map(function(s){ return s.toLowerCase().replace(/[^a-z0-9]/g,''); });
+  var notes = (r.notes || r.siteNotes || '').toLowerCase();
+  var biz = (r.business || r.name || '').toLowerCase();
+  var type = (r.role || r.industry || r.businessType || '').toLowerCase();
+  var allText = notes + ' ' + biz + ' ' + type;
+  var isFood = allText.includes('restaurant') || allText.includes('kitchen') || allText.includes('food') ||
+    allText.includes('diner') || allText.includes('bar') || allText.includes('cafe') ||
+    allText.includes('catering') || allText.includes('bakery') || allText.includes('hotel') ||
+    allText.includes('school') || allText.includes('hospital') || allText.includes('senior') || allText.includes('nursing');
+
+  var gaps = [];
+
+  // Fire protection — almost universal
+  if (!has.includes('unipro') && !has.includes('quality3')) {
+    gaps.push({ svc:'unipro', priority:1, reason:'No fire protection on record — required by code for any commercial property.' });
+  }
+
+  // Food service specific
+  if (isFood) {
+    if (!has.includes('filterman') && (has.includes('unipro') || has.includes('gto') || has.includes('termac'))) {
+      gaps.push({ svc:'filterman', priority:2, reason:'Food service account without hood filter exchange. Similar restaurants in this ZIP use Filter Man.' });
+    }
+    if (!has.includes('gto') && (has.includes('filterman') || has.includes('unipro') || has.includes('termac'))) {
+      gaps.push({ svc:'gto', priority:2, reason:'No grease trap service. FOG compliance required for food service — most comparable accounts pump quarterly.' });
+    }
+    if (!has.includes('termac') && (has.includes('gto') || has.includes('filterman'))) {
+      gaps.push({ svc:'termac', priority:3, reason:'Has hood/grease service but no dish machine program. Common upsell — chemical + service in one visit.' });
+    }
+    if (!has.includes('allpro') && (notes.includes('remodel') || notes.includes('renovation') || notes.includes('new kitchen') || notes.includes('expansion'))) {
+      gaps.push({ svc:'allpro', priority:3, reason:'Renovation notes detected. AllPro stainless fab is a natural mention during kitchen changes.' });
+    }
+  }
+
+  // Single-service accounts
+  if (has.length === 1 && has.includes('unipro') && isFood) {
+    gaps.push({ svc:'filterman', priority:1, reason:'UniPro-only food service account — almost certainly has hood filters needing exchange.' });
+    gaps.push({ svc:'gto', priority:1, reason:'UniPro-only food service account — grease trap compliance likely required.' });
+  }
+
+  return gaps.sort(function(a,b){ return a.priority - b.priority; }).slice(0,4);
+}
+
+// Get "what similar businesses in this area buy"
+function spGetAreaComparables(r) {
+  var allAccounts = crmLoad('accounts').concat(crmLoad('leads'));
+  var zip = (r.zip || (r.address||'').match(/\d{5}/)?.[0] || '').toString();
+  var notes = (r.notes || r.siteNotes || '').toLowerCase();
+  var type  = (r.role || r.industry || r.businessType || '').toLowerCase();
+  var biz   = (r.business || r.name || '').toLowerCase();
+  var allText = notes + ' ' + type + ' ' + biz;
+
+  // Detect business category
+  var category = 'general';
+  if (allText.includes('restaurant') || allText.includes('diner') || allText.includes('bar') || allText.includes('cafe')) category = 'restaurant';
+  else if (allText.includes('hotel') || allText.includes('hospitality') || allText.includes('inn')) category = 'hotel';
+  else if (allText.includes('school') || allText.includes('education')) category = 'school';
+  else if (allText.includes('hospital') || allText.includes('medical') || allText.includes('clinic')) category = 'medical';
+  else if (allText.includes('senior') || allText.includes('nursing') || allText.includes('assisted')) category = 'senior';
+
+  // Find similar active accounts in same ZIP or nearby
+  var similar = allAccounts.filter(function(a) {
+    if (a.id === r.id) return false;
+    if (!a.services || !a.services.length) return false;
+    var aZip = (a.zip || (a.address||'').match(/\d{5}/)?.[0] || '').toString();
+    var aNotes = (a.notes || a.siteNotes || '').toLowerCase();
+    var aType  = (a.role || a.industry || a.businessType || '').toLowerCase();
+    var aBiz   = (a.business || a.name || '').toLowerCase();
+    var aText  = aNotes + ' ' + aType + ' ' + aBiz;
+    var zipMatch = zip && aZip && aZip === zip;
+    var catMatch = false;
+    if (category === 'restaurant') catMatch = aText.includes('restaurant') || aText.includes('diner') || aText.includes('bar') || aText.includes('cafe');
+    else if (category === 'hotel') catMatch = aText.includes('hotel') || aText.includes('hospitality');
+    else if (category === 'school') catMatch = aText.includes('school') || aText.includes('education');
+    else if (category === 'medical') catMatch = aText.includes('hospital') || aText.includes('medical');
+    else if (category === 'senior') catMatch = aText.includes('senior') || aText.includes('nursing');
+    return zipMatch || catMatch;
+  });
+
+  if (!similar.length) return null;
+
+  // Tally service usage among similar accounts
+  var svcCounts = {};
+  similar.forEach(function(a) {
+    (a.services || []).forEach(function(svc) {
+      var key = svc.toLowerCase().replace(/[^a-z0-9]/g,'');
+      svcCounts[key] = (svcCounts[key] || 0) + 1;
+    });
+  });
+
+  // What does the current account NOT have that most similar accounts do?
+  var has = (r.services || []).map(function(s){ return s.toLowerCase().replace(/[^a-z0-9]/g,''); });
+  var recommendations = [];
+  Object.keys(svcCounts).forEach(function(svc) {
+    if (has.includes(svc)) return;
+    var pct = Math.round((svcCounts[svc] / similar.length) * 100);
+    if (pct >= 40) { // Only surface if 40%+ of comparable accounts use it
+      recommendations.push({ svc:svc, pct:pct, count:svcCounts[svc], total:similar.length });
+    }
+  });
+  recommendations.sort(function(a,b){ return b.pct - a.pct; });
+
+  return {
+    similar: similar.length,
+    zip: zip,
+    category: category,
+    recommendations: recommendations.slice(0,3),
+  };
+}
+
+function spBuildCrossSellIntel(r) {
+  var section  = document.getElementById('siCrossSell');
+  var body     = document.getElementById('siCrossSellBody');
+  if (!section || !body) return;
+
+  var gaps        = spGetCrossSellGaps(r);
+  var comparables = spGetAreaComparables(r);
+  var has         = (r.services || []).map(function(s){ return s.toLowerCase().replace(/[^a-z0-9]/g,''); });
+
+  if (!gaps.length && (!comparables || !comparables.recommendations.length)) {
+    section.style.display = 'none';
+    return;
+  }
+  section.style.display = 'block';
+
+  var html = '';
+
+  // Area comparables section
+  if (comparables && comparables.recommendations.length) {
+    html += '<div style="background:#0F1B0F;border:1px solid #1E7B3C;border-radius:8px;padding:10px 12px;margin-bottom:10px">'
+      + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.10em;text-transform:uppercase;color:#6EE7B7;margin-bottom:6px">'
+        + '📍 What Similar ' + (comparables.category !== 'general' ? comparables.category.charAt(0).toUpperCase() + comparables.category.slice(1) + ' ' : '')
+        + 'Businesses in This Area Buy'
+      + '</div>';
+
+    comparables.recommendations.forEach(function(rec) {
+      var pitch = UPSELL_PITCHES[rec.svc];
+      var label = pitch ? pitch.label : rec.svc;
+      var urgColor = pitch && pitch.urgency === 'high' ? '#F87171' : pitch && pitch.urgency === 'medium' ? '#FCD34D' : '#60A5FA';
+      html += '<div style="padding:6px 0;border-bottom:1px solid rgba(255,255,255,.06)">'
+        + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px">'
+          + '<span style="font-size:12px;font-weight:700;color:#fff">' + label + '</span>'
+          + '<span style="font-size:10px;color:' + urgColor + ';font-weight:700">' + rec.pct + '% use it</span>'
+        + '</div>'
+        + '<div style="font-size:11px;color:#9CA3AF">' + rec.count + ' of ' + rec.total + ' comparable accounts are on this service</div>'
+      + '</div>';
+    });
+    html += '</div>';
+  }
+
+  // Cross-sell gap recommendations
+  if (gaps.length) {
+    html += '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.10em;text-transform:uppercase;color:#F59E0B;margin-bottom:6px">🎯 Upsell Opportunities</div>';
+    gaps.forEach(function(gap) {
+      var pitch = UPSELL_PITCHES[gap.svc];
+      if (!pitch) return;
+      var urgDot = pitch.urgency === 'high' ? '#EF4444' : pitch.urgency === 'medium' ? '#F59E0B' : '#60A5FA';
+      html += '<div style="border-left:3px solid ' + urgDot + ';padding:8px 0 8px 10px;margin-bottom:8px">'
+        + '<div style="font-size:12px;font-weight:700;color:#1A1D21;margin-bottom:3px">' + pitch.label + '</div>'
+        + '<div style="font-size:11px;color:#5A616B;line-height:1.5">' + pitch.pitch + '</div>'
+      + '</div>';
+    });
+  }
+
+  body.innerHTML = html;
+}
+
+
 function spBuildTalkTracks(r) {
   const section = document.getElementById('siTracks');
   const el = document.getElementById('siTrackList');
@@ -3306,28 +3961,33 @@ function siConfirmLog() {
 
 async function spRunAI(r, tab) {
   const actSummary = (r.activityLog||[]).slice(-8).map(a => `${new Date(a.ts).toLocaleDateString()}: ${a.title}${a.note?' — '+a.note:''}`).join('\n') || 'No activity logged';
-  const prompt = `You are an expert B2B sales intelligence assistant for Termac, a fire protection and commercial kitchen services company in Philadelphia serving restaurants, hotels, schools, and commercial facilities.
+  // Build cross-sell context for the AI
+  const crossGaps = typeof spGetCrossSellGaps === 'function' ? spGetCrossSellGaps(r) : [];
+  const comparables = typeof spGetAreaComparables === 'function' ? spGetAreaComparables(r) : null;
+  const hasSvcs = (r.services||[]).join(', ') || 'None tagged';
+  const missingSvcs = crossGaps.map(function(g){ var p = UPSELL_PITCHES[g.svc]; return p ? p.label.replace(/[🔥💧🏭🔧🧴]/g,'').trim() : g.svc; }).join(', ');
+  const areaInsight = comparables && comparables.recommendations.length
+    ? comparables.recommendations.map(function(rec){ return (UPSELL_PITCHES[rec.svc] ? UPSELL_PITCHES[rec.svc].label : rec.svc) + ' (' + rec.pct + '% of similar ' + comparables.category + ' businesses in this area use it)'; }).join('; ')
+    : 'No area comparison data available yet';
 
-Analyze this sales record and provide 3 specific, actionable outputs:
-
-RECORD:
-Business: ${r.business||r.name||'Unknown'}
-Type/Industry: ${r.role||r.industry||'Unknown'}
-Services interested in: ${(r.services||[]).join(', ')||'None tagged'}
-Pipeline stage: ${r.lifecycleStage||'lead'}
-Lead score: ${r.score||'Not scored'}/10
-Last contact: ${r.lastContactDate||'Unknown'}
-Notes: ${r.notes||r.siteNotes||'None'}
-Recent activity:
-${actSummary}
-
-Respond ONLY with valid JSON (no markdown):
-{
-  "summary": "One crisp sentence: where things stand and the single most important thing to know right now",
-  "next_best_action": "One specific action the rep should take TODAY with exact talking point or angle",
-  "likely_objections": ["objection 1 (max 6 words)", "objection 2", "objection 3"],
-  "best_call_time": "Best time of day to reach this type of business and why (1 sentence)"
-}`;
+  const prompt = 'You are an expert B2B sales intelligence assistant for Termac, a fire protection and commercial kitchen services company in the Philadelphia/NJ/DE/MD area. Be concise, direct, and actionable.'
+    + '\n\nRECORD:'
+    + '\nBusiness: ' + (r.business||r.name||'Unknown')
+    + '\nType/Industry: ' + (r.role||r.industry||'Unknown')
+    + '\nCurrent services: ' + hasSvcs
+    + '\nServices NOT on (upsell gaps): ' + (missingSvcs || 'None identified')
+    + '\nWhat similar businesses in this area buy: ' + areaInsight
+    + '\nPipeline stage: ' + (r.lifecycleStage||'lead')
+    + '\nLead score: ' + (r.score||'?') + '/10'
+    + '\nNotes: ' + (r.notes||r.siteNotes||'None')
+    + '\nRecent activity:\n' + actSummary
+    + '\n\nRespond ONLY with valid JSON (no markdown):\n{\n'
+    + '  "summary": "One crisp sentence: where things stand and the single most important thing to know right now",\n'
+    + '  "next_best_action": "One specific action the rep should take TODAY — if there are upsell gaps, lead with the highest-priority one",\n'
+    + '  "upsell_angle": "Conversational one-sentence pitch for the most impactful missing service based on what similar nearby businesses use",\n'
+    + '  "likely_objections": ["objection 1 (max 6 words)", "objection 2", "objection 3"],\n'
+    + '  "best_call_time": "Best time of day to reach this type of business and why (1 sentence)"\n'
+    + '}';
 
   try {
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
@@ -3361,6 +4021,20 @@ Respond ONLY with valid JSON (no markdown):
     if(ctEl && ai.best_call_time){
       ctEl.style.display='block';
       ctEl.textContent='🕐 '+ai.best_call_time;
+    }
+    // Upsell angle
+    if(ai.upsell_angle) {
+      var upsellEl = document.getElementById('siAiUpsell');
+      if (!upsellEl) {
+        upsellEl = document.createElement('div');
+        upsellEl.id = 'siAiUpsell';
+        upsellEl.style.cssText = 'margin-top:8px;background:linear-gradient(135deg,#0F2A0F,#142814);border:1px solid #1E7B3C;border-radius:7px;padding:8px 10px';
+        var ctParent = ctEl.parentNode;
+        if (ctParent) ctParent.insertBefore(upsellEl, ctEl.nextSibling);
+      }
+      upsellEl.innerHTML = '<div style="font-size:9px;font-weight:700;color:#6EE7B7;text-transform:uppercase;letter-spacing:.10em;margin-bottom:4px">🔗 Upsell Angle</div>'
+        + '<div style="font-size:11px;color:#D1FAE5;line-height:1.5">'+escH(ai.upsell_angle)+'</div>';
+      upsellEl.style.display = 'block';
     }
   } catch(e) {
     const summaryEl = document.getElementById('siAiSummary');
