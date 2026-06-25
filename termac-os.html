@@ -20110,6 +20110,21 @@ function doSignOut() {
 
 // Check session on load
 document.addEventListener('DOMContentLoaded', () => {
+  // ── URL PARAM SURVEY LAUNCH (from sales portal) ───────────────────────────
+  // Runs before anything else — URL params survive cache and sessionStorage issues
+  (function() {
+    var params = new URLSearchParams(window.location.search);
+    if (params.get('launch') === 'survey') {
+      // Clean URL immediately
+      history.replaceState(null, '', window.location.pathname);
+      var aid = params.get('aid') || '';
+      var biz = decodeURIComponent(params.get('biz') || '');
+      var at  = decodeURIComponent(params.get('at')  || '');
+      // Store for use after page init
+      window._surveyLaunch = { aid: aid, biz: biz, accountType: at };
+    }
+  })();
+
   // Clear any stale/broken sv_preload that would cause JSON parse errors on this page
   (function() {
     var raw = sessionStorage.getItem('sv_preload');
@@ -20175,7 +20190,10 @@ document.addEventListener('DOMContentLoaded', () => {
   // stay hidden until that specific flow's _showPage() callback fires,
   // so the user never sees an intermediate screen (e.g. Dashboard) flash
   // before the real destination (e.g. Reports) renders.
-  if (!sessionStorage.getItem('openOnLoad')) {
+  if (window._surveyLaunch) {
+    // URL param survey launch — override openOnLoad
+    sessionStorage.setItem('openOnLoad', 'survey');
+  } else if (!sessionStorage.getItem('openOnLoad')) {
     // Always open manager portal on plain load — old hub page is retired
     sessionStorage.setItem('openOnLoad', 'mgr');
     sessionStorage.removeItem('returnPortal');
@@ -20221,33 +20239,30 @@ document.addEventListener('DOMContentLoaded', () => {
     } else if (openOnLoad === 'mgr') {
       if(typeof openOverlay==='function') openOverlay('mgr');
       _showPage();
-    } else if (openOnLoad === 'survey') {
-      // Survey launch from sales portal — open survey overlay, then show page
+    } else if (openOnLoad === 'survey' || window._surveyLaunch) {
+      // Survey launch — open survey overlay then show page (no flash)
+      var _sl = window._surveyLaunch || {};
+      window._surveyLaunch = null;
       setTimeout(function() {
         try {
-          var _sp = sessionStorage.getItem('sv_preload');
-          sessionStorage.removeItem('sv_preload');
-          if (_sp) {
-            var _pd = JSON.parse(_sp);
-            if (_pd && _pd.accountId && typeof openSiteSurvey === 'function') {
-              openSiteSurvey(_pd.accountId);
-            } else if (_pd && typeof svState !== 'undefined') {
-              svState.accountId = null;
-              svState.bizName = (_pd && _pd.bizName) || '';
-              svState.accountType = (_pd && _pd.accountType) || null;
-              svState.selectedServices = [];
-              svState.visitType = null;
-              svState.currentStep = 0;
-              svState.surveyData = {};
-              var _el = document.getElementById('svBizName');
-              if (_el) _el.textContent = svState.bizName || 'New Account';
-              var _ov = document.getElementById('svOverlay');
-              if (_ov) _ov.classList.add('open');
-            }
+          if (_sl.aid && typeof openSiteSurvey === 'function') {
+            openSiteSurvey(_sl.aid);
+          } else if (typeof svState !== 'undefined') {
+            svState.accountId  = null;
+            svState.bizName    = _sl.biz || '';
+            svState.accountType = _sl.accountType || null;
+            svState.selectedServices = [];
+            svState.visitType  = null;
+            svState.currentStep = 0;
+            svState.surveyData  = {};
+            var _el = document.getElementById('svBizName');
+            if (_el) _el.textContent = svState.bizName || 'New Account';
+            var _ov = document.getElementById('svOverlay');
+            if (_ov) _ov.classList.add('open');
           }
-        } catch(se) { console.warn('survey openOnLoad error:', se); }
+        } catch(se) { console.warn('survey launch error:', se); }
         _showPage();
-      }, 400);
+      }, 500);
     } else if (openOnLoad === 'catalog') {
       if(typeof openCatalog==='function') openCatalog();
       const _retUrl = sessionStorage.getItem('trnReturnUrl');
