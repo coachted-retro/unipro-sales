@@ -1117,7 +1117,7 @@
   //  Supports UniPro fire (NFPA), Filter Man, GTO intervals.
   // ══════════════════════════════════════════════════════════════════════════
 
-  const SERVICE_INTERVALS = {
+  var SERVICE_INTERVALS = {
     // UniPro / Fire — NFPA mandated
     'fire_suppression_semiannual': { days: 182, label: 'Hood Suppression Semi-Annual', division: 'UniPro', nfpa: 'NFPA 96' },
     'fire_extinguisher_annual':    { days: 365, label: 'Fire Extinguisher Annual',      division: 'UniPro', nfpa: 'NFPA 10' },
