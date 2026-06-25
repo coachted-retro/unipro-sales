@@ -295,7 +295,9 @@ body{background:var(--dark);color:var(--ink);font-family:'Barlow',sans-serif;fon
       <span class="trn-logo-txt">Termac One</span>
     </button>
     <div class="trn-title" id="trnRoleTitle">Scheduler</div>
+    <div id="schedDivBadge" style="display:inline-flex;align-items:center;gap:6px;margin-left:8px;padding:3px 10px;border-radius:6px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;color:#fff;letter-spacing:.04em"></div>
     <div class="trn-spacer"></div>
+    <button class="trn-btn" id="btnAllDivBoard" onclick="openAllDivBoard()" style="font-size:10px;padding:5px 10px;border-color:#F2B705;color:#F2B705">🗓 All-Divisions Board</button>
     <button class="trn-btn" onclick="window.open('user-manuals.html?role=scheduler','_blank')" style="font-size:10px;padding:5px 10px">? Help</button>
     <span class="trn-user-chip" id="schUserChip" style="display:none"><span class="trn-user-chip-avatar" id="schChipInitials" style="background:#1B5FA8"></span><span><span class="trn-user-chip-name" id="schChipName"></span><br><span class="trn-user-chip-role">Scheduler</span></span></span>
     <button class="trn-btn primary" onclick="sessionStorage.setItem('trnReturnUrl','scheduler-unipro.html');window.location.href='employee-portal.html'">🏠 Employee Portal</button>
@@ -477,6 +479,21 @@ body{background:var(--dark);color:var(--ink);font-family:'Barlow',sans-serif;fon
       </div>
     </div>
 
+
+      <!-- COORDINATION INBOX -->
+      <div id="coordInboxPanel" style="background:var(--panel);border-radius:var(--radius);border:1px solid var(--line);margin:12px 0;overflow:hidden">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:#111518;border-bottom:1px solid #2A2E33;cursor:pointer" onclick="toggleCoordInbox()">
+          <div style="font-family:Barlow,sans-serif;font-weight:800;font-size:11px;letter-spacing:.10em;text-transform:uppercase;color:#F2B705">
+            📨 Coordination Inbox
+            <span id="coordInboxBadge" style="display:none;background:#C8102E;color:#fff;border-radius:99px;padding:0 7px;font-size:9px;font-weight:800;margin-left:6px">0</span>
+          </div>
+          <span id="coordInboxChevron" style="color:var(--soft);font-size:13px">▾</span>
+        </div>
+        <div id="coordInboxBody" style="padding:14px 16px;max-height:280px;overflow-y:auto">
+          <div id="coordInboxList" style="font-size:12px;color:var(--soft)">Loading…</div>
+        </div>
+      </div>
+
   </div><!-- /main -->
 
 </div><!-- /app-body -->
@@ -617,6 +634,157 @@ var JOBS = (function(){
 // Call log
 var CALL_LOG = (function(){ try{ return JSON.parse(localStorage.getItem('unipro_calls')||'[]'); }catch(e){ return []; } })();
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  SCHEDULER DIVISION CONFIG
+//  Maps logged-in user → their division → filters all views accordingly.
+//  At Azure SSO go-live: user group membership replaces name-based lookup.
+// ═══════════════════════════════════════════════════════════════════════════
+var SCHEDULER_DIVISIONS = {
+  'UniPro': {
+    color: '#C8102E', label: 'UniPro — Fire Protection',
+    jobsKey: 'unipro_jobs',
+    techs: ['Mike R.','Dave S.','Carlos M.','Tom K.'],
+    serviceIntervals: { fire_extinguisher_annual:365, fire_suppression_semiannual:182, emergency_lights_annual:365 },
+    schedulers: ['Aine Curran','Jasmine Paez','Samuel Holmes'],
+  },
+  'GTO': {
+    color: '#6D28D9', label: 'GTO — Grease Trap Service',
+    jobsKey: 'gto_invoices',
+    techs: ['Chris O.','Jerome B.'],
+    serviceIntervals: { gto_monthly:30, gto_quarterly:90, gto_semiannual:182 },
+    schedulers: [], // TBD
+  },
+  'Filter Man': {
+    color: '#0D7490', label: 'Filter Man — Hood Filter Exchange',
+    jobsKey: 'filterman_invoices',
+    techs: ['Tony F.'],
+    serviceIntervals: { filter_weekly:7, filter_biweekly:14, filter_monthly:28, filter_6week:42 },
+    schedulers: [], // TBD
+  },
+  'AllPro': {
+    color: '#065F46', label: 'AllPro — Stainless Fabrication',
+    jobsKey: 'allpro_invoices',
+    techs: ['Mike T.'],
+    serviceIntervals: {},
+    schedulers: [], // TBD
+  },
+  'Termac': {
+    color: '#7C3AED', label: 'Termac — Dish Machine & Chemical',
+    jobsKey: 'termac_invoices',
+    techs: ['Lisa P.'],
+    serviceIntervals: {},
+    schedulers: [], // TBD
+  },
+  'Quality III': {
+    color: '#1B5FA8', label: 'Quality III — Fire Protection (DE)',
+    jobsKey: 'quality3_invoices',
+    techs: ['Jerome B.'],
+    serviceIntervals: { fire_extinguisher_annual:365, fire_alarm_annual:365 },
+    schedulers: [],
+  },
+};
+
+// Resolve which division the logged-in scheduler belongs to
+function getSchedulerDivision() {
+  var name = localStorage.getItem('termac_current_user') || '';
+  // Check explicit division override (set by admin or Azure SSO group)
+  var override = sessionStorage.getItem('scheduler_division');
+  if (override && SCHEDULER_DIVISIONS[override]) return override;
+  // Match by name in scheduler lists
+  for (var div in SCHEDULER_DIVISIONS) {
+    if (SCHEDULER_DIVISIONS[div].schedulers.includes(name)) return div;
+  }
+  // Default: UniPro (until Azure assigns groups)
+  return 'UniPro';
+}
+
+var _SCHED_DIV = getSchedulerDivision();
+var _SCHED_CFG = SCHEDULER_DIVISIONS[_SCHED_DIV];
+
+// Load jobs for THIS division only
+function loadDivisionJobs() {
+  var key = _SCHED_CFG.jobsKey || 'unipro_jobs';
+  try {
+    var stored = JSON.parse(localStorage.getItem(key) || '[]');
+    if (stored.length) return stored;
+  } catch(e) {}
+  return [];
+}
+
+// Load ALL division jobs (for All-Divisions Board)
+function loadAllDivisionJobs() {
+  var all = [];
+  var today = new Date().toISOString().slice(0,10);
+  Object.keys(SCHEDULER_DIVISIONS).forEach(function(div) {
+    var key = SCHEDULER_DIVISIONS[div].jobsKey;
+    try {
+      var jobs = JSON.parse(localStorage.getItem(key) || '[]');
+      jobs.forEach(function(j) {
+        j._division = div;
+        j._divColor = SCHEDULER_DIVISIONS[div].color;
+        all.push(j);
+      });
+    } catch(e) {}
+  });
+  // Also include termac_scheduled_jobs
+  try {
+    var scheduled = JSON.parse(localStorage.getItem('termac_scheduled_jobs') || '[]');
+    scheduled.forEach(function(j) {
+      j._division = j.division || 'UniPro';
+      j._divColor = (SCHEDULER_DIVISIONS[j._division] || {color:'#374151'}).color;
+      all.push(j);
+    });
+  } catch(e) {}
+  return all;
+}
+
+// Detect same-account conflicts across divisions on same day
+function detectConflicts(allJobs) {
+  var today = new Date().toISOString().slice(0,10);
+  var todayJobs = allJobs.filter(function(j) {
+    return (j.date || '').slice(0,10) === today;
+  });
+  var byAccount = {};
+  todayJobs.forEach(function(j) {
+    var key = (j.accountName || j.account || j.biz || '').toLowerCase().trim();
+    if (!key) return;
+    if (!byAccount[key]) byAccount[key] = [];
+    byAccount[key].push(j);
+  });
+  var conflicts = [];
+  Object.keys(byAccount).forEach(function(acct) {
+    var jobs = byAccount[acct];
+    if (jobs.length < 2) return;
+    var divs = [...new Set(jobs.map(function(j){return j._division;}))];
+    if (divs.length > 1) {
+      // Check time overlap
+      var sorted = jobs.slice().sort(function(a,b){return (a.time||'00:00')>(b.time||'00:00')?1:-1;});
+      var overlapping = false;
+      for (var i=0;i<sorted.length-1;i++) {
+        var aEnd = timeToMin(sorted[i].time) + (parseInt(sorted[i].duration)||60);
+        var bStart = timeToMin(sorted[i+1].time);
+        if (aEnd > bStart) { overlapping = true; break; }
+      }
+      conflicts.push({
+        account: jobs[0].accountName || jobs[0].account || jobs[0].biz || acct,
+        divisions: divs,
+        jobs: sorted,
+        overlapping,
+        severity: overlapping ? 'red' : 'yellow',
+      });
+    }
+  });
+  return conflicts;
+}
+
+function timeToMin(t) {
+  if (!t) return 0;
+  var p = t.split(':');
+  return parseInt(p[0]||0)*60 + parseInt(p[1]||0);
+}
+
+
+
 var selectedAccount = null;
 var selectedSlot = null;
 var calYear, calMonth;
@@ -626,6 +794,38 @@ var microCharts = {};
 
 // ── INIT ──────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function(){
+  // ── Apply division identity ──────────────────────────────────────────────
+  _SCHED_DIV = getSchedulerDivision();
+  _SCHED_CFG = SCHEDULER_DIVISIONS[_SCHED_DIV];
+  // Update nav badge
+  var badge = document.getElementById('schedDivBadge');
+  if (badge) {
+    badge.style.background = _SCHED_CFG.color;
+    badge.textContent = _SCHED_CFG.label;
+  }
+  // Update page title
+  var title = document.getElementById('trnRoleTitle');
+  if (title) title.textContent = 'Scheduler — ' + _SCHED_DIV;
+  // Update user chip
+  var chipName = document.getElementById('schChipName');
+  var chipInit = document.getElementById('schChipInitials');
+  var userName = localStorage.getItem('termac_current_user') || 'Scheduler';
+  if (chipName) chipName.textContent = userName;
+  if (chipInit) chipInit.textContent = userName.split(' ').map(function(w){return w[0]||'';}).join('').slice(0,2).toUpperCase();
+  var chip = document.getElementById('schUserChip');
+  if (chip) chip.style.display = 'inline-flex';
+  // Filter TECHS to division
+  TECHS = TECHS.filter(function(t) {
+    return !_SCHED_CFG.techs.length || _SCHED_CFG.techs.some(function(tn){
+      return t.name.toLowerCase().includes(tn.toLowerCase().split('.')[0]);
+    });
+  });
+  // Reload JOBS from division-specific key
+  try {
+    var divJobs = loadDivisionJobs();
+    if (divJobs.length) { JOBS.length=0; divJobs.forEach(function(j){JOBS.push(j);}); }
+  } catch(e) {}
+
   // Loop 4 — Generate scheduling alerts on load
   if (typeof TermacIntelligence !== 'undefined') {
     var alerts = TermacIntelligence.getSchedulingAlerts(30);
@@ -2536,6 +2736,9 @@ Service: '+job.serviceType);
   } catch(e) {}
 
   renderUnassignedQueue();
+  renderCoordInboxList();
+  // Poll coord inbox every 30s
+  setInterval(function(){ renderCoordInboxList(); }, 30000);
   renderCallList();
   renderDaySchedule(new Date());
   alert('✅ Assigned to '+techName+'. Job added to schedule.');
@@ -2643,6 +2846,263 @@ function renderMultiDivCoord() {
 
 // Run on load and when JOBS changes
 setTimeout(renderMultiDivCoord, 800);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  ALL-DIVISIONS BOARD
+//  Read-only view of all jobs across all 6 divisions today.
+//  Conflict detection: same account + same day + different division.
+//  Cross-scheduler coordination: "Coordinate" button writes to target div queue.
+// ═══════════════════════════════════════════════════════════════════════════
+
+function openAllDivBoard() {
+  var modal = document.getElementById('allDivModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'allDivModal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:800;display:flex;align-items:flex-start;justify-content:center;padding:20px;overflow-y:auto';
+    modal.innerHTML = '<div style="background:#1A1D21;border-radius:12px;width:100%;max-width:900px;max-height:90vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.5)">' +
+      '<div style="background:#111316;padding:16px 20px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #2A2E33;flex-shrink:0">' +
+        '<div>' +
+          '<div style="font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:9px;letter-spacing:.18em;text-transform:uppercase;color:#F2B705;margin-bottom:3px">OPERATIONS COMMAND</div>' +
+          '<div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:20px;color:#fff">All-Divisions Board</div>' +
+        '</div>' +
+        '<div style="display:flex;align-items:center;gap:10px">' +
+          '<div id="allDivDate" style="font-size:12px;color:#6B7280"></div>' +
+          '<button onclick="document.getElementById('allDivModal').remove()" style="background:rgba(255,255,255,.1);border:none;border-radius:6px;color:#fff;font-size:18px;cursor:pointer;padding:4px 10px;width:34px">✕</button>' +
+        '</div>' +
+      '</div>' +
+      '<div id="allDivContent" style="flex:1;overflow-y:auto;padding:16px"></div>' +
+    '</div>';
+    document.body.appendChild(modal);
+    modal.addEventListener('click', function(e){ if(e.target===modal) modal.remove(); });
+  }
+  renderAllDivBoard();
+}
+
+function renderAllDivBoard() {
+  var content = document.getElementById('allDivContent');
+  var dateEl  = document.getElementById('allDivDate');
+  if (!content) return;
+
+  var today = new Date().toISOString().slice(0,10);
+  var todayLabel = new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
+  if (dateEl) dateEl.textContent = todayLabel;
+
+  var allJobs = loadAllDivisionJobs();
+  var todayJobs = allJobs.filter(function(j){
+    return (j.date||j.scheduledDate||'').slice(0,10) === today;
+  });
+  todayJobs.sort(function(a,b){ return (a.time||a.scheduledTime||'00:00') > (b.time||b.scheduledTime||'00:00') ? 1 : -1; });
+
+  var conflicts = detectConflicts(allJobs);
+  var conflictAccts = {};
+  conflicts.forEach(function(cf){ conflictAccts[(cf.account||'').toLowerCase()] = cf; });
+
+  // KPI row
+  var divCounts = {};
+  todayJobs.forEach(function(j){ divCounts[j._division] = (divCounts[j._division]||0)+1; });
+  var kpiHtml = '<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">';
+  kpiHtml += '<div style="background:#2A2E33;border-radius:8px;padding:10px 16px;flex:1;min-width:120px">' +
+    '<div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:24px;color:#fff">'+todayJobs.length+'</div>' +
+    '<div style="font-size:10px;color:#6B7280;text-transform:uppercase;letter-spacing:.08em">Total Jobs Today</div></div>';
+  Object.keys(SCHEDULER_DIVISIONS).forEach(function(div) {
+    var cnt = divCounts[div]||0;
+    if (!cnt) return;
+    var color = SCHEDULER_DIVISIONS[div].color;
+    kpiHtml += '<div style="background:#2A2E33;border-radius:8px;padding:10px 16px;border-left:3px solid '+color+';flex:1;min-width:100px">' +
+      '<div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:22px;color:'+color+'">'+cnt+'</div>' +
+      '<div style="font-size:10px;color:#6B7280;text-transform:uppercase;letter-spacing:.06em">'+div+'</div></div>';
+  });
+  kpiHtml += '</div>';
+
+  // Conflicts section
+  var conflictHtml = '';
+  if (conflicts.length) {
+    conflictHtml = '<div style="background:#1F0F0F;border:1.5px solid #C8102E;border-radius:10px;padding:14px 16px;margin-bottom:16px">' +
+      '<div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:#C8102E;margin-bottom:10px">⚠️ Schedule Conflicts — '+conflicts.length+' Account'+(conflicts.length>1?'s':'')+' with Multi-Division Jobs Today</div>';
+    conflicts.forEach(function(cf) {
+      var icon = cf.overlapping ? '🔴' : '🟡';
+      var severity = cf.overlapping ? 'Time Overlap' : 'Same Day — Coordinate Windows';
+      conflictHtml += '<div style="background:#2A1010;border-radius:7px;padding:10px 14px;margin-bottom:8px">' +
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">' +
+          '<div style="font-weight:700;font-size:13px;color:#fff">'+icon+' '+escH(cf.account)+'</div>' +
+          '<span style="font-size:10px;color:'+(cf.overlapping?'#F87171':'#FCD34D')+';font-weight:700">'+severity+'</span>' +
+        '</div>' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">' +
+          cf.divisions.map(function(d){ return '<span style="background:'+(SCHEDULER_DIVISIONS[d]||{color:'#374151'}).color+';color:#fff;border-radius:4px;padding:1px 8px;font-size:10px;font-weight:700">'+d+'</span>'; }).join('') +
+        '</div>' +
+        '<div style="font-size:11px;color:#9CA3AF;margin-bottom:8px">' +
+          cf.jobs.map(function(j){
+            return (j.time||'TBD')+' · '+(j._division)+' · '+(j.serviceType||j.type||'Service')+(j.tech||j.techName?' · '+(j.tech||j.techName):'');
+          }).join('<br>') +
+        '</div>' +
+        '<button onclick="openCoordinateDialog(''+escH(cf.account)+'',''+escH(cf.divisions.join(','))+'')" style="background:#C8102E;color:#fff;border:none;border-radius:6px;padding:5px 14px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.06em;cursor:pointer">📨 Coordinate →</button>' +
+      '</div>';
+    });
+    conflictHtml += '</div>';
+  }
+
+  // Jobs table
+  var tableHtml = '<div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.10em;text-transform:uppercase;color:#6B7280;margin-bottom:8px">Today's Full Schedule — All Divisions</div>';
+  if (!todayJobs.length) {
+    tableHtml += '<div style="text-align:center;padding:40px;color:#4B5563;font-family:'Barlow Condensed',sans-serif;font-size:14px">No jobs scheduled today across any division.<br>Jobs will appear here when added by division schedulers.</div>';
+  } else {
+    tableHtml += '<div style="display:flex;flex-direction:column;gap:4px">';
+    todayJobs.forEach(function(j) {
+      var acctKey = (j.accountName||j.account||j.biz||'').toLowerCase().trim();
+      var cf = conflictAccts[acctKey];
+      var borderColor = cf ? (cf.overlapping?'#C8102E':'#D97706') : '#2A2E33';
+      var divColor = j._divColor || '#374151';
+      var techName = j.tech || j.techName || j.techId || '—';
+      var status = j.status || 'scheduled';
+      var statusColor = {complete:'#22C55E','in-progress':'#F59E0B',onsite:'#F59E0B',enroute:'#3B82F6',scheduled:'#6B7280',cancelled:'#EF4444'}[status]||'#6B7280';
+
+      tableHtml += '<div style="background:#2A2E33;border-radius:8px;padding:10px 14px;border:1px solid '+borderColor+';display:flex;align-items:center;gap:12px">' +
+        '<div style="width:52px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px;color:#fff;flex-shrink:0">'+(j.time||j.scheduledTime||'TBD')+'</div>' +
+        '<div style="width:4px;height:36px;border-radius:2px;background:'+divColor+';flex-shrink:0"></div>' +
+        '<div style="flex:1;min-width:0">' +
+          '<div style="font-weight:700;font-size:13px;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+(cf?'⚠️ ':'')+escH(j.accountName||j.account||j.biz||'Account')+'</div>' +
+          '<div style="font-size:11px;color:#9CA3AF;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+ escH(j.serviceType||j.type||'Service')+'</div>' +
+        '</div>' +
+        '<div style="text-align:right;flex-shrink:0">' +
+          '<div style="background:'+divColor+';color:#fff;border-radius:4px;padding:1px 8px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;margin-bottom:3px">'+escH(j._division)+'</div>' +
+          '<div style="font-size:10px;color:#9CA3AF">'+escH(techName)+'</div>' +
+          '<div style="font-size:10px;color:'+statusColor+';font-weight:700;text-transform:uppercase">'+status+'</div>' +
+        '</div>' +
+      '</div>';
+    });
+    tableHtml += '</div>';
+  }
+
+  content.innerHTML = kpiHtml + conflictHtml + tableHtml;
+
+  // Auto-refresh every 60s
+  if (window._allDivRefreshTimer) clearInterval(window._allDivRefreshTimer);
+  window._allDivRefreshTimer = setInterval(function(){
+    if (document.getElementById('allDivModal')) renderAllDivBoard();
+    else clearInterval(window._allDivRefreshTimer);
+  }, 60000);
+}
+
+// ── CROSS-SCHEDULER COORDINATION ─────────────────────────────────────────────
+function openCoordinateDialog(account, divisionsStr) {
+  var divisions = divisionsStr.split(',');
+  var myDiv = _SCHED_DIV;
+  var otherDivs = divisions.filter(function(d){ return d !== myDiv; });
+
+  var note = prompt(
+    'COORDINATE: ' + account + '
+
+' +
+    'Send a coordination note to: ' + otherDivs.join(', ') + '
+
+' +
+    'Example: "Can you move your 11am visit to 2pm? We have UniPro there at 10am."
+
+' +
+    'Enter your message:'
+  );
+  if (!note || !note.trim()) return;
+
+  var ts = Date.now();
+  var from = localStorage.getItem('termac_current_user') || _SCHED_DIV + ' Scheduler';
+  var msgId = 'coord_' + ts;
+
+  // Write to shared coordination queue — each target division reads it
+  otherDivs.forEach(function(targetDiv) {
+    try {
+      var qKey = 'termac_sched_coord_' + targetDiv.toLowerCase().replace(/\s/g,'_');
+      var queue = JSON.parse(localStorage.getItem(qKey) || '[]');
+      queue.unshift({
+        id: msgId, ts, from, fromDivision: myDiv, targetDivision: targetDiv,
+        account, note: note.trim(), status: 'unread',
+        date: new Date().toLocaleDateString('en-US'),
+        time: new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}),
+      });
+      localStorage.setItem(qKey, JSON.stringify(queue.slice(0,50)));
+    } catch(e) {}
+  });
+
+  // Also write to intelligence notification feed
+  try {
+    var notifs = JSON.parse(localStorage.getItem('termac_hotlead_notifs') || '[]');
+    notifs.unshift({
+      id: 'n_'+ts, ts, type:'sched_coord', icon:'📨', urgent:false,
+      title: 'Schedule Coordination — '+account,
+      body: from+' → '+otherDivs.join('/')+': "'+note.trim().slice(0,80)+'"',
+      recipient: otherDivs.join(', '), read:false,
+      date: new Date().toLocaleDateString('en-US'),
+      time: new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}),
+    });
+    localStorage.setItem('termac_hotlead_notifs', JSON.stringify(notifs.slice(0,100)));
+  } catch(e) {}
+
+  alert('✅ Coordination note sent to ' + otherDivs.join(', ') + ' scheduler queue.');
+  renderAllDivBoard(); // refresh to show sent status
+}
+
+// ── COORDINATION INBOX (reads messages sent TO this division) ─────────────────
+function renderCoordInbox() {
+  var myDiv = _SCHED_DIV;
+  var qKey = 'termac_sched_coord_' + myDiv.toLowerCase().replace(/\s/g,'_');
+  try {
+    var msgs = JSON.parse(localStorage.getItem(qKey) || '[]');
+    var unread = msgs.filter(function(m){return m.status==='unread';});
+    // Update badge
+    var badge = document.getElementById('coordInboxBadge');
+    if (badge) { badge.textContent = unread.length; badge.style.display = unread.length ? 'inline' : 'none'; }
+    return msgs;
+  } catch(e) { return []; }
+}
+
+function markCoordRead(msgId) {
+  var myDiv = _SCHED_DIV;
+  var qKey = 'termac_sched_coord_' + myDiv.toLowerCase().replace(/\s/g,'_');
+  try {
+    var msgs = JSON.parse(localStorage.getItem(qKey) || '[]');
+    msgs.forEach(function(m){if(m.id===msgId)m.status='read';});
+    localStorage.setItem(qKey, JSON.stringify(msgs));
+  } catch(e) {}
+  renderCoordInbox();
+}
+
+
+function renderCoordInboxList() {
+  var msgs = renderCoordInbox();
+  var el = document.getElementById('coordInboxList');
+  if (!el) return;
+  if (!msgs.length) {
+    el.innerHTML = '<div style="color:var(--soft);text-align:center;padding:16px">No coordination messages.</div>';
+    return;
+  }
+  el.innerHTML = msgs.slice(0,10).map(function(m) {
+    var isUnread = m.status === 'unread';
+    return '<div style="background:'+(isUnread?'#1A1D21':'#111316')+';border:1px solid '+(isUnread?'#F2B705':'#2A2E33')+';border-radius:8px;padding:10px 12px;margin-bottom:6px">' +
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">' +
+        '<div style="font-weight:700;font-size:12px;color:'+(isUnread?'#F2B705':'#9CA3AF')+'">' +
+          (isUnread?'🔔 ':'')+'From: '+escH(m.from)+' ('+escH(m.fromDivision)+')' +
+        '</div>' +
+        '<div style="font-size:10px;color:#4B5563">'+escH(m.date)+' '+escH(m.time)+'</div>' +
+      '</div>' +
+      '<div style="font-size:11px;color:#9CA3AF;margin-bottom:4px">Re: <strong style="color:#fff">'+escH(m.account)+'</strong></div>' +
+      '<div style="font-size:12px;color:#E5E7EB;margin-bottom:8px;line-height:1.5">"'+escH(m.note)+'"</div>' +
+      (isUnread?'<button onclick="markCoordRead(''+m.id+'')" style="background:#374151;color:#D1D5DB;border:none;border-radius:5px;padding:4px 10px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;cursor:pointer">Mark Read</button>':'') +
+    '</div>';
+  }).join('');
+}
+
+var _coordInboxOpen = true;
+function toggleCoordInbox() {
+  _coordInboxOpen = !_coordInboxOpen;
+  var body = document.getElementById('coordInboxBody');
+  var chev = document.getElementById('coordInboxChevron');
+  if (body) body.style.display = _coordInboxOpen ? 'block' : 'none';
+  if (chev) chev.textContent = _coordInboxOpen ? '▾' : '▸';
+}
+
+function escH(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
 
 </script>
 </body>
