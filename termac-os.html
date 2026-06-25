@@ -13579,6 +13579,142 @@ function dmsAssignHotLead(id) {
 
   showToast(`🔥 Hot lead assigned to ${rep} — in-app + email notification sent`);
   _dmsShowRepSLAStatus(newLead.id, rep, now);
+  // Generate pre-visit intel brief for rep
+  dmsShowIntelBrief(newLead, r, rep);
+}
+
+// ══ DMS PRE-VISIT INTEL BRIEF ═══════════════════════════════════════════
+// Generated automatically when a DMS hot lead is assigned to a rep.
+// Aggregates: account history, last contact, cert status, open deficiencies,
+// cross-sell gaps, churn risk, and call notes — in one printable card.
+function dmsShowIntelBrief(lead, dmsRecord, repName) {
+  // Pull any existing account match from CRM
+  const accounts = crmLoad('termac_crm_accounts').concat(crmLoad('crm_accounts'));
+  const match = accounts.find(a =>
+    (a.name||a.business||'').toLowerCase() === (lead.business||lead.name||'').toLowerCase()
+  );
+
+  // Build the brief content
+  const existing = match ? 'existing' : 'new';
+  const certExp  = match?.certStatus?.expiryDate || null;
+  const certDays = certExp ? Math.round((new Date(certExp)-Date.now())/86400000) : null;
+  const lastContact = match?.lastContactDate || match?.activityLog?.[0]?.ts
+    ? new Date(match.activityLog[0].ts).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})
+    : 'No history';
+  const openDefs   = (match?.deficiencies||[]).filter(d=>!d.resolved);
+  const churnScore = match && typeof calcChurnScore === 'function' ? calcChurnScore(match) : null;
+  const services   = (lead.services||dmsRecord?.dmsDivisions||['UniPro']).join(', ');
+  const notes      = dmsRecord?.dmsNotes || lead.notes || '';
+
+  // Cross-sell gaps — what services does the account NOT currently have?
+  const currentServices = (match?.services||[]).map(s=>s.toLowerCase());
+  const allServices = ['unipro','gto','filterman','allpro','termac'];
+  const gaps = allServices.filter(s => !currentServices.some(c=>c.includes(s)));
+
+  const certBadge = certDays === null ? '<span style="background:#F3F4F6;color:#6B7280;border-radius:4px;padding:1px 7px;font-size:10px">No cert on file</span>'
+    : certDays < 0 ? '<span style="background:#FEE2E2;color:#991B1B;border-radius:4px;padding:1px 7px;font-size:10px;font-weight:800">EXPIRED</span>'
+    : certDays < 30 ? `<span style="background:#FEF3C7;color:#92400E;border-radius:4px;padding:1px 7px;font-size:10px;font-weight:800">Expires in ${certDays}d</span>`
+    : `<span style="background:#D1FAE5;color:#065F46;border-radius:4px;padding:1px 7px;font-size:10px">Valid — ${certDays}d left</span>`;
+
+  const churnBadge = churnScore === null ? ''
+    : churnScore >= 8 ? '<span style="background:#FEE2E2;color:#991B1B;border-radius:4px;padding:1px 7px;font-size:10px;font-weight:800">HIGH CHURN RISK</span>'
+    : churnScore >= 5 ? '<span style="background:#FEF3C7;color:#92400E;border-radius:4px;padding:1px 7px;font-size:10px">At Risk</span>'
+    : '<span style="background:#D1FAE5;color:#065F46;border-radius:4px;padding:1px 7px;font-size:10px">Healthy</span>';
+
+  const modal = document.createElement('div');
+  modal.id = 'dmsIntelBriefModal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(26,29,33,.55);z-index:700;display:flex;align-items:flex-start;justify-content:center;padding:24px 16px;overflow-y:auto';
+
+  modal.innerHTML = `
+    <div style="background:#fff;border-radius:12px;max-width:560px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,.25);overflow:hidden">
+      <!-- Header -->
+      <div style="background:linear-gradient(135deg,#1A1D21,#1E3A8A);padding:16px 20px;display:flex;align-items:center;justify-content:space-between">
+        <div>
+          <div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:#93C5FD;margin-bottom:3px">Pre-Visit Intel Brief</div>
+          <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:18px;color:#fff">${escH(lead.business||lead.name)}</div>
+          <div style="font-size:11px;color:#BFC4CA;margin-top:2px">Assigned to <strong style="color:#FCD34D">${escH(repName)}</strong> · DMS Source</div>
+        </div>
+        <button onclick="document.getElementById('dmsIntelBriefModal').remove()" style="background:rgba(255,255,255,.15);border:none;border-radius:6px;color:#fff;font-size:18px;cursor:pointer;padding:4px 10px;line-height:1">✕</button>
+      </div>
+
+      <!-- Body -->
+      <div style="padding:16px 20px;display:flex;flex-direction:column;gap:14px">
+
+        <!-- Account status -->
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <span style="background:${existing==='existing'?'#DBEAFE':'#F0FDF4'};color:${existing==='existing'?'#1E40AF':'#166534'};border-radius:4px;padding:2px 9px;font-size:11px;font-weight:700">${existing==='existing'?'EXISTING ACCOUNT':'NEW PROSPECT'}</span>
+          ${certBadge}
+          ${churnBadge}
+        </div>
+
+        <!-- Key info grid -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div style="background:#F9FAFB;border-radius:7px;padding:10px 12px">
+            <div style="font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#9CA3AF;margin-bottom:4px">📞 Phone</div>
+            <div style="font-weight:700;font-size:13px">${escH(lead.phone||'—')}</div>
+          </div>
+          <div style="background:#F9FAFB;border-radius:7px;padding:10px 12px">
+            <div style="font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#9CA3AF;margin-bottom:4px">📍 Address</div>
+            <div style="font-weight:600;font-size:12px">${escH(lead.address||'—')}</div>
+          </div>
+          <div style="background:#F9FAFB;border-radius:7px;padding:10px 12px">
+            <div style="font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#9CA3AF;margin-bottom:4px">🏢 Division Interest</div>
+            <div style="font-weight:700;font-size:13px">${escH(services)}</div>
+          </div>
+          <div style="background:#F9FAFB;border-radius:7px;padding:10px 12px">
+            <div style="font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#9CA3AF;margin-bottom:4px">📅 Last Contact</div>
+            <div style="font-weight:700;font-size:13px">${lastContact}</div>
+          </div>
+        </div>
+
+        <!-- DMS call notes -->
+        <div style="background:#EFF6FF;border-left:3px solid #3B82F6;border-radius:0 7px 7px 0;padding:10px 14px">
+          <div style="font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#1E40AF;margin-bottom:5px">📞 DMS Call Notes</div>
+          <div style="font-size:12px;color:#1E3A8A;line-height:1.6">${escH(notes)||'<em style="color:#6B7280">No notes recorded.</em>'}</div>
+        </div>
+
+        ${openDefs.length ? `
+        <!-- Open deficiencies -->
+        <div style="background:#FEF2F2;border-left:3px solid #EF4444;border-radius:0 7px 7px 0;padding:10px 14px">
+          <div style="font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#991B1B;margin-bottom:5px">⚠️ Open Deficiencies (${openDefs.length})</div>
+          <ul style="margin:0;padding-left:16px;font-size:12px;color:#7F1D1D;line-height:1.8">
+            ${openDefs.slice(0,3).map(d=>`<li>${escH(d.description||d.text||JSON.stringify(d))}</li>`).join('')}
+            ${openDefs.length>3?`<li style="color:#9CA3AF">+${openDefs.length-3} more — see account record</li>`:''}
+          </ul>
+        </div>` : ''}
+
+        ${gaps.length ? `
+        <!-- Cross-sell opportunities -->
+        <div style="background:#FFF7ED;border-left:3px solid #F59E0B;border-radius:0 7px 7px 0;padding:10px 14px">
+          <div style="font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#B45309;margin-bottom:5px">💡 Cross-Sell Opportunities</div>
+          <div style="font-size:12px;color:#78350F">Not currently using: <strong>${gaps.map(g=>g.charAt(0).toUpperCase()+g.slice(1)).join(', ')}</strong> — mention during visit.</div>
+        </div>` : ''}
+
+        <!-- Call script starter -->
+        <div style="background:#F0FDF4;border-left:3px solid #22C55E;border-radius:0 7px 7px 0;padding:10px 14px">
+          <div style="font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#166534;margin-bottom:5px">🎙️ Opening Script Suggestion</div>
+          <div style="font-size:12px;color:#14532D;line-height:1.6;font-style:italic">
+            "Hi, I'm ${escH(repName.split(' ')[0])} with Universal Fire Protection — Termac Family of Companies. Our team spoke with you recently about ${escH(services)} services and I wanted to follow up personally. Do you have a few minutes to talk about protecting your business?"
+          </div>
+        </div>
+
+        <!-- Actions -->
+        <div style="display:flex;gap:10px;flex-wrap:wrap;padding-top:4px">
+          <button onclick="window.print()" style="flex:1;background:#1B5FA8;color:#fff;border:none;border-radius:7px;padding:10px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.06em;cursor:pointer">🖨️ Print Brief</button>
+          <button onclick="document.getElementById('dmsIntelBriefModal').remove()" style="flex:1;background:#1A1D21;color:#fff;border:none;border-radius:7px;padding:10px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.06em;cursor:pointer">✅ Got It</button>
+        </div>
+      </div>
+    </div>`;
+
+  document.body.appendChild(modal);
+}
+
+// Also expose as standalone opener (e.g. from lead detail view)
+function dmsOpenIntelBrief(leadId) {
+  const lead = crmLoad('leads').find(l => l.id === leadId);
+  const dmsRec = crmLoad('dms_coldcall').find(r => r.promotedToLeadId === leadId);
+  if (!lead) return;
+  dmsShowIntelBrief(lead, dmsRec || {}, lead.assignedRep || 'Rep');
 }
 
 function _dmsShowRepSLAStatus(leadId, rep, assignedTs) {

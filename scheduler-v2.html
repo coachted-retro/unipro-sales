@@ -350,6 +350,21 @@ body{background:var(--dark);color:var(--ink);font-family:'Barlow',sans-serif;fon
     </div>
 
     <!-- BOTTOM METRICS -->
+      <!-- MULTI-DIVISION COORDINATION -->
+      <div id="multiDivPanel" style="background:var(--panel);border-radius:var(--radius);border:1px solid var(--line);margin:12px 0;overflow:hidden">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:#F8F9FA;border-bottom:1px solid var(--line);cursor:pointer" onclick="toggleMultiDiv()">
+          <div style="font-family:Barlow,sans-serif;font-weight:800;font-size:11px;letter-spacing:.10em;text-transform:uppercase;color:var(--navy)">
+            🏢 Multi-Division Account Coordination
+            <span id="multiDivBadge" style="display:none;background:#C8102E;color:#fff;border-radius:99px;padding:0 7px;font-size:9px;font-weight:800;margin-left:6px">0</span>
+          </div>
+          <span id="multiDivChevron" style="color:var(--soft);font-size:13px">▾</span>
+        </div>
+        <div id="multiDivBody" style="padding:14px 16px">
+          <p style="font-size:12px;color:var(--soft);margin-bottom:12px">Accounts with jobs scheduled across multiple divisions today or this week — coordinate visit windows to reduce truck rolls and improve customer experience.</p>
+          <div id="multiDivList" style="font-size:13px;color:var(--soft)">Analyzing today's schedule…</div>
+        </div>
+      </div>
+
     <div class="metrics-bar">
       <div class="metric-tile" onclick="toggleChart('jobs')">
         <div class="mt-label">Jobs Today</div>
@@ -2287,6 +2302,110 @@ setInterval(function(){
   var badge=document.getElementById('stBadge-late');
   if(badge){ badge.textContent=lateCount; badge.style.display=lateCount?'inline':'none'; }
 }, 60000);
+
+// ══ MULTI-DIVISION ACCOUNT COORDINATION ═══════════════════════════════════
+var _multiDivOpen = true;
+
+function toggleMultiDiv() {
+  _multiDivOpen = !_multiDivOpen;
+  var body = document.getElementById('multiDivBody');
+  var chev = document.getElementById('multiDivChevron');
+  if (body) body.style.display = _multiDivOpen ? 'block' : 'none';
+  if (chev) chev.textContent = _multiDivOpen ? '▾' : '▸';
+}
+
+function renderMultiDivCoord() {
+  var el = document.getElementById('multiDivList');
+  var badge = document.getElementById('multiDivBadge');
+  if (!el) return;
+
+  // Pull all job sources
+  var today = new Date().toISOString().slice(0,10);
+  var allJobs = [];
+  try { allJobs = allJobs.concat(JSON.parse(localStorage.getItem('unipro_jobs')||'[]')); } catch(e) {}
+  try { allJobs = allJobs.concat(JSON.parse(localStorage.getItem('gto_invoices')||'[]')); } catch(e) {}
+  try { allJobs = allJobs.concat(JSON.parse(localStorage.getItem('filterman_invoices')||'[]')); } catch(e) {}
+  try { allJobs = allJobs.concat(JSON.parse(localStorage.getItem('termac_svc_invoices')||'[]')); } catch(e) {}
+  // Also include JOBS array from scheduler
+  if (typeof JOBS !== 'undefined') {
+    JOBS.forEach(function(j) {
+      if (!allJobs.some(function(x) { return x.id === j.id; })) allJobs.push(j);
+    });
+  }
+
+  // Filter to this week
+  var weekStart = new Date();
+  weekStart.setDate(weekStart.getDate() - weekStart.getDay()); // Sunday
+  var weekEnd = new Date(weekStart); weekEnd.setDate(weekEnd.getDate() + 6);
+  var weekStr = weekStart.toISOString().slice(0,10);
+  var weekEndStr = weekEnd.toISOString().slice(0,10);
+
+  var thisWeekJobs = allJobs.filter(function(j) {
+    var d = j.date || j.completedAt && new Date(j.completedAt).toISOString().slice(0,10) || '';
+    return d >= weekStr && d <= weekEndStr;
+  });
+
+  // Group by accountId or accountName
+  var byAccount = {};
+  thisWeekJobs.forEach(function(j) {
+    var key = j.accountId || (j.accountName||j.account||'').toLowerCase().replace(/\s+/g,'_');
+    if (!key) return;
+    if (!byAccount[key]) byAccount[key] = { name: j.accountName||j.account||key, jobs: [], dates: [], divs: [] };
+    var div = (j.division||j.serviceType||j.type||'UniPro').split(' ')[0];
+    byAccount[key].jobs.push(j);
+    if (!byAccount[key].divs.includes(div)) byAccount[key].divs.push(div);
+    var d = j.date || '';
+    if (d && !byAccount[key].dates.includes(d)) byAccount[key].dates.push(d);
+  });
+
+  // Find multi-division accounts (2+ different division jobs this week)
+  var multiDiv = Object.values(byAccount).filter(function(a) { return a.divs.length >= 2; });
+
+  if (badge) {
+    badge.textContent = multiDiv.length;
+    badge.style.display = multiDiv.length ? 'inline' : 'none';
+  }
+
+  if (!multiDiv.length) {
+    el.innerHTML = '<div style="color:var(--green);font-size:12px;font-weight:600;padding:4px 0">✅ No multi-division coordination needed this week — all accounts are single-division.</div>';
+    return;
+  }
+
+  var DIVISION_COLORS = {
+    'UniPro':'#1B5FA8','GTO':'#1E7B3C','Filter':'#0D7490','AllPro':'#065F46','Termac':'#6D28D9','Quality':'#B45309'
+  };
+
+  el.innerHTML = multiDiv.map(function(a) {
+    var divTags = a.divs.map(function(d) {
+      var col = DIVISION_COLORS[d] || '#6B7280';
+      return '<span style="background:'+col+'22;color:'+col+';border:1px solid '+col+'44;border-radius:4px;padding:1px 7px;font-size:10px;font-weight:700;margin-right:4px">'+d+'</span>';
+    }).join('');
+    var dateList = a.dates.sort().join(', ');
+    var sameDay = a.dates.length === 1;
+    var sameDayFlag = sameDay
+      ? '<span style="background:#D1FAE5;color:#065F46;border-radius:4px;padding:1px 7px;font-size:9px;font-weight:800;margin-left:6px">SAME DAY — ALREADY COORDINATED</span>'
+      : '<span style="background:#FEF3C7;color:#92400E;border-radius:4px;padding:1px 7px;font-size:9px;font-weight:800;margin-left:6px">SPLIT DAYS — CONSOLIDATE?</span>';
+    return '<div style="background:#fff;border:1.5px solid var(--line);border-radius:8px;padding:12px 14px;margin-bottom:10px">'
+      + '<div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:8px">'
+      + '<div><div style="font-weight:800;font-size:14px">'+a.name+'</div>'
+      + '<div style="font-size:11px;color:var(--soft);margin-top:2px">'+a.jobs.length+' jobs · Dates: '+dateList+'</div></div>'
+      + sameDayFlag + '</div>'
+      + '<div style="margin-bottom:8px">' + divTags + '</div>'
+      + '<div style="font-size:11px;color:var(--soft)">'
+      + a.jobs.map(function(j) {
+          return '&bull; '+(j.date||'')+(j.time?' @ '+j.time:'')+' — '+(j.serviceType||j.type||'Service')+(j.techId?' · '+j.techId:'');
+        }).join('<br>')
+      + '</div>'
+      + (!sameDay ? '<div style="margin-top:10px;display:flex;gap:8px">'
+        + '<button onclick="alert('Consolidation: open the Account record for '+a.name+' and drag jobs to the same date in the calendar.')" style="background:#1B5FA8;color:#fff;border:none;border-radius:5px;padding:5px 12px;font-size:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;cursor:pointer">Consolidate Visits</button>'
+        + '</div>' : '')
+      + '</div>';
+  }).join('');
+}
+
+// Run on load and when JOBS changes
+setTimeout(renderMultiDivCoord, 800);
+
 </script>
 </body>
 </html>

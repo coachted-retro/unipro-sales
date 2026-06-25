@@ -83,6 +83,8 @@
       }
     */
     tiLog(`Loop 1: Job complete — ${jobData.accountName} / ${jobData.division}`);
+    // Loop 8: FTFR callback detection
+    tiDetectFTFRCallback(jobData);
 
     const now = Date.now();
     const completedAt = jobData.completedAt || now;
@@ -764,8 +766,189 @@
     tiGetSchedulingAlerts(30);
     tiAnalyzeCrossSellGaps();
     tiCheckScorecardCoachingFlags();
+    tiScanAllFTFR(); // Loop 8
 
     tiLog('Daily intelligence pass complete');
+  }
+
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // LOOP 8 — FIRST-TIME FIX RATE (FTFR) CALLBACK DETECTION
+  // Scans completed jobs for repeat visits to the same account within 30
+  // days. When found: increments account's repeat-visit counter, flags
+  // the tech's FTFR score, notifies the manager, creates a coaching flag.
+  // Triggered: on job complete (via tiOnJobComplete) + daily pass.
+  // ═══════════════════════════════════════════════════════════════════════
+  const FTFR_WINDOW_DAYS = 30;   // days to look back for same-account repeat
+  const FTFR_THRESHOLD   = 75;   // % FTFR below which coaching flag fires
+
+  /**
+   * Called on every job completion. Checks if this account had a prior
+   * job within FTFR_WINDOW_DAYS that was marked "resolved". If so this
+   * is a callback — record it, flag tech, notify manager.
+   */
+  function tiDetectFTFRCallback(job) {
+    if (!job || !job.accountId) return null;
+
+    const nowMs       = Date.now();
+    const windowMs    = FTFR_WINDOW_DAYS * 86400000;
+    const cutoff      = nowMs - windowMs;
+
+    // Pull all completed jobs for this account
+    const allJobs = [
+      ...tiRead('unipro_jobs',          []),
+      ...tiRead('gto_invoices',         []),
+      ...tiRead('filterman_invoices',   []),
+      ...tiRead('termac_svc_invoices',  []),
+    ].filter(j =>
+      j.accountId === job.accountId &&
+      j.id !== job.id &&
+      (j.completedAt || j.ts || 0) >= cutoff &&
+      j.status !== 'callback'  // don't double-count
+    );
+
+    if (!allJobs.length) return null; // no prior job in window → FTFR intact
+
+    // This is a callback — the prior job didn't stick
+    const priorJob = allJobs.sort((a,b) => (b.completedAt||b.ts||0)-(a.completedAt||a.ts||0))[0];
+    const daysSincePrior = Math.round((nowMs - (priorJob.completedAt||priorJob.ts||0)) / 86400000);
+
+    tiLog(`FTFR callback detected: account=${job.accountId} tech=${job.techId} priorJob=${priorJob.id} daysSince=${daysSincePrior}`);
+
+    // 1. Mark the new job as a callback
+    job.isCallback    = true;
+    job.callbackDays  = daysSincePrior;
+    job.priorJobId    = priorJob.id;
+
+    // 2. Increment account repeat-visit counter
+    const accounts = tiRead('termac_crm_accounts', []);
+    const acct = accounts.find(a => a.id === job.accountId);
+    if (acct) {
+      acct.callbackCount = (acct.callbackCount || 0) + 1;
+      acct.lastCallbackDate = new Date().toISOString().slice(0,10);
+      acct.activityLog = acct.activityLog || [];
+      acct.activityLog.unshift({
+        ts:    nowMs,
+        type:  'callback',
+        icon:  '🔁',
+        title: `Callback Visit — FTFR Flag`,
+        note:  `Repeat visit within ${daysSincePrior} days of prior job (${priorJob.id}). Tech: ${job.techId||'Unknown'}. FTFR impacted.`,
+        who:   'Intelligence Engine',
+      });
+      tiWrite('termac_crm_accounts', accounts);
+    }
+
+    // 3. Update tech FTFR score
+    tiFlagTechFTFR(job.techId, daysSincePrior, job.accountId);
+
+    // 4. Notify manager
+    tiNotify({
+      type:    'ftfr_callback',
+      icon:    '🔁',
+      urgent:  daysSincePrior <= 7,  // within a week = urgent
+      title:   `FTFR Callback — ${acct?.name || job.accountId}`,
+      body:    `Repeat visit ${daysSincePrior}d after prior job. Tech: ${job.techId||'Unknown'}. Review prior work order.`,
+      target:  'manager',
+    });
+
+    return { isCallback: true, daysSincePrior, priorJobId: priorJob.id };
+  }
+
+  /**
+   * Recalculate a tech's running FTFR % and flag if below threshold.
+   * Looks at all jobs in the last 90 days for that tech.
+   */
+  function tiFlagTechFTFR(techId, callbackDays, accountId) {
+    if (!techId) return;
+    const window90 = Date.now() - 90 * 86400000;
+
+    const allJobs = [
+      ...tiRead('unipro_jobs', []),
+      ...tiRead('gto_invoices', []),
+      ...tiRead('filterman_invoices', []),
+      ...tiRead('termac_svc_invoices', []),
+    ].filter(j => j.techId === techId && (j.completedAt || j.ts || 0) >= window90);
+
+    const total     = allJobs.length;
+    const callbacks = allJobs.filter(j => j.isCallback).length;
+    const ftfrPct   = total > 0 ? Math.round(((total - callbacks) / total) * 100) : 100;
+
+    tiLog(`Tech FTFR: techId=${techId} total=${total} callbacks=${callbacks} ftfr=${ftfrPct}%`);
+
+    // Store on tech performance record
+    const perfKey = 'termac_tech_perf_' + techId;
+    const perf = tiRead(perfKey, { techId, jobs90d: 0, callbacks90d: 0, ftfrPct: 100 });
+    perf.jobs90d     = total;
+    perf.callbacks90d = callbacks;
+    perf.ftfrPct     = ftfrPct;
+    perf.lastUpdated = Date.now();
+    tiWrite(perfKey, perf);
+
+    // Coaching flag if below threshold
+    if (ftfrPct < FTFR_THRESHOLD) {
+      const flags = tiRead('termac_coaching_flags', []);
+      // Dedup — only one active FTFR flag per tech at a time
+      const existingIdx = flags.findIndex(f => f.techId === techId && f.type === 'ftfr' && !f.resolved);
+      const flag = {
+        id:         `flag_ftfr_${techId}_${Date.now()}`,
+        techId,
+        type:       'ftfr',
+        title:      `FTFR Below Threshold — ${ftfrPct}%`,
+        detail:     `${callbacks} callbacks in last 90 days out of ${total} jobs. Target: ≥${FTFR_THRESHOLD}%.`,
+        severity:   ftfrPct < 60 ? 'high' : 'medium',
+        created:    Date.now(),
+        resolved:   false,
+        callbackDays,
+        accountId,
+      };
+      if (existingIdx >= 0) flags[existingIdx] = flag;
+      else flags.unshift(flag);
+      tiWrite('termac_coaching_flags', flags);
+      tiLog(`Coaching flag set: tech=${techId} ftfr=${ftfrPct}%`);
+    }
+  }
+
+  /**
+   * Scan all recent jobs for missed FTFR callbacks (batch — runs in daily pass).
+   * Catches cases where job completion didn't run through tiOnJobComplete.
+   */
+  function tiScanAllFTFR() {
+    const window30 = Date.now() - FTFR_WINDOW_DAYS * 86400000;
+    const allJobs = [
+      ...tiRead('unipro_jobs', []),
+      ...tiRead('gto_invoices', []),
+      ...tiRead('filterman_invoices', []),
+      ...tiRead('termac_svc_invoices', []),
+    ].filter(j => (j.completedAt || j.ts || 0) >= window30 && j.accountId && !j.isCallback);
+
+    // Group by accountId
+    const byAccount = {};
+    allJobs.forEach(j => {
+      if (!byAccount[j.accountId]) byAccount[j.accountId] = [];
+      byAccount[j.accountId].push(j);
+    });
+
+    let callbacksFound = 0;
+    Object.entries(byAccount).forEach(([accountId, jobs]) => {
+      if (jobs.length < 2) return;
+      // Sort by date ascending
+      jobs.sort((a,b) => (a.completedAt||a.ts||0) - (b.completedAt||b.ts||0));
+      // Flag any job where the previous job was within FTFR_WINDOW_DAYS
+      for (let i = 1; i < jobs.length; i++) {
+        const prior = jobs[i-1];
+        const curr  = jobs[i];
+        const daysBetween = Math.round(((curr.completedAt||curr.ts||0) - (prior.completedAt||prior.ts||0)) / 86400000);
+        if (daysBetween <= FTFR_WINDOW_DAYS && daysBetween > 0) {
+          curr.isCallback   = true;
+          curr.callbackDays = daysBetween;
+          curr.priorJobId   = prior.id;
+          tiFlagTechFTFR(curr.techId, daysBetween, accountId);
+          callbacksFound++;
+        }
+      }
+    });
+    tiLog(`FTFR batch scan: ${callbacksFound} callbacks detected across ${Object.keys(byAccount).length} accounts`);
+    return callbacksFound;
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -790,6 +973,9 @@
     getDMSIntelligence:      tiGetDMSIntelligence,
     // Loop 7
     onLCModuleComplete:      tiOnLCModuleComplete,
+    // Loop 8 — FTFR
+    detectFTFRCallback:      tiDetectFTFRCallback,
+    scanAllFTFR:             tiScanAllFTFR,
     // Notifications
     notify:                  tiNotify,
     getNotifications:        tiGetNotifications,
@@ -798,7 +984,7 @@
     runDailyIntelligence:    tiRunDailyIntelligence,
     JOB_CERT_REQUIREMENTS,
     LC_TO_CERT_MAP,
-    VERSION: '1.0.0'
+    VERSION: '1.1.0'
   };
 
   tiLog('v1.0.0 loaded — 7 intelligence loops ready');
