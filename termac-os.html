@@ -1363,7 +1363,7 @@ var TIER_CONFIG = {
 };
 // getTechTier moved below
 
-setTimeout(function(){ if(typeof TECHS!=='undefined') renderLB('score'); }, 200);
+setTimeout(function(){ if(typeof TECHS!=='undefined' && typeof renderLB==='function') renderLB('score'); }, 500);
 
 </script>
 
@@ -30109,40 +30109,48 @@ function dripWrap(body, repName) {
 <script>
 // ── SURVEY PRELOAD FROM SALES PORTAL ─────────────────────────────────────
 (function() {
-  // Run after a short delay to let the page fully initialize
+  // Run after page fully initializes
   setTimeout(function() {
     try {
       var raw = sessionStorage.getItem('sv_preload');
       if (!raw) return;
       var p = JSON.parse(raw);
       sessionStorage.removeItem('sv_preload');
-
-      // Only proceed if source is from sales portal
       if (!p.source) return;
 
-      if (p.accountId) {
-        // Known account — open survey with pre-fill
-        if (typeof openSiteSurvey === 'function') {
-          openSiteSurvey(p.accountId);
-          return;
-        }
+      // Auto-inject rep session so survey functions work without manual login
+      if (p.repUser && typeof _currentUser !== 'undefined' && !_currentUser) {
+        try {
+          _currentUser = p.repUser;
+          sessionStorage.setItem('termacUser', JSON.stringify(p.repUser));
+          if (typeof applyRoleAccess === 'function') applyRoleAccess(p.repUser);
+          if (typeof renderWelcomeBadge === 'function') renderWelcomeBadge(p.repUser);
+        } catch(e2) { console.warn('sv_preload auth inject error:', e2); }
       }
 
-      // Cold call or account not found — open survey with blank pre-fill
-      if (typeof svState !== 'undefined') {
-        svState.accountId = null;
-        svState.bizName = p.bizName || '';
-        svState.selectedServices = [];
-        svState.visitType = null;
-        svState.currentStep = 0;
-        svState.surveyData = {};
-        var el = document.getElementById('svBizName');
-        if (el) el.textContent = p.bizName || 'New Account';
-        var ov = document.getElementById('svOverlay');
-        if (ov) ov.classList.add('open');
+      // Open the survey
+      if (p.accountId) {
+        if (typeof openSiteSurvey === 'function') {
+          openSiteSurvey(p.accountId);
+        }
+      } else {
+        // Cold call — open survey with blank state
+        if (typeof svState !== 'undefined') {
+          svState.accountId = null;
+          svState.bizName   = p.bizName || '';
+          svState.accountType = p.accountType || null;
+          svState.selectedServices = [];
+          svState.visitType = null;
+          svState.currentStep = 0;
+          svState.surveyData = {};
+          var el = document.getElementById('svBizName');
+          if (el) el.textContent = p.bizName || 'New Account';
+          var ov = document.getElementById('svOverlay');
+          if (ov) ov.classList.add('open');
+        }
       }
     } catch(e) { console.warn('sv_preload error:', e); }
-  }, 800);
+  }, 900);
 })();
 </script>
 
