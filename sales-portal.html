@@ -920,7 +920,7 @@ function spRenderCRM(tab) {
   <!-- Recently Viewed -->
   ${spRecentlyViewed()}
   <!-- Appointments Calendar (leads tab only) -->
-  ${tab === 'leads' ? spCalendar() : ''}
+  ${tab === 'leads' ? spRenderTodayAgenda() : ''}
   <!-- Plan My Day (leads tab only) -->
   ${tab === 'leads' ? spPlanMyDay() : ''}
   <!-- Needs Attention (leads tab only) -->
@@ -1115,6 +1115,248 @@ function spOpenApptModal(accountId, tab) {
   document.body.appendChild(modal);
 }
 
+// ════════════════════════════════════════════════════════
+//  TODAY'S AGENDA — The rep's entire day in one view
+//  Types: appointment (confirmed) | opportunity (nearby lead)
+//         check_in (existing account due for visit) | ai_scan (new from AI)
+// ════════════════════════════════════════════════════════
+
+var CHECKIN_INTERVAL_DAYS = 30; // flag existing accounts not visited in 30+ days
+
+function spBuildAgenda() {
+  var today = new Date();
+  var todayStr = today.toISOString().slice(0,10);
+  var repName = _spRep ? _spRep.name : '';
+  var repZip  = (_spRep && _spRep.zip) ? _spRep.zip : '';
+
+  var agenda = [];
+
+  // ── 1. Confirmed appointments ───────────────────────────────────────────
+  var appts = crmLoad('appointments') || [];
+  appts.filter(function(a) {
+    return a.date === todayStr && (!a.rep || a.rep === repName);
+  }).forEach(function(a) {
+    agenda.push({
+      type:      'appointment',
+      id:        a.id,
+      accountId: a.accountId || null,
+      title:     a.title || a.business || 'Appointment',
+      address:   a.address || '',
+      time:      a.time || '',
+      notes:     a.notes || '',
+      phone:     a.phone || '',
+      color:     '#1B5FA8',
+      bg:        '#EFF6FF',
+      label:     '📅 Appointment',
+      action:    'survey',
+    });
+  });
+
+  // ── 2. Opportunities / site_visit stage records in rep's territory ──────
+  var leads = crmLoad('leads');
+  leads.filter(function(r) {
+    var stage = r.lifecycleStage || '';
+    var isRep = !r.assignedRep || r.assignedRep === repName || r.ownedBy === repName;
+    return isRep && (stage === 'appointment' || stage === 'site_visit' || stage === 'opportunity');
+  }).forEach(function(r) {
+    // Only add if not already in appointments
+    var alreadyIn = agenda.some(function(a){ return a.accountId === r.id; });
+    if (alreadyIn) return;
+    agenda.push({
+      type:      'opportunity',
+      id:        'opp_' + r.id,
+      accountId: r.id,
+      title:     r.business || r.name || 'Opportunity',
+      address:   r.address || '',
+      time:      r.appointmentTime || '',
+      notes:     r.notes || '',
+      phone:     r.phone || '',
+      color:     '#7C3AED',
+      bg:        '#F3E8FF',
+      label:     '💼 Opportunity',
+      action:    'survey',
+      stage:     r.lifecycleStage,
+    });
+  });
+
+  // ── 3. Existing accounts due for a check-in ─────────────────────────────
+  var accounts = crmLoad('accounts');
+  var cutoff = Date.now() - (CHECKIN_INTERVAL_DAYS * 86400000);
+  accounts.filter(function(a) {
+    var isRep = !a.assignedRep || a.assignedRep === repName || a.ownedBy === repName;
+    var isActive = a.status === 'active';
+    var overdue = !a.lastCheckin || a.lastCheckin < cutoff;
+    return isRep && isActive && overdue;
+  }).slice(0,4).forEach(function(a) {
+    agenda.push({
+      type:      'check_in',
+      id:        'ci_' + a.id,
+      accountId: a.id,
+      title:     a.name || a.business || 'Account',
+      address:   a.address || '',
+      time:      '',
+      notes:     'Regular check-in — inventory + customer satisfaction',
+      phone:     a.phone || '',
+      color:     '#059669',
+      bg:        '#F0FDF4',
+      label:     '🟢 Check-In',
+      action:    'visit',
+      services:  a.services || [],
+    });
+  });
+
+  // ── 4. Nearby leads (same ZIP as confirmed appointments or rep territory) ─
+  var apptZips = agenda.filter(function(a){ return a.type === 'appointment'; })
+    .map(function(a){ var m = a.address.match(/\d{5}/); return m ? m[0] : ''; })
+    .filter(Boolean);
+
+  leads.filter(function(r) {
+    var stage = r.lifecycleStage || 'lead';
+    if (!['lead','contact'].includes(stage)) return false;
+    var isHot = r.score >= 7 || r.status === 'hot';
+    var zip = (r.zip || (r.address||'').match(/\d{5}/)?.[0] || '');
+    var nearAppt = apptZips.includes(zip);
+    return (nearAppt || isHot) && !agenda.some(function(a){ return a.accountId === r.id; });
+  }).slice(0,3).forEach(function(r) {
+    agenda.push({
+      type:      'nearby',
+      id:        'nb_' + r.id,
+      accountId: r.id,
+      title:     r.business || r.name || 'Lead',
+      address:   r.address || '',
+      time:      '',
+      notes:     'Hot lead nearby — worth a pop-in while in the area',
+      phone:     r.phone || '',
+      score:     r.score || 0,
+      color:     '#D97706',
+      bg:        '#FEF3C7',
+      label:     '⭐ Nearby Lead',
+      action:    'survey',
+    });
+  });
+
+  // Sort: appointments by time first, then others
+  agenda.sort(function(a,b) {
+    var at = a.time || '99:99', bt = b.time || '99:99';
+    // appointments first, then by time
+    var typeOrder = {appointment:0, opportunity:1, nearby:2, check_in:3};
+    if ((typeOrder[a.type]||9) !== (typeOrder[b.type]||9)) return (typeOrder[a.type]||9) - (typeOrder[b.type]||9);
+    return at > bt ? 1 : -1;
+  });
+
+  return agenda;
+}
+
+function spRenderTodayAgenda() {
+  var agenda = spBuildAgenda();
+  var todayLabel = new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'});
+
+  if (!agenda.length) {
+    return '<div class="sp-card" style="margin-bottom:14px">'
+      + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">'
+        + '<div class="sp-card-title" style="margin-bottom:0">📅 Today — ' + todayLabel + '</div>'
+        + '<button class="sp-btn sp-btn-red" style="font-size:10px;padding:5px 12px" onclick="spGenerateDay()">⚡ Generate My Day</button>'
+      + '</div>'
+      + '<div style="text-align:center;padding:28px;color:var(--soft)">'
+        + '<div style="font-size:32px;margin-bottom:10px">📋</div>'
+        + '<div style="font-weight:700;font-size:14px;color:var(--ink);margin-bottom:6px">No agenda yet</div>'
+        + '<div style="font-size:12px">Hit Generate My Day to fill today with appointments, nearby leads, and account check-ins.</div>'
+      + '</div>'
+    + '</div>';
+  }
+
+  var items = agenda.map(function(item) {
+    var timeStr = item.time ? '<span style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:16px;color:' + item.color + ';min-width:44px">' + item.time + '</span>' : '<span style="min-width:44px;display:inline-block"></span>';
+    var actionLabel = item.action === 'visit' ? "I\'m Here — Check In →" : "I\'m Here — Start Survey →";
+    var actionFn = item.action === 'visit'
+      ? "spAgendaArriveVisit('" + item.accountId + "')"
+      : "spAgendaArriveSurvey('" + item.accountId + "','" + item.id + "')";
+
+    return '<div style="background:' + item.bg + ';border-left:4px solid ' + item.color + ';border-radius:9px;padding:12px 14px;margin-bottom:8px">'
+      + '<div style="display:flex;align-items:flex-start;gap:10px">'
+        + '<div style="flex:1;min-width:0">'
+          + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap">'
+            + timeStr
+            + '<span style="font-weight:700;font-size:13px;color:var(--ink)">' + escH(item.title) + '</span>'
+            + '<span style="background:' + item.color + '20;color:' + item.color + ';border-radius:4px;padding:1px 7px;font-size:10px;font-weight:700">' + item.label + '</span>'
+          + '</div>'
+          + (item.address ? '<div style="font-size:11px;color:var(--soft);margin-bottom:3px">📍 ' + escH(item.address) + '</div>' : '')
+          + (item.phone ? '<div style="font-size:11px;color:var(--soft);margin-bottom:3px">📞 <a href="tel:' + escH(item.phone) + '" onclick="event.stopPropagation()" style="color:var(--blue)">' + escH(item.phone) + '</a></div>' : '')
+          + (item.notes ? '<div style="font-size:11px;color:var(--soft);font-style:italic">' + escH(item.notes) + '</div>' : '')
+        + '</div>'
+      + '</div>'
+      + '<div style="margin-top:10px">'
+        + '<button onclick="' + actionFn + '" style="background:' + item.color + ';color:#fff;border:none;border-radius:7px;padding:9px 18px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;width:100%">'
+          + actionLabel
+        + '</button>'
+      + '</div>'
+    + '</div>';
+  }).join('');
+
+  return '<div class="sp-card" style="margin-bottom:14px">'
+    + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">'
+      + '<div>'
+        + '<div class="sp-card-title" style="margin-bottom:2px">📅 Today — ' + todayLabel + '</div>'
+        + '<div style="font-size:11px;color:var(--soft)">' + agenda.length + ' stops — tap I\'m Here when you arrive</div>'
+      + '</div>'
+      + '<button class="sp-btn sp-btn-red" style="font-size:10px;padding:5px 12px" onclick="spGenerateDay()">⚡ Refresh</button>'
+    + '</div>'
+    + items
+  + '</div>';
+}
+
+// ── GENERATE MY DAY ─────────────────────────────────────────────────────────
+function spOpenRouteMap(){ window.open('termac-os.html','_blank'); }
+
+function spGenerateDay() {
+  // Re-render the leads tab which includes the agenda
+  spNav('leads');
+  spToast('📅 Agenda refreshed — ' + spBuildAgenda().length + ' stops today');
+}
+
+// ── ARRIVAL HANDLERS ─────────────────────────────────────────────────────────
+function spAgendaArriveSurvey(accountId, agendaId) {
+  // Mark arrival time
+  var appts = crmLoad('appointments') || [];
+  appts = appts.map(function(a) {
+    if (a.id === agendaId || a.accountId === accountId) {
+      a.arrivedAt = Date.now();
+      a.status = 'in_progress';
+    }
+    return a;
+  });
+  crmSave('appointments', appts);
+
+  // Advance lead stage to site_visit if needed
+  var leads = crmLoad('leads');
+  var r = leads.find(function(x){ return x.id === accountId; });
+  if (r && r.lifecycleStage !== 'site_visit' && r.lifecycleStage !== 'survey') {
+    r.lifecycleStage = 'site_visit';
+    r.activityLog = r.activityLog || [];
+    r.activityLog.push({ ts:Date.now(), type:'system', icon:'📍', title:'Arrived — Survey started', who:_spRep ? _spRep.name : 'Rep' });
+    crmSave('leads', leads);
+  }
+
+  // Launch survey
+  spLaunchSurveyFromCard(accountId || '', 'contacts');
+}
+
+function spAgendaArriveVisit(accountId) {
+  // Mark check-in on account
+  var accounts = crmLoad('accounts');
+  var idx = accounts.findIndex(function(a){ return a.id === accountId; });
+  if (idx > -1) {
+    accounts[idx].lastCheckin = Date.now();
+    accounts[idx].activityLog = accounts[idx].activityLog || [];
+    accounts[idx].activityLog.push({ ts:Date.now(), type:'rep', icon:'📍', title:'Customer visit — check-in', who:_spRep ? _spRep.name : 'Rep' });
+    crmSave('accounts', accounts);
+  }
+  // Open customer visit wizard
+  spOpenVisitModal(accountId);
+  spToast('📍 Visit started — ' + (accounts[idx] ? accounts[idx].name || accounts[idx].business : ''));
+}
+
+
 // ── CARD STAGE-AWARE BADGE/BUTTON HELPERS ──────────────────────────────────
 function spLaunchSurveyFromSearchEl(rid) {
   spLaunchSurveyFromSearch(rid);
@@ -1145,7 +1387,7 @@ function spCardApptBadge(r, tab) {
 }
 
 function spCardSurveyBtn(r, tab) {
-  if (r.lifecycleStage !== 'appointment' && r.lifecycleStage !== 'site_visit') return '';
+  if (r.lifecycleStage !== 'appointment' && r.lifecycleStage !== 'site_visit' && r.lifecycleStage !== 'opportunity') return '';
   return '<div style="margin-top:8px">'
     + '<button onclick="event.stopPropagation();spLaunchSurveyFromCardEl(this)" '
     + 'style="background:#C8102E;color:#fff;border:none;border-radius:7px;padding:8px 16px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;width:100%">'
@@ -1333,20 +1575,26 @@ function spSaveAppt(accountId, tab) {
 
   spCloseApptModal();
   spToast('📅 Appointment saved — ' + date + (time ? ' at ' + time : ''));
-  if (tab) spNav(tab);
+  // Re-render the current tab so card shows appointment badge + Start Survey button
+  if (tab) {
+    spRenderCRM(tab);
+    spToast('📅 Appointment set · Start Survey button now on card');
+  }
 }
 
 // ══════════════════════════════════════════════════════
 //  PLAN MY DAY
 // ══════════════════════════════════════════════════════
 function spPlanMyDay() {
-  return `<div style="background:linear-gradient(135deg,#1B5FA8,#0F3E73);border-radius:12px;padding:16px 20px;color:#fff;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:14px">
-    <div>
-      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:16px;margin-bottom:3px">🧭 Plan My Day</div>
-      <div style="font-size:12px;color:rgba(255,255,255,.8)">Pick one or more days — we'll find the best opportunity areas in your territory.</div>
-    </div>
-    <button onclick="window.open('termac-os.html','_blank')" style="background:#fff;color:#1B5FA8;border:none;border-radius:8px;padding:9px 18px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">Find My Route →</button>
-  </div>`;
+  return '<div style="background:linear-gradient(135deg,#1B5FA8,#0F3E73);border-radius:12px;padding:14px 18px;color:#fff;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:14px">'
+    + '<div>'
+      + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:15px;margin-bottom:2px">🧭 Plan My Day</div>'
+      + '<div style="font-size:11px;color:rgba(255,255,255,.75)">Auto-fills today with appointments, nearby leads & account check-ins</div>'
+    + '</div>'
+    + '<div style="display:flex;gap:8px">'
+      + '<button onclick="spOpenRouteMap()" style="background:rgba(255,255,255,.15);color:#fff;border:1.5px solid rgba(255,255,255,.3);border-radius:7px;padding:8px 16px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">Route Map →</button>'
+    + '</div>'
+  + '</div>';
 }
 
 // ══════════════════════════════════════════════════════
@@ -1697,9 +1945,9 @@ function spSetStage(id, tab, newStage, selectEl) {
     localStorage.setItem('termac_mgr_disq_queue', JSON.stringify(q));
   }
 
-  // Appointment Set: fire calendar picker immediately
+  // Appointment Set: fire calendar picker AFTER card re-renders
   if (newStage === 'appointment') {
-    setTimeout(function(){ spOpenApptModal(id, tab); }, 80);
+    setTimeout(function(){ spOpenApptModal(id, tab); }, 300);
   }
 
   // Site Visit: show confirmation — Start Survey button will appear on card
@@ -1786,8 +2034,11 @@ function spSetStage(id, tab, newStage, selectEl) {
 
   // ── UPSELL TRACKING: credit rep for closing cross-sell gaps ────────────
   spTrackUpsellAction(r, oldStage, newStage);
-  spToast('✅ ' + (SP_STAGES[newStage]?.label || newStage));
-  spRenderCRM(tab);
+  if (newStage !== 'appointment') {
+    // For appointment: modal opens, re-render happens after save
+    spToast('✅ ' + (SP_STAGES[newStage]?.label || newStage));
+    spRenderCRM(tab);
+  }
 }
 
 // ══════════════════════════════════════════════════════
