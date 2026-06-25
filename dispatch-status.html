@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dispatch Status Board — Termac One</title>
+<link rel="icon" type="image/png" href="termac-one-logo.png">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;800;900&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+:root{--navy:#1A1D21;--red:#C8102E;--green:#1E7B3C;--blue:#1B5FA8;--amber:#D97706;--purple:#6D28D9;--teal:#0D7490;--ink:#1A1D21;--soft:#6B7280;--line:#E5E7EB;--bg:#0F1117;--panel:#1A1D21}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Barlow,sans-serif;background:var(--bg);color:#E5E7EB;height:100vh;overflow:hidden;display:flex;flex-direction:column}
+/* TOP NAV */
+.trn{background:#111318;border-bottom:1px solid #2A2E35;height:50px;display:flex;align-items:center;padding:0 16px;gap:12px;flex-shrink:0;z-index:100}
+.trn-logo{font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:13px;letter-spacing:.14em;color:#F2B705;text-transform:uppercase}
+.trn-title{font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.10em;color:#6B7280;text-transform:uppercase}
+.trn-spacer{flex:1}
+.trn-btn{background:none;border:1px solid #2A2E35;border-radius:5px;color:#9CA3AF;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:10px;text-transform:uppercase;padding:4px 10px;cursor:pointer;letter-spacing:.06em}
+.live-dot{width:8px;height:8px;border-radius:50%;background:#22C55E;display:inline-block;margin-right:6px;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+/* LAYOUT */
+.shell{display:flex;flex:1;overflow:hidden}
+/* SIDEBAR */
+.sidebar{width:320px;background:var(--panel);border-right:1px solid #2A2E35;display:flex;flex-direction:column;overflow:hidden;flex-shrink:0}
+.sidebar-hdr{padding:12px 14px;border-bottom:1px solid #2A2E35;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.sidebar-hdr-title{font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#6B7280}
+.sidebar-scroll{flex:1;overflow-y:auto;padding:8px}
+/* TECH CARD */
+.tech-card{background:#111318;border:1px solid #2A2E35;border-radius:8px;padding:12px 14px;margin-bottom:8px;cursor:pointer;transition:border-color .12s,background .12s}
+.tech-card:hover{border-color:#3A3E45;background:#181C23}
+.tech-card.selected{border-color:var(--blue)}
+.tech-card-top{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.tech-avatar{width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:14px;flex-shrink:0}
+.tech-name{font-weight:700;font-size:13px;color:#F3F4F6}
+.tech-div{font-size:10px;color:#9CA3AF;margin-top:1px}
+.status-pill{display:inline-flex;align-items:center;gap:4px;border-radius:99px;padding:2px 8px;font-size:10px;font-weight:700;margin-left:auto}
+.st-enroute{background:#1E3A5F;color:#93C5FD}
+.st-onsite{background:#14532D;color:#86EFAC}
+.st-break{background:#3B1F05;color:#FCD34D}
+.st-complete{background:#14532D;color:#6EE7B7}
+.st-wrapping{background:#4C1D95;color:#C4B5FD}
+.st-idle{background:#1F2937;color:#9CA3AF}
+.tech-progress{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.prog-bar{flex:1;height:4px;background:#2A2E35;border-radius:99px;overflow:hidden}
+.prog-fill{height:100%;border-radius:99px;background:linear-gradient(90deg,var(--blue),#22C55E);transition:width .4s}
+.prog-label{font-size:10px;color:#6B7280;white-space:nowrap}
+.tech-stop{font-size:11px;color:#D1D5DB;margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tech-stop-sub{font-size:10px;color:#6B7280}
+.tech-stats{display:flex;gap:14px;margin-top:6px;padding-top:6px;border-top:1px solid #2A2E35}
+.ts-val{font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:16px;color:#F3F4F6}
+.ts-lbl{font-size:9px;color:#6B7280;text-transform:uppercase;letter-spacing:.06em}
+/* FILTERS */
+.filter-bar{display:flex;gap:6px;padding:8px 8px 0;flex-wrap:wrap}
+.filter-btn{background:none;border:1px solid #2A2E35;border-radius:99px;color:#9CA3AF;font-size:10px;font-family:Barlow Condensed,sans-serif;font-weight:700;padding:3px 10px;cursor:pointer;letter-spacing:.04em;transition:all .12s}
+.filter-btn.active{background:var(--blue);border-color:var(--blue);color:#fff}
+/* MAP */
+.map-area{flex:1;position:relative}
+#dispatchMap{width:100%;height:100%}
+/* ALERT STRIP */
+.alert-strip{background:#7C1D1D;border-top:1px solid #991B1B;padding:6px 16px;font-size:11px;color:#FCA5A5;display:flex;align-items:center;gap:8px;flex-shrink:0}
+/* INFO PANEL */
+.info-panel{position:absolute;top:12px;right:12px;background:rgba(17,19,24,.95);border:1px solid #2A2E35;border-radius:10px;padding:14px 16px;min-width:220px;z-index:500;backdrop-filter:blur(8px)}
+.info-panel-title{font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.10em;text-transform:uppercase;color:#9CA3AF;margin-bottom:10px}
+.info-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.info-lbl{font-size:11px;color:#6B7280}
+.info-val{font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:14px;color:#F3F4F6}
+/* LEGEND */
+.legend{position:absolute;bottom:16px;left:336px;background:rgba(17,19,24,.92);border:1px solid #2A2E35;border-radius:8px;padding:10px 14px;z-index:500}
+.leg-row{display:flex;align-items:center;gap:7px;font-size:11px;color:#D1D5DB;margin-bottom:4px}
+.leg-row:last-child{margin-bottom:0}
+.leg-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+/* CLOCK */
+.clock{font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:14px;color:#F2B705;letter-spacing:.04em}
+/* EMERGENCY */
+.emergency-btn{background:var(--red);color:#fff;border:none;border-radius:6px;padding:5px 12px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.06em;cursor:pointer;text-transform:uppercase}
+@media(max-width:700px){.sidebar{width:100%;height:50vh}.shell{flex-direction:column}.map-area{height:50vh}.info-panel,.legend{display:none}}
+</style>
+</head>
+<body>
+
+<nav class="trn">
+  <div class="trn-logo">Termac One</div>
+  <div class="trn-title"><span class="live-dot"></span>Dispatch Status Board</div>
+  <div class="trn-spacer"></div>
+  <div class="clock" id="liveClock"></div>
+  <button class="emergency-btn" onclick="openEmergency()">🚨 Emergency</button>
+  <button class="trn-btn" onclick="window.open('user-manuals.html?role=dispatcher','_blank')">? Help</button>
+  <button class="trn-btn" onclick="history.back()">← Back</button>
+</nav>
+
+<div class="shell">
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+    <div class="sidebar-hdr">
+      <div class="sidebar-hdr-title">Field Units <span id="techCountBadge" style="background:var(--blue);color:#fff;border-radius:99px;padding:0 7px;font-size:9px;margin-left:4px">0</span></div>
+      <button onclick="refreshAll()" class="trn-btn" style="font-size:9px;padding:3px 8px">↻ Refresh</button>
+    </div>
+    <div class="filter-bar">
+      <button class="filter-btn active" onclick="filterTechs('all',this)">All</button>
+      <button class="filter-btn" onclick="filterTechs('enroute',this)">En Route</button>
+      <button class="filter-btn" onclick="filterTechs('onsite',this)">On Site</button>
+      <button class="filter-btn" onclick="filterTechs('exception',this)">Exception</button>
+      <button class="filter-btn" onclick="filterTechs('idle',this)">Idle</button>
+    </div>
+    <div class="sidebar-scroll" id="techList"></div>
+  </div>
+
+  <!-- MAP -->
+  <div class="map-area">
+    <div id="dispatchMap"></div>
+
+    <!-- INFO PANEL (fleet summary) -->
+    <div class="info-panel">
+      <div class="info-panel-title">Fleet Summary</div>
+      <div class="info-row"><span class="info-lbl">Active Units</span><span class="info-val" id="si_active">—</span></div>
+      <div class="info-row"><span class="info-lbl">Jobs Complete</span><span class="info-val" id="si_complete">—</span></div>
+      <div class="info-row"><span class="info-lbl">Jobs Remaining</span><span class="info-val" id="si_remaining">—</span></div>
+      <div class="info-row"><span class="info-lbl">Open Exceptions</span><span class="info-val" style="color:var(--red)" id="si_exceptions">—</span></div>
+      <div class="info-row"><span class="info-lbl">Revenue Today</span><span class="info-val" style="color:#22C55E" id="si_revenue">—</span></div>
+      <div style="border-top:1px solid #2A2E35;margin-top:8px;padding-top:8px">
+        <button onclick="broadcastMessage()" style="width:100%;background:#1B5FA8;color:#fff;border:none;border-radius:6px;padding:7px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.06em;cursor:pointer;text-transform:uppercase">📢 Broadcast Message</button>
+      </div>
+    </div>
+
+    <!-- MAP LEGEND -->
+    <div class="legend">
+      <div class="leg-row"><div class="leg-dot" style="background:#3B82F6"></div>En Route</div>
+      <div class="leg-row"><div class="leg-dot" style="background:#22C55E"></div>On Site</div>
+      <div class="leg-row"><div class="leg-dot" style="background:#F59E0B"></div>Break</div>
+      <div class="leg-row"><div class="leg-dot" style="background:#A78BFA"></div>Wrapping Up</div>
+      <div class="leg-row"><div class="leg-dot" style="background:#EF4444"></div>Exception / Alert</div>
+      <div class="leg-row"><div class="leg-dot" style="background:#6B7280"></div>Idle / Offline</div>
+    </div>
+  </div>
+</div>
+
+<!-- ALERT STRIP (hidden by default, shown when exceptions exist) -->
+<div class="alert-strip" id="alertStrip" style="display:none">
+  <span>🚨</span><span id="alertMsg">Open exceptions require dispatcher attention</span>
+  <button onclick="document.getElementById('alertStrip').style.display='none'" style="margin-left:auto;background:none;border:none;color:#FCA5A5;cursor:pointer;font-size:16px">✕</button>
+</div>
+
+<script>
+// ══ DISPATCH STATUS BOARD ══════════════════════════════════════════════════
+// Real-time field unit status board for dispatchers.
+// In production: status pings come from tech portal check-ins via API.
+// Currently: reads from localStorage (job status, exceptions, check-ins)
+// and simulates GPS positions for the demo.
+//
+// Tech check-in protocol (used by all tech portals):
+//   localStorage.setItem('termac_checkin_' + techId, JSON.stringify({
+//     techId, techName, status, lat, lng, currentJob, jobsComplete,
+//     jobsTotal, division, lastPing: Date.now()
+//   }));
+
+// ── DEMO TECH DATA ────────────────────────────────────────────────────────
+// In production this comes from API pings. For now, seeded demo with
+// realistic positions in Termac territory (PA/NJ/DE).
+var DEMO_TECHS = [
+  { id:'tech_mw', name:'Marcus Williams', initials:'MW', division:'UniPro', color:'#1B5FA8',
+    status:'onsite', lat:39.9526, lng:-75.1652, currentJob:'Ferraro Ristorante', jobsComplete:3, jobsTotal:6,
+    lastPing: Date.now() - 120000, revenue:485 },
+  { id:'tech_dk', name:'Dana Kowalski',   initials:'DK', division:'GTO',    color:'#1E7B3C',
+    status:'enroute', lat:39.9800, lng:-75.1300, currentJob:'Wu Dim Sum Palace', jobsComplete:5, jobsTotal:8,
+    lastPing: Date.now() - 45000, revenue:640 },
+  { id:'tech_rs', name:'Ray Santos',      initials:'RS', division:'UniPro', color:'#1B5FA8',
+    status:'wrapping', lat:40.1787, lng:-74.8765, currentJob:'Fairless Hills Ret. Center', jobsComplete:2, jobsTotal:4,
+    lastPing: Date.now() - 200000, revenue:1045 },
+  { id:'tech_tf', name:'Tanya Ford',      initials:'TF', division:'Filter Man', color:'#0D7490',
+    status:'enroute', lat:39.9200, lng:-75.0300, currentJob:'Shore Medical Center', jobsComplete:4, jobsTotal:7,
+    lastPing: Date.now() - 30000, revenue:280 },
+  { id:'tech_jb', name:'James Brown',     initials:'JB', division:'GTO',    color:'#1E7B3C',
+    status:'break',   lat:40.0583, lng:-74.4057, currentJob:'Break — Woodbridge NJ', jobsComplete:3, jobsTotal:6,
+    lastPing: Date.now() - 600000, revenue:320 },
+  { id:'tech_lm', name:'Luis Morales',    initials:'LM', division:'Termac', color:'#6D28D9',
+    status:'onsite',  lat:39.9900, lng:-75.2000, currentJob:'Bay Café', jobsComplete:4, jobsTotal:5,
+    lastPing: Date.now() - 90000, revenue:210 },
+  { id:'tech_sr', name:'Sara Rivera',     initials:'SR', division:'AllPro', color:'#065F46',
+    status:'idle',    lat:40.1200, lng:-74.9500, currentJob:'Route complete', jobsComplete:5, jobsTotal:5,
+    lastPing: Date.now() - 1800000, revenue:725 },
+];
+
+var _techs = DEMO_TECHS;
+var _filter = 'all';
+var _map, _markers = {}, _selectedTech = null;
+
+// ── MAP INIT ──────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', function() {
+  _map = L.map('dispatchMap', { zoomControl:true }).setView([39.98, -75.05], 10);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution:'©OpenStreetMap ©CARTO', maxZoom:19
+  }).addTo(_map);
+
+  // Load real check-ins from localStorage (overlay on demo)
+  loadRealCheckins();
+
+  renderSidebar();
+  renderMapMarkers();
+  renderSummary();
+  startClock();
+
+  // Auto-refresh every 30 seconds
+  setInterval(function() {
+    loadRealCheckins();
+    renderSidebar();
+    renderMapMarkers();
+    renderSummary();
+  }, 30000);
+});
+
+// ── LOAD REAL CHECK-INS FROM LOCALSTORAGE ─────────────────────────────────
+function loadRealCheckins() {
+  var realTechs = [];
+  // Scan for any termac_checkin_* keys
+  for (var i = 0; i < localStorage.length; i++) {
+    var key = localStorage.key(i);
+    if (key && key.startsWith('termac_checkin_')) {
+      try {
+        var ci = JSON.parse(localStorage.getItem(key));
+        if (ci && ci.techId && ci.lat && ci.lng) {
+          // Override demo entry if same techId, otherwise add
+          var idx = _techs.findIndex(function(t){ return t.id === ci.techId; });
+          var entry = {
+            id: ci.techId, name: ci.techName || ci.techId, initials: (ci.techName||'T').split(' ').map(function(w){return w[0];}).join('').slice(0,2).toUpperCase(),
+            division: ci.division || 'UniPro', color: '#1B5FA8',
+            status: ci.status || 'idle', lat: ci.lat, lng: ci.lng,
+            currentJob: ci.currentJob || '—', jobsComplete: ci.jobsComplete || 0, jobsTotal: ci.jobsTotal || 0,
+            lastPing: ci.lastPing || Date.now(), revenue: ci.revenue || 0,
+            _real: true
+          };
+          if (idx >= 0) _techs[idx] = entry;
+          else realTechs.push(entry);
+        }
+      } catch(e) {}
+    }
+  }
+  // Add any new real techs not in demo set
+  realTechs.forEach(function(t) { if (!_techs.some(function(x){ return x.id === t.id; })) _techs.push(t); });
+}
+
+// ── STATUS CONFIG ─────────────────────────────────────────────────────────
+var STATUS_CFG = {
+  enroute:   { label:'En Route',   color:'#3B82F6', pillClass:'st-enroute' },
+  onsite:    { label:'On Site',    color:'#22C55E', pillClass:'st-onsite'  },
+  break:     { label:'Break',      color:'#F59E0B', pillClass:'st-break'   },
+  wrapping:  { label:'Wrapping',   color:'#A78BFA', pillClass:'st-wrapping'},
+  exception: { label:'Exception',  color:'#EF4444', pillClass:'st-enroute' },
+  complete:  { label:'Complete',   color:'#6EE7B7', pillClass:'st-complete'},
+  idle:      { label:'Idle',       color:'#6B7280', pillClass:'st-idle'    },
+};
+
+// ── SIDEBAR RENDER ────────────────────────────────────────────────────────
+function filterTechs(f, btn) {
+  _filter = f;
+  document.querySelectorAll('.filter-btn').forEach(function(b){ b.classList.remove('active'); });
+  btn.classList.add('active');
+  renderSidebar();
+}
+
+function renderSidebar() {
+  var visible = _techs.filter(function(t){
+    if (_filter === 'all') return true;
+    if (_filter === 'exception') return t.status === 'exception' || pingAge(t) > 900;
+    return t.status === _filter;
+  });
+
+  document.getElementById('techCountBadge').textContent = _techs.length;
+
+  var list = document.getElementById('techList');
+  list.innerHTML = visible.map(function(t) {
+    var st = STATUS_CFG[t.status] || STATUS_CFG.idle;
+    var pct = t.jobsTotal > 0 ? Math.round(t.jobsComplete / t.jobsTotal * 100) : 0;
+    var age = pingAge(t);
+    var stale = age > 600;
+    var borderCol = _selectedTech && _selectedTech.id === t.id ? ' border-color:var(--blue)' : '';
+    var staleBadge = stale ? '<span style="background:#3B1F05;color:#FCD34D;border-radius:3px;padding:1px 5px;font-size:9px;margin-left:4px">STALE ' + Math.floor(age/60) + 'm</span>' : '';
+
+    return '<div class="tech-card' + ((_selectedTech && _selectedTech.id === t.id) ? ' selected' : '') + '"'
+      + ' onclick="selectTech(\'' + t.id + '\')" style="' + borderCol + '">'
+      + '<div class="tech-card-top">'
+      + '<div class="tech-avatar" style="background:' + t.color + '22;color:' + t.color + '">' + t.initials + '</div>'
+      + '<div><div class="tech-name">' + t.name + staleBadge + '</div><div class="tech-div">' + t.division + '</div></div>'
+      + '<span class="status-pill ' + st.pillClass + '">' + st.label + '</span>'
+      + '</div>'
+      + '<div class="tech-progress">'
+      + '<div class="prog-bar"><div class="prog-fill" style="width:' + pct + '%"></div></div>'
+      + '<div class="prog-label">' + t.jobsComplete + '/' + t.jobsTotal + ' jobs</div>'
+      + '</div>'
+      + '<div class="tech-stop">📍 ' + (t.currentJob || '—') + '</div>'
+      + '<div class="tech-stop-sub">Last ping: ' + formatAge(age) + ' ago</div>'
+      + '<div class="tech-stats">'
+      + '<div><div class="ts-val" style="color:#22C55E">' + t.jobsComplete + '</div><div class="ts-lbl">Done</div></div>'
+      + '<div><div class="ts-val" style="color:#93C5FD">' + (t.jobsTotal - t.jobsComplete) + '</div><div class="ts-lbl">Left</div></div>'
+      + '<div><div class="ts-val" style="color:#F2B705">$' + (t.revenue||0) + '</div><div class="ts-lbl">Revenue</div></div>'
+      + '</div>'
+      + '</div>';
+  }).join('');
+}
+
+// ── MAP MARKERS ───────────────────────────────────────────────────────────
+function renderMapMarkers() {
+  Object.values(_markers).forEach(function(m){ _map.removeLayer(m); });
+  _markers = {};
+
+  _techs.forEach(function(t) {
+    var st = STATUS_CFG[t.status] || STATUS_CFG.idle;
+    var stale = pingAge(t) > 600;
+    var col = stale ? '#F59E0B' : st.color;
+
+    var icon = L.divIcon({
+      className: '',
+      html: '<div style="width:36px;height:36px;border-radius:50%;background:' + col + ';border:3px solid ' + (stale?'#FCD34D':'#fff') + ';display:flex;align-items:center;justify-content:center;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.4);cursor:pointer">' + t.initials + '</div>',
+      iconSize:[36,36], iconAnchor:[18,18]
+    });
+
+    var marker = L.marker([t.lat, t.lng], { icon: icon })
+      .addTo(_map)
+      .bindPopup(buildPopup(t), { maxWidth:260 });
+
+    marker.on('click', function(){ selectTech(t.id); });
+    _markers[t.id] = marker;
+
+    // Pulse ring for en-route techs
+    if (t.status === 'enroute' || t.status === 'onsite') {
+      L.circleMarker([t.lat, t.lng], {
+        radius: 20, color: col, weight: 1.5, opacity: .4, fillOpacity: 0
+      }).addTo(_map);
+    }
+  });
+}
+
+function buildPopup(t) {
+  var st = STATUS_CFG[t.status] || STATUS_CFG.idle;
+  var age = pingAge(t);
+  return '<div style="font-family:Barlow,sans-serif;min-width:200px">'
+    + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:14px;margin-bottom:4px">' + t.name + '</div>'
+    + '<div style="font-size:11px;color:#6B7280;margin-bottom:8px">' + t.division + ' · Last ping: ' + formatAge(age) + ' ago</div>'
+    + '<div style="font-size:12px;margin-bottom:4px"><strong>Status:</strong> <span style="color:' + st.color + ';font-weight:700">' + st.label + '</span></div>'
+    + '<div style="font-size:12px;margin-bottom:4px"><strong>Current Stop:</strong> ' + (t.currentJob||'—') + '</div>'
+    + '<div style="font-size:12px;margin-bottom:4px"><strong>Jobs:</strong> ' + t.jobsComplete + ' of ' + t.jobsTotal + ' complete</div>'
+    + '<div style="font-size:12px;margin-bottom:8px"><strong>Revenue:</strong> $' + (t.revenue||0) + '</div>'
+    + '<div style="display:flex;gap:6px">'
+    + '<button onclick="dispatchCallTech(\'' + t.id + '\')" style="flex:1;background:#1B5FA8;color:#fff;border:none;border-radius:5px;padding:6px;font-size:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;cursor:pointer">📞 Call</button>'
+    + '<button onclick="dispatchMessageTech(\'' + t.id + '\')" style="flex:1;background:#1E7B3C;color:#fff;border:none;border-radius:5px;padding:6px;font-size:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;cursor:pointer">💬 Message</button>'
+    + '</div></div>';
+}
+
+function selectTech(id) {
+  _selectedTech = _techs.find(function(t){ return t.id === id; });
+  if (!_selectedTech) return;
+  _map.flyTo([_selectedTech.lat, _selectedTech.lng], 14, { duration:1 });
+  if (_markers[id]) _markers[id].openPopup();
+  renderSidebar();
+}
+
+// ── FLEET SUMMARY ─────────────────────────────────────────────────────────
+function renderSummary() {
+  var active = _techs.filter(function(t){ return t.status !== 'idle'; }).length;
+  var complete = _techs.reduce(function(s,t){ return s + t.jobsComplete; }, 0);
+  var remaining = _techs.reduce(function(s,t){ return s + (t.jobsTotal - t.jobsComplete); }, 0);
+  var revenue = _techs.reduce(function(s,t){ return s + (t.revenue||0); }, 0);
+
+  // Exceptions from localStorage
+  var exc = 0;
+  try { exc = (JSON.parse(localStorage.getItem('termac_exceptions')||'[]')).filter(function(e){ return !e.resolved && e.date === new Date().toISOString().slice(0,10); }).length; } catch(e){}
+
+  document.getElementById('si_active').textContent = active;
+  document.getElementById('si_complete').textContent = complete;
+  document.getElementById('si_remaining').textContent = remaining;
+  document.getElementById('si_exceptions').textContent = exc;
+  document.getElementById('si_revenue').textContent = '$' + revenue.toLocaleString();
+
+  // Alert strip
+  if (exc > 0) {
+    document.getElementById('alertStrip').style.display = 'flex';
+    document.getElementById('alertMsg').textContent = exc + ' open exception' + (exc>1?'s':'')+' require dispatcher attention';
+  }
+
+  // Stale techs alert
+  var stale = _techs.filter(function(t){ return pingAge(t) > 900 && t.status !== 'idle' && t.status !== 'complete'; });
+  if (stale.length) {
+    document.getElementById('alertStrip').style.display = 'flex';
+    document.getElementById('alertMsg').textContent = stale.map(function(t){ return t.name; }).join(', ') + ' — no status ping in 15+ minutes';
+  }
+}
+
+// ── UTILITIES ─────────────────────────────────────────────────────────────
+function pingAge(t) { return Math.round((Date.now() - (t.lastPing||0)) / 1000); }
+function formatAge(secs) {
+  if (secs < 60) return secs + 's';
+  if (secs < 3600) return Math.floor(secs/60) + 'm';
+  return Math.floor(secs/3600) + 'h ' + Math.floor((secs%3600)/60) + 'm';
+}
+
+function startClock() {
+  function tick() {
+    var now = new Date();
+    document.getElementById('liveClock').textContent = now.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  }
+  tick(); setInterval(tick, 1000);
+}
+
+function refreshAll() {
+  loadRealCheckins();
+  renderSidebar();
+  renderMapMarkers();
+  renderSummary();
+  showToast('↻ Board refreshed');
+}
+
+function broadcastMessage() {
+  var msg = prompt('Broadcast message to all field techs (logged to their portals):');
+  if (!msg) return;
+  try {
+    var bc = JSON.parse(localStorage.getItem('termac_broadcasts')||'[]');
+    bc.unshift({ id:'bc_'+Date.now(), ts:Date.now(), msg, from:'Dispatch', read:[] });
+    localStorage.setItem('termac_broadcasts', JSON.stringify(bc.slice(0,20)));
+    showToast('📢 Broadcast sent to ' + _techs.length + ' units');
+  } catch(e) {}
+}
+
+function dispatchCallTech(id) {
+  var t = _techs.find(function(x){ return x.id === id; });
+  alert('In production, this opens a VoIP call to ' + (t?.name||id) + '\'s company phone. For now, call their direct number from the staff directory.');
+}
+
+function dispatchMessageTech(id) {
+  var t = _techs.find(function(x){ return x.id === id; });
+  var msg = prompt('Message to ' + (t?.name||id) + ':');
+  if (!msg) return;
+  try {
+    var msgs = JSON.parse(localStorage.getItem('termac_dispatch_msgs')||'[]');
+    msgs.unshift({ id:'msg_'+Date.now(), ts:Date.now(), to: id, from:'Dispatch', msg, read:false });
+    localStorage.setItem('termac_dispatch_msgs', JSON.stringify(msgs.slice(0,100)));
+    showToast('✉️ Message sent to ' + (t?.name||id));
+  } catch(e) {}
+}
+
+function openEmergency() {
+  var acct = prompt('Emergency — describe the situation (account name, location, nature of emergency):');
+  if (!acct) return;
+  try {
+    var exc = JSON.parse(localStorage.getItem('termac_exceptions')||'[]');
+    exc.unshift({ id:'emrg_'+Date.now(), ts:Date.now(), date:new Date().toISOString().slice(0,10), typeKey:'safety', typeIcon:'🚨', typeLabel:'Emergency — Dispatcher Alert', accountName:acct, notes:acct, techName:'Dispatcher', resolved:false });
+    localStorage.setItem('termac_exceptions', JSON.stringify(exc));
+    showToast('🚨 Emergency logged — management notified');
+  } catch(e) {}
+  document.getElementById('alertStrip').style.display = 'flex';
+  document.getElementById('alertMsg').textContent = '🚨 EMERGENCY LOGGED — ' + acct;
+}
+
+function showToast(msg) {
+  var t = document.createElement('div');
+  t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1A1D21;color:#fff;border:1px solid #2A2E35;border-radius:8px;padding:10px 18px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;z-index:9999;white-space:nowrap';
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(function(){ t.remove(); }, 2800);
+}
+</script>
+</body>
+</html>

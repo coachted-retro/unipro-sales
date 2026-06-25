@@ -391,7 +391,39 @@ function woPrintInvoice(){
   const lines=woState.lines.map(l=>`<tr><td>${l.label}</td><td style="text-align:right">${l.qty||1}</td><td style="text-align:right">$${((l.qty||1)*(l.unitPrice||0)).toFixed(2)}</td></tr>`).join('');
   const w=window.open('','_blank');
   w.document.write(`<!DOCTYPE html><html><head><title>${DIV_NAME} Invoice</title><style>body{font-family:Arial,sans-serif;padding:30px;max-width:700px;margin:0 auto}h1{color:#065F46;border-bottom:3px solid #065F46;padding-bottom:8px}table{width:100%;border-collapse:collapse;margin:20px 0}th{background:#065F46;color:#fff;padding:8px 10px;text-align:left}td{padding:7px 10px;border-bottom:1px solid #eee}.total{font-weight:bold;font-size:18px;text-align:right;color:#065F46}.sig{margin-top:30px;border-top:2px solid #333;padding-top:15px}</style><script src="service-exception.js"></script>
-</head><body><h1>${DIV_NAME} — Service Invoice</h1><p><strong>Termac Family of Companies</strong></p><p>Date: ${new Date().toLocaleDateString('en-US')}</p><hr><p><strong>Customer:</strong> ${job.account||'—'}</p><p><strong>Address:</strong> ${job.addr||'—'}</p><table><thead><tr><th>Service</th><th>Qty</th><th>Amount</th></tr></thead><tbody>${lines}</tbody></table><p class="total">Total: $${total.toFixed(2)}</p><div class="sig"><p><strong>Authorized by:</strong> ${document.getElementById('woSignerName')?.value||'—'}</p><p>Title: ${document.getElementById('woSignerTitle')?.value||'—'}</p></div></body></html>`);
+</head><body><h1>${DIV_NAME} — Service Invoice</h1><p><strong>Termac Family of Companies</strong></p><p>Date: ${new Date().toLocaleDateString('en-US')}</p><hr><p><strong>Customer:</strong> ${job.account||'—'}</p><p><strong>Address:</strong> ${job.addr||'—'}</p><table><thead><tr><th>Service</th><th>Qty</th><th>Amount</th></tr></thead><tbody>${lines}</tbody></table><p class="total">Total: $${total.toFixed(2)}</p><div class="sig"><p><strong>Authorized by:</strong> ${document.getElementById('woSignerName')?.value||'—'}</p><p>Title: ${document.getElementById('woSignerTitle')?.value||'—'}</p></div><script>
+var PORTAL_DIVISION = 'AllPro';
+
+// ── DISPATCH CHECK-IN PROTOCOL ────────────────────────────────────────────
+// Pings the Dispatch Status Board every 5 minutes with current status.
+// In production: POST to /api/dispatch/checkin — Azure Function endpoint.
+(function dispatchCheckin() {
+  function ping(status, jobName) {
+    try {
+      var u = JSON.parse(localStorage.getItem('termac_current_user') || sessionStorage.getItem('termac_current_user') || '{}');
+      var techId = u.id || u.email || 'unknown_tech';
+      var techName = u.name || 'Unknown Tech';
+      // Territory-based rough GPS (demo: randomize within Phila metro on each ping)
+      var baseLat = 39.95 + (Math.random() - 0.5) * 0.3;
+      var baseLng = -75.10 + (Math.random() - 0.5) * 0.4;
+      localStorage.setItem('termac_checkin_' + techId, JSON.stringify({
+        techId, techName,
+        division: PORTAL_DIVISION || 'Field',
+        status: status || 'onsite',
+        lat: baseLat, lng: baseLng,
+        currentJob: jobName || 'Active route',
+        jobsComplete: 0, jobsTotal: 0, revenue: 0,
+        lastPing: Date.now(),
+      }));
+    } catch(e) {}
+  }
+  // Ping on load and every 5 minutes
+  ping('onsite');
+  setInterval(function(){ ping('onsite'); }, 300000);
+})();
+
+</script>
+</body></html>`);
   w.document.close();setTimeout(()=>w.print(),300);
 }
 

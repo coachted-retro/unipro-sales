@@ -735,6 +735,303 @@ var _cfResult = null;
 var _cfQueue = [];
 
 // ── NAV ──
+
+// ══ JURISDICTION ENGINE ═══════════════════════════════════════════════════
+// Detects jurisdiction from ZIP/address and auto-populates:
+//   • AHJ name and address
+//   • Required license/permit fields (Philadelphia L&I, NJ DEA, etc.)
+//   • Jurisdiction-specific form notes and requirements
+//   • Extra required fields shown/hidden per jurisdiction
+
+var JURISDICTIONS = {
+  // ── PHILADELPHIA ─────────────────────────────────────────────────────
+  phila: {
+    name: 'Philadelphia',
+    state: 'PA',
+    label: 'Philadelphia, PA',
+    zips: ['191','192'],   // prefix match
+    fire_ahj: 'Philadelphia Fire Department — Fire Prevention Bureau',
+    fire_ahj_addr: '240 Spring Garden St, Philadelphia PA 19123 · (215) 686-1300',
+    fog_ahj: 'Philadelphia Water Department — Fats, Oils & Grease Program',
+    fog_ahj_addr: '1101 Market St, Philadelphia PA 19107 · (215) 685-6300',
+    nfpa10_extras: [
+      { id:'jx_phila_li', label:'Philadelphia L&I Permit #', placeholder:'L&I permit number if applicable', required: false },
+      { id:'jx_phila_inspector_id', label:'Inspector Badge / ID #', placeholder:'PFD inspector badge number', required: false },
+    ],
+    nfpa10_notes: 'Philadelphia: Submit completed inspection reports to the Fire Prevention Bureau within 30 days. Extinguisher service companies must hold a valid Philadelphia contractor license.',
+    nfpa96_extras: [
+      { id:'jx_phila_hood_permit', label:'Philadelphia Hood System Permit #', placeholder:'Required for Ansul/suppression work', required: false },
+    ],
+    nfpa96_notes: 'Philadelphia: Hood suppression work requires a separate permit from L&I. Notify the Bureau of Fire Prevention when any suppression system is placed out of service.',
+    fog_extras: [
+      { id:'jx_phila_fog_account', label:'Philadelphia PWD FOG Account #', placeholder:'PWD registered account number', required: false },
+      { id:'jx_phila_food_license', label:'Philadelphia Food License #', placeholder:'City food establishment license', required: false },
+    ],
+    fog_notes: 'Philadelphia: Grease trap service records must be retained for 3 years and available for inspection by PWD FOG Program inspectors. Traps ≥25 gallons serving commercial kitchens must be pumped per frequency schedule based on trap size and kitchen volume.',
+    manifest_hauler_license: 'PA DEP Waste Hauler License',
+    manifest_notes: 'PA: Manifest required per PA Solid Waste Management Act. Records retained minimum 5 years. Report to PA DEP if waste not delivered to approved facility.',
+  },
+
+  // ── NEW JERSEY ──────────────────────────────────────────────────────
+  nj: {
+    name: 'New Jersey',
+    state: 'NJ',
+    label: 'New Jersey',
+    zips: ['07','08'],    // prefix match
+    fire_ahj: 'NJ Division of Fire Safety — Local Fire Official',
+    fire_ahj_addr: 'Contact local municipality — NJ Uniform Fire Code (NJUFC)',
+    fog_ahj: 'NJ DEP — Division of Water Quality',
+    fog_ahj_addr: 'NJ DEP, 401 E State St, Trenton NJ 08625 · (609) 292-5066',
+    nfpa10_extras: [
+      { id:'jx_nj_dea', label:'NJ DEA License #', placeholder:'NJ Division of Consumer Affairs license', required: true },
+      { id:'jx_nj_ufc_ref', label:'NJUFC Reference #', placeholder:'N.J.A.C. 5:70 — if AHJ requires', required: false },
+      { id:'jx_nj_lfo', label:'Local Fire Official Name', placeholder:'Name of local AHJ inspector', required: false },
+    ],
+    nfpa10_notes: 'New Jersey: All fire extinguisher service technicians must hold a valid NJ DEA license (N.J.A.C. 13:44B). Inspection tags must include technician DEA license number. Records submitted to the Local Fire Official (LFO) per NJUFC.',
+    nfpa96_extras: [
+      { id:'jx_nj_hood_cert', label:'NJ Hood Suppression Contractor #', placeholder:'NJ contractor certification number', required: false },
+    ],
+    nfpa96_notes: 'New Jersey: Hood suppression inspections governed by NJUFC N.J.A.C. 5:70. Semi-annual inspection required. Contractor must be certified under N.J.A.C. 5:70-4.5.',
+    fog_extras: [
+      { id:'jx_nj_pwo', label:'NJ PWO Registration #', placeholder:'Pollution Discharge Elimination registration', required: false },
+      { id:'jx_nj_dep_id', label:'NJ DEP Generator ID', placeholder:'If food service facility is DEP-registered', required: false },
+    ],
+    fog_notes: 'New Jersey: Grease trap waste haulers must hold NJ DEP Solid Waste Transporter approval. Manifests retained 3 years. Food service establishments in municipalities with FOG ordinances may require separate municipal registration.',
+    manifest_hauler_license: 'NJ DEP Solid Waste Transporter Approval #',
+    manifest_notes: 'NJ: Transporter must hold NJ DEP Solid Waste Transporter approval. Waste accepted only at NJ DEP-permitted facilities. Retain manifests minimum 3 years per NJDEP regulations.',
+  },
+
+  // ── DELAWARE ────────────────────────────────────────────────────────
+  de: {
+    name: 'Delaware',
+    state: 'DE',
+    label: 'Delaware',
+    zips: ['197','198','199'],
+    fire_ahj: 'Delaware Office of the Fire Marshal',
+    fire_ahj_addr: '1537 Chestnut Grove Rd, Dover DE 19904 · (302) 739-5665',
+    fog_ahj: 'Delaware DNREC — Division of Watershed Stewardship',
+    fog_ahj_addr: '89 Kings Hwy, Dover DE 19901 · (302) 739-9921',
+    nfpa10_extras: [
+      { id:'jx_de_license', label:'DE Fire Marshal License #', placeholder:'DE licensed fire equipment technician #', required: false },
+    ],
+    nfpa10_notes: 'Delaware: Fire extinguisher service governed by Delaware Fire Prevention Regulations. Technicians must be licensed by the State Fire Marshal.',
+    nfpa96_extras: [],
+    nfpa96_notes: 'Delaware: Hood suppression inspections per IFC as adopted by Delaware Fire Prevention Commission.',
+    fog_extras: [
+      { id:'jx_de_dnrec', label:'DE DNREC Permit #', placeholder:'If facility requires DNREC FOG permit', required: false },
+    ],
+    fog_notes: 'Delaware: FOG disposal regulated by DNREC. Waste haulers must hold DNREC solid waste hauler registration. Report discharges within 2 hours to DNREC hotline.',
+    manifest_hauler_license: 'DE DNREC Solid Waste Hauler Registration #',
+    manifest_notes: 'DE: Retain manifests 3 years. Waste must go to DNREC-approved facility. Illegal disposal subject to DNREC enforcement action.',
+  },
+
+  // ── EASTERN PA (NON-PHILA) ──────────────────────────────────────────
+  pa: {
+    name: 'Pennsylvania',
+    state: 'PA',
+    label: 'Eastern PA',
+    zips: ['180','181','182','183','184','185','186','187','188','189','190','193','194','195','196'],
+    fire_ahj: 'Local Fire Marshal / AHJ',
+    fire_ahj_addr: 'Contact local municipality fire official',
+    fog_ahj: 'Local Municipal Authority / PA DEP',
+    fog_ahj_addr: 'PA DEP Southeast Region, 2 East Main St, Norristown PA 19401 · (484) 250-5900',
+    nfpa10_extras: [],
+    nfpa10_notes: 'Pennsylvania: No statewide fire protection technician license required, but local AHJ may have additional requirements. Inspection records retained minimum 1 year.',
+    nfpa96_extras: [],
+    nfpa96_notes: 'Pennsylvania: Hood suppression per NFPA 96 and local fire codes. Verify AHJ has received current inspection records.',
+    fog_extras: [],
+    fog_notes: 'Pennsylvania (non-Philadelphia): FOG regulations vary by municipality. Contact local municipal authority or county health department for specific requirements.',
+    manifest_hauler_license: 'PA DEP Residual Waste Hauler License #',
+    manifest_notes: 'PA: Grease waste classified as residual waste. Hauler must be permitted by PA DEP. Records retained 5 years. Manifest required per 25 Pa. Code Chapter 299.',
+  },
+};
+
+// ── DETECT JURISDICTION FROM ADDRESS STRING ──────────────────────────────
+function cfDetectJurisdiction(addrStr) {
+  if (!addrStr) return null;
+  var addr = addrStr.toUpperCase();
+  var zip = (addrStr.match(/\b(\d{5})\b/) || [])[1] || '';
+
+  // Philadelphia check — ZIP OR city name
+  if (/PHILADELPHIA/.test(addr) || (zip && (zip.startsWith('191') || zip.startsWith('192')))) {
+    return JURISDICTIONS.phila;
+  }
+  // NJ — ZIP prefix or state abbrev
+  if (/\bNJ\b|NEW JERSEY/.test(addr) || (zip && (zip.startsWith('07') || zip.startsWith('08')))) {
+    return JURISDICTIONS.nj;
+  }
+  // Delaware
+  if (/\bDE\b|DELAWARE/.test(addr) || (zip && (zip.startsWith('197') || zip.startsWith('198') || zip.startsWith('199')))) {
+    return JURISDICTIONS.de;
+  }
+  // PA (non-Phila)
+  if (/\bPA\b|PENNSYLVANIA/.test(addr)) {
+    return JURISDICTIONS.pa;
+  }
+  return null;
+}
+
+// ── APPLY JURISDICTION TO ACTIVE FORM ────────────────────────────────────
+function cfApplyJurisdiction(jur) {
+  if (!jur) return;
+
+  // Show jurisdiction banner
+  var existing = document.getElementById('cfJurBanner');
+  if (existing) existing.remove();
+  var banner = document.createElement('div');
+  banner.id = 'cfJurBanner';
+  banner.style.cssText = 'background:linear-gradient(90deg,#1B5FA8,#1E3A8A);color:#fff;border-radius:8px;padding:10px 16px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;font-size:12px';
+  banner.innerHTML = '<div><strong style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;letter-spacing:.04em">📍 ' + jur.label + ' — Jurisdiction Auto-Detected</strong><br><span style="opacity:.85">' + (jur.fire_ahj || '') + '</span></div>'
+    + '<button onclick="cfDismissJurBanner()" style="background:rgba(255,255,255,.2);border:none;border-radius:5px;color:#fff;cursor:pointer;padding:3px 10px;font-size:12px">✕</button>';
+  
+  // Insert banner at top of active form body
+  var activeForm = document.querySelector('[id^="cfPage-"]:not([style*="display:none"])');
+  if (!activeForm) return;
+  var body = activeForm.querySelector('.form-card-body');
+  if (body) body.insertBefore(banner, body.firstChild);
+
+  // Auto-fill AHJ fields for current form page
+  var page = document.querySelector('[id^="cfPage-"]:not([style*="display:none"])')?.id?.replace('cfPage-','');
+  cfFillJurFields(page, jur);
+
+  // Show jurisdiction notes
+  cfShowJurNotes(page, jur);
+
+  // Show/hide extra jurisdiction fields
+  cfRenderJurExtras(page, jur);
+
+  // Store for reference
+  window._cfCurrentJur = jur;
+}
+
+function cfFillJurFields(page, jur) {
+  function sv(id, val) { var el=document.getElementById(id); if(el && val && !el.value) el.value = val; }
+  if (page === 'nfpa10') {
+    sv('n10_ahj', jur.fire_ahj);
+  } else if (page === 'nfpa96') {
+    sv('n96_ahj', jur.fire_ahj);
+  } else if (page === 'cert') {
+    sv('cert_ahj', jur.fire_ahj);
+  } else if (page === 'fog') {
+    sv('fog_ahj', jur.fog_ahj);
+  } else if (page === 'fogcert') {
+    sv('fogcert_muni', jur.fog_ahj);
+  } else if (page === 'manifest' || page === 'gto_coc') {
+    sv('wm_hauler_lic', jur.manifest_hauler_license || '');
+    sv('coc_hauler_lic', jur.manifest_hauler_license || '');
+  } else if (page === 'filterman96') {
+    sv('fm_ahj', jur.fire_ahj);
+  }
+}
+
+function cfShowJurNotes(page, jur) {
+  // Remove existing notes
+  var existing = document.getElementById('cfJurNotes');
+  if (existing) existing.remove();
+
+  var notes = '';
+  if (page === 'nfpa10') notes = jur.nfpa10_notes;
+  else if (page === 'nfpa96') notes = jur.nfpa96_notes;
+  else if (page === 'fog' || page === 'fogcert') notes = jur.fog_notes;
+  else if (page === 'manifest' || page === 'gto_coc') notes = jur.manifest_notes;
+  else if (page === 'filterman96') notes = jur.nfpa96_notes;
+
+  if (!notes) return;
+  var noteEl = document.createElement('div');
+  noteEl.id = 'cfJurNotes';
+  noteEl.style.cssText = 'background:#FEF3C7;border-left:3px solid #D97706;border-radius:0 7px 7px 0;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#78350F;line-height:1.6';
+  noteEl.innerHTML = '<strong>⚖️ ' + jur.label + ' Requirements:</strong> ' + notes;
+  var activeForm = document.querySelector('[id^="cfPage-"]:not([style*="display:none"])');
+  if (!activeForm) return;
+  var body = activeForm.querySelector('.form-card-body');
+  var banner = document.getElementById('cfJurBanner');
+  if (body) {
+    if (banner) banner.after(noteEl);
+    else body.insertBefore(noteEl, body.firstChild);
+  }
+}
+
+function cfRenderJurExtras(page, jur) {
+  // Remove existing extras
+  document.querySelectorAll('.cf-jur-extra').forEach(function(el){ el.remove(); });
+
+  var extras = [];
+  if (page === 'nfpa10') extras = jur.nfpa10_extras || [];
+  else if (page === 'nfpa96') extras = jur.nfpa96_extras || [];
+  else if (page === 'fog' || page === 'fogcert') extras = jur.fog_extras || [];
+  else if (page === 'filterman96') extras = jur.nfpa96_extras || [];
+
+  if (!extras.length) return;
+
+  var wrapper = document.createElement('div');
+  wrapper.className = 'cf-jur-extra';
+  wrapper.style.cssText = 'margin-bottom:14px';
+  wrapper.innerHTML = '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#1B5FA8;margin-bottom:8px">📋 ' + jur.label + ' — Required Fields</div>'
+    + '<div class="form-grid">'
+    + extras.map(function(ex) {
+        return '<div class="form-field"><label>' + (ex.required ? '<span style="color:#C8102E">*</span> ' : '') + ex.label + '</label>'
+          + '<input id="' + ex.id + '" placeholder="' + ex.placeholder + '"' + (ex.required ? ' required' : '') + '></div>';
+      }).join('')
+    + '</div>';
+
+  var activeForm = document.querySelector('[id^="cfPage-"]:not([style*="display:none"])');
+  if (!activeForm) return;
+  var body = activeForm.querySelector('.form-card-body');
+  var notes = document.getElementById('cfJurNotes');
+  if (body) {
+    if (notes) notes.after(wrapper);
+    else {
+      var banner = document.getElementById('cfJurBanner');
+      if (banner) banner.after(wrapper);
+      else body.insertBefore(wrapper, body.firstChild);
+    }
+  }
+}
+
+function cfDismissJurBanner() {
+  var b = document.getElementById('cfJurBanner');
+  if (b) b.remove();
+}
+
+// ── WATCH ADDRESS FIELDS AND TRIGGER DETECTION ───────────────────────────
+function cfWatchAddress() {
+  var addressFields = [
+    'n10_addr','n96_addr','cert_addr','fog_addr','wm_gen_addr',
+    'fogcert_addr','fm_addr','coc_gen_addr'
+  ];
+  addressFields.forEach(function(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('blur', function() {
+      var jur = cfDetectJurisdiction(el.value);
+      if (jur) cfApplyJurisdiction(jur);
+    });
+    el.addEventListener('change', function() {
+      var jur = cfDetectJurisdiction(el.value);
+      if (jur) cfApplyJurisdiction(jur);
+    });
+  });
+}
+
+// Re-run jurisdiction when nav changes — patch cfNav after definition
+function cfNavWithJur(page) {
+  var pages = document.querySelectorAll('[id^="cfPage-"]');
+  pages.forEach(function(p){ p.style.display='none'; });
+  document.querySelectorAll('[id^="sbNav-"]').forEach(function(el){ el.classList.remove('active'); });
+  var target = document.getElementById('cfPage-'+page);
+  if(target) target.style.display='';
+  var sb = document.getElementById('sbNav-'+page);
+  if(sb) sb.classList.add('active');
+  // Re-apply jurisdiction if detected
+  setTimeout(function() {
+    if (window._cfCurrentJur) {
+      cfFillJurFields(page, window._cfCurrentJur);
+      cfShowJurNotes(page, window._cfCurrentJur);
+      cfRenderJurExtras(page, window._cfCurrentJur);
+    }
+  }, 60);
+}
+
 function cfNav(page) {
   _cfPage = page;
   document.querySelectorAll('[id^="cfPage-"]').forEach(function(el){ el.style.display='none'; });
@@ -805,6 +1102,9 @@ function cfLoadJob() {
   // Auto-navigate to relevant form type
   if(job.typeKey === 'grease') cfNav('fog');
   else cfNav('nfpa10');
+  // Auto-detect jurisdiction from loaded job address
+  var jur = cfDetectJurisdiction(job.addr || '');
+  if (jur) { window._cfCurrentJur = jur; setTimeout(function(){ cfApplyJurisdiction(jur); }, 100); }
 
   cfToast('Job loaded: '+job.account);
 }
@@ -1064,6 +1364,7 @@ document.addEventListener('DOMContentLoaded', function(){
   if(formType) cfNav(formType);
 
   cfInitJobSelect();
+  cfWatchAddress(); // Auto-detect jurisdiction from address fields
 
   if(jobId) {
     var sel = document.getElementById('jobSelect');
