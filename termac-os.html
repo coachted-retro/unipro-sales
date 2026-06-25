@@ -1053,6 +1053,7 @@ body.rail-open .rail-overlay{display:block}
 .sc-bonus-yes{background:#E7F5EC;color:var(--green)}.sc-bonus-no{background:#FEE9EC;color:var(--red)}
 .sc-trend-sparkline{display:flex;align-items:flex-end;gap:2px;height:22px}.sc-spark{width:7px;border-radius:2px}
 </style>
+<script src="termac-notify.js"></script>
 </head>
 <body>
 
@@ -3951,6 +3952,20 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
       </div>
       <div id="cs-body-exceptions">
         <div id="exceptionPanelBody" style="font-size:12px;color:#6B7280">Loading…</div>
+      </div>
+    </div>
+
+    <!-- Hot Lead & Urgent Response Log -->
+    <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:14px;margin-bottom:14px">
+      <div onclick="mgrToggle('hotleads')" style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none;padding-bottom:8px">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft)">
+          🔥 Hot Leads &amp; Urgent Alerts
+          <span id="notifBadge" style="display:none;background:#C8102E;color:#fff;border-radius:99px;padding:1px 7px;font-size:9px;font-weight:800;margin-left:6px">0</span>
+        </div>
+        <span id="cs-icon-hotleads" style="color:var(--soft);font-size:14px">▾</span>
+      </div>
+      <div id="cs-body-hotleads">
+        <div id="hotleadPanelBody" style="font-size:12px;color:#6B7280">Loading…</div>
       </div>
     </div>
 
@@ -11831,6 +11846,85 @@ try { weeklyAutoClean(); } catch(e) {}
 
 
 // ── SERVICE EXCEPTION PANEL ──────────────────────────────────────────────────
+
+// ── HOT LEAD & URGENT RESPONSE PANEL ─────────────────────────────────────
+function renderHotLeadPanel() {
+  const body = document.getElementById('hotleadPanelBody');
+  if (!body) return;
+
+  let notifs = [];
+  try { notifs = JSON.parse(localStorage.getItem('termac_hotlead_notifs') || '[]'); } catch(e) {}
+
+  // Update badge
+  const badge = document.getElementById('notifBadge');
+  const unread = notifs.filter(n => !n.read).length;
+  if (badge) {
+    badge.textContent = unread;
+    badge.style.display = unread > 0 ? 'inline' : 'none';
+  }
+
+  if (!notifs.length) {
+    body.innerHTML = '<div style="color:var(--green);font-size:11px;font-weight:600;padding:8px 0">✅ No hot leads or urgent alerts on record</div>';
+    return;
+  }
+
+  const typeColors = { hot_lead:'#C8102E', urgent_response:'#7C2D12', dms_escalation:'#D97706',
+    routed_call:'#1B5FA8', lead_claimed:'#1E7B3C' };
+  const typeBg = { hot_lead:'#FEE2E2', urgent_response:'#FEF2F2', dms_escalation:'#FEF3C7',
+    routed_call:'#DBEAFE', lead_claimed:'#D1FAE5' };
+
+  body.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <div style="font-size:11px;color:var(--soft)">${unread} unread · ${notifs.length} total</div>
+      <div style="display:flex;gap:8px">
+        <button onclick="markAllNotifsRead()" style="background:none;border:1px solid var(--line);border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer;color:var(--soft)">Mark all read</button>
+        <button onclick="clearReadNotifs()" style="background:none;border:1px solid var(--line);border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer;color:var(--soft)">Clear read</button>
+      </div>
+    </div>` +
+  notifs.slice(0, 20).map(n => `
+    <div onclick="markNotifRead('${n.id}')" style="background:${n.read ? '#F9FAFB' : (typeBg[n.type]||'#FEF2F2')};border-radius:8px;border-left:3px solid ${typeColors[n.type]||'#C8102E'};padding:10px 12px;margin-bottom:8px;opacity:${n.read?'.65':'1'};cursor:pointer">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px">${n.icon} ${n.title}</div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <span style="font-size:10px;color:#6B7280">${n.date} ${n.time}</span>
+          ${!n.read ? '<span style="background:#C8102E;color:#fff;border-radius:99px;padding:0 6px;font-size:9px;font-weight:800">NEW</span>' : ''}
+        </div>
+      </div>
+      <div style="font-size:11px;color:#6B7280;margin-bottom:3px">→ ${n.recipient || '—'}</div>
+      <div style="font-size:12px;color:#374151">${n.body}</div>
+      ${n.email ? `<div style="font-size:10px;color:#1B5FA8;margin-top:4px">📧 ${n.email}</div>` : ''}
+    </div>`).join('') +
+  (notifs.length > 20 ? `<div style="font-size:11px;color:var(--soft);text-align:center;padding:6px">${notifs.length - 20} older records not shown</div>` : '');
+}
+
+function markNotifRead(id) {
+  try {
+    const notifs = JSON.parse(localStorage.getItem('termac_hotlead_notifs') || '[]');
+    const n = notifs.find(x => x.id === id);
+    if (n) n.read = true;
+    localStorage.setItem('termac_hotlead_notifs', JSON.stringify(notifs));
+    renderHotLeadPanel();
+  } catch(e) {}
+}
+
+function markAllNotifsRead() {
+  try {
+    const notifs = JSON.parse(localStorage.getItem('termac_hotlead_notifs') || '[]');
+    notifs.forEach(n => n.read = true);
+    localStorage.setItem('termac_hotlead_notifs', JSON.stringify(notifs));
+    renderHotLeadPanel();
+  } catch(e) {}
+}
+
+function clearReadNotifs() {
+  try {
+    const notifs = JSON.parse(localStorage.getItem('termac_hotlead_notifs') || '[]');
+    const unread = notifs.filter(n => !n.read);
+    localStorage.setItem('termac_hotlead_notifs', JSON.stringify(unread));
+    renderHotLeadPanel();
+  } catch(e) {}
+}
+
 function renderExceptionPanel() {
   const body = document.getElementById('exceptionPanelBody');
   const badge = document.getElementById('exBadge');
@@ -11884,6 +11978,7 @@ function resolveException(id) {
     if (ex) { ex.resolved = true; ex.resolvedAt = Date.now(); ex.resolvedBy = _currentUser?.name || 'Manager'; }
     localStorage.setItem('termac_exceptions', JSON.stringify(exceptions));
     renderExceptionPanel();
+  renderHotLeadPanel();
   } catch(e) {}
 }
 
@@ -13525,6 +13620,9 @@ function dmsEscalate(id) {
     who: _currentUser?.name || 'DMS'
   });
   crmSave('dms_coldcall', data);
+
+  // 🔔 Hot Lead notification to target recipient
+  if (typeof notifyOnDmsEscalation === 'function') notifyOnDmsEscalation(r, target);
 
   // Internal notification (sessionStorage for demo)
   const notifs = JSON.parse(sessionStorage.getItem('termac_notifs') || '[]');
@@ -17390,6 +17488,8 @@ function rcpLogCall(){
   ['rcpCallType','rcpRouteTo'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
   const eu=document.getElementById('rcpUrgency');if(eu)eu.value='normal';
   rcpHideComplaintBanner();
+  // 🔔 Hot Lead + Urgent Response notifications
+  if (typeof notifyOnCallLogged === 'function') notifyOnCallLogged(call);
   rcpRefresh();return call;
 }
 function rcpLogAndCreateLead(){
@@ -17484,6 +17584,8 @@ async function rcpSendComplaintEscalation(call) {
     '— Termac One Reception System'
   );
   // mailto: opens default email client pre-filled — replace with Brevo API once key is active
+  // Note: notifyOnCallLogged handles complaint notification now via termac-notify.js
+  // This function is kept as legacy fallback for direct calls
   window.open('mailto:jkennedy@termac.com,tpittakas@termac.com?subject=' + subject + '&body=' + body, '_blank');
 }
 
@@ -22377,6 +22479,8 @@ function claimLead(id) {
   });
 
   crmSave('leads', data);
+  // 🔔 Lead claimed notification
+  if (typeof notifyOnLeadClaimed === 'function') notifyOnLeadClaimed(r, repName);
   renderLeadPool();
   renderCRMView();
   buildActionQueue();
