@@ -387,31 +387,102 @@
     return { success: true, leadId: newLead.id };
   }
 
-  // Run account analysis to auto-detect cross-sell gaps
+  // Run account analysis to auto-detect cross-sell gaps — ALL 6 DIVISIONS
   function tiAnalyzeCrossSellGaps() {
     const accounts = tiRead('termac_crm_accounts', []);
     const gaps = [];
-    const allDivisions = ['unipro', 'gto', 'filterman'];
+    const allDivisions = ['unipro', 'gto', 'filterman', 'allpro', 'termac', 'quality3'];
 
     accounts.filter(a => a.status === 'active').forEach(account => {
       const has = (account.services || []).map(s => s.toLowerCase());
-      // GTO customer without UniPro — most common cross-sell
+      const type = (account.type || account.businessType || '').toLowerCase();
+      const notes = (account.notes || '').toLowerCase();
+
+      // ── UniPro / Fire ──────────────────────────────────────────────────────
+      // GTO customer without UniPro — extinguishers required in any food service
       if (has.includes('gto') && !has.includes('unipro')) {
-        gaps.push({ account, missing: 'unipro', reason: 'GTO customer — extinguisher inspection cross-sell' });
+        gaps.push({ account, missing: 'unipro', targetDivision: 'UniPro',
+          reason: 'GTO customer — fire extinguisher inspection required in any commercial kitchen (NFPA 10)' });
       }
-      // Filter Man without GTO — hood filter + grease trap bundle
-      if (has.includes('filterman') && !has.includes('gto')) {
-        gaps.push({ account, missing: 'gto', reason: 'Filter Man customer — grease trap bundle opportunity' });
+      // Filter Man without UniPro — hood suppression + extinguisher cross-sell
+      if (has.includes('filterman') && !has.includes('unipro')) {
+        gaps.push({ account, missing: 'unipro', targetDivision: 'UniPro',
+          reason: 'Filter Man customer — hood suppression + extinguisher inspection cross-sell (NFPA 96)' });
       }
       // UniPro without Filter Man — fire inspection customer likely has commercial kitchen
       if (has.includes('unipro') && !has.includes('filterman') && has.length === 1) {
-        gaps.push({ account, missing: 'filterman', reason: 'UniPro-only — likely has hood filters needing exchange' });
+        gaps.push({ account, missing: 'filterman', targetDivision: 'Filter Man',
+          reason: 'UniPro-only — likely has commercial kitchen with hood filters needing exchange' });
+      }
+
+      // ── GTO / Grease Trap ─────────────────────────────────────────────────
+      // Filter Man without GTO — hood filter + grease trap bundle
+      if (has.includes('filterman') && !has.includes('gto')) {
+        gaps.push({ account, missing: 'gto', targetDivision: 'GTO',
+          reason: 'Filter Man customer — grease trap service bundle opportunity (FOG compliance)' });
+      }
+      // UniPro food service without GTO
+      if (has.includes('unipro') && !has.includes('gto') &&
+          (type.includes('restaurant') || type.includes('food') || type.includes('kitchen') ||
+           notes.includes('kitchen') || notes.includes('restaurant') || notes.includes('food'))) {
+        gaps.push({ account, missing: 'gto', targetDivision: 'GTO',
+          reason: 'Food service UniPro account — grease trap compliance likely required by municipality' });
+      }
+
+      // ── AllPro / Stainless Fabrication ────────────────────────────────────
+      // Any food service account without AllPro — stainless fab is a natural bundle
+      if (!has.includes('allpro') &&
+          (has.includes('gto') || has.includes('filterman')) &&
+          (type.includes('restaurant') || type.includes('food') || type.includes('kitchen') ||
+           notes.includes('remodel') || notes.includes('renovation') || notes.includes('new kitchen'))) {
+        gaps.push({ account, missing: 'allpro', targetDivision: 'AllPro',
+          reason: 'Food service customer — stainless fabrication/install opportunity (hoods, shelving, worktables)' });
+      }
+      // Filter Man customer mentioning hood work
+      if (has.includes('filterman') && !has.includes('allpro') &&
+          (notes.includes('hood') || notes.includes('exhaust') || notes.includes('duct'))) {
+        gaps.push({ account, missing: 'allpro', targetDivision: 'AllPro',
+          reason: 'Hood filter customer with hood notes — AllPro stainless hood fabrication cross-sell' });
+      }
+
+      // ── Termac / Dish Machine & Chemical ─────────────────────────────────
+      // Any food service account without Termac dish machine service
+      if (!has.includes('termac') &&
+          (type.includes('restaurant') || type.includes('hotel') || type.includes('cafeteria') ||
+           type.includes('hospital') || type.includes('school') || type.includes('catering') ||
+           notes.includes('dish') || notes.includes('dishwasher') || notes.includes('warewash'))) {
+        gaps.push({ account, missing: 'termac', targetDivision: 'Termac',
+          reason: 'Food service account — dish machine leasing/chemical service opportunity (NSF compliance)' });
+      }
+      // GTO or Filter Man customer without Termac — high probability they have a dish machine
+      if ((has.includes('gto') || has.includes('filterman')) && !has.includes('termac')) {
+        gaps.push({ account, missing: 'termac', targetDivision: 'Termac',
+          reason: 'Commercial kitchen account — dish machine chemical service bundle opportunity' });
+      }
+
+      // ── Quality III / Delaware Fire (de-duplication) ──────────────────────
+      // UniPro account in DE territory without Quality III
+      if (has.includes('unipro') && !has.includes('quality3') &&
+          (account.state === 'DE' || (account.addr||'').includes(' DE ') ||
+           (account.addr||'').toLowerCase().includes('delaware') ||
+           (account.zip||'').startsWith('197') || (account.zip||'').startsWith('198'))) {
+        gaps.push({ account, missing: 'quality3', targetDivision: 'Quality III',
+          reason: 'Delaware account with UniPro — Quality III handles DE fire protection (same license territory)' });
       }
     });
 
-    tiWrite('termac_ti_xsell_gaps', { gaps, analyzedAt: Date.now() });
-    tiLog(`Loop 2: Cross-sell gap analysis — ${gaps.length} opportunities found`);
-    return gaps;
+    // Deduplicate — same account + same missing division = one gap
+    const seen = new Set();
+    const deduped = gaps.filter(g => {
+      const key = (g.account.id || g.account.name) + '_' + g.missing;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    tiWrite('termac_ti_xsell_gaps', { gaps: deduped, analyzedAt: Date.now() });
+    tiLog('Loop 2: Cross-sell gap analysis — ' + deduped.length + ' opportunities found');
+    return deduped;
   }
 
   // ─────────────────────────────────────────────────────────────────────────

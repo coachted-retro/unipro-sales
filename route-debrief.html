@@ -398,12 +398,106 @@ function submitDebrief() {
     localStorage.setItem('termac_debriefs', JSON.stringify(existing.slice(0,60)));
   } catch(e) {}
 
-  // Flag sales leads for manager review
-  if (debrief.salesLeadsDiscovered) {
+  // ── SALES INTEL: Convert field observations → CRM leads ──────────────────
+  if (debrief.salesLeadsDiscovered && debrief.salesLeadsDiscovered.trim()) {
     try {
-      var alerts = JSON.parse(localStorage.getItem('warehouse_alerts') || '[]');
-      alerts.unshift({ id:'debrief_lead_'+Date.now(), ts:Date.now(), type:'debrief_lead', tech, note: debrief.salesLeadsDiscovered });
-      localStorage.setItem('warehouse_alerts', JSON.stringify(alerts));
+      // Parse freetext intel — each sentence/line = potential lead signal
+      var intelText = debrief.salesLeadsDiscovered.trim();
+      var leads = JSON.parse(localStorage.getItem('termac_crm_leads') || '[]');
+
+      // Create a field intel lead record
+      var intelLead = {
+        id: 'field_intel_' + Date.now(),
+        name: 'Field Intel — ' + tech,
+        business: 'Field Intelligence Report',
+        source: 'Field Tech — ' + debrief.division,
+        type: 'Field Intelligence',
+        status: 'new',
+        score: 7,
+        assignedRep: 'Ted Scholl',
+        division: debrief.division || 'UniPro',
+        notes: intelText,
+        techName: tech,
+        debriefDate: debrief.date,
+        created: Date.now(),
+        activityLog: [{
+          ts: Date.now(), type: 'field_intel', icon: '💡',
+          title: 'Sales Intel from Field Tech',
+          note: intelText, who: tech
+        }]
+      };
+      leads.unshift(intelLead);
+      localStorage.setItem('termac_crm_leads', JSON.stringify(leads));
+
+      // Also write to intelligence feed
+      var notifs = JSON.parse(localStorage.getItem('termac_hotlead_notifs') || '[]');
+      notifs.unshift({
+        id: 'n_' + Date.now(), ts: Date.now(),
+        type: 'field_intel', icon: '💡', urgent: false,
+        title: 'Field Sales Intel — ' + tech,
+        body: intelText.slice(0, 120) + (intelText.length > 120 ? '…' : ''),
+        recipient: 'Ted Scholl', read: false,
+        date: new Date().toLocaleDateString('en-US'),
+        time: new Date().toLocaleTimeString('en-US', {hour:'2-digit',minute:'2-digit'})
+      });
+      localStorage.setItem('termac_hotlead_notifs', JSON.stringify(notifs.slice(0,100)));
+    } catch(e) {}
+  }
+
+  // ── COMPLAINTS: Write to urgent response queue ─────────────────────────
+  if (debrief.customerComplaints && debrief.customerComplaints.trim()) {
+    try {
+      var queue = JSON.parse(localStorage.getItem('officeQueue') || '[]');
+      queue.unshift({
+        type: 'complaint', ts: Date.now(), tech: tech,
+        division: debrief.division, date: debrief.date,
+        complaint: debrief.customerComplaints,
+        status: 'pending', urgent: true
+      });
+      localStorage.setItem('officeQueue', JSON.stringify(queue.slice(0, 200)));
+
+      // Notification to management
+      var cNotifs = JSON.parse(localStorage.getItem('termac_hotlead_notifs') || '[]');
+      cNotifs.unshift({
+        id: 'n_' + Date.now(), ts: Date.now(),
+        type: 'urgent_response', icon: '🚨', urgent: true,
+        title: 'Customer Complaint — ' + tech + ' (' + (debrief.division||'') + ')',
+        body: debrief.customerComplaints.slice(0, 120),
+        recipient: 'Management', read: false,
+        date: new Date().toLocaleDateString('en-US'),
+        time: new Date().toLocaleTimeString('en-US', {hour:'2-digit',minute:'2-digit'})
+      });
+      localStorage.setItem('termac_hotlead_notifs', JSON.stringify(cNotifs.slice(0,100)));
+    } catch(e) {}
+  }
+
+  // ── BLOCKERS: Write to manager intelligence feed ───────────────────────
+  if (debrief.blockers && debrief.blockers.trim()) {
+    try {
+      var bNotifs = JSON.parse(localStorage.getItem('termac_hotlead_notifs') || '[]');
+      bNotifs.unshift({
+        id: 'n_' + Date.now(), ts: Date.now(),
+        type: 'blocker', icon: '🚧', urgent: false,
+        title: 'Route Blocker — ' + tech,
+        body: debrief.blockers.slice(0, 120),
+        recipient: 'Operations', read: false,
+        date: new Date().toLocaleDateString('en-US'),
+        time: new Date().toLocaleTimeString('en-US', {hour:'2-digit',minute:'2-digit'})
+      });
+      localStorage.setItem('termac_hotlead_notifs', JSON.stringify(bNotifs.slice(0,100)));
+    } catch(e) {}
+  }
+
+  // ── SUPPLIES NEEDED: Write to warehouse queue ──────────────────────────
+  if (debrief.suppliesNeeded && debrief.suppliesNeeded.trim()) {
+    try {
+      var wQueue = JSON.parse(localStorage.getItem('officeQueue') || '[]');
+      wQueue.unshift({
+        type: 'supply_request', ts: Date.now(), tech: tech,
+        division: debrief.division, date: debrief.date,
+        supplies: debrief.suppliesNeeded, status: 'pending'
+      });
+      localStorage.setItem('officeQueue', JSON.stringify(wQueue.slice(0, 200)));
     } catch(e) {}
   }
 
