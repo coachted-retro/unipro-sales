@@ -574,13 +574,24 @@ function dmsEnterPortal(){
   el = document.getElementById('dmsUsername'); if(el) el.textContent=_dmsUser.name;
   var navTitle = document.getElementById('trnRoleTitle');
   if(navTitle) navTitle.textContent = 'DMS Dashboard';
-  // Show user chip
-  var chip = document.getElementById('dmsUserChip');
-  if(chip){ chip.style.display='inline-flex'; }
-  var ci = document.getElementById('dmsChipInitials');
-  if(ci) ci.textContent = _dmsUser.initials || (_dmsUser.name||'?').split(' ').map(function(w){return w[0];}).join('').toUpperCase().slice(0,2);
-  var cn = document.getElementById('dmsChipName');
-  if(cn) cn.textContent = _dmsUser.name || '';
+// ── USER IDENTITY CHIP ─────────────────────────────────────────────────
+  (function populateUserChip() {
+    var name = '';
+    // 1. Platform-wide: set by Employee Portal login
+    try { name = localStorage.getItem('termac_current_user') || ''; } catch(e) {}
+    // 2. Portal-specific fallback: _dmsUser.name from portal login
+    if (!name) { try { if(typeof _dmsUser !== 'undefined' && _dmsUser && _dmsUser.name) name = _dmsUser.name; } catch(e) {} }
+    // 3. Last resort
+    if (!name) name = 'DMS Rep';
+    var initials = name.split(' ').map(function(w){return w[0]||'';}).join('').slice(0,2).toUpperCase() || 'DM';
+    var chip = document.getElementById('dmsUserChip');
+    if (chip) chip.style.display = 'inline-flex';
+    var ci = document.getElementById('dmsChipInitials');
+    if (ci) ci.textContent = initials;
+    var cn = document.getElementById('dmsChipName');
+    if (cn) cn.textContent = name;
+  })();
+  // ── END USER CHIP ───────────────────────────────────────────────────────
   dmsNav('leads');
 
   dmsUpdateRail();}
@@ -991,8 +1002,15 @@ function dmsToast(msg,dur=2800){
 
 // ── INIT ──
 document.addEventListener('DOMContentLoaded',()=>{
-  // DEMO MODE: auto-enter
-  _dmsUser={...DMS_STAFF['Chrystal Bush'],name:'Chrystal Bush'};
+  // Use logged-in user from Employee Portal; fall back to first DMS staff member
+  var loggedInName = localStorage.getItem('termac_current_user') || '';
+  if (loggedInName && DMS_STAFF[loggedInName]) {
+    _dmsUser = {...DMS_STAFF[loggedInName], name: loggedInName};
+  } else {
+    // Default: first entry in DMS_STAFF
+    var firstKey = Object.keys(DMS_STAFF)[0];
+    _dmsUser = {...DMS_STAFF[firstKey], name: firstKey};
+  }
   dmsEnterPortal();
   document.getElementById('dmsModalBg').addEventListener('click',e=>{
     if(e.target.id==='dmsModalBg') dmsCloseModal();

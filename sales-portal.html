@@ -667,15 +667,24 @@ function spEnterPortal() {
   if (navTitle) navTitle.textContent = 'Sales Dashboard';
   var dateEl = document.getElementById('spTopDate');
   if (dateEl) dateEl.textContent = new Date().toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
-  // User chip
-  if (_spRep) {
-    var chip=document.getElementById('spUserChip');
-    if(chip) chip.style.display='inline-flex';
-    var ci=document.getElementById('spChipInitials');
-    if(ci) ci.textContent=_spRep.initials||(_spRep.name||'?').split(' ').map(function(w){return w[0];}).join('').slice(0,2).toUpperCase();
-    var cn=document.getElementById('spChipName');
-    if(cn) cn.textContent=_spRep.name||'Rep';
-  }
+// ── USER IDENTITY CHIP ─────────────────────────────────────────────────
+  (function populateUserChip() {
+    var name = '';
+    // 1. Platform-wide: set by Employee Portal login
+    try { name = localStorage.getItem('termac_current_user') || ''; } catch(e) {}
+    // 2. Portal-specific fallback: _spRep.name from portal login
+    if (!name) { try { if(typeof _spRep !== 'undefined' && _spRep && _spRep.name) name = _spRep.name; } catch(e) {} }
+    // 3. Last resort
+    if (!name) name = 'Sales Rep';
+    var initials = name.split(' ').map(function(w){return w[0]||'';}).join('').slice(0,2).toUpperCase() || 'SR';
+    var chip = document.getElementById('spUserChip');
+    if (chip) chip.style.display = 'inline-flex';
+    var ci = document.getElementById('spChipInitials');
+    if (ci) ci.textContent = initials;
+    var cn = document.getElementById('spChipName');
+    if (cn) cn.textContent = name;
+  })();
+  // ── END USER CHIP ───────────────────────────────────────────────────────
   spUpdateQueueBadge();
   spNav('leads');
 }
@@ -1729,8 +1738,11 @@ function spToast(msg, duration=2800) {
 //  INIT
 // ══════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', () => {
-  // DEMO MODE: auto-enter, no login required
-  _spRep = { ...SP_REPS['Ted Scholl'], name: 'Ted Scholl' };
+  // Use logged-in user from Employee Portal; fall back to Ted Scholl
+  var loggedInName = localStorage.getItem('termac_current_user') || 'Ted Scholl';
+  _spRep = SP_REPS[loggedInName]
+    ? { ...SP_REPS[loggedInName], name: loggedInName }
+    : { ...SP_REPS['Ted Scholl'], name: loggedInName, initials: loggedInName.split(' ').map(function(w){return w[0]||'';}).join('').slice(0,2).toUpperCase() };
   spEnterPortal();
 
   // Rail collapsed state
