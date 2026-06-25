@@ -67,8 +67,8 @@ body{background:var(--dark);color:var(--ink);font-family:'Barlow',sans-serif;fon
 .card-score{position:absolute;top:8px;right:10px;font-family:Barlow,sans-serif;font-weight:800;font-size:13px;color:var(--yellow)}
 
 /* MAIN AREA */
-.main{flex:1;display:flex;flex-direction:column;overflow:hidden}
-.main-top{display:flex;gap:0;flex:1;overflow:hidden}
+.main{flex:1;display:flex;flex-direction:column;overflow-y:auto;overflow-x:hidden;min-width:0}
+.main-top{display:flex;gap:0;height:calc(100vh - 52px - 40px);overflow:hidden;flex-shrink:0}
 
 /* CALENDAR */
 .cal-panel{width:300px;min-width:280px;background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;overflow:hidden;flex-shrink:0}
@@ -909,7 +909,9 @@ document.addEventListener('DOMContentLoaded', function(){
     renderUnassignedQueue();
     renderCoordInboxList();
     renderMultiDivCoord();
-  }, 400);
+    // Invalidate map after queue panels expand
+    if (schedMap) schedMap.invalidateSize();
+  }, 500);
 });
 
 // ── CALENDAR ──────────────────────────────────────────────────
@@ -2706,42 +2708,109 @@ function renderUnassignedQueue() {
 
 
 function assignFromQueue(jobId) {
-  // Pull job from queue
   var jobs = [];
   try { jobs = JSON.parse(localStorage.getItem('termac_scheduled_jobs')||'[]'); } catch(e) {}
   var job = jobs.find(function(j){ return j.id === jobId; });
-  if (!job) { alert('Job not found in queue.'); return; }
+  if (!job) {
+    // Also search division job stores
+    var divKeys = ['unipro_jobs','gto_invoices','filterman_invoices','allpro_invoices','termac_invoices','quality3_invoices'];
+    divKeys.forEach(function(k) {
+      if (job) return;
+      try {
+        var arr = JSON.parse(localStorage.getItem(k)||'[]');
+        var found = arr.find(function(j){ return j.id === jobId; });
+        if (found) { job = found; job._storeKey = k; }
+      } catch(e) {}
+    });
+  }
+  if (!job) { alert('Job not found.'); return; }
 
-  var techName = prompt('Assign to tech (full name):\n\nJob: '+job.account+'\nDate: '+(job.scheduledDate||'TBD')+'\nService: '+job.serviceType);
+  // ── PREFERRED TECH CHECK ─────────────────────────────────────────────────
+  var accounts = [];
+  try { accounts = JSON.parse(localStorage.getItem('termac_crm_accounts')||'[]'); } catch(e) {}
+  var acct = accounts.find(function(a){
+    return a.id === job.accountId || (a.name||a.business||'').toLowerCase() === (job.accountName||job.account||job.biz||'').toLowerCase();
+  });
+  var preferredTech = acct && acct.preferredTech ? acct.preferredTech : null;
+  var preferredMsg = preferredTech ? '\n\n⭐ PREFERRED TECH: ' + preferredTech + ' (per account preference)' : '';
+
+  // ── PROXIMITY BATCH SUGGESTION ───────────────────────────────────────────
+  var allQueued = [];
+  try { allQueued = JSON.parse(localStorage.getItem('termac_scheduled_jobs')||'[]'); } catch(e) {}
+  // Find nearby unassigned jobs (same ZIP or within ~2 miles based on address)
+  var jobZip = (job.address||job.addr||'').match(/\b\d{5}\b/);
+  jobZip = jobZip ? jobZip[0] : null;
+  var nearby = allQueued.filter(function(j) {
+    if (j.id === job.id || j.techName || j.status === 'complete') return false;
+    if (!jobZip) return false;
+    var jZip = (j.address||j.addr||'').match(/\b\d{5}\b/);
+    return jZip && jZip[0] === jobZip;
+  });
+  var batchMsg = '';
+  if (nearby.length > 0) {
+    batchMsg = '\n\n📍 ' + nearby.length + ' nearby unassigned job(s) in same ZIP (' + jobZip + '):\n'
+      + nearby.slice(0,3).map(function(j){ return '  • ' + (j.account||j.accountName||'Account') + ' — ' + (j.serviceType||'Service'); }).join('\n')
+      + '\n\nAssign the same tech to all nearby jobs? (Saves a route stop)';
+  }
+
+  var prompt_msg = 'Assign tech to: ' + (job.account||job.accountName||job.biz||'Job')
+    + '\nDate: ' + (job.scheduledDate||job.date||'TBD')
+    + '\nService: ' + (job.serviceType||'')
+    + preferredMsg + batchMsg
+    + '\n\nEnter tech name:';
+
+  var techName = prompt(prompt_msg);
   if (!techName || !techName.trim()) return;
+  techName = techName.trim();
 
-  job.techName = techName.trim();
-  job.status = 'assigned';
-  job.assignedAt = Date.now();
+  // ── ASSIGN PRIMARY JOB ───────────────────────────────────────────────────
+  function assignJob(j, store) {
+    j.techName = techName;
+    j.tech = techName;
+    j.assignedAt = Date.now();
+    j.status = j.status === 'unassigned' || j.status === 'pending' ? 'scheduled' : j.status;
+  }
 
+  // Update in termac_scheduled_jobs
+  jobs = jobs.map(function(j){ if(j.id===jobId){ assignJob(j); } return j; });
   localStorage.setItem('termac_scheduled_jobs', JSON.stringify(jobs));
 
-  // Also write to unipro_jobs so dispatch and tech portal can see it
-  try {
-    var uJobs = JSON.parse(localStorage.getItem('unipro_jobs')||'[]');
-    uJobs.push({
-      id: job.id, account: job.account, biz: job.account,
-      addr: job.address||'', contact: job.contact||'', phone: job.phone||'',
-      type: job.serviceType, serviceType: job.serviceType, division: job.division,
-      tech: job.techName, techId: '', date: job.scheduledDate||'',
-      time: '08:00', status: 'scheduled', notes: job.notes||'', priority: job.nfpa||'',
-    });
-    localStorage.setItem('unipro_jobs', JSON.stringify(uJobs));
-  } catch(e) {}
+  // Also update in division store if applicable
+  if (job._storeKey) {
+    try {
+      var divJobs = JSON.parse(localStorage.getItem(job._storeKey)||'[]');
+      divJobs = divJobs.map(function(j){ if(j.id===jobId){ assignJob(j); } return j; });
+      localStorage.setItem(job._storeKey, JSON.stringify(divJobs));
+    } catch(e) {}
+  }
+
+  // ── BATCH ASSIGN NEARBY ───────────────────────────────────────────────────
+  var batchAssigned = 0;
+  if (nearby.length > 0) {
+    var doBatch = confirm('Assign ' + techName + ' to the ' + nearby.length + ' nearby job(s) as well?');
+    if (doBatch) {
+      var updatedJobs = JSON.parse(localStorage.getItem('termac_scheduled_jobs')||'[]');
+      updatedJobs = updatedJobs.map(function(j) {
+        var isNearby = nearby.find(function(n){ return n.id === j.id; });
+        if (isNearby) { assignJob(j); batchAssigned++; }
+        return j;
+      });
+      localStorage.setItem('termac_scheduled_jobs', JSON.stringify(updatedJobs));
+    }
+  }
+
+  var msg = techName + ' assigned to ' + (job.account||job.accountName||'job');
+  if (batchAssigned > 0) msg += ' + ' + batchAssigned + ' nearby job(s)';
+  if (preferredTech && techName.toLowerCase() !== preferredTech.toLowerCase()) {
+    msg += '\n\n⚠️ Note: ' + (job.account||job.accountName||'This account') + ' prefers ' + preferredTech + '.';
+  }
+  alert('✅ ' + msg);
 
   renderUnassignedQueue();
-  renderCoordInboxList();
-  // Poll coord inbox every 30s
-  setInterval(function(){ renderCoordInboxList(); }, 30000);
   renderCallList();
   renderDaySchedule(new Date());
-  alert('✅ Assigned to '+techName+'. Job added to schedule.');
 }
+
 
 
 var _multiDivOpen = true;
