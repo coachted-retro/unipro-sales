@@ -3455,17 +3455,26 @@ function openAddModal(){
 }
 
 function quickCreateOpportunity(){
-  // Quick-create: opens an Add Lead modal but pre-sets lifecycleStage to 'opportunity'
-  // System back-fills Lead/Contact records automatically on save
-  _modalTab = 'leads';
-  _modalId = null;
-  document.getElementById('crmModalTitle').textContent = '💼 New Opportunity';
-  document.getElementById('crmModalBody').innerHTML = buildModalForm('leads', null) +
-    `<input type="hidden" id="mf_quickOppty" value="1">
-     <div style="background:#F3E8FF;border:1px solid #7C3AED;border-radius:7px;padding:8px 12px;margin-top:6px;font-size:12px;color:#5B21B6">
-       💼 This will create a new Opportunity. Lead &amp; Contact records are auto-created from this info.
-     </div>`;
-  document.getElementById('crmModalBg').classList.add('open');
+  // Show account type gate FIRST — must select before proceeding
+  openAccountTypeGate(function(typeValue) {
+    _modalTab = 'leads';
+    _modalId = null;
+    const cfg = getAccountTypeCfg(typeValue);
+    document.getElementById('crmModalTitle').textContent = '💼 New Opportunity';
+    document.getElementById('crmModalBody').innerHTML = buildModalForm('leads', null) +
+      '<input type="hidden" id="mf_quickOppty" value="1">' +
+      '<input type="hidden" id="mf_accountType" value="' + typeValue + '">' +
+      '<input type="hidden" id="mf_pricingMode" value="' + cfg.pricingMode + '">' +
+      '<div style="background:#F3E8FF;border:1px solid #7C3AED;border-radius:7px;padding:10px 14px;margin-top:8px">' +
+        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">' +
+          '<span style="font-size:16px">' + cfg.label.split(' ')[0] + '</span>' +
+          '<strong style="font-size:13px;color:#5B21B6">' + cfg.label.slice(cfg.label.indexOf(' ')+1) + '</strong>' +
+          '<span style="margin-left:auto;background:' + (cfg.pricingMode==='per_visit'?'#DCFCE7':'#EFF6FF') + ';color:' + (cfg.pricingMode==='per_visit'?'#1E7B3C':'#1E40AF') + ';border-radius:4px;padding:1px 8px;font-size:10px;font-weight:700;font-family:Barlow Condensed,sans-serif;letter-spacing:.06em">' + (cfg.pricingMode==='per_visit'?'PER VISIT':'ANNUAL CONTRACT') + '</span>' +
+        '</div>' +
+        '<div style="font-size:11px;color:#6B7280">' + cfg.contractNote + '</div>' +
+      '</div>';
+    document.getElementById('crmModalBg').classList.add('open');
+  });
 }
 
 function editRecord(id,tab){
@@ -3579,6 +3588,8 @@ function saveModalRecord(){
     services: svcs,
     notes: document.getElementById('mf_notes').value.trim(),
     preferredTech: (document.getElementById('mf_preferredTech')?.value||'').trim() || null,
+    accountType: document.getElementById('mf_accountType')?.value || r?.accountType || null,
+    pricingMode: document.getElementById('mf_pricingMode')?.value || r?.pricingMode || null,
     siteNotes: document.getElementById('mf_siteNotes')?.value?.trim() || '',
     role: document.getElementById('mf_role')?.value || '',
     roleCustom: document.getElementById('mf_role_custom')?.value?.trim() || '',
@@ -3633,10 +3644,19 @@ function saveModalRecord(){
   }
   if(!rec.name){ alert('Name is required.'); return; }
 
-  // Quick-create opportunity: set lifecycleStage and back-fill contact record
+  // Quick-create opportunity: set lifecycleStage, accountType, and back-fill contact record
   const isQuickOppty = !!document.getElementById('mf_quickOppty');
   if (isQuickOppty && !_modalId) {
     rec.lifecycleStage = 'opportunity';
+    // Save accountType + pricingMode from gate
+    const _acctTypeEl = document.getElementById('mf_accountType');
+    const _pricingModeEl = document.getElementById('mf_pricingMode');
+    if (_acctTypeEl && _acctTypeEl.value) {
+      rec.accountType = _acctTypeEl.value;
+      const _cfg = typeof getAccountTypeCfg === 'function' ? getAccountTypeCfg(_acctTypeEl.value) : null;
+      rec.pricingMode = (_pricingModeEl && _pricingModeEl.value) || (_cfg && _cfg.pricingMode) || 'per_visit';
+      rec.paymentTerms = _cfg ? _cfg.paymentTerms : 'Due on completion';
+    }
     rec.status = rec.status || 'warm';
     // Auto-create a matching contact record
     const contactData = crmLoad('contacts');
@@ -7555,6 +7575,8 @@ let svState = {
   accountId: null,
   bizName: '',
   visitType: null,          // 'appointment' | 'blind'
+  accountType: null,        // 'independent' | 'small_chain' | 'regional_chain' | 'corporate' | 'industrial' | 'institutional' | 'property_mgmt'
+  pricingMode: 'per_visit', // 'per_visit' | 'annual' — derived from accountType, drives estimate display
   selectedServices: [],     // ['unipro','filterman','gto','allpro','quality3','termac']
   surveyOrder: [],          // ordered list of survey keys to show
   currentSurveyIdx: 0,      // index into surveyOrder during survey steps
@@ -7562,6 +7584,46 @@ let svState = {
   surveyData: {},           // collected field data keyed by service
   _objContext: ''           // current context for objection handler
 };
+
+// ── ACCOUNT TYPE CONFIG ────────────────────────────────────────────────────
+const ACCOUNT_TYPES = [
+  { value:'independent',   label:'🏪 Independent / Mom & Pop',   pricingMode:'per_visit', paymentTerms:'Due on completion',          contractNote:'No annual contract required — we invoice after each visit.' },
+  { value:'small_chain',   label:'🔗 Small Chain (2–5 locations)', pricingMode:'per_visit', paymentTerms:'Due on completion',         contractNote:'Per-visit pricing across all locations. No long-term commitment.' },
+  { value:'regional_chain',label:'🏢 Regional Chain (6–20 loc.)', pricingMode:'annual',    paymentTerms:'Net 30',                    contractNote:'12-month service agreement. Renewal 60 days prior to term end.' },
+  { value:'corporate',     label:'🏙️ Corporate / National Chain', pricingMode:'annual',    paymentTerms:'Net 30',                    contractNote:'Enterprise service agreement with SLA. PO reference required.' },
+  { value:'industrial',    label:'🏭 Industrial / Manufacturing',  pricingMode:'annual',    paymentTerms:'Net 30',                    contractNote:'Annual compliance contract. Includes all regulatory documentation.' },
+  { value:'institutional', label:'🏥 Institutional (hospital/school/senior)',pricingMode:'annual',paymentTerms:'Net 60',             contractNote:'Annual service agreement. Certificate of Insurance on file required.' },
+  { value:'property_mgmt', label:'🏘️ Property Management / HOA',  pricingMode:'annual',    paymentTerms:'Net 30',                    contractNote:'Portfolio service agreement covering all managed properties.' },
+];
+
+function getAccountTypeCfg(typeValue) {
+  return ACCOUNT_TYPES.find(function(t){ return t.value === typeValue; }) || ACCOUNT_TYPES[0];
+}
+
+function setAccountType(typeValue) {
+  svState.accountType = typeValue;
+  const cfg = getAccountTypeCfg(typeValue);
+  svState.pricingMode = cfg.pricingMode;
+  // Persist to current account record
+  if (svState.accountId) {
+    const data = crmLoad('accounts');
+    const r = data.find(function(x){ return x.id === svState.accountId; });
+    if (r) {
+      r.accountType = typeValue;
+      r.pricingMode = cfg.pricingMode;
+      r.paymentTerms = cfg.paymentTerms;
+      crmSave('accounts', data);
+    }
+    // Also update leads
+    const leads = crmLoad('leads');
+    const l = leads.find(function(x){ return x.id === svState.accountId; });
+    if (l) {
+      l.accountType = typeValue;
+      l.pricingMode = cfg.pricingMode;
+      crmSave('leads', leads);
+    }
+  }
+}
 
 // Step definitions — dynamic based on selected services
 const SV_STEPS_FIXED = [
@@ -8020,6 +8082,25 @@ function svGoNext(){
   const step = _svSteps[svState.currentStep];
   if(step.id === 'visit_type' && !svState.visitType){
     alert('Please select a visit type to continue.');
+    return;
+  }
+  // Account type gate: required before moving past account_info
+  if(step.id === 'account_info' && !svState.accountType){
+    openAccountTypeGate(function(typeValue) {
+      svState.accountType = typeValue;
+      if (typeof setAccountType === 'function') setAccountType(typeValue);
+      // Show confirmation badge on the panel
+      var badge = document.getElementById('svAcctTypeBadge');
+      if (badge) {
+        var cfg = typeof getAccountTypeCfg === 'function' ? getAccountTypeCfg(typeValue) : null;
+        if (cfg) {
+          badge.textContent = cfg.label + ' · ' + (cfg.pricingMode === 'per_visit' ? 'Per-Visit Pricing' : 'Annual Contract');
+          badge.style.display = 'inline-block';
+        }
+      }
+      // Proceed after selection
+      svGoNext();
+    });
     return;
   }
   if(step.id === 'services'){
@@ -17069,13 +17150,47 @@ function estRender(){
 
   container.innerHTML = html;
 
-  // Grand total
-  document.getElementById('estGrandTotal').textContent = grandTotal > 0
-    ? '$'+grandTotal.toLocaleString()
-    : 'TBD — see items';
-  document.getElementById('estGrandMonthly').textContent = monthlyTotal > 0
-    ? `≈ $${monthlyTotal.toLocaleString()}/mo recurring services`
-    : '';
+  // Grand total — display format driven by account type / pricing mode
+  var _pricingMode = (svState && svState.pricingMode) || 'per_visit';
+  var _acctTypeCfg = (typeof getAccountTypeCfg === 'function' && svState && svState.accountType)
+    ? getAccountTypeCfg(svState.accountType) : null;
+
+  var totalDisplay = grandTotal > 0 ? '$' + grandTotal.toLocaleString() : 'TBD — see items';
+  document.getElementById('estGrandTotal').textContent = totalDisplay;
+
+  // Pricing mode label below total
+  var monthlyEl = document.getElementById('estGrandMonthly');
+  if (monthlyEl) {
+    var modeLines = [];
+    if (monthlyTotal > 0) modeLines.push('≈ $' + monthlyTotal.toLocaleString() + '/mo recurring services');
+    if (_pricingMode === 'per_visit' && grandTotal > 0) {
+      modeLines.push('Per-visit pricing · Payment due on job completion');
+    } else if (_pricingMode === 'annual' && grandTotal > 0) {
+      var annualTotal = grandTotal;
+      modeLines.push('Annual contract value: $' + annualTotal.toLocaleString() + '/yr');
+    }
+    monthlyEl.textContent = modeLines.join(' · ');
+  }
+
+  // Payment terms + contract note banner
+  var _termsEl = document.getElementById('estPaymentTermsBanner');
+  if (!_termsEl) {
+    _termsEl = document.createElement('div');
+    _termsEl.id = 'estPaymentTermsBanner';
+    _termsEl.style.cssText = 'margin-top:10px;padding:10px 14px;border-radius:8px;font-size:12px;line-height:1.5';
+    var _totalArea = document.getElementById('estGrandTotal');
+    if (_totalArea && _totalArea.parentNode) _totalArea.parentNode.appendChild(_termsEl);
+  }
+  if (_acctTypeCfg && grandTotal > 0) {
+    var _modeColor = _pricingMode === 'per_visit' ? '#1E7B3C' : '#1E40AF';
+    var _modeBg    = _pricingMode === 'per_visit' ? '#DCFCE7' : '#EFF6FF';
+    _termsEl.style.background = _modeBg;
+    _termsEl.innerHTML = '<strong style="color:' + _modeColor + '">' + (_pricingMode==='per_visit'?'Per-Visit Pricing':'Annual Contract') + '</strong>'
+      + ' · ' + _acctTypeCfg.paymentTerms
+      + '<br><span style="color:#6B7280">' + _acctTypeCfg.contractNote + '</span>';
+  } else if (!_acctTypeCfg) {
+    _termsEl.innerHTML = '';
+  }
   document.getElementById('estSquareAmount').textContent = grandTotal > 0
     ? '$'+grandTotal.toLocaleString() : 'TBD';
 
@@ -29990,6 +30105,95 @@ function dripWrap(body, repName) {
 
 
 </div>
+
+<!-- ══ ACCOUNT TYPE GATE MODAL ══ -->
+<div id="acctTypeModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:15000;align-items:center;justify-content:center;padding:20px">
+  <div style="background:#fff;border-radius:14px;width:min(560px,96vw);box-shadow:0 20px 60px rgba(0,0,0,.3)">
+    <div style="background:#1A1D21;border-radius:14px 14px 0 0;padding:18px 24px">
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:9px;letter-spacing:.18em;text-transform:uppercase;color:#F2B705;margin-bottom:4px">REQUIRED BEFORE PROCEEDING</div>
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:20px;color:#fff">What type of business is this?</div>
+      <div style="font-size:12px;color:#9CA3AF;margin-top:4px">This sets the pricing format, payment terms, and contract language for the estimate and all downstream documents. Takes 3 seconds.</div>
+    </div>
+    <div style="padding:20px 24px">
+      <div id="acctTypeOptions" style="display:flex;flex-direction:column;gap:8px"></div>
+      <div style="display:flex;gap:10px;margin-top:20px">
+        <button onclick="closeAccountTypeGate()" style="flex:1;background:#F3F4F6;color:#6B7280;border:none;border-radius:8px;padding:10px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Cancel</button>
+        <button id="acctTypeProceedBtn" onclick="confirmAccountType()" disabled style="flex:2;background:#6B7280;color:#9CA3AF;border:none;border-radius:8px;padding:10px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px;letter-spacing:.04em;cursor:not-allowed">Select a business type to continue →</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── ACCOUNT TYPE GATE ─────────────────────────────────────────────────────────
+var _acctTypeCallback = null;
+var _acctTypeSelected = null;
+
+function openAccountTypeGate(callback) {
+  _acctTypeCallback = callback;
+  _acctTypeSelected = null;
+  var modal = document.getElementById('acctTypeModal');
+  if (!modal) return;
+
+  // Populate options
+  var opts = document.getElementById('acctTypeOptions');
+  if (opts) {
+    opts.innerHTML = (typeof ACCOUNT_TYPES !== 'undefined' ? ACCOUNT_TYPES : []).map(function(t) {
+      var modeLabel = t.pricingMode === 'per_visit' ? 'Per-Visit Pricing' : 'Annual Contract';
+      var modeColor = t.pricingMode === 'per_visit' ? '#1E7B3C' : '#1E40AF';
+      var modeBg    = t.pricingMode === 'per_visit' ? '#DCFCE7' : '#EFF6FF';
+      return '<div class="acct-type-opt" data-value="' + t.value + '" onclick="selectAccountType(this.dataset.value)" style="border:2px solid #E5E7EB;border-radius:10px;padding:12px 16px;cursor:pointer;display:flex;align-items:center;gap:12px;transition:all .12s">'
+        + '<div style="flex:1">'
+          + '<div style="font-weight:700;font-size:14px;color:#1A1D21">' + t.label + '</div>'
+          + '<div style="font-size:11px;color:#6B7280;margin-top:2px">' + t.contractNote + '</div>'
+        + '</div>'
+        + '<span style="background:' + modeBg + ';color:' + modeColor + ';border-radius:6px;padding:3px 10px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.06em;white-space:nowrap">' + modeLabel + '</span>'
+      + '</div>';
+    }).join('');
+  }
+
+  var btn = document.getElementById('acctTypeProceedBtn');
+  if (btn) { btn.disabled = true; btn.style.background = '#6B7280'; btn.style.color = '#9CA3AF'; btn.style.cursor = 'not-allowed'; btn.textContent = 'Select a business type to continue →'; }
+
+  modal.style.display = 'flex';
+}
+
+function selectAccountType(typeValue) {
+  _acctTypeSelected = typeValue;
+  // Update visual selection
+  document.querySelectorAll('.acct-type-opt').forEach(function(el) {
+    var isSelected = el.dataset.value === typeValue;
+    el.style.borderColor = isSelected ? '#C8102E' : '#E5E7EB';
+    el.style.background  = isSelected ? '#FFF5F5' : '#fff';
+  });
+  // Enable proceed button
+  var btn = document.getElementById('acctTypeProceedBtn');
+  if (btn) {
+    btn.disabled = false;
+    btn.style.background = '#C8102E';
+    btn.style.color = '#fff';
+    btn.style.cursor = 'pointer';
+    var cfg = typeof getAccountTypeCfg === 'function' ? getAccountTypeCfg(typeValue) : null;
+    btn.textContent = cfg ? 'Continue as ' + cfg.label.slice(cfg.label.indexOf(' ')+1) + ' →' : 'Continue →';
+  }
+  // Also store in svState if available
+  if (typeof setAccountType === 'function') setAccountType(typeValue);
+}
+
+function confirmAccountType() {
+  if (!_acctTypeSelected) return;
+  closeAccountTypeGate();
+  if (typeof _acctTypeCallback === 'function') _acctTypeCallback(_acctTypeSelected);
+}
+
+function closeAccountTypeGate() {
+  var modal = document.getElementById('acctTypeModal');
+  if (modal) modal.style.display = 'none';
+  _acctTypeCallback = null;
+  _acctTypeSelected = null;
+}
+</script>
+
 
 <!-- ══ DATA RESET MODAL ══ -->
 <div id="resetModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:20000;align-items:center;justify-content:center">
