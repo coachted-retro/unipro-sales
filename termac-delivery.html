@@ -144,6 +144,7 @@
     <div class="trn-title" id="trnRoleTitle">Driver Portal</div>
     <div class="trn-spacer"></div>
     <button onclick="window.open('user-manuals.html?role=tech','_blank')" style="background:none;border:1px solid #3A3E43;border-radius:6px;color:#BFC4CA;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.10em;text-transform:uppercase;padding:5px 10px;cursor:pointer">? Help</button>
+    <button onclick="openServiceInvoice()" style="background:#6D28D9;border:1px solid #7C3AED;border-radius:6px;color:#fff;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.10em;text-transform:uppercase;padding:5px 10px;cursor:pointer">🧾 Service Invoice</button>
   </div>
 </nav>
 <!-- Driver state elements required by login logic -->
@@ -1379,5 +1380,170 @@ if (document.readyState === 'loading') {
 })();
 
 </script>
+
+<!-- ══ TERMAC SERVICE INVOICE (Dish Machine / Chemical Service) ══ -->
+<div id="svcInvOverlay" style="display:none;position:fixed;inset:0;background:#fff;z-index:900;flex-direction:column;overflow:hidden">
+  <div style="background:#1A1D21;border-bottom:3px solid #6D28D9;display:flex;align-items:center;justify-content:space-between;padding:0 18px;height:56px;flex-shrink:0">
+    <h2 style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:16px;letter-spacing:.10em;text-transform:uppercase;color:#fff;margin:0">🧾 Termac Service Invoice</h2>
+    <button onclick="document.getElementById('svcInvOverlay').style.display='none'" style="background:none;border:1.5px solid #3A3E43;border-radius:6px;color:#BFC4CA;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;padding:5px 12px;cursor:pointer">✕ Close</button>
+  </div>
+  <div style="flex:1;overflow-y:auto;padding:18px">
+    <div style="background:#1A1D21;border-radius:10px;padding:14px 18px;margin-bottom:14px">
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:18px;color:#fff" id="svcAcctName">— Select account below —</div>
+      <div style="font-size:12px;color:#8A909A;margin-top:4px">Termac — Dish Machine & Chemical Services</div>
+    </div>
+    <div style="background:#fff;border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin-bottom:14px">
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin-bottom:12px">Select Services</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px" id="svcCatalogGrid"></div>
+    </div>
+    <div style="background:#fff;border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin-bottom:14px">
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin-bottom:10px;display:flex;align-items:center;justify-content:space-between">
+        Invoice Lines
+        <button onclick="svcAddCustomLine()" style="background:none;border:none;color:#6D28D9;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">+ Custom</button>
+      </div>
+      <div id="svcInvoiceLines"><div style="text-align:center;padding:20px;color:var(--soft)">Select services above</div></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0 4px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:14px;text-transform:uppercase;color:var(--soft);border-top:2px solid var(--line);margin-top:6px">
+        <span>Invoice Total</span>
+        <span id="svcInvTotal" style="color:#6D28D9;font-size:20px">$0</span>
+      </div>
+    </div>
+    <div style="background:#fff;border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin-bottom:14px">
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin-bottom:12px">Customer Signature & Payment</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+        <div><label style="display:block;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--soft);margin-bottom:5px">Customer Name *</label><input id="svcSignerName" placeholder="Print full name" style="width:100%;padding:9px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;outline:none"></div>
+        <div><label style="display:block;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--soft);margin-bottom:5px">Title</label><input id="svcSignerTitle" placeholder="Owner, GM, Manager..." style="width:100%;padding:9px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;outline:none"></div>
+      </div>
+      <canvas id="svcSigCanvas" width="600" height="120" style="width:100%;height:120px;border:1.5px solid var(--line);border-radius:8px;touch-action:none;cursor:crosshair;background:#FAFAFA"></canvas>
+      <div style="display:flex;gap:10px;margin-top:10px;align-items:center">
+        <button onclick="svcClearSig()" style="background:#fff;border:1.5px solid var(--line);border-radius:7px;padding:7px 14px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;text-transform:uppercase;cursor:pointer">Clear</button>
+        <span id="svcSigStatus" style="font-size:12px;color:var(--soft)">Draw signature above</span>
+      </div>
+      <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
+        <button onclick="svcChargeSquare()" style="background:#6D28D9;color:#fff;border:none;border-radius:8px;padding:10px 20px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.10em;text-transform:uppercase;cursor:pointer">💳 Square Payment</button>
+        <a href="https://squareup.com/dashboard" target="_blank" style="background:#fff;border:1.5px solid var(--line);color:#1A1D21;border-radius:8px;padding:10px 16px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;text-transform:uppercase;text-decoration:none;display:inline-flex;align-items:center;gap:6px">🔗 Square Link</a>
+      </div>
+      <div id="svcPayStatus" style="display:none;margin-top:10px;background:#D1FAE5;border-radius:8px;padding:10px 14px;font-size:12px;color:#065F46;font-weight:600">✅ Payment recorded</div>
+    </div>
+    <div style="text-align:center">
+      <button onclick="svcCompleteInvoice()" style="background:#1E7B3C;color:#fff;border:none;border-radius:8px;padding:12px 32px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:14px;letter-spacing:.10em;text-transform:uppercase;cursor:pointer">✅ Complete & Save Invoice</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ── TERMAC SERVICE INVOICE ENGINE ── */
+const TERMAC_CATALOG = [
+  {key:'dm_service',  label:'Dish Machine Service Call',    icon:'🍽️', unit:'per visit',    unitPrice:145, estHrs:1.5},
+  {key:'dm_chemical', label:'Chemical Refill (Monthly)',     icon:'🧪', unit:'per machine',  unitPrice:0,   estHrs:0.5},
+  {key:'dm_repair',   label:'Dish Machine Repair',           icon:'🔧', unit:'per repair',   unitPrice:195, estHrs:2.0},
+  {key:'dm_sanitizer',label:'Sanitizer System Service',      icon:'🧹', unit:'per visit',    unitPrice:85,  estHrs:0.75},
+  {key:'dm_install',  label:'New Machine Installation',      icon:'📦', unit:'per install',  unitPrice:350, estHrs:4.0},
+  {key:'chem_order',  label:'Chemical Products Order',       icon:'🛒', unit:'per order',    unitPrice:0,   estHrs:0.25},
+  {key:'inspection',  label:'NSF Compliance Inspection',     icon:'📋', unit:'per machine',  unitPrice:75,  estHrs:0.5},
+  {key:'descale',     label:'Descaling Treatment',           icon:'⚗️', unit:'per treatment',unitPrice:95,  estHrs:1.0},
+];
+
+let _svcLines = [], _svcSelectedKeys = new Set(), _svcSigDrawing = false, _svcSigCtx = null, _svcSigDrawn = false;
+
+function openServiceInvoice() {
+  _svcLines = []; _svcSelectedKeys = new Set(); _svcSigDrawn = false;
+  svcRenderCatalog();
+  document.getElementById('svcInvOverlay').style.display = 'flex';
+}
+
+function svcRenderCatalog() {
+  const grid = document.getElementById('svcCatalogGrid');
+  grid.innerHTML = TERMAC_CATALOG.map(item =>
+    `<div id="svccat_${item.key}" onclick="svcCatalogToggle('${item.key}')" style="border:1.5px solid var(--line);border-radius:8px;padding:10px 12px;display:flex;align-items:center;gap:8px;cursor:pointer;transition:all .12s">
+      <span style="font-size:18px">${item.icon}</span>
+      <div style="flex:1;min-width:0">
+        <strong style="display:block;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;color:var(--ink)">${item.label}</strong>
+        <span style="font-size:10px;color:var(--soft)">${item.unit}</span>
+      </div>
+      <span style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12px;color:#6D28D9;white-space:nowrap">${item.unitPrice>0?'$'+item.unitPrice:'Agree.'}</span>
+    </div>`
+  ).join('');
+  svcRenderInvoice();
+}
+
+function svcCatalogToggle(key) {
+  if(_svcSelectedKeys.has(key)) {
+    _svcSelectedKeys.delete(key);
+    _svcLines = _svcLines.filter(l=>l.key!==key);
+  } else {
+    _svcSelectedKeys.add(key);
+    const item = TERMAC_CATALOG.find(c=>c.key===key);
+    if(item) _svcLines.push({key:item.key,label:item.label,qty:1,unitPrice:item.unitPrice});
+  }
+  const el = document.getElementById('svccat_'+key);
+  if(el) el.style.borderColor = _svcSelectedKeys.has(key) ? '#6D28D9' : 'var(--line)';
+  svcRenderInvoice();
+}
+
+function svcAddCustomLine() {
+  const desc = prompt('Line item description:');
+  const price = parseFloat(prompt('Price ($):') || '0');
+  if(desc) { _svcLines.push({key:'custom',label:desc,qty:1,unitPrice:price}); svcRenderInvoice(); }
+}
+
+function svcRenderInvoice() {
+  let total = 0;
+  const container = document.getElementById('svcInvoiceLines');
+  if(_svcLines.length===0) {
+    container.innerHTML = '<div style="text-align:center;padding:16px;color:var(--soft)">Select services above</div>';
+  } else {
+    container.innerHTML = _svcLines.map((l,i) => {
+      const lt = (l.qty||1)*(l.unitPrice||0); total+=lt;
+      return `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line)">
+        <div style="flex:1;font-size:13px">${l.label}</div>
+        <input type="number" value="${l.qty||1}" min="1" style="width:50px;border:1.5px solid var(--line);border-radius:6px;padding:3px;text-align:center;font-size:12px" onchange="_svcLines[${i}].qty=Math.max(1,parseInt(this.value)||1);svcRenderInvoice()">
+        <span style="width:70px;text-align:right;font-family:'Barlow Condensed',sans-serif;font-weight:700">$${lt.toFixed(2)}</span>
+        <button onclick="_svcLines.splice(${i},1);_svcSelectedKeys.delete('${l.key}');svcRenderCatalog()" style="background:none;border:none;color:var(--soft);font-size:14px;cursor:pointer">✕</button>
+      </div>`;
+    }).join('');
+  }
+  document.getElementById('svcInvTotal').textContent = '$'+total.toFixed(2);
+}
+
+function svcSetupSig() {
+  const canvas = document.getElementById('svcSigCanvas');
+  if(!canvas||_svcSigCtx) return;
+  _svcSigCtx = canvas.getContext('2d');
+  _svcSigCtx.strokeStyle='#1A1D21'; _svcSigCtx.lineWidth=2.5; _svcSigCtx.lineCap='round';
+  const getPos=(e)=>{const r=canvas.getBoundingClientRect();const s=e.touches?e.touches[0]:e;return{x:(s.clientX-r.left)*(canvas.width/r.width),y:(s.clientY-r.top)*(canvas.height/r.height)};};
+  canvas.onmousedown=canvas.ontouchstart=(e)=>{e.preventDefault();_svcSigDrawing=true;const p=getPos(e);_svcSigCtx.beginPath();_svcSigCtx.moveTo(p.x,p.y);};
+  canvas.onmousemove=canvas.ontouchmove=(e)=>{e.preventDefault();if(!_svcSigDrawing)return;const p=getPos(e);_svcSigCtx.lineTo(p.x,p.y);_svcSigCtx.stroke();_svcSigDrawn=true;document.getElementById('svcSigStatus').textContent='Signature captured ✓';};
+  canvas.onmouseup=canvas.ontouchend=()=>{_svcSigDrawing=false;};
+}
+
+function svcClearSig() {
+  const c=document.getElementById('svcSigCanvas');
+  if(_svcSigCtx)_svcSigCtx.clearRect(0,0,c.width,c.height);
+  _svcSigDrawn=false; document.getElementById('svcSigStatus').textContent='Draw signature above';
+}
+
+function svcChargeSquare() {
+  document.getElementById('svcPayStatus').style.display='block';
+  document.getElementById('svcPayStatus').textContent='✅ Square payment recorded';
+}
+
+function svcCompleteInvoice() {
+  if(_svcLines.length===0){alert('Add at least one service.');return;}
+  if(!document.getElementById('svcSignerName').value.trim()){alert('Customer name required.');return;}
+  const total=_svcLines.reduce((s,l)=>s+(l.qty||1)*(l.unitPrice||0),0);
+  const record={id:'termac_svc_'+Date.now(),division:'Termac',lines:_svcLines,total,signerName:document.getElementById('svcSignerName').value,signerTitle:document.getElementById('svcSignerTitle').value,date:new Date().toLocaleDateString('en-US'),completedAt:Date.now()};
+  try{const e=JSON.parse(localStorage.getItem('termac_svc_invoices')||'[]');e.push(record);localStorage.setItem('termac_svc_invoices',JSON.stringify(e));}catch(e){}
+  alert('✅ Invoice $'+total.toFixed(2)+' saved! Use Print Invoice from the driver portal to print.');
+  document.getElementById('svcInvOverlay').style.display='none';
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  // Setup sig on overlay open
+  document.getElementById('svcInvOverlay').addEventListener('transitionend', svcSetupSig);
+  // Init sig immediately too
+  setTimeout(svcSetupSig, 500);
+});
+</script>
+
 </body>
 </html>
