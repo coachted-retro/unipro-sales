@@ -381,7 +381,7 @@ function buildHTML() {
         <button class="fr-btn ghost" onclick="frTool('nfpa')">📋 Code / Standards Lookup</button>
         <button class="fr-btn ghost" onclick="frTool('checklist')">✅ Pre-Job Checklist</button>
         <button class="fr-btn ghost" onclick="frTool('late')">📞 Running Late Message</button>
-        <button class="fr-btn ghost" onclick="frTool('parts')">🔩 Parts Request Guide</button>
+        <button class="fr-btn ghost" onclick="frOpenPartsRequest()">🔩 Request Parts</button>
         <button class="fr-btn ghost" onclick="frTool('debrief')">📝 Job Debrief Prompt</button>
       </div>
     </div>
@@ -399,7 +399,47 @@ function buildHTML() {
     </div>
 
   </div><!-- /fr-rail-inner -->
-</div><!-- /fr-rail -->`;
+</div><!-- /fr-rail -->
+
+<!-- PARTS REQUEST MODAL -->
+<div id="frPartsModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10001;align-items:center;justify-content:center;padding:20px">
+  <div style="background:#1A1D21;border-radius:12px;width:min(460px,96vw);border:1.5px solid #334155;box-shadow:0 16px 48px rgba(0,0,0,.5)">
+    <div style="padding:16px 20px;border-bottom:1px solid #334155;display:flex;align-items:center;justify-content:space-between">
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:16px;color:#fff;letter-spacing:.04em">🔩 Parts Request</div>
+      <button onclick="frClosePartsRequest()" style="background:none;border:none;color:#6B7280;font-size:18px;cursor:pointer">✕</button>
+    </div>
+    <div style="padding:16px 20px;display:flex;flex-direction:column;gap:10px">
+      <div>
+        <label style="font-size:11px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.08em;font-family:'Barlow Condensed',sans-serif;font-weight:700;display:block;margin-bottom:4px">Account / Job Site *</label>
+        <input id="frPartsAccount" class="fr-input" placeholder="Account name or address">
+      </div>
+      <div>
+        <label style="font-size:11px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.08em;font-family:'Barlow Condensed',sans-serif;font-weight:700;display:block;margin-bottom:4px">Parts Needed *</label>
+        <textarea id="frPartsDesc" class="fr-input" rows="3" placeholder="e.g. 2x ABC-10 extinguishers, 1x nozzle kit P/N 4510, 3x K-class dry chem...&#10;Be specific — model numbers help warehouse pull faster" style="resize:none;line-height:1.5"></textarea>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div>
+          <label style="font-size:11px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.08em;font-family:'Barlow Condensed',sans-serif;font-weight:700;display:block;margin-bottom:4px">Urgency</label>
+          <select id="frPartsUrgency" class="fr-select">
+            <option value="normal">Normal — next run</option>
+            <option value="urgent">Urgent — need today</option>
+            <option value="critical">Critical — job on hold</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:11px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.08em;font-family:'Barlow Condensed',sans-serif;font-weight:700;display:block;margin-bottom:4px">Needed By</label>
+          <input id="frPartsDate" type="date" class="fr-input">
+        </div>
+      </div>
+      <div>
+        <label style="font-size:11px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.08em;font-family:'Barlow Condensed',sans-serif;font-weight:700;display:block;margin-bottom:4px">Notes for Warehouse</label>
+        <input id="frPartsNotes" class="fr-input" placeholder="Van # to load, delivery instructions, job details...">
+      </div>
+      <button class="fr-btn" onclick="frSubmitPartsRequest()" style="margin-top:4px;font-size:12px;padding:10px">📤 Send to Warehouse</button>
+      <div id="frPartsConfirm" style="display:none;background:#021F14;border:1px solid #059669;border-radius:7px;padding:10px 12px;font-size:11px;color:#6EE7B7;text-align:center"></div>
+    </div>
+  </div>
+</div>`;
 }
 
 // ── RAIL COLLAPSE ─────────────────────────────────────────────────────────────
@@ -1099,6 +1139,106 @@ window.fieldRailInit = function(cfg) {
   setInterval(function(){
     frRenderNextJob(); frRenderAlerts(); frRenderUpsell(); frRenderPerf(); frRenderBonus();
   }, 120000);
+};
+
+// ── PARTS REQUEST ─────────────────────────────────────────────────────────────
+window.frOpenPartsRequest = function() {
+  var modal = document.getElementById('frPartsModal');
+  if (!modal) return;
+  modal.style.display = 'flex';
+  // Pre-fill account from next job
+  var jobs = getTodayJobs();
+  var nextJob = jobs.filter(function(j){return j.status!=='complete';}).sort(function(a,b){return (a.time||'')>(b.time||'')?1:-1;})[0];
+  if (nextJob) {
+    var acctEl = document.getElementById('frPartsAccount');
+    if (acctEl && !acctEl.value) acctEl.value = nextJob.biz || nextJob.account || nextJob.accountName || '';
+  }
+  // Default date to today
+  var dateEl = document.getElementById('frPartsDate');
+  if (dateEl && !dateEl.value) dateEl.value = new Date().toISOString().slice(0,10);
+  document.getElementById('frPartsConfirm').style.display = 'none';
+};
+
+window.frClosePartsRequest = function() {
+  var modal = document.getElementById('frPartsModal');
+  if (modal) modal.style.display = 'none';
+};
+
+window.frSubmitPartsRequest = function() {
+  var account  = (document.getElementById('frPartsAccount')?.value || '').trim();
+  var parts    = (document.getElementById('frPartsDesc')?.value    || '').trim();
+  var urgency  = document.getElementById('frPartsUrgency')?.value  || 'normal';
+  var neededBy = document.getElementById('frPartsDate')?.value      || '';
+  var notes    = (document.getElementById('frPartsNotes')?.value   || '').trim();
+
+  if (!account || !parts) {
+    alert('Account and parts description are required.');
+    return;
+  }
+
+  var techName = getCurrentTechName();
+  var request = {
+    id:        'parts_' + Date.now(),
+    type:      'supply_request',
+    ts:        Date.now(),
+    tech:      techName,
+    division:  (_cfg && _cfg.division) || 'UniPro',
+    account:   account,
+    supplies:  parts,
+    urgency:   urgency,
+    neededBy:  neededBy,
+    notes:     notes,
+    status:    'pending',
+    source:    'Field Rail — ' + (_cfg && _cfg.division || 'Tech Portal'),
+    date:      new Date().toISOString().slice(0,10),
+    _seeded:   false,
+  };
+
+  // Write to officeQueue (read by Office Portal + Warehouse)
+  try {
+    var q = JSON.parse(localStorage.getItem('officeQueue') || '[]');
+    q.unshift(request);
+    localStorage.setItem('officeQueue', JSON.stringify(q.slice(0, 200)));
+  } catch(e) {}
+
+  // Write to dedicated parts queue key (read by Warehouse Portal)
+  try {
+    var pq = JSON.parse(localStorage.getItem('termac_parts_requests') || '[]');
+    pq.unshift(request);
+    localStorage.setItem('termac_parts_requests', JSON.stringify(pq.slice(0, 200)));
+  } catch(e) {}
+
+  // Write to intelligence notification feed
+  try {
+    var notifs = JSON.parse(localStorage.getItem('termac_hotlead_notifs') || '[]');
+    var urgencyIcon = urgency === 'critical' ? '🔴' : urgency === 'urgent' ? '🟡' : '🔵';
+    notifs.unshift({
+      id: 'n_' + Date.now(), ts: Date.now(), type: 'parts_request', icon: '🔩',
+      urgent: urgency !== 'normal',
+      title: urgencyIcon + ' Parts Request — ' + account,
+      body: techName + ': ' + parts.slice(0, 80) + (neededBy ? ' · Needed by ' + neededBy : ''),
+      recipient: 'Warehouse', read: false,
+      date: new Date().toLocaleDateString('en-US'),
+      time: new Date().toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit'}),
+    });
+    localStorage.setItem('termac_hotlead_notifs', JSON.stringify(notifs.slice(0, 100)));
+  } catch(e) {}
+
+  // Show confirmation
+  var conf = document.getElementById('frPartsConfirm');
+  if (conf) {
+    conf.style.display = 'block';
+    var urgencyLabel = {normal:'Normal', urgent:'⚡ Urgent', critical:'🔴 CRITICAL'}[urgency] || urgency;
+    conf.innerHTML = '✅ Request sent to Warehouse · ' + urgencyLabel + (neededBy ? ' · Due ' + neededBy : '');
+  }
+
+  // Clear fields
+  ['frPartsDesc','frPartsNotes'].forEach(function(id){
+    var el = document.getElementById(id); if(el) el.value = '';
+  });
+  var urg = document.getElementById('frPartsUrgency'); if(urg) urg.value = 'normal';
+
+  setTimeout(window.frClosePartsRequest, 2500);
 };
 
 })(window);
