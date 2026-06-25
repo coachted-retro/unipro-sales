@@ -3194,6 +3194,41 @@ function woRenderComplete() {
   if (jobObj) jobObj.status = 'complete';
   if (typeof renderJobs === 'function') renderJobs();
 
+  // ── LABOR COST TRACKING ──────────────────────────────────────────────────
+  (function() {
+    try {
+      var onSiteTs = parseInt(sessionStorage.getItem('tp_onsite_ts') || '0');
+      var laborMinutes = 0;
+      if (onSiteTs > 0) {
+        laborMinutes = Math.round((Date.now() - onSiteTs) / 60000);
+        sessionStorage.removeItem('tp_onsite_ts');
+        sessionStorage.removeItem('tp_onsite_job');
+      } else if (window._lrailTimer && window._lrailTimer.seconds > 0) {
+        // Fall back to Field Tools timer if On Site wasn't tapped
+        laborMinutes = Math.round(window._lrailTimer.seconds / 60);
+      }
+      // Minimum 15 min floor, cap at 12 hrs to filter bad data
+      laborMinutes = Math.max(laborMinutes, 0);
+      if (laborMinutes > 720) laborMinutes = 720;
+
+      var _tech = typeof getCurrentTech === 'function' ? getCurrentTech() : null;
+      var techName = (_tech && _tech.name) || 'Unknown Tech';
+      var jobId = woState.jobId;
+
+      if (laborMinutes > 0) {
+        var laborData = laborCalc(techName, laborMinutes);
+        laborSaveToJob(jobId, laborData);
+        // Annotate the job in JOBS array too
+        if (jobObj) {
+          jobObj.laborMinutes = laborData.laborMinutes;
+          jobObj.laborCost = laborData.totalCost;
+        }
+        console.log('[Labor] ' + techName + ' — ' + laborData.hours + 'h @ $' + laborData.rate + '/hr = $' + laborData.totalCost + (laborData.isDefault ? ' (default rate ⚠)' : ''));
+      }
+    } catch(e) { console.warn('Labor tracking error:', e); }
+  })();
+  // ── END LABOR COST TRACKING ──────────────────────────────────────────────
+
   // ── INTELLIGENCE ENGINE: Close the loops ──────────────────────────────
   if (typeof TermacIntelligence !== 'undefined') {
     const _tech = typeof getCurrentTech === 'function' ? getCurrentTech() : null;
@@ -5060,6 +5095,17 @@ function markEnroute() {
 function markOnSite() {
   var btn = document.getElementById('btnOnSite');
   btn.textContent = '📍 On Site — Clocked In'; btn.style.background = '#1A7A4A'; btn.disabled = true;
+  // Stamp on-site time — used for labor cost calc at WO close
+  var jobId = _briefData ? _briefData.jobId : null;
+  var ts = Date.now();
+  sessionStorage.setItem('tp_onsite_ts', ts);
+  if (jobId) sessionStorage.setItem('tp_onsite_job', jobId);
+  // Update job record immediately if it exists
+  try {
+    var jobs = JSON.parse(localStorage.getItem('unipro_jobs')||'[]');
+    var jidx = jobs.findIndex(function(j){ return j.id === jobId || j.briefJobId === jobId; });
+    if (jidx !== -1) { jobs[jidx].onSiteAt = ts; localStorage.setItem('unipro_jobs', JSON.stringify(jobs)); }
+  } catch(e) {}
 }
 
 function openWorkOrderFromBrief() {
@@ -5331,6 +5377,85 @@ function generateReferralHistory(t, r) {
 (function(){
   if(localStorage.getItem('railState')==='collapsed') document.body.classList.add('rail-collapsed');
 })();
+
+/* ════════════════════════════════════════════════════
+   LABOR COST ENGINE
+   - Reads tech rate from HR localStorage (termac_hr_users)
+   - Falls back to $35/hr default with a flag
+   - Called at WO complete and by manager dashboard
+════════════════════════════════════════════════════ */
+var LABOR_DEFAULT_RATE = 35.00;
+
+function laborGetTechRate(techName) {
+  try {
+    var hrUsers = JSON.parse(localStorage.getItem('termac_hr_users') || '[]');
+    if (!hrUsers.length) {
+      // Try the HR manager key format
+      hrUsers = JSON.parse(localStorage.getItem('termac_hr_users') || '[]');
+    }
+    var match = hrUsers.find(function(u) {
+      return u.name && u.name.toLowerCase() === (techName||'').toLowerCase();
+    });
+    if (match && match.hourlyRate) {
+      return { rate: parseFloat(match.hourlyRate), grade: match.payGrade||'', burden: parseFloat(match.burdenRate||0), isDefault: false, user: match };
+    }
+  } catch(e) {}
+  return { rate: LABOR_DEFAULT_RATE, grade: '', burden: 0, isDefault: true, user: null };
+}
+
+function laborCalc(techName, laborMinutes) {
+  var rateInfo = laborGetTechRate(techName);
+  var hours = laborMinutes / 60;
+  var baseCost = hours * rateInfo.rate;
+  var burdenCost = rateInfo.burden > 0 ? baseCost * (rateInfo.burden / 100) : 0;
+  var totalCost = baseCost + burdenCost;
+  return {
+    techName: techName,
+    laborMinutes: laborMinutes,
+    hours: Math.round(hours * 100) / 100,
+    rate: rateInfo.rate,
+    isDefault: rateInfo.isDefault,
+    grade: rateInfo.grade,
+    burden: rateInfo.burden,
+    baseCost: Math.round(baseCost * 100) / 100,
+    burdenCost: Math.round(burdenCost * 100) / 100,
+    totalCost: Math.round(totalCost * 100) / 100
+  };
+}
+
+function laborSaveToJob(jobId, laborData) {
+  try {
+    var jobs = JSON.parse(localStorage.getItem('unipro_jobs') || '[]');
+    var idx = jobs.findIndex(function(j){ return j.id === jobId || j.briefJobId === jobId; });
+    if (idx !== -1) {
+      jobs[idx].laborMinutes = laborData.laborMinutes;
+      jobs[idx].laborCost = laborData.totalCost;
+      jobs[idx].laborRate = laborData.rate;
+      jobs[idx].laborIsDefault = laborData.isDefault;
+      jobs[idx].laborGrade = laborData.grade;
+      jobs[idx].laborBurden = laborData.burden;
+      jobs[idx].techName = laborData.techName;
+      localStorage.setItem('unipro_jobs', JSON.stringify(jobs));
+    }
+    // Also write to a dedicated labor ledger for the manager dashboard
+    var ledger = JSON.parse(localStorage.getItem('termac_labor_ledger') || '[]');
+    ledger.push({
+      jobId: jobId,
+      techName: laborData.techName,
+      laborMinutes: laborData.laborMinutes,
+      hours: laborData.hours,
+      rate: laborData.rate,
+      isDefault: laborData.isDefault,
+      grade: laborData.grade,
+      totalCost: laborData.totalCost,
+      date: new Date().toISOString().split('T')[0],
+      ts: Date.now()
+    });
+    // Keep last 500 entries
+    if (ledger.length > 500) ledger = ledger.slice(-500);
+    localStorage.setItem('termac_labor_ledger', JSON.stringify(ledger));
+  } catch(e) { console.warn('laborSaveToJob error:', e); }
+}
 
 function toggleRail(){
   if(window.innerWidth<=960){
@@ -6702,10 +6827,21 @@ function lrailShowTimer() {
   const div = document.createElement('div');
   div.className = 'lrail-chat-msg ai';
   let seconds = 0, interval = null;
-  div.innerHTML = `<div style="font-weight:700;color:#FCD34D;margin-bottom:4px">⏱️ Job Timer</div><div id="lrailTimerDisp" style="font-family:'Barlow Condensed',sans-serif;font-size:24px;font-weight:900;color:#E2E8F0">00:00:00</div><div style="display:flex;gap:6px;margin-top:6px"><button onclick="lrailTimerStart()" style="padding:4px 8px;background:#059669;border:none;border-radius:4px;color:#fff;font-size:10px;cursor:pointer;font-weight:700">START</button><button onclick="lrailTimerStop()" style="padding:4px 8px;background:#DC2626;border:none;border-radius:4px;color:#fff;font-size:10px;cursor:pointer;font-weight:700">STOP</button><button onclick="lrailTimerReset()" style="padding:4px 8px;background:#334155;border:none;border-radius:4px;color:#fff;font-size:10px;cursor:pointer;font-weight:700">RESET</button></div>`;
+  // Check if On Site was already tapped — auto-resume that clock
+  var _existingTs = parseInt(sessionStorage.getItem('tp_onsite_ts')||'0');
+  var _initSecs = _existingTs > 0 ? Math.floor((Date.now()-_existingTs)/1000) : 0;
+  div.innerHTML = `<div style="font-weight:700;color:#FCD34D;margin-bottom:4px">⏱️ Job Timer</div>
+<div id="lrailTimerDisp" style="font-family:'Barlow Condensed',sans-serif;font-size:26px;font-weight:900;color:#E2E8F0;letter-spacing:.04em">00:00:00</div>
+<div id="lrailLaborPreview" style="font-size:11px;color:#6EE7B7;margin-top:3px;min-height:16px"></div>
+<div style="display:flex;gap:6px;margin-top:8px">
+  <button onclick="lrailTimerStart()" style="padding:5px 10px;background:#059669;border:none;border-radius:5px;color:#fff;font-size:10px;cursor:pointer;font-weight:700;font-family:'Barlow Condensed',sans-serif;letter-spacing:.06em">▶ START</button>
+  <button onclick="lrailTimerStop()" style="padding:5px 10px;background:#DC2626;border:none;border-radius:5px;color:#fff;font-size:10px;cursor:pointer;font-weight:700;font-family:'Barlow Condensed',sans-serif;letter-spacing:.06em">■ STOP</button>
+  <button onclick="lrailTimerReset()" style="padding:5px 10px;background:#334155;border:none;border-radius:5px;color:#fff;font-size:10px;cursor:pointer;font-weight:700;font-family:'Barlow Condensed',sans-serif;letter-spacing:.06em">↺ RESET</button>
+</div>
+<div style="font-size:10px;color:#475569;margin-top:8px">${_existingTs>0?'⏰ Auto-synced from On Site clock':'Tip: tap On Site to auto-start'}</div>`;
   msgs.appendChild(div);
   msgs.scrollTop = msgs.scrollHeight;
-  window._lrailTimer = {seconds:0, interval:null};
+  window._lrailTimer = {seconds: _initSecs, interval:null};
   window.lrailTimerStart = function(){
     if(window._lrailTimer.interval) return;
     window._lrailTimer.interval = setInterval(function(){
@@ -6714,10 +6850,44 @@ function lrailShowTimer() {
       const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=s%60;
       const el=document.getElementById('lrailTimerDisp');
       if(el) el.textContent=String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(sec).padStart(2,'0');
+      // Live labor cost preview every 30s
+      if(s % 30 === 0) {
+        try {
+          var _t = typeof getCurrentTech==='function' ? getCurrentTech() : null;
+          var _n = (_t&&_t.name)||'Tech';
+          var _mins = Math.round(s/60);
+          var _lr = laborGetTechRate(_n);
+          var _cost = (_mins/60) * _lr.rate;
+          var _prev = document.getElementById('lrailLaborPreview');
+          if(_prev) _prev.textContent = '💰 Est. labor: $'+_cost.toFixed(2)+(_lr.isDefault?' (default rate)':'');
+        } catch(e) {}
+      }
     },1000);
   };
-  window.lrailTimerStop = function(){ clearInterval(window._lrailTimer.interval); window._lrailTimer.interval=null; };
-  window.lrailTimerReset = function(){ lrailTimerStop(); window._lrailTimer.seconds=0; const el=document.getElementById('lrailTimerDisp'); if(el) el.textContent='00:00:00'; };
+  window.lrailTimerStop = function(){
+    clearInterval(window._lrailTimer.interval);
+    window._lrailTimer.interval=null;
+    // Snapshot final labor estimate on stop
+    try {
+      var _t = typeof getCurrentTech==='function' ? getCurrentTech() : null;
+      var _n = (_t&&_t.name)||'Tech';
+      var _mins = Math.round(window._lrailTimer.seconds/60);
+      var _lr = laborGetTechRate(_n);
+      var _cost = (_mins/60) * _lr.rate;
+      var _prev = document.getElementById('lrailLaborPreview');
+      if(_prev) _prev.textContent = '💰 Final labor: $'+_cost.toFixed(2)+' ('+_mins+'min @ $'+_lr.rate+'/hr'+ (_lr.isDefault?' — default rate ⚠':'')+')';
+    } catch(e) {}
+  };
+  window.lrailTimerReset = function(){
+    lrailTimerStop();
+    window._lrailTimer.seconds=0;
+    const el=document.getElementById('lrailTimerDisp');
+    if(el) el.textContent='00:00:00';
+    const prev=document.getElementById('lrailLaborPreview');
+    if(prev) prev.textContent='';
+  };
+  // Auto-start if On Site was already tapped
+  if(_initSecs > 0) { window.lrailTimerStart(); }
 }
 
 // ── AI CHAT ──────────────────────────────────────────

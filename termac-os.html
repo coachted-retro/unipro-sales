@@ -4023,6 +4023,17 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
       </div>
     </div>
 
+    <!-- ── LABOR COST DASHBOARD ── -->
+    <div style="margin-top:14px">
+      <div onclick="mgrToggle('labor_cost')" style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none;padding-bottom:8px">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft)">💼 Labor Cost Tracker <span id="laborAlertBadge" style="display:none;background:#F59E0B;color:#fff;border-radius:99px;padding:1px 6px;font-size:9px;font-weight:800;margin-left:6px">⚠ Default rates</span></div>
+        <span id="cs-icon-labor_cost" style="color:var(--soft);font-size:14px">▾</span>
+      </div>
+      <div id="cs-body-labor_cost">
+        <div id="laborDashBody"></div>
+      </div>
+    </div>
+
   </div><!-- /mgrPanel-dashboard -->
 
   <!-- ══ OPERATIONS ══ -->
@@ -21932,6 +21943,7 @@ const _origOpenOverlayMgr = window.openOverlay;
 window.openOverlay = function(key) {
   if (key === 'mgr') {
     setTimeout(refreshManagerDashboard, 200);
+    setTimeout(laborRenderDashboard, 300);
   }
   if (_origOpenOverlayMgr) _origOpenOverlayMgr(key);
 };
@@ -21940,13 +21952,161 @@ window.openOverlay = function(key) {
 setInterval(() => {
   if (document.getElementById('ovMgr')?.classList.contains('open')) {
     refreshManagerDashboard();
+    laborRenderDashboard();
   }
 }, 5 * 60 * 1000);
 
 // Initial load
 document.addEventListener('DOMContentLoaded', () => {
   setTimeout(refreshManagerDashboard, 1000);
+  setTimeout(laborRenderDashboard, 1200);
 });
+</script>
+
+<script>
+/* ══════════════════════════════════════════════════════════════
+   LABOR COST DASHBOARD — termac-os.html Manager Dashboard
+   Reads from: termac_labor_ledger (written by tech-portal-v3)
+               termac_hr_users (written by hr-manager-v3)
+               unipro_jobs (written by tech-portal-v3 WO complete)
+══════════════════════════════════════════════════════════════ */
+
+const LABOR_DEFAULT_RATE_OS = 35.00;
+
+function laborOsGetHrUsers() {
+  try { return JSON.parse(localStorage.getItem('termac_hr_users') || '[]'); } catch(e) { return []; }
+}
+
+function laborOsGetLedger() {
+  try { return JSON.parse(localStorage.getItem('termac_labor_ledger') || '[]'); } catch(e) { return []; }
+}
+
+function laborOsGetJobs() {
+  try { return JSON.parse(localStorage.getItem('unipro_jobs') || '[]'); } catch(e) { return []; }
+}
+
+function laborFmt(n) { return '$' + Number(n||0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+function laborFmtH(mins) { const h=Math.floor(mins/60),m=mins%60; return h+'h'+(m>0?' '+m+'m':''); }
+
+function laborRenderDashboard() {
+  const el = document.getElementById('laborDashBody');
+  if (!el) return;
+
+  const ledger = laborOsGetLedger();
+  const hrUsers = laborOsGetHrUsers();
+  const jobs = laborOsGetJobs();
+
+  // ── Date ranges ──────────────────────────────────────────────────────────
+  const now = Date.now();
+  const todayStart = new Date(); todayStart.setHours(0,0,0,0);
+  const weekStart = new Date(todayStart); weekStart.setDate(todayStart.getDate() - todayStart.getDay());
+  const monthStart = new Date(todayStart.getFullYear(), todayStart.getMonth(), 1);
+
+  const inRange = (ts, start) => ts >= start.getTime();
+
+  // ── Aggregate ledger ──────────────────────────────────────────────────────
+  const thisWeek = ledger.filter(e => inRange(e.ts, weekStart));
+  const thisMonth = ledger.filter(e => inRange(e.ts, monthStart));
+
+  const totalCostWeek = thisWeek.reduce((s,e) => s+e.totalCost, 0);
+  const totalCostMonth = thisMonth.reduce((s,e) => s+e.totalCost, 0);
+  const totalMinsWeek = thisWeek.reduce((s,e) => s+e.laborMinutes, 0);
+  const jobsThisWeek = thisWeek.length;
+  const defaultRateJobs = thisWeek.filter(e => e.isDefault).length;
+
+  // ── Revenue from jobs for margin calc ────────────────────────────────────
+  const jobMap = {};
+  jobs.forEach(j => { jobMap[j.id] = j; });
+  const revenueWeek = thisWeek.reduce((s,e) => {
+    const j = jobMap[e.jobId];
+    return s + (j && j.totalRevenue ? parseFloat(j.totalRevenue) : 0);
+  }, 0);
+  const laborMargin = revenueWeek > 0 ? Math.round((totalCostWeek / revenueWeek) * 100) : null;
+
+  // ── Per-tech breakdown ────────────────────────────────────────────────────
+  const techMap = {};
+  thisWeek.forEach(e => {
+    if (!techMap[e.techName]) techMap[e.techName] = { name:e.techName, jobs:0, mins:0, cost:0, rate:e.rate, isDefault:e.isDefault };
+    techMap[e.techName].jobs++;
+    techMap[e.techName].mins += e.laborMinutes;
+    techMap[e.techName].cost += e.totalCost;
+  });
+  const techRows = Object.values(techMap).sort((a,b) => b.cost - a.cost);
+
+  // ── Techs missing rates from HR ───────────────────────────────────────────
+  const missingRates = hrUsers.filter(u =>
+    (u.role === 'employee' || u.division === 'UniPro' || u.division === 'GTO' || u.division === 'Filter Man')
+    && !u.hourlyRate
+  );
+
+  // ── Build HTML ────────────────────────────────────────────────────────────
+  const noData = ledger.length === 0;
+
+  el.innerHTML = `
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px">
+    <div style="background:linear-gradient(135deg,#065F46,#047857);border-radius:8px;padding:10px 12px">
+      <div style="font-size:9px;color:rgba(255,255,255,.65);font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:.10em;text-transform:uppercase;margin-bottom:4px">This Week Cost</div>
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:20px;color:#fff">${noData ? '—' : laborFmt(totalCostWeek)}</div>
+      <div style="font-size:10px;color:rgba(255,255,255,.6);margin-top:2px">${noData ? 'No data yet' : jobsThisWeek+' job'+(jobsThisWeek!==1?'s':'')}</div>
+    </div>
+    <div style="background:linear-gradient(135deg,#1B5FA8,#1D4ED8);border-radius:8px;padding:10px 12px">
+      <div style="font-size:9px;color:rgba(255,255,255,.65);font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:.10em;text-transform:uppercase;margin-bottom:4px">This Month</div>
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:20px;color:#fff">${noData ? '—' : laborFmt(totalCostMonth)}</div>
+      <div style="font-size:10px;color:rgba(255,255,255,.6);margin-top:2px">${noData ? '' : laborFmtH(thisMonth.reduce((s,e)=>s+e.laborMinutes,0))+' billed'}</div>
+    </div>
+    <div style="background:linear-gradient(135deg,${laborMargin===null?'#374151,#374151':laborMargin<30?'#065F46,#047857':laborMargin<50?'#92400E,#B45309':'#7F1D1D,#991B1B'});border-radius:8px;padding:10px 12px">
+      <div style="font-size:9px;color:rgba(255,255,255,.65);font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:.10em;text-transform:uppercase;margin-bottom:4px">Labor % of Rev</div>
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:20px;color:#fff">${laborMargin !== null ? laborMargin+'%' : '—'}</div>
+      <div style="font-size:10px;color:rgba(255,255,255,.6);margin-top:2px">${revenueWeek>0?'Rev: '+laborFmt(revenueWeek):'No revenue data'}</div>
+    </div>
+  </div>
+
+  ${defaultRateJobs > 0 ? `<div style="background:#FEF3C7;border:1.5px solid #F59E0B;border-radius:7px;padding:8px 12px;margin-bottom:10px;font-size:12px;color:#92400E;display:flex;align-items:center;gap:8px">
+    <span style="font-size:16px">⚠</span>
+    <span><strong>${defaultRateJobs} job${defaultRateJobs!==1?'s':''}</strong> used the $${LABOR_DEFAULT_RATE_OS}/hr default rate — set real rates in <strong>HR Manager → Edit Employee → Labor Rate</strong></span>
+  </div>` : ''}
+
+  ${missingRates.length > 0 ? `<div style="background:#EFF6FF;border:1.5px solid #93C5FD;border-radius:7px;padding:8px 12px;margin-bottom:10px;font-size:12px;color:#1E40AF">
+    <strong>${missingRates.length} staff</strong> still need labor rates set: ${missingRates.slice(0,5).map(u=>'<strong>'+u.name+'</strong>').join(', ')}${missingRates.length>5?' + '+(missingRates.length-5)+' more':''}
+  </div>` : ''}
+
+  ${noData ? `<div style="text-align:center;padding:24px;color:var(--soft)">
+    <div style="font-size:28px;margin-bottom:8px">⏱️</div>
+    <div style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:13px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:4px">No labor data yet</div>
+    <div style="font-size:12px">Labor cost records appear here after techs complete Work Orders in the Tech Portal.<br>Make sure techs tap <strong>📍 On Site</strong> before starting service.</div>
+  </div>` : `
+  <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin-bottom:6px">By Tech — This Week</div>
+  <table style="width:100%;border-collapse:collapse;font-size:12px">
+    <thead><tr style="border-bottom:1.5px solid var(--line)">
+      <th style="text-align:left;padding:4px 6px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:9px;letter-spacing:.10em;text-transform:uppercase;color:var(--soft)">Tech</th>
+      <th style="text-align:right;padding:4px 6px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:9px;letter-spacing:.10em;text-transform:uppercase;color:var(--soft)">Jobs</th>
+      <th style="text-align:right;padding:4px 6px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:9px;letter-spacing:.10em;text-transform:uppercase;color:var(--soft)">Hours</th>
+      <th style="text-align:right;padding:4px 6px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:9px;letter-spacing:.10em;text-transform:uppercase;color:var(--soft)">Rate</th>
+      <th style="text-align:right;padding:4px 6px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:9px;letter-spacing:.10em;text-transform:uppercase;color:var(--soft)">Labor Cost</th>
+    </tr></thead>
+    <tbody>
+    ${techRows.length ? techRows.map(t => `<tr style="border-bottom:1px solid var(--line)">
+      <td style="padding:6px 6px"><div style="font-weight:700">${t.name}</div>${t.isDefault?'<div style="font-size:10px;color:#F59E0B">⚠ default rate</div>':''}</td>
+      <td style="text-align:right;padding:6px;color:var(--ink)">${t.jobs}</td>
+      <td style="text-align:right;padding:6px;color:var(--ink)">${laborFmtH(t.mins)}</td>
+      <td style="text-align:right;padding:6px;color:${t.isDefault?'#F59E0B':'var(--ink)'}">$${t.rate}/hr</td>
+      <td style="text-align:right;padding:6px;font-weight:700;color:#065F46">${laborFmt(t.cost)}</td>
+    </tr>`).join('') : '<tr><td colspan="5" style="padding:12px;text-align:center;color:var(--soft)">No jobs this week</td></tr>'}
+    </tbody>
+    <tfoot><tr style="border-top:2px solid var(--line);background:#F8F9FA">
+      <td style="padding:7px 6px;font-weight:700;font-family:'Barlow Condensed',sans-serif">WEEK TOTAL</td>
+      <td style="text-align:right;padding:7px 6px;font-weight:700">${jobsThisWeek}</td>
+      <td style="text-align:right;padding:7px 6px;font-weight:700">${laborFmtH(totalMinsWeek)}</td>
+      <td></td>
+      <td style="text-align:right;padding:7px 6px;font-weight:800;color:#065F46;font-family:'Barlow Condensed',sans-serif;font-size:14px">${laborFmt(totalCostWeek)}</td>
+    </tr></tfoot>
+  </table>`}
+  `;
+
+  // Show alert badge if default rates exist
+  const badge = document.getElementById('laborAlertBadge');
+  if (badge) badge.style.display = defaultRateJobs > 0 ? 'inline' : 'none';
+}
 </script>
 
 
