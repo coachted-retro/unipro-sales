@@ -1121,202 +1121,556 @@ function spOpenApptModal(accountId, tab) {
 //         check_in (existing account due for visit) | ai_scan (new from AI)
 // ════════════════════════════════════════════════════════
 
-var CHECKIN_INTERVAL_DAYS = 30; // flag existing accounts not visited in 30+ days
+// ════════════════════════════════════════════════════════
+//  TODAY'S AGENDA — unified calendar-first workflow
+//  Stored in localStorage so rep's additions persist across refresh
+// ════════════════════════════════════════════════════════
 
+var CHECKIN_INTERVAL_DAYS = 30;
+var AGENDA_STORE = 'termac_today_agenda';
+
+// ── Persist today's agenda (manual additions survive refresh) ───────────────
+function spLoadPersistedStops() {
+  try {
+    var raw = JSON.parse(localStorage.getItem(AGENDA_STORE) || '{}');
+    var today = new Date().toISOString().slice(0,10);
+    var rep   = _spRep ? _spRep.name : '';
+    var key   = rep + '_' + today;
+    return raw[key] || [];
+  } catch(e) { return []; }
+}
+function spSavePersistedStops(stops) {
+  try {
+    var raw = JSON.parse(localStorage.getItem(AGENDA_STORE) || '{}');
+    var today = new Date().toISOString().slice(0,10);
+    var rep   = _spRep ? _spRep.name : '';
+    var key   = rep + '_' + today;
+    // Keep only last 7 days
+    var cutoff = new Date(); cutoff.setDate(cutoff.getDate()-7);
+    Object.keys(raw).forEach(function(k){
+      var d = k.split('_').pop();
+      if (d && new Date(d) < cutoff) delete raw[k];
+    });
+    raw[key] = stops;
+    localStorage.setItem(AGENDA_STORE, JSON.stringify(raw));
+  } catch(e) {}
+}
+function spRemovePersistedStop(stopId) {
+  var stops = spLoadPersistedStops();
+  stops = stops.filter(function(s){ return s.id !== stopId; });
+  spSavePersistedStops(stops);
+}
+function spMarkStopDone(stopId) {
+  var stops = spLoadPersistedStops();
+  stops = stops.map(function(s){ if (s.id === stopId) s.done = true; return s; });
+  spSavePersistedStops(stops);
+}
+
+// ── ZIP proximity optimizer ─────────────────────────────────────────────────
+// Groups stops into ZIP clusters, anchors timed appointments, fills flex stops
+function spOptimizeRoute(stops) {
+  var timed = stops.filter(function(s){ return s.time && s.time !== ''; });
+  var flex  = stops.filter(function(s){ return !s.time || s.time === ''; });
+
+  // Sort timed by clock time
+  timed.sort(function(a,b){ return (a.time||'00:00') > (b.time||'00:00') ? 1 : -1; });
+
+  if (flex.length === 0) return timed;
+
+  // Extract ZIP from address
+  function getZip(stop) {
+    var z = stop.zip || '';
+    if (!z) { var m = (stop.address||'').match(/\b(\d{5})\b/); z = m ? m[1] : ''; }
+    return z;
+  }
+  function zipSector(zip) { return zip ? zip.slice(0,3) : 'ZZZ'; }
+
+  // Anchor ZIPs: ZIPs of timed appointments drive the clustering
+  var anchorZips = timed.map(getZip).filter(Boolean);
+  var anchorSectors = anchorZips.map(zipSector);
+
+  // Score each flex stop: how close is it to an anchor?
+  flex.forEach(function(stop) {
+    var z = getZip(stop);
+    var sec = zipSector(z);
+    var anchorMatch = anchorSectors.indexOf(sec);
+    stop._routeScore = anchorMatch >= 0 ? anchorMatch : 99;
+    stop._zip = z;
+    stop._sector = sec;
+  });
+
+  // Sort flex stops: near anchors first, then cluster remaining by sector
+  flex.sort(function(a, b) {
+    if (a._routeScore !== b._routeScore) return a._routeScore - b._routeScore;
+    if (a._sector !== b._sector) return a._sector > b._sector ? 1 : -1;
+    return (a._zip||'') > (b._zip||'') ? 1 : -1;
+  });
+
+  // Interleave: after each timed stop, insert nearby flex stops, then continue
+  var result = [];
+  var flexIdx = 0;
+  var fByAnchor = [];
+
+  // Group flex by which timed anchor they're nearest to
+  if (timed.length === 0) {
+    return flex; // no anchors — just return clustered flex
+  }
+
+  // Build timed+flex interleaved sequence
+  timed.forEach(function(timedStop, ti) {
+    result.push(timedStop);
+    // Insert flex stops that cluster near this anchor
+    var anchorSec = zipSector(getZip(timedStop));
+    var inserted = 0;
+    while (flexIdx < flex.length && inserted < 3) {
+      var f = flex[flexIdx];
+      if (f._sector === anchorSec || f._routeScore === ti) {
+        result.push(f);
+        flexIdx++;
+        inserted++;
+      } else {
+        break;
+      }
+    }
+  });
+  // Remaining flex stops at end
+  while (flexIdx < flex.length) {
+    result.push(flex[flexIdx++]);
+  }
+
+  return result;
+}
+
+// ── Build the agenda ─────────────────────────────────────────────────────────
 function spBuildAgenda() {
   var today = new Date();
   var todayStr = today.toISOString().slice(0,10);
   var repName = _spRep ? _spRep.name : '';
-  var repZip  = (_spRep && _spRep.zip) ? _spRep.zip : '';
 
   var agenda = [];
 
-  // ── 1. Confirmed appointments ───────────────────────────────────────────
+  // ── 1. Confirmed appointments for today ──────────────────────────────────
   var appts = crmLoad('appointments') || [];
   appts.filter(function(a) {
     return a.date === todayStr && (!a.rep || a.rep === repName);
   }).forEach(function(a) {
     agenda.push({
-      type:      'appointment',
-      id:        a.id,
-      accountId: a.accountId || null,
-      title:     a.title || a.business || 'Appointment',
-      address:   a.address || '',
-      time:      a.time || '',
-      notes:     a.notes || '',
-      phone:     a.phone || '',
-      color:     '#1B5FA8',
-      bg:        '#EFF6FF',
-      label:     '📅 Appointment',
-      action:    'survey',
+      type:       'appointment',
+      id:         a.id,
+      accountId:  a.accountId || null,
+      title:      a.title || a.business || 'Appointment',
+      address:    a.address || '',
+      zip:        a.zip || '',
+      time:       a.time || '',
+      notes:      a.notes || '',
+      phone:      a.phone || '',
+      color:      '#1B5FA8',
+      bg:         '#EFF6FF',
+      label:      '📅 Appointment',
+      action:     'survey',
+      fixed:      true, // timed anchor — do not move
     });
   });
 
-  // ── 2. Opportunities / site_visit stage records in rep's territory ──────
+  // ── 2. Pipeline stage opportunities ──────────────────────────────────────
   var leads = crmLoad('leads');
   leads.filter(function(r) {
     var stage = r.lifecycleStage || '';
     var isRep = !r.assignedRep || r.assignedRep === repName || r.ownedBy === repName;
-    return isRep && (stage === 'appointment' || stage === 'site_visit' || stage === 'opportunity');
+    return isRep && ['appointment','site_visit','opportunity'].includes(stage);
   }).forEach(function(r) {
-    // Only add if not already in appointments
-    var alreadyIn = agenda.some(function(a){ return a.accountId === r.id; });
-    if (alreadyIn) return;
+    if (agenda.some(function(a){ return a.accountId === r.id; })) return;
     agenda.push({
-      type:      'opportunity',
-      id:        'opp_' + r.id,
-      accountId: r.id,
-      title:     r.business || r.name || 'Opportunity',
-      address:   r.address || '',
-      time:      r.appointmentTime || '',
-      notes:     r.notes || '',
-      phone:     r.phone || '',
-      color:     '#7C3AED',
-      bg:        '#F3E8FF',
-      label:     '💼 Opportunity',
-      action:    'survey',
-      stage:     r.lifecycleStage,
+      type:       'opportunity',
+      id:         'opp_' + r.id,
+      accountId:  r.id,
+      title:      r.business || r.name || 'Opportunity',
+      address:    r.address || '',
+      zip:        r.zip || '',
+      time:       r.appointmentTime || '',
+      notes:      r.notes || '',
+      phone:      r.phone || '',
+      color:      '#7C3AED',
+      bg:         '#F3E8FF',
+      label:      '💼 Opportunity',
+      action:     'survey',
+      stage:      r.lifecycleStage,
+      accountType: r.accountType || null,
     });
   });
 
-  // ── 3. Existing accounts due for a check-in ─────────────────────────────
+  // ── 3. Existing accounts due for check-in ────────────────────────────────
   var accounts = crmLoad('accounts');
   var cutoff = Date.now() - (CHECKIN_INTERVAL_DAYS * 86400000);
   accounts.filter(function(a) {
     var isRep = !a.assignedRep || a.assignedRep === repName || a.ownedBy === repName;
-    var isActive = a.status === 'active';
-    var overdue = !a.lastCheckin || a.lastCheckin < cutoff;
-    return isRep && isActive && overdue;
+    return isRep && a.status === 'active' && (!a.lastCheckin || a.lastCheckin < cutoff);
   }).slice(0,4).forEach(function(a) {
     agenda.push({
-      type:      'check_in',
-      id:        'ci_' + a.id,
-      accountId: a.id,
-      title:     a.name || a.business || 'Account',
-      address:   a.address || '',
-      time:      '',
-      notes:     'Regular check-in — inventory + customer satisfaction',
-      phone:     a.phone || '',
-      color:     '#059669',
-      bg:        '#F0FDF4',
-      label:     '🟢 Check-In',
-      action:    'visit',
-      services:  a.services || [],
+      type:       'check_in',
+      id:         'ci_' + a.id,
+      accountId:  a.id,
+      title:      a.name || a.business || 'Account',
+      address:    a.address || '',
+      zip:        a.zip || '',
+      time:       '',
+      notes:      'Check-in — inventory & customer satisfaction',
+      phone:      a.phone || '',
+      color:      '#059669',
+      bg:         '#F0FDF4',
+      label:      '🟢 Check-In',
+      action:     'visit',
+      services:   a.services || [],
+      accountType: a.accountType || null,
     });
   });
 
-  // ── 4. Nearby leads (same ZIP as confirmed appointments or rep territory) ─
+  // ── 4. Nearby leads ──────────────────────────────────────────────────────
   var apptZips = agenda.filter(function(a){ return a.type === 'appointment'; })
-    .map(function(a){ var m = a.address.match(/\d{5}/); return m ? m[0] : ''; })
+    .map(function(a){ return a.zip || (a.address.match(/\b\d{5}\b/)||[])[0] || ''; })
     .filter(Boolean);
 
   leads.filter(function(r) {
     var stage = r.lifecycleStage || 'lead';
     if (!['lead','contact'].includes(stage)) return false;
-    var isHot = r.score >= 7 || r.status === 'hot';
-    var zip = (r.zip || (r.address||'').match(/\d{5}/)?.[0] || '');
-    var nearAppt = apptZips.includes(zip);
-    return (nearAppt || isHot) && !agenda.some(function(a){ return a.accountId === r.id; });
+    var zip = r.zip || (r.address||'').match(/\b\d{5}\b/)?.[0] || '';
+    return (apptZips.includes(zip) || r.score >= 7 || r.status === 'hot')
+      && !agenda.some(function(a){ return a.accountId === r.id; });
   }).slice(0,3).forEach(function(r) {
     agenda.push({
-      type:      'nearby',
-      id:        'nb_' + r.id,
-      accountId: r.id,
-      title:     r.business || r.name || 'Lead',
-      address:   r.address || '',
-      time:      '',
-      notes:     'Hot lead nearby — worth a pop-in while in the area',
-      phone:     r.phone || '',
-      score:     r.score || 0,
-      color:     '#D97706',
-      bg:        '#FEF3C7',
-      label:     '⭐ Nearby Lead',
-      action:    'survey',
+      type:       'nearby',
+      id:         'nb_' + r.id,
+      accountId:  r.id,
+      title:      r.business || r.name || 'Lead',
+      address:    r.address || '',
+      zip:        r.zip || '',
+      time:       '',
+      notes:      'Hot lead nearby — good time for a pop-in',
+      phone:      r.phone || '',
+      score:      r.score || 0,
+      color:      '#D97706',
+      bg:         '#FEF3C7',
+      label:      '⭐ Nearby Lead',
+      action:     'survey',
+      accountType: r.accountType || null,
     });
   });
 
-  // Sort: appointments by time first, then others
-  agenda.sort(function(a,b) {
-    var at = a.time || '99:99', bt = b.time || '99:99';
-    // appointments first, then by time
-    var typeOrder = {appointment:0, opportunity:1, nearby:2, check_in:3};
-    if ((typeOrder[a.type]||9) !== (typeOrder[b.type]||9)) return (typeOrder[a.type]||9) - (typeOrder[b.type]||9);
-    return at > bt ? 1 : -1;
+  // ── 5. Merge in persisted manual stops (rep-added) ───────────────────────
+  var manual = spLoadPersistedStops().filter(function(s){
+    return !s.done && !agenda.some(function(a){ return a.id === s.id || a.accountId === s.accountId; });
   });
+  agenda = agenda.concat(manual);
 
-  return agenda;
+  // ── 6. Optimize route ────────────────────────────────────────────────────
+  return spOptimizeRoute(agenda);
 }
 
+// ── Render the agenda ────────────────────────────────────────────────────────
 function spRenderTodayAgenda() {
   var agenda = spBuildAgenda();
   var todayLabel = new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'});
+  var doneCount  = spLoadPersistedStops().filter(function(s){ return s.done; }).length;
+
+  var headerBtns = '<div style="display:flex;gap:6px;flex-shrink:0">'
+    + '<button class="sp-btn sp-btn-red" style="font-size:10px;padding:5px 12px" onclick="spOpenAddStop()">+ Add Stop</button>'
+    + '<button class="sp-btn" style="font-size:10px;padding:5px 12px;background:#059669;color:#fff;border:none;border-radius:5px;cursor:pointer" onclick="spGenerateDay()">⚡ Optimize</button>'
+    + '</div>';
 
   if (!agenda.length) {
     return '<div class="sp-card" style="margin-bottom:14px">'
       + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">'
         + '<div class="sp-card-title" style="margin-bottom:0">📅 Today — ' + todayLabel + '</div>'
-        + '<button class="sp-btn sp-btn-red" style="font-size:10px;padding:5px 12px" onclick="spGenerateDay()">⚡ Generate My Day</button>'
+        + headerBtns
       + '</div>'
       + '<div style="text-align:center;padding:28px;color:var(--soft)">'
         + '<div style="font-size:32px;margin-bottom:10px">📋</div>'
-        + '<div style="font-weight:700;font-size:14px;color:var(--ink);margin-bottom:6px">No agenda yet</div>'
-        + '<div style="font-size:12px">Hit Generate My Day to fill today with appointments, nearby leads, and account check-ins.</div>'
+        + '<div style="font-weight:700;font-size:14px;color:var(--ink);margin-bottom:6px">No stops yet</div>'
+        + '<div style="font-size:12px">Hit Optimize to auto-fill your day, or tap + Add Stop to add a call or visit.</div>'
       + '</div>'
     + '</div>';
   }
 
+  var stopNum = 0;
   var items = agenda.map(function(item) {
-    var timeStr = item.time ? '<span style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:16px;color:' + item.color + ';min-width:44px">' + item.time + '</span>' : '<span style="min-width:44px;display:inline-block"></span>';
-    var actionLabel = item.action === 'visit' ? "I\'m Here — Check In →" : "I\'m Here — Start Survey →";
-    var actionFn = item.action === 'visit'
-      ? "spAgendaArriveVisit('" + item.accountId + "')"
+    stopNum++;
+    var timeStr = item.time
+      ? '<span style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:15px;color:' + item.color + ';min-width:44px">' + escH(item.time) + '</span>'
+      : '<span style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:14px;color:#D1D5DB;min-width:44px">Stop ' + stopNum + '</span>';
+
+    var acctTypeBadge = '';
+    if (item.accountType) {
+      var cfg = typeof getAccountTypeCfg === 'function' ? getAccountTypeCfg(item.accountType) : null;
+      if (cfg) {
+        var modeColor = cfg.pricingMode === 'per_visit' ? '#1E7B3C' : '#1E40AF';
+        acctTypeBadge = ' <span style="background:' + (cfg.pricingMode==='per_visit'?'#DCFCE7':'#EFF6FF') + ';color:' + modeColor + ';border-radius:3px;padding:1px 5px;font-size:9px;font-weight:700">'
+          + (cfg.pricingMode==='per_visit'?'PER VISIT':'ANNUAL') + '</span>';
+      }
+    }
+
+    var actionLabel = item.action === 'visit' ? "I\u2019m Here \u2014 Check In \u2192" : "I\u2019m Here \u2014 Start Survey \u2192";
+    var actionFn    = item.action === 'visit'
+      ? "spAgendaArriveVisit('" + item.accountId + "','" + item.id + "')"
       : "spAgendaArriveSurvey('" + item.accountId + "','" + item.id + "')";
 
-    return '<div style="background:' + item.bg + ';border-left:4px solid ' + item.color + ';border-radius:9px;padding:12px 14px;margin-bottom:8px">'
-      + '<div style="display:flex;align-items:flex-start;gap:10px">'
+    var removeBtn = item.type === 'manual'
+      ? '<button onclick="event.stopPropagation();spRemoveStop(\'' + item.id + '\')" style="background:none;border:none;color:#9CA3AF;font-size:16px;cursor:pointer;padding:2px 4px;line-height:1" title="Remove stop">✕</button>'
+      : '';
+
+    return '<div id="agendaStop_' + item.id + '" style="background:' + item.bg + ';border-left:4px solid ' + item.color + ';border-radius:9px;padding:12px 14px;margin-bottom:8px">'
+      + '<div style="display:flex;align-items:flex-start;gap:8px">'
         + '<div style="flex:1;min-width:0">'
           + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap">'
             + timeStr
             + '<span style="font-weight:700;font-size:13px;color:var(--ink)">' + escH(item.title) + '</span>'
             + '<span style="background:' + item.color + '20;color:' + item.color + ';border-radius:4px;padding:1px 7px;font-size:10px;font-weight:700">' + item.label + '</span>'
+            + acctTypeBadge
           + '</div>'
-          + (item.address ? '<div style="font-size:11px;color:var(--soft);margin-bottom:3px">📍 ' + escH(item.address) + '</div>' : '')
-          + (item.phone ? '<div style="font-size:11px;color:var(--soft);margin-bottom:3px">📞 <a href="tel:' + escH(item.phone) + '" onclick="event.stopPropagation()" style="color:var(--blue)">' + escH(item.phone) + '</a></div>' : '')
+          + (item.address ? '<div style="font-size:11px;color:var(--soft);margin-bottom:2px">📍 ' + escH(item.address) + '</div>' : '')
+          + (item.phone ? '<div style="font-size:11px;color:var(--soft);margin-bottom:2px">📞 <a href="tel:' + escH(item.phone) + '" onclick="event.stopPropagation()" style="color:var(--blue)">' + escH(item.phone) + '</a></div>' : '')
           + (item.notes ? '<div style="font-size:11px;color:var(--soft);font-style:italic">' + escH(item.notes) + '</div>' : '')
         + '</div>'
+        + removeBtn
       + '</div>'
-      + '<div style="margin-top:10px">'
-        + '<button onclick="' + actionFn + '" style="background:' + item.color + ';color:#fff;border:none;border-radius:7px;padding:9px 18px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;width:100%">'
+      + '<div style="margin-top:10px;display:flex;gap:6px">'
+        + '<button onclick="' + actionFn + '" style="flex:1;background:' + item.color + ';color:#fff;border:none;border-radius:7px;padding:9px 14px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">'
           + actionLabel
         + '</button>'
+        + (!item.accountType ? '<button onclick="event.stopPropagation();spSetStopAccountType(\'' + item.id + '\',\'' + (item.accountId||'') + '\')" style="background:rgba(0,0,0,.06);border:none;border-radius:7px;padding:9px 10px;font-size:10px;cursor:pointer;color:var(--soft)" title="Set business type">🏷️</button>' : '')
       + '</div>'
     + '</div>';
   }).join('');
 
+  var summaryBar = doneCount > 0
+    ? '<div style="font-size:11px;color:var(--soft);margin-bottom:8px">✅ ' + doneCount + ' completed today</div>'
+    : '';
+
   return '<div class="sp-card" style="margin-bottom:14px">'
-    + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">'
+    + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'
       + '<div>'
-        + '<div class="sp-card-title" style="margin-bottom:2px">📅 Today — ' + todayLabel + '</div>'
-        + '<div style="font-size:11px;color:var(--soft)">' + agenda.length + ' stops — tap I\'m Here when you arrive</div>'
+        + '<div class="sp-card-title" style="margin-bottom:2px">📅 Today \u2014 ' + todayLabel + '</div>'
+        + '<div style="font-size:11px;color:var(--soft)">' + agenda.length + ' stops \u00b7 route optimized by area</div>'
       + '</div>'
-      + '<button class="sp-btn sp-btn-red" style="font-size:10px;padding:5px 12px" onclick="spGenerateDay()">⚡ Refresh</button>'
+      + headerBtns
     + '</div>'
+    + summaryBar
     + items
   + '</div>';
 }
 
-// ── GENERATE MY DAY ─────────────────────────────────────────────────────────
+// ── ADD STOP MODAL ───────────────────────────────────────────────────────────
+function spOpenAddStop() {
+  var old = document.getElementById('spAddStopModal');
+  if (old) old.remove();
+
+  var leads    = crmLoad('leads');
+  var accounts = crmLoad('accounts');
+  var all      = leads.concat(accounts).filter(function(r){ return r.business || r.name; });
+
+  var modal = document.createElement('div');
+  modal.id  = 'spAddStopModal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:5000;display:flex;align-items:flex-start;justify-content:center;padding:60px 20px 20px';
+  modal._all = all;
+
+  modal.innerHTML = '<div style="background:#fff;border-radius:14px;width:min(560px,96vw);box-shadow:0 16px 48px rgba(0,0,0,.35);overflow:hidden">'
+    + '<div style="background:#1A1D21;padding:16px 20px;display:flex;align-items:center;justify-content:space-between">'
+      + '<div>'
+        + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:16px;color:#fff;letter-spacing:.08em;text-transform:uppercase">+ Add Stop</div>'
+        + '<div style="font-size:11px;color:#9CA3AF;margin-top:2px">Search existing accounts or add a cold call stop</div>'
+      + '</div>'
+      + '<button onclick="spCloseAddStop()" style="background:none;border:1.5px solid #3A3E43;border-radius:6px;color:#9CA3AF;padding:4px 10px;font-size:12px;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:700">✕</button>'
+    + '</div>'
+    + '<div style="padding:14px">'
+      + '<input id="addStopSearch" placeholder="Search by name, address, or phone..." oninput="spAddStopSearch()" style="width:100%;border:1.5px solid #D7DBE0;border-radius:8px;padding:10px 14px;font-family:Barlow,sans-serif;font-size:14px;outline:none;margin-bottom:10px">'
+      + '<div id="addStopResults" style="max-height:260px;overflow-y:auto;margin-bottom:10px"></div>'
+      + '<div style="border-top:1px solid #E5E7EB;padding-top:10px">'
+        + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#6B7280;margin-bottom:8px">Cold Call — Not in System</div>'
+        + '<input id="addStopAddress" placeholder="Address or business name (optional)..." style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 12px;font-family:Barlow,sans-serif;font-size:13px;outline:none;margin-bottom:6px">'
+        + '<input id="addStopPhone" placeholder="Phone (optional)..." style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 12px;font-family:Barlow,sans-serif;font-size:13px;outline:none;margin-bottom:8px">'
+        + '<button onclick="spAddColdCallStop()" style="width:100%;background:#1A1D21;color:#fff;border:none;border-radius:8px;padding:10px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">📍 Add Cold Call Stop</button>'
+      + '</div>'
+    + '</div>'
+  + '</div>';
+
+  document.body.appendChild(modal);
+  spAddStopSearch();
+  document.getElementById('addStopSearch').focus();
+}
+
+function spCloseAddStop() {
+  var m = document.getElementById('spAddStopModal');
+  if (m) m.remove();
+}
+
+function spAddStopSearch() {
+  var q = (document.getElementById('addStopSearch')?.value || '').toLowerCase().trim();
+  var modal = document.getElementById('spAddStopModal');
+  var all   = modal ? modal._all : [];
+  var results = document.getElementById('addStopResults');
+  if (!results) return;
+
+  var filtered = q.length
+    ? all.filter(function(r){
+        return ((r.business||'')+(r.name||'')+(r.address||'')+(r.phone||'')).toLowerCase().includes(q);
+      }).slice(0,8)
+    : all.slice(0,6);
+
+  if (!filtered.length) {
+    results.innerHTML = '<div style="text-align:center;padding:16px;color:#9CA3AF;font-size:13px">No matches — use cold call below</div>';
+    return;
+  }
+
+  results.innerHTML = '';
+  filtered.forEach(function(r) {
+    var div = document.createElement('div');
+    div.style.cssText = 'padding:10px 12px;border-radius:8px;cursor:pointer;border:1.5px solid #E5E7EB;margin-bottom:6px;transition:border-color .12s';
+    var stage = r.lifecycleStage || r.status || '';
+    var acctType = r.accountType ? ' · ' + r.accountType : '';
+    div.innerHTML = '<div style="font-weight:700;font-size:13px;color:#1A1D21">' + escH(r.business||r.name||'Account') + '</div>'
+      + '<div style="font-size:11px;color:#6B7280">'
+        + (r.address ? '📍 ' + escH(r.address) + ' ' : '')
+        + (stage ? '<span style="color:#9CA3AF">· ' + escH(stage) + escH(acctType) + '</span>' : '')
+      + '</div>';
+    div.addEventListener('mouseover', function(){ this.style.borderColor='#C8102E'; });
+    div.addEventListener('mouseout',  function(){ this.style.borderColor='#E5E7EB'; });
+    (function(rec){ div.addEventListener('click', function(){ spAddExistingStop(rec); }); })(r);
+    results.appendChild(div);
+  });
+}
+
+function spAddExistingStop(r) {
+  // Gate on account type if not set
+  var accountType = r.accountType || null;
+  if (!accountType) {
+    spCloseAddStop();
+    openAccountTypeGate(function(typeValue) {
+      r.accountType = typeValue;
+      // Persist type back to record
+      var pool = crmLoad('leads');
+      var idx  = pool.findIndex(function(x){ return x.id === r.id; });
+      if (idx > -1) { pool[idx].accountType = typeValue; crmSave('leads', pool); }
+      // Now add the stop
+      spCommitStop({
+        type:        r.lifecycleStage === 'active' || r.status === 'active' ? 'check_in' : 'opportunity',
+        id:          'manual_' + Date.now(),
+        accountId:   r.id,
+        title:       r.business || r.name || 'Account',
+        address:     r.address || '',
+        zip:         r.zip || '',
+        time:        '',
+        notes:       '',
+        phone:       r.phone || '',
+        color:       '#7C3AED',
+        bg:          '#F3E8FF',
+        label:       r.status === 'active' ? '🟢 Check-In' : '💼 Stop Added',
+        action:      r.status === 'active' ? 'visit' : 'survey',
+        accountType: typeValue,
+        manual:      true,
+      });
+    });
+  } else {
+    spCommitStop({
+      type:        r.status === 'active' ? 'check_in' : 'opportunity',
+      id:          'manual_' + Date.now(),
+      accountId:   r.id,
+      title:       r.business || r.name || 'Account',
+      address:     r.address || '',
+      zip:         r.zip || '',
+      time:        '',
+      notes:       '',
+      phone:       r.phone || '',
+      color:       '#7C3AED',
+      bg:          '#F3E8FF',
+      label:       r.status === 'active' ? '🟢 Check-In' : '💼 Stop Added',
+      action:      r.status === 'active' ? 'visit' : 'survey',
+      accountType: accountType,
+      manual:      true,
+    });
+    spCloseAddStop();
+  }
+}
+
+function spAddColdCallStop() {
+  var address = (document.getElementById('addStopAddress')?.value || '').trim();
+  var phone   = (document.getElementById('addStopPhone')?.value || '').trim();
+  var zip     = (address.match(/\b\d{5}\b/)||[])[0] || '';
+
+  spCloseAddStop();
+  openAccountTypeGate(function(typeValue) {
+    spCommitStop({
+      type:        'manual',
+      id:          'cc_' + Date.now(),
+      accountId:   null,
+      title:       address || 'Cold Call',
+      address:     address,
+      zip:         zip,
+      time:        '',
+      notes:       'Cold call',
+      phone:       phone,
+      color:       '#374151',
+      bg:          '#F9FAFB',
+      label:       '📍 Cold Call',
+      action:      'survey',
+      accountType: typeValue,
+      manual:      true,
+    });
+  });
+}
+
+function spCommitStop(stop) {
+  var stops = spLoadPersistedStops();
+  stops.push(stop);
+  spSavePersistedStops(stops);
+  spGenerateDay();
+  spToast('📍 Stop added — route re-optimized');
+}
+
+function spRemoveStop(stopId) {
+  spRemovePersistedStop(stopId);
+  spGenerateDay();
+  spToast('Stop removed');
+}
+
+// ── Set account type from agenda card ────────────────────────────────────────
+function spSetStopAccountType(stopId, accountId) {
+  openAccountTypeGate(function(typeValue) {
+    // Persist to persisted stops if manual
+    var stops = spLoadPersistedStops();
+    stops = stops.map(function(s){
+      if (s.id === stopId) s.accountType = typeValue;
+      return s;
+    });
+    spSavePersistedStops(stops);
+    // Also persist to the account/lead record
+    if (accountId) {
+      var pool = crmLoad('leads');
+      var r    = pool.find(function(x){ return x.id === accountId; });
+      if (r) { r.accountType = typeValue; crmSave('leads', pool); }
+      else {
+        var accts = crmLoad('accounts');
+        var a     = accts.find(function(x){ return x.id === accountId; });
+        if (a) { a.accountType = typeValue; crmSave('accounts', accts); }
+      }
+    }
+    spGenerateDay();
+  });
+}
+
+// ── GENERATE / REFRESH ──────────────────────────────────────────────────────
 function spOpenRouteMap(){ window.open('termac-os.html','_blank'); }
 
 function spGenerateDay() {
-  // Re-render the leads tab which includes the agenda
   spNav('leads');
-  spToast('📅 Agenda refreshed — ' + spBuildAgenda().length + ' stops today');
+  var count = spBuildAgenda().length;
+  spToast('📅 Route optimized \u2014 ' + count + ' stops');
 }
 
 // ── ARRIVAL HANDLERS ─────────────────────────────────────────────────────────
 function spAgendaArriveSurvey(accountId, agendaId) {
-  // Mark arrival time
+  // Mark stop done in persisted agenda
+  if (agendaId) spMarkStopDone(agendaId);
+
+  // Mark arrival time in appointments store
   var appts = crmLoad('appointments') || [];
   appts = appts.map(function(a) {
     if (a.id === agendaId || a.accountId === accountId) {
@@ -1341,7 +1695,8 @@ function spAgendaArriveSurvey(accountId, agendaId) {
   spLaunchSurveyFromCard(accountId || '', 'contacts');
 }
 
-function spAgendaArriveVisit(accountId) {
+function spAgendaArriveVisit(accountId, stopId) {
+  if (stopId) spMarkStopDone(stopId);
   // Mark check-in on account
   var accounts = crmLoad('accounts');
   var idx = accounts.findIndex(function(a){ return a.id === accountId; });
