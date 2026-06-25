@@ -1054,6 +1054,7 @@ body.rail-open .rail-overlay{display:block}
 .sc-trend-sparkline{display:flex;align-items:flex-end;gap:2px;height:22px}.sc-spark{width:7px;border-radius:2px}
 </style>
 <script src="termac-notify.js"></script>
+<script src="termac-lifecycle.js"></script>
 </head>
 <body>
 
@@ -2265,6 +2266,57 @@ function currentRepTerritory() {
   return Array.isArray(t) && t.length ? t : null;
 }
 
+// ── WARM HARVEST QUEUE ────────────────────────────────────────────────────
+function renderWarmHarvestQueue() {
+  const el = document.getElementById('warmHarvestQueue');
+  if (!el) return;
+  const repName = _currentUser?.name || '';
+  let harvested = [];
+  try {
+    const all = JSON.parse(localStorage.getItem('leads') || '[]');
+    harvested = all.filter(l => l.isWarmHarvest && l.assignedRep === repName
+      && l.status !== 'won' && l.status !== 'dead');
+  } catch(e) {}
+  const badge = document.getElementById('warmHarvestBadge');
+  if (badge) { badge.textContent = harvested.length; badge.style.display = harvested.length ? 'inline' : 'none'; }
+  if (!harvested.length) {
+    el.innerHTML = '<div style="color:var(--soft);font-size:12px;padding:6px 0">No warm harvest leads in your territory right now.</div>';
+    return;
+  }
+  el.innerHTML = harvested.slice(0,8).map(l =>
+    `<div style="background:#F0FDF4;border-left:3px solid #22C55E;border-radius:0 7px 7px 0;padding:9px 13px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+      <div>
+        <div style="font-weight:700;font-size:13px">${escH(l.business||l.name||'—')}</div>
+        <div style="font-size:11px;color:var(--soft)">${escH(l.address||l.zip||'No address')} · Score: ${l.score||'—'}/10 · ${escH(l.harvesterSource||l.source||'Harvest')}</div>
+      </div>
+      <div style="display:flex;gap:6px;flex-shrink:0">
+        <button onclick="lcSetAppointment('${l.id}')" style="background:#1E7B3C;color:#fff;border:none;border-radius:5px;padding:5px 10px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:10px;cursor:pointer;white-space:nowrap">📅 Set Visit</button>
+        <button onclick="openAcctDetail('${l.id}','leads')" style="background:none;border:1.5px solid var(--line);border-radius:5px;padding:5px 10px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:10px;cursor:pointer">View →</button>
+      </div>
+    </div>`
+  ).join('') + (harvested.length > 8 ? `<div style="font-size:11px;color:var(--soft);text-align:center;padding:4px">+${harvested.length-8} more in lead pool</div>` : '');
+}
+
+function lcSetAppointment(leadId) {
+  if (typeof TermacLifecycle !== 'undefined') {
+    TermacLifecycle.setAppointment(leadId);
+  } else {
+    // Fallback
+    const leads = JSON.parse(localStorage.getItem('leads') || '[]');
+    const lead  = leads.find(l => l.id === leadId);
+    if (!lead) return;
+    const dateStr = prompt('Appointment date (YYYY-MM-DD):');
+    if (!dateStr) return;
+    lead.status = 'opportunity';
+    lead.appointmentDate = dateStr;
+    lead.updated = Date.now();
+    localStorage.setItem('leads', JSON.stringify(leads));
+    showToast('📅 Appointment set — ' + dateStr);
+    renderCRMView();
+  }
+  renderWarmHarvestQueue();
+}
+
 function renderCRMView(){
   // Never re-render while estimate, survey, or account overlays are open
   // — would clobber the visible overlay and bounce the user to the CRM
@@ -2371,6 +2423,24 @@ function renderCRMView(){
     html+=`<div class="crm-empty"><div class="crm-empty-icon">🔍</div><div class="crm-empty-msg">${emptyMsg}</div></div>`;
     body.innerHTML=html; return;
   }
+  // ── Warm Harvest Queue (rep dashboard) ──
+  if (tab === 'leads' && _currentUser?.role !== 'manager') {
+    const repLeads = data.filter(l => l.isWarmHarvest);
+    if (repLeads.length > 0) {
+      html += `<div style="background:#F0FDF4;border:1.5px solid #86EFAC;border-radius:10px;padding:14px 16px;margin-bottom:14px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#166534">
+            🌾 Warm Harvest Queue — Your Territory
+            <span style="background:#1E7B3C;color:#fff;border-radius:99px;padding:0 7px;font-size:9px;font-weight:800;margin-left:6px">${repLeads.length}</span>
+          </div>
+          <span style="font-size:11px;color:#166534;font-weight:600">No DMS needed — visit or call direct</span>
+        </div>
+        <div id="warmHarvestQueue">Loading…</div>
+      </div>`;
+      setTimeout(renderWarmHarvestQueue, 50);
+    }
+  }
+
   // ── Rep Appointments Calendar -- mini monthly calendar showing appointments ──
   const _today = new Date();
   const _appts = crmLoad('appointments') || [];
@@ -2881,7 +2951,7 @@ function renderCard(tab,r){
   } else if(tab==='opportunities'){
     actions=`<button class="crm-action-btn" onclick="openLogModal('${r.id}','leads')">📞 Log</button>
              <button class="crm-action-btn" onclick="openApptModal('${r.id}','leads')">📅 Appt</button>
-             <button class="crm-action-btn" onclick="openSiteSurvey('${r.id}')">📋 Survey</button>
+             <button class="crm-action-btn" onclick="openSiteSurvey('${r.id}')">📋 Survey</button><button class="crm-action-btn" onclick="lcSetAppointment('${r.id}')" style="background:#1E7B3C;color:#fff;border-color:#1E7B3C">📅 Set Appointment</button>
              ${renderStageDropdown(r, 'leads')}
              <button class="crm-action-btn dead" onclick="openDeadModal('${r.id}','leads')">💀 Dead</button>`;
   } else if(tab==='accounts'){
@@ -3583,6 +3653,15 @@ function saveModalRecord(){
     data.push(rec);
   }
   crmSave(_modalTab,data);
+  // 🔔 Universal notification for new leads
+  if (_modalTab === 'leads' && !_modalId && typeof TermacLifecycle !== 'undefined') {
+    // ZIP-route if no rep assigned
+    if (!rec.assignedRep || rec.assignedRep === 'Unassigned') {
+      const zip = rec.zip || '';
+      if (zip && typeof getRepForZip === 'function') rec.assignedRep = getRepForZip(zip);
+    }
+    TermacLifecycle.notifyNewLead(rec, 'Manual Entry');
+  }
   closeModal();
   addRecent(_modalTab,rec);
   renderCRMView();
@@ -3973,6 +4052,12 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
       <div id="cs-body-exceptions">
         <div id="exceptionPanelBody" style="font-size:12px;color:#6B7280">Loading…</div>
       </div>
+    </div>
+
+    <!-- Lifecycle Pipeline Status -->
+    <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:14px;margin-bottom:14px">
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft);margin-bottom:10px">📊 Lifecycle Pipeline Status</div>
+      <div id="lifecyclePanelBody">Loading…</div>
     </div>
 
     <!-- Hot Lead & Urgent Response Log -->
@@ -11952,6 +12037,48 @@ function renderDebriefPanel() {
 
 // ── SERVICE EXCEPTION PANEL ──────────────────────────────────────────────────
 
+
+// ── LIFECYCLE PIPELINE STATUS PANEL ─────────────────────────────────────
+function renderLifecyclePanel() {
+  const el = document.getElementById('lifecyclePanelBody');
+  if (!el) return;
+
+  const leads    = crmLoad('leads');
+  const accounts = crmLoad('termac_crm_accounts');
+  const jobs     = (() => { try { return JSON.parse(localStorage.getItem('unipro_jobs')||'[]'); } catch(e){return[];} })();
+  const defs     = (() => { try { return JSON.parse(localStorage.getItem('termac_deficiencies')||'[]'); } catch(e){return[];} })();
+
+  const stages = {
+    new:         leads.filter(l => l.status === 'new').length,
+    warm:        leads.filter(l => l.status === 'warm' || l.isWarmHarvest).length,
+    opportunity: leads.filter(l => l.status === 'opportunity').length,
+    won:         leads.filter(l => l.status === 'won').length,
+    active:      accounts.filter(a => a.status === 'active').length,
+    pending_job: jobs.filter(j => j.status === 'pending_schedule').length,
+    open_def:    defs.filter(d => !d.resolved).length,
+    unquoted_def: defs.filter(d => !d.resolved && !d.quoteBuilt).length,
+  };
+
+  el.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:8px;margin-bottom:12px">
+      ${[
+        { label:'New Leads',     val: stages.new,         color:'#1B5FA8', icon:'🆕' },
+        { label:'Warm / Harvest',val: stages.warm,        color:'#1E7B3C', icon:'🌾' },
+        { label:'Opportunity',   val: stages.opportunity,  color:'#D97706', icon:'📅' },
+        { label:'Won',           val: stages.won,         color:'#059669', icon:'🏆' },
+        { label:'Active Accts',  val: stages.active,      color:'#1B5FA8', icon:'🏢' },
+        { label:'Pending Jobs',  val: stages.pending_job, color:'#D97706', icon:'⏳' },
+        { label:'Open Defs',     val: stages.open_def,    color:'#C8102E', icon:'⚠️' },
+        { label:'Unquoted Defs', val: stages.unquoted_def,color:'#991B1B', icon:'🚨' },
+      ].map(s => `<div style="background:#F9FAFB;border-radius:7px;padding:10px 12px;text-align:center">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:24px;color:${s.color}">${s.val}</div>
+        <div style="font-size:9px;color:var(--soft);text-transform:uppercase;letter-spacing:.08em;font-weight:700;margin-top:2px">${s.icon} ${s.label}</div>
+      </div>`).join('')}
+    </div>
+    ${stages.unquoted_def > 0 ? `<div style="background:#FEE2E2;border-left:3px solid #C8102E;border-radius:0 7px 7px 0;padding:8px 12px;font-size:12px;color:#991B1B;font-weight:600">🚨 ${stages.unquoted_def} open deficiency${stages.unquoted_def>1?'s':''} without a quote — Lexi needs to act.</div>` : ''}
+    ${stages.pending_job > 0 ? `<div style="background:#FEF3C7;border-left:3px solid #D97706;border-radius:0 7px 7px 0;padding:8px 12px;font-size:12px;color:#92400E;font-weight:600;margin-top:8px">⏳ ${stages.pending_job} job${stages.pending_job>1?'s':''} pending scheduling — check scheduler alerts.</div>` : ''}`;
+}
+
 // ── HOT LEAD & URGENT RESPONSE PANEL ─────────────────────────────────────
 function renderHotLeadPanel() {
   const body = document.getElementById('hotleadPanelBody');
@@ -12010,6 +12137,7 @@ function markNotifRead(id) {
     localStorage.setItem('termac_hotlead_notifs', JSON.stringify(notifs));
     renderHotLeadPanel();
   renderDebriefPanel();
+  renderLifecyclePanel();
   } catch(e) {}
 }
 
@@ -13683,6 +13811,8 @@ function dmsAssignHotLead(id) {
   const assignCell = row?.querySelectorAll('td')?.[6];
   if (assignCell) assignCell.innerHTML = `<span class="dms-promoted-badge">✅ In Leads</span>`;
 
+  // 🔔 Universal notification — CC Jim + Tom
+  if (typeof TermacLifecycle !== 'undefined') TermacLifecycle.notifyNewLead(newLead, 'DMS Hot Lead');
   showToast(`🔥 Hot lead assigned to ${rep} — in-app + email notification sent`);
   _dmsShowRepSLAStatus(newLead.id, rep, now);
   // Generate pre-visit intel brief for rep
@@ -17736,10 +17866,17 @@ function rcpLogCall(){
 }
 function rcpLogAndCreateLead(){
   const call=rcpLogCall();if(!call)return;
-  const lead={id:'lead_rcp_'+Date.now(),name:call.name,business:call.company,phone:call.phone,email:'',address:'',zip:'',company:'UniPro',status:'new',services:[],score:6,source:'Inbound Call',created:Date.now(),notes:'Inbound call '+call.date+' '+call.time+'. Type: '+call.type+'. '+call.notes,activityLog:[{ts:Date.now(),type:'call',icon:'📞',title:'Inbound Call — Reception',note:call.notes||'',who:call.loggedBy}]};
-  const leads=crmLoad('leads');leads.unshift(lead);crmSave('leads',leads);
-  const calls=rcpLoadCalls();const c=calls.find(x=>x.id===call.id);if(c){c.createdLead=true;c.leadId=lead.id;rcpSaveCalls(calls);}
-  rcpRefresh();alert('Call logged and lead created for '+(call.name||call.company)+'. Find it in the Lead Pool to assign to a rep.');
+  // Use lifecycle engine — auto ZIP-routes to rep and fires universal notification
+  const lead = typeof TermacLifecycle !== 'undefined'
+    ? TermacLifecycle.rcpCreateLead(call)
+    : null;
+  if(!lead){
+    // Fallback if lifecycle engine not loaded
+    const l={id:'lead_rcp_'+Date.now(),name:call.name,business:call.company,phone:call.phone,email:'',address:'',zip:'',company:'UniPro',status:'new',services:[],score:6,source:'Inbound Call',created:Date.now(),assignedRep:'Unassigned'};
+    const leads=crmLoad('leads');leads.unshift(l);crmSave('leads',leads);
+  }
+  rcpRefresh();
+  showToast('✅ Lead created' + (lead&&lead.assignedRep&&lead.assignedRep!=='Unassigned' ? ' → Routed to ' + lead.assignedRep + ' · Jim & Tom CC'd' : ' — ZIP not found, dropped to shared pool'));
 }
 function rcpResolve(callId){const calls=rcpLoadCalls();const c=calls.find(x=>x.id===callId);if(c){c.status='resolved';rcpSaveCalls(calls);rcpRefresh();}}
 
@@ -18279,6 +18416,13 @@ function estShowSquarePanel(){
   }
   document.getElementById('estSquarePanel').style.display = 'block';
   document.getElementById('estSquarePanel').scrollIntoView({ behavior:'smooth' });
+  // 🏆 LIFECYCLE: trigger won-lead for existing accounts (no sig panel path)
+  if (typeof TermacLifecycle !== 'undefined' && estState.accountId && !estState._wonFired) {
+    estState._wonFired = true;
+    const accts = crmLoad('accounts');
+    const acct  = accts.find(x => x.id === estState.accountId);
+    if (acct) TermacLifecycle.wonLead(acct, { total: estState.total||0, lineItems: estState.lineItems||[], id:'est_'+estState.accountId });
+  }
 }
 
 // ── ESTIMATE SIGNATURE CANVAS ──────────────────────────────────────────────
@@ -18393,9 +18537,37 @@ function estSigProceed() {
   }
 
   document.getElementById('estSigPanel').style.display = 'none';
+
+  // 🏆 LIFECYCLE: trigger full won-lead flow
+  if (typeof TermacLifecycle !== 'undefined' && estState.accountId) {
+    const accounts = crmLoad('accounts');
+    const acct = accounts.find(x => x.id === estState.accountId);
+    if (acct) {
+      TermacLifecycle.wonLead(acct, {
+        total:      estState.total || 0,
+        lineItems:  estState.lineItems || [],
+        divisions:  estState.divisions || acct.services || ['UniPro'],
+        id:         'est_' + estState.accountId,
+        rep:        acct.assignedRep || '',
+      });
+    }
+  }
+
   estShowSquarePanel();
 }
 
+
+// ── GLOBAL DEFICIENCY FLAG — callable from tech portals ──────────────────
+function flagDeficiencyFromTech(accountId, accountName, address, description, severity, techId, jobId, canFixNow, partsNeeded) {
+  if (typeof TermacLifecycle !== 'undefined') {
+    TermacLifecycle.flagDeficiency({ accountId, accountName, address, description, severity, techId, jobId, canFixNow, partsNeeded });
+  } else {
+    // Fallback: direct email to Lexi
+    const subj = encodeURIComponent('⚠️ Deficiency — ' + accountName);
+    const body = encodeURIComponent('Deficiency flagged at ' + accountName + '\nDescription: ' + description + '\nCan fix now: ' + canFixNow);
+    window.open('mailto:lcranfield@termac.com?subject=' + subj + '&body=' + body, '_blank');
+  }
+}
 function estDecline(){
   estState.decision = 'thinking';
   document.getElementById('estDecision').classList.remove('open');
@@ -22723,6 +22895,10 @@ function claimLead(id) {
   crmSave('leads', data);
   // 🔔 Lead claimed notification
   if (typeof notifyOnLeadClaimed === 'function') notifyOnLeadClaimed(r, repName);
+  // 🔔 Universal hot lead notification — CC Jim + Tom
+  if (typeof TermacLifecycle !== 'undefined') {
+    TermacLifecycle.notifyNewLead(r, 'Lead Pool — Claimed by ' + repName);
+  }
   renderLeadPool();
   renderCRMView();
   buildActionQueue();
