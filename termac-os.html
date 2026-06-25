@@ -20584,7 +20584,32 @@ function saveFollowup() {
    REP ACTION QUEUE + ALERT SYSTEM (Session 8B)
    48hr follow-up · 90-day check-in · renewal flags
 ───────────────────────────────────────────── */
+
+// ── COLLECTIONS OVERDUE ALERT ─────────────────────────────────────────────
+function checkCollectionsOverdue() {
+  try {
+    var colls = JSON.parse(localStorage.getItem('termac_collections')||'[]');
+    var overdue = colls.filter(function(c){
+      return c.status === 'collected' && (Date.now()-c.collectedAt) > (48*3600000);
+    });
+    if (!overdue.length) return;
+    var notifs = JSON.parse(localStorage.getItem('termac_hotlead_notifs')||'[]');
+    var alreadyNotified = notifs.some(function(n){ return n.type==='coll_overdue_mgr' && (Date.now()-n.ts)<3600000; });
+    if (alreadyNotified) return;
+    notifs.unshift({
+      id:'n_'+Date.now(), ts:Date.now(), type:'coll_overdue_mgr', icon:'💵',
+      urgent:true,
+      title:'⚠️ ' + overdue.length + ' Collection' + (overdue.length>1?'s':'')+' Overdue >48h',
+      body: overdue.map(function(c){ return c.collectedBy+': $'+Number(c.amount).toFixed(2)+' ('+c.accountName+')'; }).join(' · '),
+      recipient:'Manager', read:false,
+      date:new Date().toLocaleDateString('en-US'), time:new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}),
+    });
+    localStorage.setItem('termac_hotlead_notifs', JSON.stringify(notifs.slice(0,100)));
+  } catch(e){}
+}
+
 function buildActionQueue() {
+  checkCollectionsOverdue();
   const now  = Date.now();
   const day  = 86400000;
   const alerts = [];
