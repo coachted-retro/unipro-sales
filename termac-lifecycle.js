@@ -1,3 +1,49 @@
+
+// ── TERMAC ONE: localStorage key migration ─────────────────────────────────
+// Canonical keys: termac_crm_accounts, termac_crm_leads
+// Run once per session to merge any data written under legacy key names.
+(function termacKeyMigration() {
+  try {
+    var OLD_ACCOUNT_KEYS = ['crm_accounts', 'accounts'];
+    var OLD_LEAD_KEYS    = ['leads', 'termac_leads', 'crm_leads', 'termac_crm_leads'];
+    var CANONICAL_ACCTS  = 'termac_crm_accounts';
+    var CANONICAL_LEADS  = 'termac_crm_leads';
+
+    function mergeArrays(a, b, idField) {
+      // b wins on conflict (newer write)
+      var map = {};
+      (a||[]).forEach(function(x){ if(x && x[idField]) map[x[idField]] = x; });
+      (b||[]).forEach(function(x){ if(x && x[idField]) map[x[idField]] = x; });
+      return Object.values(map);
+    }
+
+    // Accounts
+    var canonical = JSON.parse(localStorage.getItem(CANONICAL_ACCTS) || '[]');
+    OLD_ACCOUNT_KEYS.forEach(function(k) {
+      var old = JSON.parse(localStorage.getItem(k) || '[]');
+      if (old.length) {
+        canonical = mergeArrays(canonical, old, 'id');
+        localStorage.removeItem(k);
+      }
+    });
+    if (canonical.length) localStorage.setItem(CANONICAL_ACCTS, JSON.stringify(canonical));
+
+    // Leads
+    var canonicalLeads = JSON.parse(localStorage.getItem(CANONICAL_LEADS) || '[]');
+    OLD_LEAD_KEYS.forEach(function(k) {
+      if (k === CANONICAL_LEADS) return;
+      var old = JSON.parse(localStorage.getItem(k) || '[]');
+      if (old.length) {
+        canonicalLeads = mergeArrays(canonicalLeads, old, 'id');
+        localStorage.removeItem(k);
+      }
+    });
+    if (canonicalLeads.length) localStorage.setItem(CANONICAL_LEADS, JSON.stringify(canonicalLeads));
+
+  } catch(e) { console.warn('Key migration error:', e); }
+})();
+// ── END KEY MIGRATION ───────────────────────────────────────────────────────
+
 /* ═══════════════════════════════════════════════════════════════════════════
    TERMAC ONE — LIFECYCLE ENGINE v1.0
    termac-lifecycle.js
@@ -174,9 +220,9 @@ function lcRcpCreateLead(call) {
 
   // Save
   try {
-    const leads = JSON.parse(localStorage.getItem('leads') || '[]');
+    const leads = JSON.parse(localStorage.getItem('termac_crm_leads') || '[]');
     leads.unshift(lead);
-    localStorage.setItem('leads', JSON.stringify(leads));
+    localStorage.setItem('termac_crm_leads', JSON.stringify(leads));
   } catch(e) {}
 
   // Link call to lead
@@ -202,7 +248,7 @@ function lcRouteHarvestedLeads(harvestedLeads, harvesterName) {
   let routed  = 0;
   let notified = {};
 
-  const existingLeads = (() => { try { return JSON.parse(localStorage.getItem('leads')||'[]'); } catch(e){ return []; } })();
+  const existingLeads = (() => { try { return JSON.parse(localStorage.getItem('termac_crm_leads')||'[]'); } catch(e){ return []; } })();
 
   harvestedLeads.forEach(function(raw) {
     const zip = raw.zip || (raw.address||'').match(/\b(\d{5})\b/)?.[1] || '';
@@ -252,7 +298,7 @@ function lcRouteHarvestedLeads(harvestedLeads, harvesterName) {
     }
   });
 
-  localStorage.setItem('leads', JSON.stringify(existingLeads));
+  localStorage.setItem('termac_crm_leads', JSON.stringify(existingLeads));
 
   // Send one digest email per rep with all their new harvest leads
   Object.entries(notified).forEach(function([rep, repLeads]) {
@@ -308,10 +354,10 @@ function lcWonLead(leadOrAccount, estimateData) {
     try {
       const accounts = JSON.parse(localStorage.getItem('termac_crm_accounts') || '[]');
       // Remove from leads
-      const leads = JSON.parse(localStorage.getItem('leads') || '[]');
+      const leads = JSON.parse(localStorage.getItem('termac_crm_leads') || '[]');
       const li = leads.findIndex(l => l.id === leadOrAccount.id);
       if (li >= 0) { leads[li].status = 'won'; leads[li].wonDate = dateStr; leads[li].accountId = account.id; }
-      localStorage.setItem('leads', JSON.stringify(leads));
+      localStorage.setItem('termac_crm_leads', JSON.stringify(leads));
       accounts.unshift(account);
       localStorage.setItem('termac_crm_accounts', JSON.stringify(accounts));
     } catch(e) {}
@@ -541,7 +587,7 @@ function lcShowWonToast(biz, rep) {
 
 // ── 5. APPOINTMENT / OPPORTUNITY CREATION ────────────────────────────────
 function lcSetAppointment(leadId) {
-  const leads   = JSON.parse(localStorage.getItem('leads') || '[]');
+  const leads   = JSON.parse(localStorage.getItem('termac_crm_leads') || '[]');
   const lead    = leads.find(function(l){ return l.id === leadId; });
   if (!lead) return;
 
@@ -563,7 +609,7 @@ function lcSetAppointment(leadId) {
     who:   (window._currentUser && window._currentUser.name) || 'Rep',
   });
 
-  localStorage.setItem('leads', JSON.stringify(leads));
+  localStorage.setItem('termac_crm_leads', JSON.stringify(leads));
 
   // Alert scheduler with pending slot
   try {

@@ -1,3 +1,49 @@
+
+// ── TERMAC ONE: localStorage key migration ─────────────────────────────────
+// Canonical keys: termac_crm_accounts, termac_crm_leads
+// Run once per session to merge any data written under legacy key names.
+(function termacKeyMigration() {
+  try {
+    var OLD_ACCOUNT_KEYS = ['crm_accounts', 'accounts'];
+    var OLD_LEAD_KEYS    = ['leads', 'termac_leads', 'crm_leads', 'termac_crm_leads'];
+    var CANONICAL_ACCTS  = 'termac_crm_accounts';
+    var CANONICAL_LEADS  = 'termac_crm_leads';
+
+    function mergeArrays(a, b, idField) {
+      // b wins on conflict (newer write)
+      var map = {};
+      (a||[]).forEach(function(x){ if(x && x[idField]) map[x[idField]] = x; });
+      (b||[]).forEach(function(x){ if(x && x[idField]) map[x[idField]] = x; });
+      return Object.values(map);
+    }
+
+    // Accounts
+    var canonical = JSON.parse(localStorage.getItem(CANONICAL_ACCTS) || '[]');
+    OLD_ACCOUNT_KEYS.forEach(function(k) {
+      var old = JSON.parse(localStorage.getItem(k) || '[]');
+      if (old.length) {
+        canonical = mergeArrays(canonical, old, 'id');
+        localStorage.removeItem(k);
+      }
+    });
+    if (canonical.length) localStorage.setItem(CANONICAL_ACCTS, JSON.stringify(canonical));
+
+    // Leads
+    var canonicalLeads = JSON.parse(localStorage.getItem(CANONICAL_LEADS) || '[]');
+    OLD_LEAD_KEYS.forEach(function(k) {
+      if (k === CANONICAL_LEADS) return;
+      var old = JSON.parse(localStorage.getItem(k) || '[]');
+      if (old.length) {
+        canonicalLeads = mergeArrays(canonicalLeads, old, 'id');
+        localStorage.removeItem(k);
+      }
+    });
+    if (canonicalLeads.length) localStorage.setItem(CANONICAL_LEADS, JSON.stringify(canonicalLeads));
+
+  } catch(e) { console.warn('Key migration error:', e); }
+})();
+// ── END KEY MIGRATION ───────────────────────────────────────────────────────
+
 /* ═══════════════════════════════════════════════════════════════════════════
    SERVICE EXCEPTION WORKFLOW — termac-exception.js
    Shared module used by: Termac Driver Portal, all Tech Portals
@@ -151,7 +197,7 @@ function saveException() {
 function _writeExceptionToAccount(record) {
   try {
     // Try CRM accounts first
-    const acctKeys = ['termac_crm_accounts','crm_accounts'];
+    const acctKeys = ['termac_crm_accounts','termac_crm_accounts'];
     for (const key of acctKeys) {
       const accounts = JSON.parse(localStorage.getItem(key) || '[]');
       const acct = accounts.find(a =>

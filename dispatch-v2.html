@@ -1221,28 +1221,92 @@ function jobAction(id){
 }
 
 // ── TECH STATUS ─────────────────────────────────────────────────
+function loadLiveCheckins() {
+  // Read all termac_checkin_* keys written by division portals every 5 min
+  var live = {};
+  var staleMs = 15 * 60 * 1000; // 15 min = stale
+  var now = Date.now();
+  try {
+    for (var i = 0; i < localStorage.length; i++) {
+      var k = localStorage.key(i);
+      if (k && k.startsWith('termac_checkin_')) {
+        var v = JSON.parse(localStorage.getItem(k) || '{}');
+        if (v && v.techName) {
+          v._stale = (now - (v.lastPing || 0)) > staleMs;
+          v._minsAgo = Math.round((now - (v.lastPing || 0)) / 60000);
+          live[v.techName] = v;
+        }
+      }
+    }
+  } catch(e) {}
+  return live;
+}
+
 function renderTechs(){
-  const jobs=loadJobs();
-  const tod=new Date().toISOString().split('T')[0];
-  const sm={available:{cls:'avail',lbl:'Available',c:'g'},
-    'en-route':{cls:'enroute',lbl:'En Route',c:'b'},
-    'on-job':{cls:'onjob',lbl:'On Job',c:'o'},
-    off:{cls:'off',lbl:'Off Duty',c:'s'}};
-  document.getElementById('techGrid').innerHTML=TECHS.map(t=>{
-    const s=sm[t.status]||sm.off;
-    const todayJobs=jobs.filter(j=>j.date===tod&&(j.techId===t.id||j.tech===t.name));
-    const wColor=t.wrench>=65?'var(--green)':t.wrench>=50?'var(--orange)':'var(--red)';
+  const jobs = loadJobs();
+  const tod = new Date().toISOString().split('T')[0];
+  const live = loadLiveCheckins(); // live pings from all division portals
+  const sm = {
+    available: {cls:'avail',  lbl:'Available', c:'g'},
+    'en-route':{cls:'enroute',lbl:'En Route',  c:'b'},
+    'on-job':  {cls:'onjob',  lbl:'On Job',    c:'o'},
+    onsite:    {cls:'onjob',  lbl:'On Site',   c:'o'},
+    enroute:   {cls:'enroute',lbl:'En Route',  c:'b'},
+    off:       {cls:'off',    lbl:'Off Duty',  c:'s'}
+  };
+
+  // Merge live checkins into TECHS + add any live techs not in static list
+  var activeTechs = TECHS.map(function(t) {
+    var ping = live[t.name];
+    if (ping && !ping._stale) {
+      return Object.assign({}, t, {
+        status: ping.status === 'onsite' ? 'on-job' : ping.status || t.status,
+        job:    ping.currentJob || t.job,
+        div:    ping.division   || t.div,
+        _pingMins: ping._minsAgo,
+        _hasLive: true,
+      });
+    }
+    return t;
+  });
+
+  // Add any live techs from checkins NOT already in TECHS list (other division staff)
+  Object.values(live).forEach(function(ping) {
+    var already = activeTechs.find(function(t){ return t.name === ping.techName; });
+    if (!already && ping.techName) {
+      var initials = ping.techName.split(' ').map(function(w){return w[0]||'';}).join('').slice(0,2).toUpperCase();
+      var divColors = {'UniPro':'#C8102E','GTO':'#6D28D9','Filter Man':'#D97706','AllPro':'#065F46','Termac':'#1B5FA8','Quality III':'#0D7490'};
+      activeTechs.push({
+        id: 'live_'+ping.techName.replace(/\s/g,'_'),
+        name: ping.techName, initials: initials,
+        div: ping.division || 'Field',
+        status: ping.status === 'onsite' ? 'on-job' : ping.status || 'available',
+        job: ping.currentJob || '',
+        phone: '', color: divColors[ping.division] || '#374151',
+        wrench: 0, cap: 480, eta: '',
+        _pingMins: ping._minsAgo, _hasLive: true,
+      });
+    }
+  });
+
+  document.getElementById('techGrid').innerHTML = activeTechs.map(function(t) {
+    const s = sm[t.status] || sm.off;
+    const todayJobs = jobs.filter(function(j){ return j.date===tod && (j.techId===t.id||j.tech===t.name); });
+    const wColor = t.wrench>=65?'var(--green)':t.wrench>=50?'var(--orange)':'var(--red)';
+    const pingBadge = t._hasLive && !t._stale
+      ? `<span style="font-size:9px;color:#4ade80;margin-left:4px">● LIVE ${t._pingMins}m ago</span>`
+      : (t._stale ? `<span style="font-size:9px;color:#f87171;margin-left:4px">● stale</span>` : '');
     return `<div class="tech-card ${s.cls}">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
         <div style="width:36px;height:36px;border-radius:50%;background:${t.color};display:flex;align-items:center;justify-content:center;font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:13px;color:#fff;flex-shrink:0">${t.initials}</div>
         <div>
-          <div class="tech-name">${esc(t.name)}</div>
+          <div class="tech-name">${esc(t.name)}${pingBadge}</div>
           <div class="tech-status ${s.c}">${s.lbl} · ${esc(t.div)}</div>
         </div>
       </div>
       <div class="tech-detail">
-        <a href="tel:${t.phone}" style="color:var(--blue)">${t.phone}</a>
-        ${t.job?`<br>📍 ${esc(t.job)}${t.eta?' · ETA '+t.eta:''}`:'' }
+        ${t.phone ? `<a href="tel:${t.phone}" style="color:var(--blue)">${t.phone}</a>` : ''}
+        ${t.job ? `<br>📍 ${esc(t.job)}${t.eta?' · ETA '+t.eta:''}` : ''}
         <br>📋 ${todayJobs.length} job${todayJobs.length!==1?'s':''} today
       </div>
       ${t.wrench>0?`<div class="tech-wrench"><div class="wrench-bar"><div class="wrench-fill" style="width:${t.wrench}%;background:${wColor}"></div></div><span class="wrench-lbl" style="color:${wColor}">${t.wrench}%</span></div>`:''}
@@ -1268,6 +1332,8 @@ function assignTech(id){
   t.status='en-route';t.job=job.biz;
   toast(`✅ ${t.name} → ${job.biz}`);
   renderTechs();renderMap();
+  // Auto-refresh tech board every 60s to pick up live checkin pings
+  setInterval(function(){ if(document.getElementById('techGrid')) renderTechs(); }, 60000);
 }
 
 // ── WRENCH MONITOR ──────────────────────────────────────────────

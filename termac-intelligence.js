@@ -1,3 +1,49 @@
+
+// ── TERMAC ONE: localStorage key migration ─────────────────────────────────
+// Canonical keys: termac_crm_accounts, termac_crm_leads
+// Run once per session to merge any data written under legacy key names.
+(function termacKeyMigration() {
+  try {
+    var OLD_ACCOUNT_KEYS = ['crm_accounts', 'accounts'];
+    var OLD_LEAD_KEYS    = ['leads', 'termac_leads', 'crm_leads', 'termac_crm_leads'];
+    var CANONICAL_ACCTS  = 'termac_crm_accounts';
+    var CANONICAL_LEADS  = 'termac_crm_leads';
+
+    function mergeArrays(a, b, idField) {
+      // b wins on conflict (newer write)
+      var map = {};
+      (a||[]).forEach(function(x){ if(x && x[idField]) map[x[idField]] = x; });
+      (b||[]).forEach(function(x){ if(x && x[idField]) map[x[idField]] = x; });
+      return Object.values(map);
+    }
+
+    // Accounts
+    var canonical = JSON.parse(localStorage.getItem(CANONICAL_ACCTS) || '[]');
+    OLD_ACCOUNT_KEYS.forEach(function(k) {
+      var old = JSON.parse(localStorage.getItem(k) || '[]');
+      if (old.length) {
+        canonical = mergeArrays(canonical, old, 'id');
+        localStorage.removeItem(k);
+      }
+    });
+    if (canonical.length) localStorage.setItem(CANONICAL_ACCTS, JSON.stringify(canonical));
+
+    // Leads
+    var canonicalLeads = JSON.parse(localStorage.getItem(CANONICAL_LEADS) || '[]');
+    OLD_LEAD_KEYS.forEach(function(k) {
+      if (k === CANONICAL_LEADS) return;
+      var old = JSON.parse(localStorage.getItem(k) || '[]');
+      if (old.length) {
+        canonicalLeads = mergeArrays(canonicalLeads, old, 'id');
+        localStorage.removeItem(k);
+      }
+    });
+    if (canonicalLeads.length) localStorage.setItem(CANONICAL_LEADS, JSON.stringify(canonicalLeads));
+
+  } catch(e) { console.warn('Key migration error:', e); }
+})();
+// ── END KEY MIGRATION ───────────────────────────────────────────────────────
+
 /**
  * TERMAC INTELLIGENCE ENGINE v1.0
  * Shared closed-loop intelligence layer across all Termac One portals.
@@ -285,7 +331,7 @@
     };
 
     const now = Date.now();
-    const leads = tiRead('termac_leads', []);
+    const leads = tiRead('termac_crm_leads', []);
 
     // Dedup — don't create if same account+division already has an open lead
     const existing = leads.find(l =>
@@ -318,12 +364,12 @@
     };
 
     leads.unshift(newLead);
-    tiWrite('termac_leads', leads);
+    tiWrite('termac_crm_leads', leads);
 
     // Also write to crm_leads for sales portal
-    const crmLeads = tiRead('crm_leads', []);
+    const crmLeads = tiRead('termac_crm_leads', []);
     crmLeads.unshift(newLead);
-    tiWrite('crm_leads', crmLeads);
+    tiWrite('termac_crm_leads', crmLeads);
 
     // Notify assigned rep
     tiNotify({

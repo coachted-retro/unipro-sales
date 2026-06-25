@@ -242,6 +242,52 @@ body{background:var(--dark);color:var(--ink);font-family:'Barlow',sans-serif;fon
 </style>
 </head>
 <body>
+<script>
+// ── TERMAC ONE: localStorage key migration ─────────────────────────────────
+// Canonical keys: termac_crm_accounts, termac_crm_leads
+// Run once per session to merge any data written under legacy key names.
+(function termacKeyMigration() {
+  try {
+    var OLD_ACCOUNT_KEYS = ['crm_accounts', 'accounts'];
+    var OLD_LEAD_KEYS    = ['leads', 'termac_leads', 'crm_leads', 'termac_crm_leads'];
+    var CANONICAL_ACCTS  = 'termac_crm_accounts';
+    var CANONICAL_LEADS  = 'termac_crm_leads';
+
+    function mergeArrays(a, b, idField) {
+      // b wins on conflict (newer write)
+      var map = {};
+      (a||[]).forEach(function(x){ if(x && x[idField]) map[x[idField]] = x; });
+      (b||[]).forEach(function(x){ if(x && x[idField]) map[x[idField]] = x; });
+      return Object.values(map);
+    }
+
+    // Accounts
+    var canonical = JSON.parse(localStorage.getItem(CANONICAL_ACCTS) || '[]');
+    OLD_ACCOUNT_KEYS.forEach(function(k) {
+      var old = JSON.parse(localStorage.getItem(k) || '[]');
+      if (old.length) {
+        canonical = mergeArrays(canonical, old, 'id');
+        localStorage.removeItem(k);
+      }
+    });
+    if (canonical.length) localStorage.setItem(CANONICAL_ACCTS, JSON.stringify(canonical));
+
+    // Leads
+    var canonicalLeads = JSON.parse(localStorage.getItem(CANONICAL_LEADS) || '[]');
+    OLD_LEAD_KEYS.forEach(function(k) {
+      if (k === CANONICAL_LEADS) return;
+      var old = JSON.parse(localStorage.getItem(k) || '[]');
+      if (old.length) {
+        canonicalLeads = mergeArrays(canonicalLeads, old, 'id');
+        localStorage.removeItem(k);
+      }
+    });
+    if (canonicalLeads.length) localStorage.setItem(CANONICAL_LEADS, JSON.stringify(canonicalLeads));
+
+  } catch(e) { console.warn('Key migration error:', e); }
+})();
+// ── END KEY MIGRATION ───────────────────────────────────────────────────────
+</script>
 <nav class="trn">
   <div class="trn-inner">
     <button class="trn-logo" onclick="history.back()">
@@ -357,6 +403,20 @@ body{background:var(--dark);color:var(--ink);font-family:'Barlow',sans-serif;fon
     </div>
 
     <!-- BOTTOM METRICS -->
+      <!-- UNASSIGNED JOB QUEUE (Loop 9 output) -->
+      <div id="unassignedQueuePanel" style="background:var(--panel);border-radius:var(--radius);border:1px solid var(--line);margin:12px 0;overflow:hidden">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:#FFF5F5;border-bottom:1px solid #FCA5A5;cursor:pointer" onclick="toggleUnassignedQueue()">
+          <div style="font-family:Barlow,sans-serif;font-weight:800;font-size:11px;letter-spacing:.10em;text-transform:uppercase;color:#991B1B">
+            📋 Unassigned Job Queue
+            <span id="unassignedBadge" style="display:none;background:#C8102E;color:#fff;border-radius:99px;padding:0 7px;font-size:9px;font-weight:800;margin-left:6px">0</span>
+          </div>
+          <span id="unassignedChevron" style="color:var(--soft);font-size:13px">▾</span>
+        </div>
+        <div id="unassignedQueueBody" style="padding:14px 16px;max-height:340px;overflow-y:auto">
+          <div id="unassignedQueueList" style="font-size:13px;color:var(--soft)">Loading…</div>
+        </div>
+      </div>
+
       <!-- MULTI-DIVISION COORDINATION -->
       <div id="multiDivPanel" style="background:var(--panel);border-radius:var(--radius);border:1px solid var(--line);margin:12px 0;overflow:hidden">
         <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:#F8F9FA;border-bottom:1px solid var(--line);cursor:pointer" onclick="toggleMultiDiv()">
@@ -2382,6 +2442,106 @@ setInterval(function(){
 }, 60000);
 
 // ══ MULTI-DIVISION ACCOUNT COORDINATION ═══════════════════════════════════
+
+// ── UNASSIGNED JOB QUEUE ─────────────────────────────────────────────────
+var _unassignedOpen = true;
+
+function toggleUnassignedQueue() {
+  _unassignedOpen = !_unassignedOpen;
+  var body = document.getElementById('unassignedQueueBody');
+  var chev = document.getElementById('unassignedChevron');
+  if (body) body.style.display = _unassignedOpen ? 'block' : 'none';
+  if (chev) chev.textContent = _unassignedOpen ? '▾' : '▸';
+}
+
+function renderUnassignedQueue() {
+  var el    = document.getElementById('unassignedQueueList');
+  var badge = document.getElementById('unassignedBadge');
+  if (!el) return;
+
+  var jobs = [];
+  try { jobs = JSON.parse(localStorage.getItem('termac_scheduled_jobs') || '[]'); } catch(e) {}
+
+  // Also pull unassigned from unipro_jobs
+  try {
+    var uJobs = JSON.parse(localStorage.getItem('unipro_jobs') || '[]');
+    uJobs.filter(function(j){ return j.status === 'scheduled' && (!j.techId && !j.tech || j.tech === 'Unassigned'); })
+      .forEach(function(j){ jobs.push({ id:j.id, account:j.account||j.biz, address:j.addr||'', division:j.division||'UniPro', serviceType:j.type||j.serviceType||'Service', scheduledDate:j.date, scheduledTs:new Date(j.date).getTime(), status:'unassigned', nfpa:null, contact:j.contact||'', phone:j.phone||'' }); });
+  } catch(e) {}
+
+  var unassigned = jobs.filter(function(j){ return j.status === 'unassigned' || j.status === 'pending' || (!j.techName && j.status !== 'complete'); });
+  unassigned.sort(function(a,b){ return (a.scheduledTs||0)-(b.scheduledTs||0); });
+
+  if (badge) {
+    badge.textContent = unassigned.length;
+    badge.style.display = unassigned.length > 0 ? 'inline' : 'none';
+  }
+
+  if (!unassigned.length) {
+    el.innerHTML = '<div style="color:var(--green);font-size:12px;font-weight:600;padding:4px 0">✅ All generated jobs have been assigned.</div>';
+    return;
+  }
+
+  var divColors = {'UniPro':'#C8102E','GTO':'#6D28D9','Filter Man':'#D97706','AllPro':'#065F46','Termac':'#1B5FA8','Quality III':'#0D7490','Scheduled':'#374151'};
+
+  el.innerHTML = unassigned.map(function(j, i) {
+    var color = divColors[j.division] || '#374151';
+    var isDefReturn = j.isDeficiencyReturn ? ' 🔴 <b>Deficiency Return</b>' : '';
+    var dueSoon = j.scheduledTs && j.scheduledTs < Date.now() + 14*86400000 && j.scheduledTs > Date.now();
+    return '<div style="background:#fff;border:1.5px solid '+(dueSoon?'#C8102E':'#E5E7EB')+';border-radius:8px;padding:10px 14px;margin-bottom:8px;font-family:Barlow,sans-serif">'
+      +'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">'
+      +'<div><span style="background:'+color+';color:#fff;border-radius:4px;padding:1px 7px;font-size:9px;font-weight:800;font-family:'Barlow Condensed',sans-serif;letter-spacing:.06em;text-transform:uppercase;margin-right:6px">'+j.division+'</span>'
+      +(dueSoon?'<span style="background:#FEF2F2;color:#991B1B;border-radius:4px;padding:1px 7px;font-size:9px;font-weight:800;font-family:'Barlow Condensed',sans-serif;text-transform:uppercase">DUE SOON</span>':'')
+      +'</div>'
+      +'<span style="font-size:11px;color:#6B7280">'+(j.scheduledDate||'TBD')+'</span>'
+      +'</div>'
+      +'<div style="font-weight:700;font-size:13px;color:#1A1D21;margin-bottom:2px">'+(j.account||'Unknown Account')+isDefReturn+'</div>'
+      +'<div style="font-size:11px;color:#6B7280;margin-bottom:8px">'+(j.serviceType||'Service')+(j.nfpa?' · '+j.nfpa:'')+(j.address?' · '+j.address:'')+'</div>'
+      +'<button onclick="assignFromQueue(''+j.id+'')" style="background:#1B5FA8;color:#fff;border:none;border-radius:6px;padding:5px 14px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.06em;cursor:pointer">Assign Tech →</button>'
+      +'</div>';
+  }).join('');
+}
+
+function assignFromQueue(jobId) {
+  // Pull job from queue
+  var jobs = [];
+  try { jobs = JSON.parse(localStorage.getItem('termac_scheduled_jobs')||'[]'); } catch(e) {}
+  var job = jobs.find(function(j){ return j.id === jobId; });
+  if (!job) { alert('Job not found in queue.'); return; }
+
+  var techName = prompt('Assign to tech (full name):
+
+Job: '+job.account+'
+Date: '+(job.scheduledDate||'TBD')+'
+Service: '+job.serviceType);
+  if (!techName || !techName.trim()) return;
+
+  job.techName = techName.trim();
+  job.status = 'assigned';
+  job.assignedAt = Date.now();
+
+  localStorage.setItem('termac_scheduled_jobs', JSON.stringify(jobs));
+
+  // Also write to unipro_jobs so dispatch and tech portal can see it
+  try {
+    var uJobs = JSON.parse(localStorage.getItem('unipro_jobs')||'[]');
+    uJobs.push({
+      id: job.id, account: job.account, biz: job.account,
+      addr: job.address||'', contact: job.contact||'', phone: job.phone||'',
+      type: job.serviceType, serviceType: job.serviceType, division: job.division,
+      tech: job.techName, techId: '', date: job.scheduledDate||'',
+      time: '08:00', status: 'scheduled', notes: job.notes||'', priority: job.nfpa||'',
+    });
+    localStorage.setItem('unipro_jobs', JSON.stringify(uJobs));
+  } catch(e) {}
+
+  renderUnassignedQueue();
+  renderCallList();
+  renderDaySchedule(new Date());
+  alert('✅ Assigned to '+techName+'. Job added to schedule.');
+}
+
+
 var _multiDivOpen = true;
 
 function toggleMultiDiv() {

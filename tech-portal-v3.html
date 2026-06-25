@@ -662,6 +662,52 @@ body.rail-open .rail-overlay{display:block}
 </style>
 </head>
 <body>
+<script>
+// ── TERMAC ONE: localStorage key migration ─────────────────────────────────
+// Canonical keys: termac_crm_accounts, termac_crm_leads
+// Run once per session to merge any data written under legacy key names.
+(function termacKeyMigration() {
+  try {
+    var OLD_ACCOUNT_KEYS = ['crm_accounts', 'accounts'];
+    var OLD_LEAD_KEYS    = ['leads', 'termac_leads', 'crm_leads', 'termac_crm_leads'];
+    var CANONICAL_ACCTS  = 'termac_crm_accounts';
+    var CANONICAL_LEADS  = 'termac_crm_leads';
+
+    function mergeArrays(a, b, idField) {
+      // b wins on conflict (newer write)
+      var map = {};
+      (a||[]).forEach(function(x){ if(x && x[idField]) map[x[idField]] = x; });
+      (b||[]).forEach(function(x){ if(x && x[idField]) map[x[idField]] = x; });
+      return Object.values(map);
+    }
+
+    // Accounts
+    var canonical = JSON.parse(localStorage.getItem(CANONICAL_ACCTS) || '[]');
+    OLD_ACCOUNT_KEYS.forEach(function(k) {
+      var old = JSON.parse(localStorage.getItem(k) || '[]');
+      if (old.length) {
+        canonical = mergeArrays(canonical, old, 'id');
+        localStorage.removeItem(k);
+      }
+    });
+    if (canonical.length) localStorage.setItem(CANONICAL_ACCTS, JSON.stringify(canonical));
+
+    // Leads
+    var canonicalLeads = JSON.parse(localStorage.getItem(CANONICAL_LEADS) || '[]');
+    OLD_LEAD_KEYS.forEach(function(k) {
+      if (k === CANONICAL_LEADS) return;
+      var old = JSON.parse(localStorage.getItem(k) || '[]');
+      if (old.length) {
+        canonicalLeads = mergeArrays(canonicalLeads, old, 'id');
+        localStorage.removeItem(k);
+      }
+    });
+    if (canonicalLeads.length) localStorage.setItem(CANONICAL_LEADS, JSON.stringify(canonicalLeads));
+
+  } catch(e) { console.warn('Key migration error:', e); }
+})();
+// ── END KEY MIGRATION ───────────────────────────────────────────────────────
+</script>
 <nav class="trn">
   <div class="trn-inner">
     <!-- Mobile hamburger for side rail -->
@@ -2368,7 +2414,7 @@ function woNext() {
     const job = woState.job;
     if (job) {
       const now = Date.now();
-      const keys = ['crm_accounts', 'termac_crm_accounts'];
+      const keys = ['termac_crm_accounts', 'termac_crm_accounts'];
       keys.forEach(key => {
         try {
           const accts = JSON.parse(localStorage.getItem(key) || '[]');
@@ -2772,7 +2818,7 @@ function submitTagScan() {
 
   // Write to shared CRM localStorage
   try {
-    const leadsKey = 'crm_leads';
+    const leadsKey = 'termac_crm_leads';
     const existing = JSON.parse(localStorage.getItem(leadsKey) || '[]');
     existing.push(lead);
     localStorage.setItem(leadsKey, JSON.stringify(existing));
@@ -3124,9 +3170,9 @@ function submitNewLead() {
   };
 
   try {
-    const existing = JSON.parse(localStorage.getItem('crm_leads') || '[]');
+    const existing = JSON.parse(localStorage.getItem('termac_crm_leads') || '[]');
     existing.push(lead);
-    localStorage.setItem('crm_leads', JSON.stringify(existing));
+    localStorage.setItem('termac_crm_leads', JSON.stringify(existing));
   } catch(e) {}
   try {
     const existing2 = JSON.parse(localStorage.getItem('termac_crm_leads') || '[]');
@@ -3167,7 +3213,7 @@ function woRenderComplete() {
 
     // Try to write to termac-os localStorage if accessible
     try {
-      const leadsKey = 'crm_leads';
+      const leadsKey = 'termac_crm_leads';
       const existing = JSON.parse(localStorage.getItem(leadsKey) || '[]');
       const now = Date.now();
       xsell.forEach(svcKey => {
@@ -3748,14 +3794,14 @@ function saveDeficiency() {
 
   // Log to CRM account record
   try {
-    const accounts = JSON.parse(localStorage.getItem('crm_accounts') || '[]');
+    const accounts = JSON.parse(localStorage.getItem('termac_crm_accounts') || '[]');
     const acct = accounts.find(a => a.name === acctName);
     if (acct) {
       if (!acct.activityLog) acct.activityLog = [];
       acct.activityLog.unshift({ ts: Date.now(), type:'tech', icon:'\u26a0\ufe0f',
         title:'Deficiency Flagged [' + sevLabel + ']', note: equip+': '+desc, who: techName });
       acct.openDeficiencies = (acct.openDeficiencies || 0) + 1;
-      localStorage.setItem('crm_accounts', JSON.stringify(accounts));
+      localStorage.setItem('termac_crm_accounts', JSON.stringify(accounts));
     }
   } catch(e) {}
 
@@ -4068,7 +4114,7 @@ function dispAccountLookup(val) {
   const sugg = document.getElementById('wo_account_suggestions');
   if (!sugg || val.length < 2) { if(sugg) sugg.style.display='none'; return; }
   try {
-    const accounts = JSON.parse(localStorage.getItem('crm_accounts') || '[]');
+    const accounts = JSON.parse(localStorage.getItem('termac_crm_accounts') || '[]');
     const matches = accounts.filter(a => (a.name||'').toLowerCase().includes(val.toLowerCase())).slice(0, 5);
     if (!matches.length) { sugg.style.display='none'; return; }
     sugg.style.display = 'block';
@@ -6010,7 +6056,7 @@ function spCamCreateTagContact() {
     '[Source: AI Camera — Inspection Tag Scan]',
   ].filter(Boolean).join('\n');
 
-  const allRecs = typeof crmLoad === 'function' ? crmLoad('leads') : JSON.parse(localStorage.getItem('termac_leads') || '[]');
+  const allRecs = typeof crmLoad === 'function' ? crmLoad('leads') : JSON.parse(localStorage.getItem('termac_crm_leads') || '[]');
   const id = 'lead_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
   const newLead = {
     id,
@@ -6046,7 +6092,7 @@ function spCamCreateTagContact() {
   if (typeof crmSave === 'function') {
     crmSave('leads', allRecs);
   } else {
-    localStorage.setItem('termac_leads', JSON.stringify(allRecs));
+    localStorage.setItem('termac_crm_leads', JSON.stringify(allRecs));
   }
 
   spCloseCamera();
@@ -6226,7 +6272,7 @@ function spVoiceCreateLead() {
     rawTx ? `[Voice Note]: ${rawTx.substring(0,400)}` : null,
   ].filter(Boolean).join('\n');
 
-  const allRecs = typeof crmLoad === 'function' ? crmLoad('leads') : JSON.parse(localStorage.getItem('termac_leads') || '[]');
+  const allRecs = typeof crmLoad === 'function' ? crmLoad('leads') : JSON.parse(localStorage.getItem('termac_crm_leads') || '[]');
   const id = 'lead_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
   const newLead = {
     id,
@@ -6256,7 +6302,7 @@ function spVoiceCreateLead() {
 
   allRecs.push(newLead);
   if (typeof crmSave === 'function') crmSave('leads', allRecs);
-  else localStorage.setItem('termac_leads', JSON.stringify(allRecs));
+  else localStorage.setItem('termac_crm_leads', JSON.stringify(allRecs));
 
   spCloseCamera();
   if (typeof spNav === 'function') {
@@ -6503,9 +6549,9 @@ function leadRouteToRep(lead) {
   lead.territory = territory;
   
   // Save to termac_leads localStorage (same pool as sales portal)
-  const leads = JSON.parse(localStorage.getItem('termac_leads')||'[]');
+  const leads = JSON.parse(localStorage.getItem('termac_crm_leads')||'[]');
   leads.unshift(lead);
-  localStorage.setItem('termac_leads', JSON.stringify(leads));
+  localStorage.setItem('termac_crm_leads', JSON.stringify(leads));
 
   // Track submission in tech referral metrics
   const techReferrals = JSON.parse(localStorage.getItem('termac_tech_referrals')||'{}');
