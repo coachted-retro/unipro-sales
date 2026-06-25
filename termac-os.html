@@ -20135,6 +20135,56 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch(e) {
       sessionStorage.removeItem('termacUser');
     }
+
+    // ── AUTO-LOGIN from sv_preload if no session (came from sales portal) ──
+    if (!_currentUser && window.location.hash === '#survey') {
+      try {
+        var raw2 = sessionStorage.getItem('sv_preload');
+        if (raw2) {
+          var p2 = JSON.parse(raw2);
+          if (p2 && p2.repUser) {
+            _currentUser = p2.repUser;
+            sessionStorage.setItem('termacUser', JSON.stringify(p2.repUser));
+            if (typeof applyRoleAccess === 'function') applyRoleAccess(p2.repUser);
+            if (typeof renderWelcomeBadge === 'function') renderWelcomeBadge(p2.repUser);
+          }
+        }
+      } catch(ae) {}
+    }
+
+    // ── HASH ROUTING: #survey opens survey overlay directly ───────────────
+    if (window.location.hash === '#survey') {
+      // Clear the hash so back button works cleanly
+      history.replaceState(null, '', window.location.pathname);
+      // Pick up sv_preload and open survey
+      setTimeout(function() {
+        try {
+          var raw = sessionStorage.getItem('sv_preload');
+          sessionStorage.removeItem('sv_preload');
+          if (raw) {
+            var p;
+            try { p = JSON.parse(raw); } catch(e) { p = null; }
+            if (p && p.accountId && typeof openSiteSurvey === 'function') {
+              openSiteSurvey(p.accountId);
+              return;
+            }
+            if (p && typeof svState !== 'undefined') {
+              svState.accountId  = null;
+              svState.bizName    = (p && p.bizName) || '';
+              svState.accountType = (p && p.accountType) || null;
+              svState.selectedServices = [];
+              svState.visitType  = null;
+              svState.currentStep = 0;
+              svState.surveyData  = {};
+              var el = document.getElementById('svBizName');
+              if (el) el.textContent = svState.bizName || 'New Account';
+              var ov = document.getElementById('svOverlay');
+              if (ov) ov.classList.add('open');
+            }
+          }
+        } catch(he) { console.warn('hash survey error:', he); }
+      }, 600);
+    }
   } else {
     // DEMO MODE — auto-login as Ted Scholl (Manager)
     // Remove this block when Azure SSO is live
@@ -30113,54 +30163,7 @@ function dripWrap(body, repName) {
 
 </div>
 
-<script>
-// ── SURVEY PRELOAD FROM SALES PORTAL ─────────────────────────────────────
-(function() {
-  // Run after page fully initializes
-  setTimeout(function() {
-    try {
-      var raw = sessionStorage.getItem('sv_preload');
-      sessionStorage.removeItem('sv_preload'); // always clear, even if bad
-      if (!raw || raw.length < 10) return;
-      var p;
-      try { p = JSON.parse(raw); } catch(je) { console.warn('sv_preload bad JSON cleared'); return; }
-      if (!p || !p.source) return;
-
-      // Auto-inject rep session so survey functions work without manual login
-      if (p.repUser && typeof _currentUser !== 'undefined' && !_currentUser) {
-        try {
-          _currentUser = p.repUser;
-          sessionStorage.setItem('termacUser', JSON.stringify(p.repUser));
-          if (typeof applyRoleAccess === 'function') applyRoleAccess(p.repUser);
-          if (typeof renderWelcomeBadge === 'function') renderWelcomeBadge(p.repUser);
-        } catch(e2) { console.warn('sv_preload auth inject error:', e2); }
-      }
-
-      // Open the survey
-      if (p.accountId) {
-        if (typeof openSiteSurvey === 'function') {
-          openSiteSurvey(p.accountId);
-        }
-      } else {
-        // Cold call — open survey with blank state
-        if (typeof svState !== 'undefined') {
-          svState.accountId = null;
-          svState.bizName   = p.bizName || '';
-          svState.accountType = p.accountType || null;
-          svState.selectedServices = [];
-          svState.visitType = null;
-          svState.currentStep = 0;
-          svState.surveyData = {};
-          var el = document.getElementById('svBizName');
-          if (el) el.textContent = p.bizName || 'New Account';
-          var ov = document.getElementById('svOverlay');
-          if (ov) ov.classList.add('open');
-        }
-      }
-    } catch(e) { console.warn('sv_preload error:', e); }
-  }, 900);
-})();
-</script>
+<!-- sv_preload handled in DOMContentLoaded -->
 
 
 <!-- ══ ACCOUNT TYPE GATE MODAL ══ -->
