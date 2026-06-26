@@ -2429,6 +2429,131 @@ function spSetStage(id, tab, newStage, selectEl) {
 // ══════════════════════════════════════════════════════
 //  LOG ACTIVITY
 // ══════════════════════════════════════════════════════
+// ── APPOINTMENT & SITE VISIT (Sales Portal) ──────────────────────────────
+var _spApptId = null, _spApptTab = null, _spApptMode = null;
+
+function spCloseApptModal() { var m = document.getElementById("spApptModal"); if(m) m.remove(); }
+
+function spOpenApptModal(id, tab, mode) {
+  _spApptId = id;
+  _spApptTab = tab;
+  _spApptMode = mode;
+
+  const data = crmLoad('leads');
+  const r = data.find(x => x.id === id) || {};
+  const addr = r.address || r.addr || '';
+  const contact = r.contact || r.name || '';
+
+  const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+
+  const isAppt = mode === 'appointment';
+  const modalHTML = '<div id="spApptModal" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9000;display:flex;align-items:center;justify-content:center;padding:16px">' +
+    '<div style="background:#fff;border-radius:12px;width:min(480px,96vw);max-height:88vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.3)">' +
+      '<div style="background:' + (isAppt?'#1B5FA8':'#D8690B') + ';border-radius:12px 12px 0 0;padding:14px 18px;display:flex;align-items:center;justify-content:space-between">' +
+        '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:16px;color:#fff;letter-spacing:.04em">' + (isAppt?'📅 Set Appointment':'🗺️ Plan Site Visit') + '</div>' +
+        '<button onclick="spCloseApptModal()" style="background:none;border:none;color:rgba(255,255,255,.7);font-size:20px;cursor:pointer;line-height:1">✕</button>' +
+      '</div>' +
+      '<div style="padding:18px;display:flex;flex-direction:column;gap:12px">' +
+        (isAppt ?
+          // APPOINTMENT fields
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' +
+            '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Date *</label>' +
+            '<input type="date" id="spApptDate" value="' + tomorrow + '" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px"></div>' +
+            '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Time *</label>' +
+            '<input type="time" id="spApptTime" value="09:00" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px"></div>' +
+          '</div>' +
+          '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Location</label>' +
+          '<input type="text" id="spApptLocation" value="' + addr.replace(/"/g,'&quot;') + '" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px" placeholder="Business address"></div>' +
+          '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Contact</label>' +
+          '<input type="text" id="spApptContact" value="' + contact.replace(/"/g,'&quot;') + '" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px" placeholder="Who are you meeting?"></div>' +
+          '<div style="background:#EBF2FD;border-radius:8px;padding:9px 12px;font-size:11px;color:#1B5FA8">📧 Customer confirmation fires via Brevo when wired. Promotes Lead/Contact to Opportunity.</div>'
+        :
+          // SITE VISIT fields
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' +
+            '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Date *</label>' +
+            '<input type="date" id="spVisitDate" value="' + tomorrow + '" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px"></div>' +
+            '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Time Window</label>' +
+            '<select id="spVisitWindow" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px"><option value="morning">Morning</option><option value="afternoon">Afternoon</option><option value="anytime">Anytime</option></select></div>' +
+          '</div>' +
+          '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Visit Type</label>' +
+          '<select id="spVisitType" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px">' +
+            '<option value="cold_stop">Cold Stop</option><option value="permit_site">Permit Site</option><option value="pop_in">Pop-In on Account</option><option value="driving_by">Driving By</option><option value="follow_up">Follow-Up Visit</option>' +
+          '</select></div>' +
+          '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Location</label>' +
+          '<input type="text" id="spVisitLocation" value="' + addr.replace(/"/g,'&quot;') + '" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px" placeholder="Address or permit site"></div>' +
+          '<div style="background:#FEF3C7;border-radius:8px;padding:9px 12px;font-size:11px;color:#92400E">🗺️ Rep-only — no customer notification. Appears as flex stop on agenda.</div>'
+        ) +
+        '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Notes</label>' +
+        '<textarea id="spApptNotes" rows="2" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px" placeholder="What is the plan?"></textarea></div>' +
+        '<div style="display:flex;gap:8px;justify-content:flex-end">' +
+          '<button onclick="spCloseApptModal()" style="background:none;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 16px;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px">Cancel</button>' +
+          '<button onclick="spSaveAppt()" style="background:' + (isAppt?'#1B5FA8':'#D8690B') + ';color:#fff;border:none;border-radius:7px;padding:8px 18px;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.04em;text-transform:uppercase">' + (isAppt?'Save Appointment':'Save Visit') + '</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+
+  var existing = document.getElementById('spApptModal');
+  if (existing) existing.remove();
+  document.body.insertAdjacentHTML('beforeend', modalHTML);
+}
+
+function spSaveAppt() {
+  const mode = _spApptMode;
+  const id   = _spApptId;
+  const tab  = _spApptTab;
+
+  const isAppt = mode === 'appointment';
+  const date = isAppt ? (document.getElementById('spApptDate')?.value||'') : (document.getElementById('spVisitDate')?.value||'');
+  const notes = document.getElementById('spApptNotes')?.value.trim() || '';
+
+  if (!date) { alert('Please select a date.'); return; }
+
+  const dateLabel = new Date(date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
+
+  // Update the record
+  const data = crmLoad('leads');
+  const r = data.find(x => x.id === id);
+  if (r) {
+    if (!r.activityLog) r.activityLog = [];
+    if (isAppt) {
+      const time = document.getElementById('spApptTime')?.value||'';
+      const location = document.getElementById('spApptLocation')?.value.trim()||'';
+      const contact = document.getElementById('spApptContact')?.value.trim()||'';
+      r.activityLog.push({ ts:Date.now(), type:'rep', icon:'📅', title:'Appointment set — '+dateLabel, note:notes||null, who:_spRep.name });
+      r.appointment = { type:'appointment', date, time, location, contact, notes, setAt:Date.now() };
+      r.followupDate = date;
+      r.status = 'hot';
+      // Promote Lead/Contact → Opportunity
+      if (!['opportunity','site_visit','appointment','active','close'].includes(r.lifecycleStage||'')) {
+        r.lifecycleStage = 'appointment';
+        r.promoted = true;
+        r.promotedAt = Date.now();
+      }
+    } else {
+      const window_ = document.getElementById('spVisitWindow')?.value||'morning';
+      const vtype = document.getElementById('spVisitType')?.value||'cold_stop';
+      const location = document.getElementById('spVisitLocation')?.value.trim()||'';
+      r.activityLog.push({ ts:Date.now(), type:'rep', icon:'🗺️', title:'Site visit planned — '+dateLabel, note:notes||null, who:_spRep.name });
+      r.siteVisit = { date, window:window_, type:vtype, location, notes, setAt:Date.now() };
+      r.followupDate = date;
+    }
+    r.updated = Date.now();
+    crmSave('leads', data);
+  }
+
+  // Save to appointments collection
+  try {
+    var appts = JSON.parse(localStorage.getItem('termac_appointments')||'[]');
+    appts.push({ id:(isAppt?'appt_':'visit_')+Date.now(), recordId:id, tab, type:mode, date, isFlexStop:!isAppt, createdAt:Date.now(), createdBy:_spRep.name });
+    localStorage.setItem('termac_appointments', JSON.stringify(appts));
+  } catch(e){}
+
+  document.getElementById('spApptModal')?.remove();
+  spToast(isAppt ? '📅 Appointment saved' + (r && !['opportunity','active'].includes(r.lifecycleStage||'') ? '' : ' — promoted to Opportunity') : '🗺️ Site visit planned');
+  spNav(tab);
+}
+
 function spLogActivity(id, tab) {
   const note = prompt('Log a call, visit, or note:');
   if (!note) return;
@@ -4082,7 +4207,9 @@ function spLoadIntelPanel(id, tab) {
   <!-- Action buttons -->
   <div style="padding:12px 14px;display:flex;flex-direction:column;gap:6px">
     ${tab==='accounts'?`<button onclick="spOpenVisitModal('${id}')" style="padding:8px;background:#059669;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">📍 Log Customer Visit</button>`:''}
-    <button onclick="spOpenAdd('${tab}')" style="padding:8px;background:var(--red);color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">+ Log Activity</button>
+    <button onclick="spOpenApptModal('${id}','${tab}','appointment')" style="padding:8px;background:#1B5FA8;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">📅 Set Appointment</button>
+    <button onclick="spOpenApptModal('${id}','${tab}','site_visit')" style="padding:8px;background:#D8690B;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">🗺️ Plan Visit</button>
+    <button onclick="spLogActivity('${id}','${tab}')" style="padding:8px;background:var(--red);color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">📝 Log Activity</button>
     <button onclick="spEditRecord('${id}','${tab}')" style="padding:8px;background:#fff;color:var(--ink);border:1.5px solid var(--line);border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">Edit Record</button>
   </div>`;
 
