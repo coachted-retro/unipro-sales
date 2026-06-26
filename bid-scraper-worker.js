@@ -36,6 +36,13 @@ function matchesKeyword(text) {
 function todayMinus(days) {
   return new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
 }
+// SAM.gov wants MM/dd/yyyy, not ISO YYYY-MM-DD.
+function usDate(days) {
+  const d = new Date(Date.now() - days * 86400000);
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${mm}/${dd}/${d.getFullYear()}`;
+}
 
 // ── SAM.GOV (Federal) ───────────────────────────────────────────────────────
 // Note: requires free API key from SAM.gov/profile — pass as ?sam_key=YOURKEY
@@ -44,25 +51,34 @@ async function scrapeSAMgov(apiKey) {
   if (!apiKey) return { bids: [], error: 'SAM.gov: No API key — register free at sam.gov/profile then add SAM_API_KEY to Worker env vars' };
 
   try {
-    const keywords = encodeURIComponent('fire extinguisher suppression kitchen hood grease trap dish machine');
-    const postedFrom = todayMinus(45).replace(/-/g, '/');
-    const url = `https://api.sam.gov/opportunities/v2/search?limit=50&api_key=${apiKey}&postedFrom=${postedFrom}&q=${keywords}&active=true`;
+    // SAM.gov requires MM/dd/yyyy dates AND both postedFrom + postedTo.
+    // It has no full-text search param (only `title`), so we pull the recent
+    // window broadly and filter client-side via matchesKeyword().
+    const postedFrom = usDate(45);
+    const postedTo   = usDate(0);
+    const url = `https://api.sam.gov/prod/opportunities/v2/search?api_key=${apiKey}&limit=100&offset=0&postedFrom=${postedFrom}&postedTo=${postedTo}`;
 
     const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`HTTP ${res.status}${body ? ' — ' + body.slice(0, 160) : ''}`);
+    }
     const data = await res.json();
 
     const bids = (data.opportunitiesData || [])
-      .filter(o => matchesKeyword(o.title) || matchesKeyword(o.description))
+      // NOTE: in SAM v2, `description` is a URL to a separate noticedesc
+      // endpoint — not scope text — so we keyword-match on title. Pulling full
+      // scope for the AI bid brief needs a follow-up fetch per notice (future).
+      .filter(o => matchesKeyword(o.title) && !/award/i.test(o.type || ''))
       .slice(0, 25)
       .map(o => ({
         source: 'SAM.gov',
-        refNo: o.solicitationNumber || o.id || '',
+        refNo: o.solicitationNumber || o.noticeId || o.id || '',
         title: o.title || '',
         agency: o.fullParentPathName || o.organizationHierarchy?.office || 'Federal Agency',
         dueDate: o.responseDeadLine ? o.responseDeadLine.slice(0,10) : '',
-        url: `https://sam.gov/opp/${o.id}/view`,
-        scopeRaw: (o.description || o.title || '').slice(0, 500),
+        url: `https://sam.gov/opp/${o.noticeId || o.id}/view`,
+        scopeRaw: o.title || '',
         estValue: null,
         scrapedAt: Date.now(),
       }));
@@ -153,39 +169,17 @@ async function scrapeDC() {
 }
 
 // ── NJSTART (NJ government procurement) ─────────────────────────────────────
-async function scrapeNJ() {
+async function scrapeNJ(env) {
+  // PA & NJ portals have no public JSON API and are postback-driven, so live
+  // scraping returns nothing. Instead we read solicitations that the
+  // bid-alert-parser worker has ingested from NJSTART notification emails and
+  // written to the BID_ALERTS KV namespace. See Option A pipeline.
   try {
-    // NJSTART public solicitation search API
-    const res = await fetch(
-      'https://www.njstart.gov/bso/external/advsearch/searchBid.sdo?mode=current&filter=FIRE&pageNbr=1',
-      { headers: { 'Accept': 'text/html,application/xhtml+xml', 'User-Agent': 'Mozilla/5.0' } }
-    );
-
-    if (!res.ok) throw new Error(`NJSTART HTTP ${res.status}`);
-    const text = await res.text();
-
-    // Parse bid titles from response
-    const matches = [];
-    const rows = text.match(/class="bidbrdRow[^"]*"[\s\S]*?<\/tr>/g) || [];
-    rows.slice(0, 30).forEach(row => {
-      const titleMatch = row.match(/title="([^"]+)"/);
-      const agencyMatch = row.match(/Entity:\s*([^<\n]+)/);
-      if (titleMatch && matchesKeyword(titleMatch[1])) {
-        matches.push({
-          source: 'NJSTART',
-          refNo: '',
-          title: titleMatch[1].trim(),
-          agency: agencyMatch ? agencyMatch[1].trim() : 'State of New Jersey',
-          dueDate: '',
-          url: 'https://www.njstart.gov',
-          scopeRaw: titleMatch[1].trim(),
-          scrapedAt: Date.now(),
-        });
-      }
-    });
-
-    return { bids: matches, count: matches.length };
-  } catch(e) {
+    if (!env || !env.BID_ALERTS) return { bids: [], error: 'NJSTART: BID_ALERTS KV not bound yet' };
+    const raw = await env.BID_ALERTS.get('bids:NJ');
+    const bids = raw ? JSON.parse(raw) : [];
+    return { bids, count: bids.length };
+  } catch (e) {
     return { bids: [], error: `NJSTART: ${e.message}` };
   }
 }
@@ -263,39 +257,15 @@ async function scrapeDE() {
 }
 
 // ── PA eMARKETPLACE ─────────────────────────────────────────────────────────
-async function scrapePA() {
+async function scrapePA(env) {
+  // Reads PA e-Alert solicitations ingested by the bid-alert-parser worker
+  // into the BID_ALERTS KV namespace (key bids:PA). See Option A pipeline.
   try {
-    // PA uses a different URL structure — try the JSON API first
-    const res = await fetch(
-      'https://www.emarketplace.state.pa.us/Solicitations.aspx?type=open',
-      { headers: { 'Accept': 'text/html', 'User-Agent': 'Mozilla/5.0' } }
-    );
-
-    if (!res.ok) throw new Error(`PA HTTP ${res.status}`);
-    const text = await res.text();
-
-    const matches = [];
-    // Match solicitation rows with titles and IDs
-    const rows = text.match(/SID=\d+[^"]*"[^>]*>([^<]+)<\/a>/g) || [];
-    rows.slice(0, 30).forEach(row => {
-      const titleMatch = row.match(/>([^<]+)<\/a>/);
-      const sidMatch = row.match(/SID=(\d+)/);
-      if (titleMatch && matchesKeyword(titleMatch[1])) {
-        matches.push({
-          source: 'PA eMarketplace',
-          refNo: sidMatch ? sidMatch[1] : '',
-          title: titleMatch[1].trim(),
-          agency: 'Commonwealth of Pennsylvania',
-          dueDate: '',
-          url: `https://www.emarketplace.state.pa.us/Solicitations.aspx?SID=${sidMatch?.[1]||''}`,
-          scopeRaw: titleMatch[1].trim(),
-          scrapedAt: Date.now(),
-        });
-      }
-    });
-
-    return { bids: matches, count: matches.length };
-  } catch(e) {
+    if (!env || !env.BID_ALERTS) return { bids: [], error: 'PA eMarketplace: BID_ALERTS KV not bound yet' };
+    const raw = await env.BID_ALERTS.get('bids:PA');
+    const bids = raw ? JSON.parse(raw) : [];
+    return { bids, count: bids.length };
+  } catch (e) {
     return { bids: [], error: `PA eMarketplace: ${e.message}` };
   }
 }
@@ -316,10 +286,10 @@ export default {
     const [phlResult, dcResult, njResult, mdResult, deResult, paResult, samResult] = await Promise.allSettled([
       scrapePHL(),
       scrapeDC(),
-      scrapeNJ(),
+      scrapeNJ(env),
       scrapeMD(),
       scrapeDE(),
-      scrapePA(),
+      scrapePA(env),
       scrapeSAMgov(samKey),
     ]);
 
