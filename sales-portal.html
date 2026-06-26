@@ -981,6 +981,7 @@ function spRecordCard(r, tab) {
     ${r.address ? `<div class="sp-rec-row">📍 ${escH(r.address)}</div>` : ''}
     ${r.siteNotes ? `<div class="sp-site-notes" style="margin-top:8px"><div class="sp-site-notes-lbl">🔶 Site Notes</div>${escH(r.siteNotes)}</div>` : ''}
     <div class="sp-rec-chips">${svcs}</div>
+      ${(function(){ try { var cs = r.completionScore || calcCompletionScore(r); var cc = cs>=80?'#1E7B3C':cs>=60?'#D97706':'#C8102E'; return cs<100 ? '<div style="font-size:9px;font-weight:700;color:'+cc+';margin-top:2px">📊 Data: '+cs+'%</div>' : ''; } catch(e){return '';} })()}
     <div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px">
       <span class="sp-stage-pill" style="background:${stage.bg};color:${stage.color}">${stage.label}</span>
       <div class="sp-actions" onclick="event.stopPropagation()">
@@ -2829,7 +2830,376 @@ function spFillIfEmpty(id, val) {
   if (el && !el.value && val) el.value = val;
 }
 
-function spCloseApptModal() { var m = document.getElementById("spApptModal"); if(m) m.remove(); }
+// ══════════════════════════════════════════════════════════════
+//  AI PRODUCT INVENTORY + SMART REORDER + DATA ENRICHMENT
+// ══════════════════════════════════════════════════════════════
+
+// ── PRODUCT CATALOG ────────────────────────────────────────────────────────
+var TERMAC_PRODUCTS = [
+  { sku:'TRM-DET-1G',  name:'Termac Detergent',        category:'dish',     unit:'1 gal',  dilution:'1:128', cogsPerUnit:8.50  },
+  { sku:'TRM-DET-5G',  name:'Termac Detergent',        category:'dish',     unit:'5 gal',  dilution:'1:128', cogsPerUnit:32.00 },
+  { sku:'TRM-SAN-1G',  name:'Termac Sanitizer',        category:'dish',     unit:'1 gal',  dilution:'1:512', cogsPerUnit:9.00  },
+  { sku:'TRM-DEG-1G',  name:'Termac Degreaser',        category:'chemical', unit:'1 gal',  dilution:'1:64',  cogsPerUnit:10.50 },
+  { sku:'TRM-DEG-5G',  name:'Termac Degreaser',        category:'chemical', unit:'5 gal',  dilution:'1:64',  cogsPerUnit:38.00 },
+  { sku:'TRM-GLS-1G',  name:'Termac Glass Cleaner',    category:'chemical', unit:'1 gal',  dilution:'1:32',  cogsPerUnit:7.00  },
+  { sku:'TRM-FLR-1G',  name:'Termac Floor Cleaner',    category:'chemical', unit:'1 gal',  dilution:'1:32',  cogsPerUnit:8.00  },
+  { sku:'TRM-PPR-CS',  name:'Paper Towels',            category:'paper',    unit:'case',   dilution:null,    cogsPerUnit:28.00 },
+  { sku:'TRM-TIS-CS',  name:'Facial Tissue',           category:'paper',    unit:'case',   dilution:null,    cogsPerUnit:22.00 },
+  { sku:'TRM-NAP-CS',  name:'Napkins',                 category:'paper',    unit:'case',   dilution:null,    cogsPerUnit:18.00 },
+  { sku:'TRM-GLS-BX',  name:'Disposable Gloves',       category:'paper',    unit:'box',    dilution:null,    cogsPerUnit:14.00 },
+  { sku:'TRM-BSK-CS',  name:'Dish Machine Baskets',    category:'dish',     unit:'case',   dilution:null,    cogsPerUnit:45.00 },
+];
+
+// ── INVENTORY SCAN ─────────────────────────────────────────────────────────
+var _spInvParsed = null;
+var _spInvB64    = null;
+var _spInvMediaType = 'image/jpeg';
+
+async function spCamInventoryScan(input) {
+  var file = input.files[0];
+  if (!file) return;
+  _spInvMediaType = file.type || 'image/jpeg';
+
+  var reader = new FileReader();
+  reader.onload = async function(e) {
+    _spInvB64 = e.target.result.split(',')[1];
+
+    var prev = document.getElementById('spCamInvPreview');
+    var img  = document.getElementById('spCamInvPreviewImg');
+    if (prev) prev.style.display = 'block';
+    if (img)  img.src = e.target.result;
+
+    var resultEl  = document.getElementById('spCamInvResult');
+    var thinkEl   = document.getElementById('spCamInvThinking');
+    if (resultEl) resultEl.style.display = 'none';
+    if (thinkEl)  thinkEl.style.display  = 'block';
+
+    // Get account context for the scan
+    var ctx = _spDetailId ? spGetRecordCtx(_spDetailId) : {};
+    var covers = ctx._raw ? (ctx._raw.coversPerDay || 0) : 0;
+    var nextVisit = ctx._raw ? (ctx._raw.serviceWindow || '') : '';
+
+    var prompt = 'You are a Termac inventory scanner. A field rep just photographed a commercial kitchen chemical/supply storage area.\n\n' +
+      'Account: ' + (ctx.business||'Unknown account') + '\n' +
+      'Covers/day: ' + (covers||'unknown') + '\n\n' +
+      'Analyze the image and return ONLY valid JSON in this exact format:\n' +
+      '{\n' +
+      '  "products": [\n' +
+      '    {"name": "product name", "sku_guess": "TRM-XXX or competitor SKU", "quantity_level": "full|half|quarter|empty|unknown", "qty_units": 2, "unit": "gallon|case|bottle", "is_termac": true/false, "competitor_brand": "brand if not Termac"},\n' +
+      '    ...\n' +
+      '  ],\n' +
+      '  "missing_expected": ["products that should be here but are not visible"],\n' +
+      '  "reorder_urgent": ["products that are quarter or empty"],\n' +
+      '  "cross_sell_signals": ["any equipment or products suggesting Termac service opportunity"],\n' +
+      '  "storage_notes": "brief note on storage conditions"\n' +
+      '}\n\n' +
+      'Return ONLY the JSON object. No preamble or explanation.';
+
+    try {
+      var res = await fetch('https://unipro-ai-proxy.tedscholl.workers.dev', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-6', max_tokens: 800,
+          messages: [{ role: 'user', content: [
+            { type: 'image', source: { type: 'base64', media_type: _spInvMediaType, data: _spInvB64 }},
+            { type: 'text', text: prompt }
+          ]}]
+        })
+      });
+      var data = await res.json();
+      var raw = (data.content||[]).map(function(x){return x.text||'';}).join('');
+
+      // Parse JSON
+      try {
+        var clean = raw.replace(/```json|```/g,'').trim();
+        _spInvParsed = JSON.parse(clean);
+      } catch(parseErr) {
+        _spInvParsed = null;
+      }
+
+      renderInventoryResult(_spInvParsed, raw, ctx);
+
+    } catch(err) {
+      var body = document.getElementById('spCamInvResultBody');
+      if (body) body.innerHTML = '<span style="color:#C8102E">Could not reach AI — check connection.</span>';
+      if (resultEl) resultEl.style.display = 'block';
+    }
+    if (thinkEl) thinkEl.style.display = 'none';
+  };
+  reader.readAsDataURL(file);
+}
+
+function renderInventoryResult(parsed, rawText, ctx) {
+  var resultEl = document.getElementById('spCamInvResult');
+  var body     = document.getElementById('spCamInvResultBody');
+  var title    = document.getElementById('spCamInvResultTitle');
+  var reorderSec  = document.getElementById('spCamInvReorderSection');
+  var reorderList = document.getElementById('spCamInvReorderList');
+
+  if (!resultEl || !body) return;
+
+  if (!parsed || !parsed.products) {
+    body.innerHTML = '<span style="color:#C8102E">Could not parse scan results. Try a clearer photo of the product labels.</span>';
+    resultEl.style.display = 'block';
+    return;
+  }
+
+  // Products found
+  var html = '';
+  if (parsed.products && parsed.products.length) {
+    html += '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#5A616B;margin-bottom:6px">Products Found (' + parsed.products.length + ')</div>';
+    html += '<div style="display:flex;flex-direction:column;gap:4px;margin-bottom:10px">';
+    parsed.products.forEach(function(p) {
+      var levelColor = p.quantity_level==='empty'?'#C8102E':p.quantity_level==='quarter'?'#D97706':p.quantity_level==='half'?'#F2B705':'#1E7B3C';
+      var levelIcon  = p.quantity_level==='empty'?'🔴':p.quantity_level==='quarter'?'🟡':p.quantity_level==='half'?'🟡':'🟢';
+      html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 8px;background:#F8F9FA;border-radius:6px">';
+      html += '<div><div style="font-weight:600;font-size:12px">' + escH(p.name||'Unknown') + '</div>';
+      if (!p.is_termac && p.competitor_brand) html += '<div style="font-size:10px;color:#C8102E">⚠️ Competitor: ' + escH(p.competitor_brand) + '</div>';
+      html += '</div>';
+      html += '<div style="text-align:right"><div style="font-size:11px;font-weight:700;color:'+levelColor+'">' + levelIcon + ' ' + (p.quantity_level||'unknown').toUpperCase() + '</div>';
+      if (p.qty_units) html += '<div style="font-size:10px;color:#6B7280">' + p.qty_units + ' ' + (p.unit||'') + '</div>';
+      html += '</div></div>';
+    });
+    html += '</div>';
+  }
+
+  // Missing / cross-sell
+  if (parsed.missing_expected && parsed.missing_expected.length) {
+    html += '<div style="background:#FEF3C7;border-radius:6px;padding:8px;margin-bottom:8px;font-size:11px;color:#92400E">';
+    html += '<strong>Missing expected products:</strong> ' + parsed.missing_expected.join(', ');
+    html += '</div>';
+  }
+  if (parsed.cross_sell_signals && parsed.cross_sell_signals.length) {
+    html += '<div style="background:#EFF6FF;border-radius:6px;padding:8px;margin-bottom:8px;font-size:11px;color:#1E40AF">';
+    html += '<strong>Cross-sell signals:</strong> ' + parsed.cross_sell_signals.join(', ');
+    html += '</div>';
+  }
+
+  body.innerHTML = html;
+  if (title) title.textContent = '📦 ' + (parsed.products||[]).length + ' products scanned';
+
+  // Build reorder list
+  var urgentItems = (parsed.reorder_urgent||[]);
+  var competitorItems = (parsed.products||[]).filter(function(p){return !p.is_termac && p.competitor_brand;});
+  var quarterEmpty = (parsed.products||[]).filter(function(p){return p.quantity_level==='quarter'||p.quantity_level==='empty';});
+
+  var allReorder = [];
+  quarterEmpty.forEach(function(p) {
+    allReorder.push({ name: p.name, qty: 2, sku: p.sku_guess||'', urgency: p.quantity_level==='empty'?'critical':'soon' });
+  });
+  competitorItems.forEach(function(p) {
+    if (!allReorder.find(function(r){return r.name===p.name;})) {
+      allReorder.push({ name: 'Termac equiv. for ' + p.competitor_brand, qty: 1, sku:'', urgency:'opportunity' });
+    }
+  });
+
+  if (allReorder.length && reorderSec && reorderList) {
+    var rHtml = allReorder.map(function(item) {
+      var urgColor = item.urgency==='critical'?'#C8102E':item.urgency==='soon'?'#D97706':'#1B5FA8';
+      var urgLabel = item.urgency==='critical'?'🔴 Critical':item.urgency==='soon'?'🟡 Soon':'💙 Opportunity';
+      return '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 8px;border:1px solid #E5E7EB;border-radius:6px;margin-bottom:4px;background:#fff">' +
+        '<div><div style="font-size:12px;font-weight:600">' + escH(item.name) + '</div>' +
+        '<div style="font-size:10px;color:'+urgColor+';font-weight:700">' + urgLabel + '</div></div>' +
+        '<div style="display:flex;align-items:center;gap:6px">' +
+        '<input type="number" value="' + item.qty + '" min="1" data-item="' + escH(item.name) + '" style="width:50px;padding:4px;border:1px solid #D1D5DB;border-radius:4px;font-size:12px;text-align:center">' +
+        '</div></div>';
+    }).join('');
+    reorderList.innerHTML = rHtml;
+    reorderSec.style.display = 'block';
+  }
+
+  // Save scan to account record
+  if (_spDetailId) {
+    try {
+      var data = crmLoad('leads');
+      var r = data.find(function(x){return x.id===_spDetailId;});
+      if (r) {
+        r.lastInventoryScan = { ts: Date.now(), products: parsed.products||[], reorderUrgent: parsed.reorder_urgent||[] };
+        r.updated = Date.now();
+        if (!r.activityLog) r.activityLog = [];
+        r.activityLog.push({ ts:Date.now(), type:'rep', icon:'📦', title:'Inventory scan completed — '+(parsed.products||[]).length+' products', who:_spRep.name });
+        crmSave('leads', data);
+        // Update completion score
+        updateCompletionScore(_spDetailId);
+      }
+    } catch(e){}
+  }
+
+  resultEl.style.display = 'block';
+}
+
+function spCamSubmitReorder() {
+  var inputs = document.querySelectorAll('#spCamInvReorderList input[type="number"]');
+  var items = [];
+  inputs.forEach(function(inp) {
+    var qty = parseInt(inp.value)||1;
+    var name = inp.dataset.item||'';
+    if (name) items.push({ name:name, qty:qty });
+  });
+  if (!items.length) { spToast('No items to reorder'); return; }
+
+  // Write to warehouse pick queue
+  try {
+    var queue = JSON.parse(localStorage.getItem('termac_reorder_queue')||'[]');
+    var account = _spDetailId ? spGetRecordCtx(_spDetailId) : {};
+    queue.unshift({
+      id: 'RO' + Date.now(),
+      accountId: _spDetailId||'',
+      accountName: account.business||account.name||'Unknown',
+      address: account.address||'',
+      rep: _spRep.name,
+      items: items,
+      requestedAt: Date.now(),
+      status: 'pending'
+    });
+    localStorage.setItem('termac_reorder_queue', JSON.stringify(queue));
+  } catch(e){}
+
+  spCloseCamera();
+  spToast('📦 Reorder submitted — ' + items.length + ' item' + (items.length>1?'s':'') + ' sent to warehouse queue');
+}
+
+// ── ACCOUNT DATA COMPLETION SYSTEM ─────────────────────────────────────────
+var COMPLETION_FIELDS = [
+  // Critical — needed for AI reorder
+  { key:'coversPerDay',   label:'Covers/day',       weight:15, priority:'critical' },
+  { key:'serviceFreq',    label:'Service frequency', weight:12, priority:'critical' },
+  { key:'parLevels',      label:'Par levels',        weight:10, priority:'critical' },
+  // Important
+  { key:'equipmentList',  label:'Equipment list',    weight:8,  priority:'important' },
+  { key:'competitor',     label:'Current vendor',    weight:7,  priority:'important' },
+  { key:'decisionMaker',  label:'Decision maker',    weight:6,  priority:'important' },
+  { key:'ownerName',      label:'Owner name',        weight:5,  priority:'important' },
+  { key:'ownerPhone',     label:'Owner phone',       weight:5,  priority:'important' },
+  { key:'ownerEmail',     label:'Owner email',       weight:5,  priority:'important' },
+  // Nice to have
+  { key:'serviceWindow',  label:'Service window',    weight:4,  priority:'nice' },
+  { key:'siteNotes',      label:'Site notes',        weight:3,  priority:'nice' },
+  { key:'contractExp',    label:'Contract expiry',   weight:3,  priority:'nice' },
+  { key:'lastInventoryScan', label:'Inventory scan', weight:8,  priority:'important' },
+  { key:'dealType',       label:'Deal type',         weight:4,  priority:'nice' },
+  { key:'estValue',       label:'Est. value',        weight:5,  priority:'nice' },
+];
+
+var TOTAL_WEIGHT = COMPLETION_FIELDS.reduce(function(s,f){return s+f.weight;},0);
+
+function calcCompletionScore(r) {
+  if (!r) return 0;
+  var earned = 0;
+  COMPLETION_FIELDS.forEach(function(f) {
+    var val = r[f.key];
+    if (val && val !== '' && val !== 0) earned += f.weight;
+  });
+  return Math.round(earned / TOTAL_WEIGHT * 100);
+}
+
+function updateCompletionScore(recordId) {
+  var data = crmLoad('leads');
+  var r = data.find(function(x){return x.id===recordId;});
+  if (!r) return;
+  r.completionScore = calcCompletionScore(r);
+  crmSave('leads', data);
+  return r.completionScore;
+}
+
+function getMissingFields(r, maxCount) {
+  if (!r) return [];
+  var missing = COMPLETION_FIELDS.filter(function(f) {
+    var val = r[f.key];
+    return !val || val === '' || val === 0;
+  }).sort(function(a,b) {
+    var pOrder = {critical:0,important:1,nice:2};
+    return (pOrder[a.priority]||2) - (pOrder[b.priority]||2);
+  });
+  return maxCount ? missing.slice(0,maxCount) : missing;
+}
+
+// ── ALERT TRIGGERS ─────────────────────────────────────────────────────────
+// Trigger 1: Start of day briefing — low completion stops
+function buildStartOfDayBriefing(repName) {
+  var data = crmLoad('leads');
+  var myLeads = data.filter(function(r){
+    return (r.assignedRep===repName||r.ownedBy===repName||r.createdBy===repName) &&
+           ['lead','contacted','opportunity','site_visit','appointment','active'].includes(r.lifecycleStage||'lead');
+  });
+
+  // Calculate completion for each
+  myLeads.forEach(function(r){ if (!r.completionScore) r.completionScore = calcCompletionScore(r); });
+
+  // Sort lowest completion first
+  var lowCompletion = myLeads.filter(function(r){return (r.completionScore||0)<60;})
+    .sort(function(a,b){return (a.completionScore||0)-(b.completionScore||0)})
+    .slice(0,5);
+
+  return {
+    lowCompletion: lowCompletion,
+    totalLeads: myLeads.length,
+    avgScore: myLeads.length ? Math.round(myLeads.reduce(function(s,r){return s+(r.completionScore||0);},0)/myLeads.length) : 0
+  };
+}
+
+// Trigger 2: I'm Here — top 3 missing fields for this account
+function getArrivalPrompt(recordId) {
+  var data = crmLoad('leads');
+  var r = data.find(function(x){return x.id===recordId;});
+  if (!r) return null;
+  var missing = getMissingFields(r, 3);
+  if (!missing.length) return null;
+  return {
+    record: r,
+    topMissing: missing,
+    score: calcCompletionScore(r)
+  };
+}
+
+// Trigger 3: Visit close — soft reminder if nothing updated
+function checkVisitCloseReminder(recordId, previousScore) {
+  var data = crmLoad('leads');
+  var r = data.find(function(x){return x.id===recordId;});
+  if (!r) return false;
+  var newScore = calcCompletionScore(r);
+  return newScore <= previousScore; // true = nothing changed = show reminder
+}
+
+// ── INVENTORY CHECK BUTTON (from account detail panel) ─────────────────────
+function spOpenInventoryCheck(recordId) {
+  _spDetailId = recordId;
+  spOpenCamera('inventory');
+}
+
+// ── ARRIVAL PROMPT MODAL ───────────────────────────────────────────────────
+function spShowArrivalPrompt(recordId) {
+  var prompt = getArrivalPrompt(recordId);
+  if (!prompt || !prompt.topMissing.length) return;
+
+  var existing = document.getElementById('spArrivalPromptModal');
+  if (existing) existing.remove();
+
+  var html = '<div id="spArrivalPromptModal" style="position:fixed;bottom:80px;right:16px;z-index:8000;background:#1A1D21;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.4);width:min(320px,90vw);overflow:hidden">';
+  html += '<div style="background:#F2B705;padding:10px 14px;display:flex;align-items:center;justify-content:space-between">';
+  html += '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:13px;color:#1A1D21">📍 You\'re Here — What to Ask</div>';
+  html += '<button onclick="document.getElementById(\'spArrivalPromptModal\').remove()" style="background:none;border:none;font-size:16px;cursor:pointer;color:#1A1D21">✕</button>';
+  html += '</div>';
+  html += '<div style="padding:12px 14px">';
+  html += '<div style="font-size:11px;color:#9CA3AF;margin-bottom:8px">Data completion: ' + prompt.score + '% — top 3 missing fields:</div>';
+  prompt.topMissing.forEach(function(f) {
+    var pColor = f.priority==='critical'?'#C8102E':f.priority==='important'?'#F2B705':'#9CA3AF';
+    html += '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #2A2E33">';
+    html += '<span style="font-size:10px;font-weight:800;color:'+pColor+';text-transform:uppercase;letter-spacing:.06em">'+f.priority+'</span>';
+    html += '<span style="font-size:12px;color:#fff;font-weight:600">'+f.label+'</span>';
+    html += '</div>';
+  });
+  html += '<div style="display:flex;gap:8px;margin-top:10px">';
+  html += '<button onclick="spOpenInventoryCheck(\''+recordId+'\')" style="flex:1;background:#C8102E;color:#fff;border:none;border-radius:7px;padding:7px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;cursor:pointer">📦 Scan Inventory</button>';
+  html += '<button onclick="spEditRecord(\''+recordId+'\',\'leads\')" style="flex:1;background:#374151;color:#fff;border:none;border-radius:7px;padding:7px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;cursor:pointer">✏️ Update Record</button>';
+  html += '</div></div></div>';
+
+  document.body.insertAdjacentHTML('beforeend', html);
+  // Auto-dismiss after 30 seconds
+  setTimeout(function(){ var m=document.getElementById('spArrivalPromptModal'); if(m) m.remove(); }, 30000);
+}
+
 
 function spOpenApptModal(id, tab, mode) {
   _spApptId = id;
@@ -3771,6 +4141,30 @@ if (document.readyState === 'loading') {
       </div>
     </div>
 
+    <!-- MODE: INVENTORY SCAN -->
+    <div id="spCamZoneInventory" style="display:none;padding:16px">
+      <div style="font-size:12px;color:#9CA3AF;margin-bottom:10px;line-height:1.5">Point camera at the product storage area, chemical shelf, or supply cabinet. AI will identify products, estimate quantities, and flag what needs reordering.</div>
+      <div onclick="document.getElementById('spCamInvCapture').click()" style="border:2px dashed #3A3E43;border-radius:10px;padding:24px 20px;text-align:center;cursor:pointer;background:#0F1114;margin-bottom:10px" onmouseover="this.style.borderColor='#F2B705'" onmouseout="this.style.borderColor='#3A3E43'">
+        <div style="font-size:32px;margin-bottom:8px">📦</div>
+        <div style="color:#9CA3AF;font-size:13px;font-weight:700">Tap to scan inventory / products</div>
+        <div style="color:#6B7280;font-size:11px;margin-top:4px">or upload from gallery</div>
+      </div>
+      <input type="file" id="spCamInvCapture" accept="image/*" capture="environment" style="display:none" onchange="spCamInventoryScan(this)">
+      <input type="file" id="spCamInvUpload" accept="image/*" style="display:none" onchange="spCamInventoryScan(this)">
+      <button onclick="document.getElementById('spCamInvUpload').click()" style="width:100%;background:#1A1D21;border:1.5px solid #3A3E43;border-radius:8px;color:#9CA3AF;padding:8px;font-size:12px;cursor:pointer;margin-bottom:12px">📂 Upload from Gallery</button>
+      <div id="spCamInvPreview" style="display:none;margin-bottom:10px;border-radius:8px;overflow:hidden"><img id="spCamInvPreviewImg" style="width:100%;max-height:200px;object-fit:contain;background:#000" alt=""></div>
+      <div id="spCamInvThinking" style="display:none;text-align:center;padding:14px;color:#F2B705;font-size:13px">📦 Scanning inventory with AI…</div>
+      <div id="spCamInvResult" style="display:none;background:#fff;border-radius:8px;padding:14px">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;color:#1A1D21;margin-bottom:8px" id="spCamInvResultTitle">Inventory Analysis</div>
+        <div id="spCamInvResultBody" style="font-size:12px;color:#1A1D21;line-height:1.6"></div>
+        <div id="spCamInvReorderSection" style="display:none;margin-top:12px;border-top:1px solid #E5E7EB;padding-top:12px">
+          <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#C8102E;margin-bottom:8px">📋 Suggested Reorder</div>
+          <div id="spCamInvReorderList"></div>
+          <button onclick="spCamSubmitReorder()" style="width:100%;margin-top:10px;background:#C8102E;color:#fff;border:none;border-radius:8px;padding:10px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">📤 Submit Reorder to Warehouse</button>
+        </div>
+      </div>
+    </div>
+
     <!-- MODE: INSPECTION TAG -->
     <div id="spCamZoneTag" style="display:none;padding:16px">
       <div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:10px 12px;font-size:12px;color:#92400E;margin-bottom:14px">
@@ -3848,14 +4242,14 @@ function spCamClear() {
 
 /* ── MODE TABS ── */
 function spCamRenderMode() {
-  const tabs = ['general','tag','voice'];
-  const labels = {'general':'📷 General Scan','tag':'🏷️ Inspection Tag','voice':'🎙️ Talk to Text'};
+  const tabs = ['general','inventory','tag','voice'];
+  const labels = {'general':'📷 General Scan','inventory':'📦 Inventory Check','tag':'🏷️ Inspection Tag','voice':'🎙️ Talk to Text'};
   const bar = document.getElementById('spCamModeBar');
   if (bar) bar.innerHTML = tabs.map(t =>
     `<button onclick="spCamSetMode('${t}')" style="flex:1;padding:7px 4px;border:none;border-radius:6px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;transition:background .1s,color .1s;background:${_spCamMode===t?'#C8102E':'transparent'};color:${_spCamMode===t?'#fff':'#9CA3AF'}">${labels[t]}</button>`
   ).join('');
 
-  ['spCamZoneGeneral','spCamZoneTag','spCamZoneVoice'].forEach(id => {
+  ['spCamZoneGeneral','spCamZoneInventory','spCamZoneTag','spCamZoneVoice'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = 'none';
   });
@@ -4603,7 +4997,9 @@ function spLoadIntelPanel(id, tab) {
 
   <!-- Action buttons -->
   <div style="padding:12px 14px;display:flex;flex-direction:column;gap:6px">
-    ${tab==='accounts'?`<button onclick="spOpenVisitModal('${id}')" style="padding:8px;background:#059669;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">📍 Log Customer Visit</button>`:''}
+    ${tab==='accounts'?`<button onclick="spOpenVisitModal('${id}')" style="padding:8px;background:#059669;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">📍 Log Customer Visit</button>
+    <button onclick="spOpenInventoryCheck('${id}')" style="padding:8px;background:#7C3AED;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">📦 Inventory Check</button>
+    <button onclick="spShowArrivalPrompt('${id}')" style="padding:8px;background:#D8690B;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">📍 I'm Here</button>`:''}
     <button onclick="spOpenApptModal('${id}','${tab}','appointment')" style="padding:8px;background:#1B5FA8;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">📅 Set Appointment</button>
     <button onclick="spOpenApptModal('${id}','${tab}','site_visit')" style="padding:8px;background:#D8690B;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">🗺️ Plan Visit</button>
     <button onclick="spLogActivity('${id}','${tab}')" style="padding:8px;background:var(--red);color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">📝 Log Activity</button>
