@@ -6962,7 +6962,7 @@ document.addEventListener('keydown', e=>{
                 </div>
                 <div class="fs-grid-2">
                   <div class="fs-field"><label>Contract Start Date</label><input type="date" id="fs_sfContractStart"></div>
-                  <div class="fs-field"><label>Contract Term</label><select id="fs_sfContractTerm"><option value="">Select</option><option>1 Year</option><option>3 Years</option></select></div>
+                  <div class="fs-field"><label>Contract Term</label><select id="fs_sfContractTerm"><option value="per_visit">Per Visit — No Contract</option><option value="1yr">1 Year</option><option value="3yr">3 Years</option></select></div>
                 </div>
                 <div class="fs-field"><label>Annual Contract Value</label><div class="fs-price-input-group"><span>$</span><input type="number" id="fs_sfContractValue" placeholder="0" min="0" style="font-weight:700"></div></div>
                 <div class="fs-field"><label>CRM Notes</label><textarea id="fs_sfNotes" rows="3" placeholder="Pipeline notes, decision maker context, account history..."></textarea></div>
@@ -7149,10 +7149,14 @@ document.addEventListener('keydown', e=>{
                 <option>6 Week</option><option>8 Week</option>
               </select>
             </div>
-            <div class="sv-field"><label>Agreement Term</label>
+            <div class="sv-field" id="sv_fm_term_wrap">
+              <label>Agreement Term
+                <span id="sv_fm_term_badge" style="margin-left:6px;font-size:10px;font-weight:700;padding:1px 6px;border-radius:3px;vertical-align:middle"></span>
+              </label>
               <select id="sv_fm_term" onchange="svFMCalcRate()">
-                <option value="">— Select —</option>
-                <option value="1yr">1 Year</option><option value="3yr">3 Years (best rate)</option>
+                <option value="per_visit">Per Visit — No Contract</option>
+                <option value="1yr">1 Year Agreement</option>
+                <option value="3yr">3 Year Agreement (best rate)</option>
               </select>
             </div>
             <div class="sv-field"><label>Monthly Rate ($)</label><input type="number" id="sv_fm_rate" placeholder="Auto-calculated"></div>
@@ -7218,10 +7222,14 @@ document.addEventListener('keydown', e=>{
                 <option>Monthly</option><option>Every 6 Weeks</option><option>Every 2 Months</option><option>Quarterly</option>
               </select>
             </div>
-            <div class="sv-field"><label>Agreement Term</label>
+            <div class="sv-field">
+              <label>Agreement Term
+                <span id="sv_gto_term_badge" style="margin-left:6px;font-size:10px;font-weight:700;padding:1px 6px;border-radius:3px;vertical-align:middle"></span>
+              </label>
               <select id="sv_gto_term">
-                <option value="">— Select —</option>
-                <option value="1yr">1 Year</option><option value="3yr">3 Years (best rate)</option>
+                <option value="per_visit">Per Visit — No Contract</option>
+                <option value="1yr">1 Year Agreement</option>
+                <option value="3yr">3 Year Agreement (best rate)</option>
               </select>
             </div>
             <div class="sv-field"><label>Monthly Rate ($)</label><input type="number" id="sv_gto_rate" placeholder="Auto-calculated"></div>
@@ -8011,6 +8019,41 @@ function svGotoStep(idx){
   if(step.panel === 11 && typeof fsPrefillClientInfo === 'function') {
     fsPrefillClientInfo();
   }
+
+  // Auto-set agreement term based on account type
+  (function applyAccountTypeTerm() {
+    var pricingMode = svState.pricingMode || 'per_visit';
+    var isPerVisit  = pricingMode === 'per_visit';
+    var defaultTerm = isPerVisit ? 'per_visit' : '1yr';
+
+    // Filter Man term
+    var fmTerm = document.getElementById('sv_fm_term');
+    if (fmTerm && !fmTerm.dataset.userSet) {
+      fmTerm.value = defaultTerm;
+      var fmBadge = document.getElementById('sv_fm_term_badge');
+      if (fmBadge) {
+        fmBadge.textContent = isPerVisit ? 'Per-Visit Account' : 'Contract Account';
+        fmBadge.style.background = isPerVisit ? '#DCFCE7' : '#EFF6FF';
+        fmBadge.style.color      = isPerVisit ? '#1E7B3C' : '#1E40AF';
+      }
+    }
+    // GTO term
+    var gtoTerm = document.getElementById('sv_gto_term');
+    if (gtoTerm && !gtoTerm.dataset.userSet) {
+      gtoTerm.value = defaultTerm;
+      var gtoBadge = document.getElementById('sv_gto_term_badge');
+      if (gtoBadge) {
+        gtoBadge.textContent = isPerVisit ? 'Per-Visit Account' : 'Contract Account';
+        gtoBadge.style.background = isPerVisit ? '#DCFCE7' : '#EFF6FF';
+        gtoBadge.style.color      = isPerVisit ? '#1E7B3C' : '#1E40AF';
+      }
+    }
+    // Mark as auto-set (not user override)
+    ['sv_fm_term','sv_gto_term'].forEach(function(id) {
+      var el = document.getElementById(id);
+      if (el) el.addEventListener('change', function(){ this.dataset.userSet = '1'; }, { once:true });
+    });
+  })();
 
   // Pre-fill client info when the shared fire-survey pricing wizard activates
   // (panel 3 -- serves both UniPro and Quality III, see SVC_PANEL above)
@@ -16297,10 +16340,17 @@ function svFMCalcRate() {
 
   const visitsPerYear = EST_PRICING.filterman.visitsPerYear[freq] || 13;
   const monthlyRate = Math.round((perVisit * visitsPerYear) / 12);
-  document.getElementById('sv_fm_rate').value = monthlyRate;
+  const termVal = document.getElementById('sv_fm_term')?.value || 'per_visit';
+  const isPerVisit = termVal === 'per_visit';
+  document.getElementById('sv_fm_rate').value = isPerVisit ? perVisit.toFixed(2) : monthlyRate;
   if (breakdownEl) {
-    breakdownEl.innerHTML = `Per visit: $${perVisit.toFixed(2)} — ${breakdown.join(' · ')}<br>` +
-      `≈ $${monthlyRate}/mo at ${freq} service (${visitsPerYear.toFixed(1)} visits/yr) — before tax`;
+    if (isPerVisit) {
+      breakdownEl.innerHTML = `<strong>Per-visit rate: $${perVisit.toFixed(2)}</strong> — ${breakdown.join(' · ')}<br>`+
+        `<span style="color:#1E7B3C">No contract · billed per service visit</span>`;
+    } else {
+      breakdownEl.innerHTML = `Per visit: $${perVisit.toFixed(2)} — ${breakdown.join(' · ')}<br>` +
+        `≈ $${monthlyRate}/mo at ${freq} service (${visitsPerYear.toFixed(1)} visits/yr) — before tax`;
+    }
   }
 }
 
