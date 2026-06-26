@@ -2976,6 +2976,7 @@ function renderCard(tab,r){
              <button class="crm-action-btn" onclick="openApptModal('${r.id}','${srcTab2}','appointment')" style="background:#1B5FA8;color:#fff;border-color:#1B5FA8">📅 Set Appt</button>
              <button class="crm-action-btn" onclick="openApptModal('${r.id}','${srcTab2}','site_visit')" style="background:#D8690B;color:#fff;border-color:#D8690B">🗺️ Plan Visit</button>
              <button class="crm-action-btn" onclick="openFollowupModal('${r.id}','${srcTab2}')">🔔 Follow-Up</button>
+             <button class="crm-action-btn" onclick="requestReferral('${r.id}')" style="background:#1E7B3C;color:#fff;border-color:#1E7B3C">🔗 Referral</button>
              <button class="crm-action-btn" onclick="editRecord('${r.id}','${srcTab2}')">✏️ Edit</button>
              <button class="crm-action-btn dead" onclick="openDeadModal('${r.id}','${srcTab2}')">💀 Dead</button>`;
   } else if(tab==='dms_coldcall'){
@@ -3541,6 +3542,31 @@ function buildModalForm(tab,r){
     <label style="display:flex;align-items:center;gap:6px">⭐ Preferred Technician <span style="font-size:10px;font-weight:400;color:var(--soft);font-family:Barlow,sans-serif">Customer requests this tech — scheduler is notified</span></label>
     <input id="mf_preferredTech" value="${v('preferredTech')}" placeholder="Tech name (optional) — e.g. Mike R., Dave S.">
     <label>Notes</label><textarea id="mf_notes" rows="3">${v('notes')}</textarea>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;padding-top:8px;border-top:1px solid var(--line)">
+      <div>
+        <label style="display:flex;align-items:center;gap:4px">💼 Deal Type
+          <span style="font-size:10px;font-weight:400;color:var(--soft);text-transform:none;letter-spacing:0">for revenue forecasting</span>
+        </label>
+        <select id="mf_dealType">
+          <option value="">— Select type —</option>
+          <option value="inspection_only" ${v('dealType')==='inspection_only'?'selected':''}>Inspection Only</option>
+          <option value="hood_install" ${v('dealType')==='hood_install'?'selected':''}>Hood Install (AllPro)</option>
+          <option value="full_bundle" ${v('dealType')==='full_bundle'?'selected':''}>Full Bundle (multi-service)</option>
+          <option value="bid_win" ${v('dealType')==='bid_win'?'selected':''}>Bid Win (government/commercial)</option>
+          <option value="stainless_fab" ${v('dealType')==='stainless_fab'?'selected':''}>Stainless Fabrication</option>
+          <option value="service_contract" ${v('dealType')==='service_contract'?'selected':''}>Service Contract</option>
+          <option value="permit_lead" ${v('dealType')==='permit_lead'?'selected':''}>Permit Lead</option>
+        </select>
+      </div>
+      <div>
+        <label style="display:flex;align-items:center;gap:4px">💰 Est. Value
+          <span style="font-size:10px;font-weight:400;color:var(--soft);text-transform:none;letter-spacing:0">annual or project $</span>
+        </label>
+        <input id="mf_estValue" type="number" placeholder="e.g. 25000" value="${v('estValue')||''}" style="width:100%;box-sizing:border-box">
+      </div>
+    </div>
+
     <label style="margin-top:8px;display:flex;align-items:center;gap:6px">
       🔶 Site Notes
       <span style="font-size:10px;font-weight:400;color:var(--soft);font-family:Barlow,sans-serif">Door codes, delivery instructions, special access — shows on tech tickets &amp; delivery orders</span>
@@ -3595,6 +3621,8 @@ function saveModalRecord(){
     accountType: document.getElementById('mf_accountType')?.value || r?.accountType || null,
     pricingMode: document.getElementById('mf_pricingMode')?.value || r?.pricingMode || null,
     siteNotes: document.getElementById('mf_siteNotes')?.value?.trim() || '',
+    dealType:  document.getElementById('mf_dealType')?.value || '',
+    estValue:  parseFloat(document.getElementById('mf_estValue')?.value||'0') || 0,
     role: document.getElementById('mf_role')?.value || '',
     roleCustom: document.getElementById('mf_role_custom')?.value?.trim() || '',
     extraContacts: window._mfExtraContacts || [],
@@ -22954,6 +22982,79 @@ function renderTedPerf() {
   html += kpiCard('Total Bids in System', bids.length, 'All time in pipeline', '#6B7280', '');
   html += '</div>';
 
+  // ── Section 6: Revenue Forecast ──────────────────────────
+  html += sectionHdr('📈', 'Revenue Forecast — Stage 1 (Value-Based Pipeline)', '#1E7B3C');
+
+  var DEAL_LABELS = {inspection_only:'Inspection Only',hood_install:'Hood Install',full_bundle:'Full Bundle',bid_win:'Bid Win',stainless_fab:'Stainless Fab',service_contract:'Service Contract',permit_lead:'Permit Lead','':'Untagged'};
+  var DEAL_DEFAULTS = {inspection_only:8000,hood_install:35000,full_bundle:52000,bid_win:28000,stainless_fab:22000,service_contract:15000,permit_lead:5000};
+  var DEAL_3YR = {inspection_only:24000,hood_install:55000,full_bundle:58000,bid_win:42000,stainless_fab:22000,service_contract:45000,permit_lead:18000};
+
+  var activePipeline = leads.filter(function(r){ return ['lead','contacted','qualified','opportunity','site_visit','appointment','survey','proposal'].includes(r.lifecycleStage||'lead'); });
+  var byType = {};
+  activePipeline.forEach(function(r) {
+    var t = r.dealType || '';
+    if (!byType[t]) byType[t] = {count:0,value:0,value3yr:0};
+    byType[t].count++;
+    byType[t].value += r.estValue || DEAL_DEFAULTS[t] || 8000;
+    byType[t].value3yr += r.estValue ? r.estValue*3 : (DEAL_3YR[t] || 24000);
+  });
+  var totalPipeValue = Object.values(byType).reduce(function(s,b){return s+b.value;},0);
+  var total3yrValue = Object.values(byType).reduce(function(s,b){return s+b.value3yr;},0);
+  var taggedCount = activePipeline.filter(function(r){return r.dealType;}).length;
+  var untaggedCount = activePipeline.length - taggedCount;
+
+  html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:12px">';
+  html += kpiCard('Pipeline Leads', activePipeline.length, taggedCount+' tagged · '+untaggedCount+' untagged', '#1E7B3C', untaggedCount>10?untaggedCount+' need tags':'');
+  html += kpiCard('Est. 1-Yr Value', '$'+(totalPipeValue/1000).toFixed(0)+'K', 'Active pipeline', '#1B5FA8', '');
+  html += kpiCard('Est. 3-Yr Value', '$'+(total3yrValue/1000).toFixed(0)+'K', 'Full account lifetime', '#5B21B6', '');
+  html += kpiCard('Single Kitchen Win', '$50-60K', 'Hood+suppression+3yr bundle', '#D8690B', '');
+  html += '</div>';
+
+  if (Object.keys(byType).length > 1 || (Object.keys(byType).length===1 && Object.keys(byType)[0]!=='')) {
+    html += '<div style="background:#F8F9FA;border-radius:9px;overflow:hidden;margin-bottom:12px">';
+    html += '<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--soft);padding:8px 12px;border-bottom:1px solid var(--line)"><div>Deal Type</div><div style="text-align:right">Count</div><div style="text-align:right">1-Yr</div><div style="text-align:right">3-Yr</div></div>';
+    Object.entries(byType).sort(function(a,b){return b[1].value-a[1].value;}).forEach(function(entry){
+      var t=entry[0],d=entry[1];
+      html += '<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr;padding:8px 12px;border-bottom:1px solid var(--line);font-size:12px">';
+      html += '<div style="font-weight:600">'+(DEAL_LABELS[t]||t||'Untagged')+'</div>';
+      html += '<div style="text-align:right;color:var(--soft)">'+d.count+'</div>';
+      html += '<div style="text-align:right;font-weight:700;color:#1B5FA8">$'+(d.value/1000).toFixed(0)+'K</div>';
+      html += '<div style="text-align:right;color:#5B21B6">$'+(d.value3yr/1000).toFixed(0)+'K</div>';
+      html += '</div>';
+    });
+    html += '</div>';
+  }
+
+  html += '<div style="background:#EFF6FF;border:1.5px solid #BFDBFE;border-radius:8px;padding:10px 14px;font-size:12px;color:#1E40AF;margin-bottom:4px"><strong>Stage 2</strong> unlocks after 60-90 days of tagged data: real conversion benchmarks by deal type. <strong>Stage 3</strong>: AI flags pipeline gaps. Tag every lead now to build the dataset.</div>';
+
+  // ── Section 7: Referral Engine ─────────────────────────────
+  html += sectionHdr('🔗', 'Referral Engine', '#D8690B');
+
+  var referralLeads = leads.filter(function(r){return (r.source||'').toLowerCase().includes('referral')||r.isReferral;});
+  var referralQTD = referralLeads.filter(function(r){return r.created>=qStart;});
+  var referralConverted = referralLeads.filter(function(r){return ['active','close','onboarding','first_service'].includes(r.lifecycleStage||'');});
+  var referralValue = referralConverted.reduce(function(s,r){return s+(r.estValue||8000);},0);
+
+  html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:10px">';
+  html += kpiCard('Referral Leads QTD', referralQTD.length, 'Tagged source=Referral', referralQTD.length>0?'#1E7B3C':'#6B7280', '');
+  html += kpiCard('All-Time Referrals', referralLeads.length, 'Total tagged referral leads', '#D8690B', '');
+  html += kpiCard('Converted', referralConverted.length, 'Active accounts from referrals', '#1E7B3C', '');
+  html += kpiCard('Referral Revenue', referralValue>0?'$'+(referralValue/1000).toFixed(0)+'K':'--', 'Est. value converted', '#5B21B6', '');
+  html += '</div>';
+
+  var recentWins = leads.filter(function(r){return ['active','close','onboarding'].includes(r.lifecycleStage||'');});
+  var zipClusters = {};
+  recentWins.forEach(function(r){var z=r.zip||'';if(!z)return;if(!zipClusters[z])zipClusters[z]={wins:0,permits:0};zipClusters[z].wins++;});
+  permitLeads.forEach(function(r){var z=r.zip||'';if(!z||!zipClusters[z])return;zipClusters[z].permits++;});
+  var hotZips = Object.entries(zipClusters).filter(function(e){return e[1].wins>0&&e[1].permits>0;}).slice(0,3);
+  if (hotZips.length) {
+    html += '<div style="background:#FEF3C7;border:1.5px solid #D97706;border-radius:8px;padding:10px 14px;font-size:12px;color:#92400E;margin-bottom:4px">';
+    html += '<strong>🗺️ AllPro Geographic Play:</strong> ';
+    hotZips.forEach(function(e){html += 'ZIP '+e[0]+' — '+e[1].wins+' win'+(e[1].wins>1?'s':'')+', '+e[1].permits+' permit lead'+(e[1].permits>1?'s':'')+'. ';});
+    html += 'Strike while credibility is local.';
+    html += '</div>';
+  }
+
   // ── Quick Links ────────────────────────────────────────────
   html += '<div style="background:#F8F9FA;border-radius:9px;padding:12px 16px;margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">';
   html += '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft);width:100%;margin-bottom:4px">Quick Actions</div>';
@@ -22966,6 +23067,102 @@ function renderTedPerf() {
   html += '<div style="font-size:11px;color:var(--soft);text-align:right;margin-top:10px;padding-bottom:8px">Last refreshed: '+new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})+'</div>';
 
   el.innerHTML = html;
+}
+
+// ══════════════════════════════════════════════════════════════
+//  REFERRAL ENGINE — Layer 2: Active Referral Request
+//  Account card → Request Referral → referred lead auto-creates
+// ══════════════════════════════════════════════════════════════
+function requestReferral(accountId) {
+  var data = crmLoad('leads');
+  var account = data.find(function(r){ return r.id === accountId; });
+  if (!account) return;
+
+  var bizName = account.business || account.name || 'this account';
+  var referredBiz = prompt('Who are they referring?\n\nEnter the referred business name (you can edit the lead after):');
+  if (!referredBiz || !referredBiz.trim()) return;
+
+  var referredContact = prompt('Contact name at ' + referredBiz + ' (optional — press Enter to skip):');
+  var referredPhone   = prompt('Phone number (optional — press Enter to skip):');
+
+  // Create referred lead tagged with source
+  var now = Date.now();
+  var newLead = {
+    id: 'REF' + String(now).slice(-8),
+    name: (referredContact||'').trim() || referredBiz.trim(),
+    business: referredBiz.trim(),
+    phone: (referredPhone||'').trim(),
+    source: 'Referral',
+    isReferral: true,
+    referralSourceId: accountId,
+    referralSourceName: bizName,
+    referralRequestedAt: now,
+    status: 'hot',
+    lifecycleStage: 'lead',
+    score: 9,  // Referrals get high score automatically
+    assignedRep: account.assignedRep || account.ownedBy || (_currentUser&&_currentUser.name) || '',
+    ownedBy: account.assignedRep || account.ownedBy || (_currentUser&&_currentUser.name) || '',
+    createdBy: (_currentUser&&_currentUser.name) || 'Rep',
+    services: account.services || [],
+    company: account.company || 'UniPro',
+    notes: 'Referred by ' + bizName + '. ' + (account.assignedRep||'Rep') + ' to follow up.',
+    created: now,
+    updated: now,
+    activityLog: [{
+      ts: now, type: 'system', icon: '🔗',
+      title: 'Referral lead created — referred by ' + bizName,
+      note: 'Account ' + bizName + ' referred this contact. High-priority follow-up.',
+      who: 'System'
+    }]
+  };
+
+  data.unshift(newLead);
+  crmSave('leads', data);
+
+  // Log referral request on source account
+  var srcIdx = data.findIndex(function(r){ return r.id === accountId; });
+  if (srcIdx >= 0) {
+    if (!data[srcIdx].activityLog) data[srcIdx].activityLog = [];
+    data[srcIdx].activityLog.push({
+      ts: now, type: 'rep', icon: '🔗',
+      title: 'Referral request sent — ' + referredBiz.trim(),
+      note: 'Referral lead created in pipeline.',
+      who: (_currentUser&&_currentUser.name) || 'Rep'
+    });
+    data[srcIdx].referralsSent = (data[srcIdx].referralsSent||0) + 1;
+    data[srcIdx].lastReferralAt = now;
+    data[srcIdx].updated = now;
+    crmSave('leads', data);
+  }
+
+  // Track in referral log
+  try {
+    var refLog = JSON.parse(localStorage.getItem('termac_referrals')||'[]');
+    refLog.unshift({
+      id: newLead.id, sourceId: accountId, sourceName: bizName,
+      referredBiz: referredBiz.trim(), referredContact: referredContact||'',
+      referredPhone: referredPhone||'', requestedAt: now,
+      requestedBy: (_currentUser&&_currentUser.name)||'Rep',
+      status: 'pending', convertedAt: null
+    });
+    localStorage.setItem('termac_referrals', JSON.stringify(refLog));
+  } catch(e){}
+
+  if (typeof renderCRM === 'function') renderCRM();
+  showToast('🔗 Referral lead created — ' + referredBiz.trim() + ' added to hot leads');
+}
+
+// Mark a referral as converted (called when referral lead moves to active)
+function markReferralConverted(leadId) {
+  try {
+    var refLog = JSON.parse(localStorage.getItem('termac_referrals')||'[]');
+    var idx = refLog.findIndex(function(r){ return r.id === leadId; });
+    if (idx >= 0) {
+      refLog[idx].status = 'converted';
+      refLog[idx].convertedAt = Date.now();
+      localStorage.setItem('termac_referrals', JSON.stringify(refLog));
+    }
+  } catch(e){}
 }
 
 function refreshManagerDashboard() {
