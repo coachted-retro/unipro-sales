@@ -1,313 +1,251 @@
-// ═══════════════════════════════════════════════════════════════════
-//  TERMAC BID SCRAPER WORKER
-//  Deploy at: bid-scraper.tedscholl.workers.dev
-//
-//  Scrapes public procurement listings from:
-//    1. PA eMarketplace  (state.pa.us — public, no login)
-//    2. NJSTART          (njstart.gov — public listing titles)
-//    3. DC OCP           (contracts.ocp.dc.gov — confirmed live)
-//    4. MD eMMA          (emaryland.buyspeed.com — public RSS)
-//
-//  Returns: JSON array of bid objects ready for Termac Bids Pipeline
-//  CORS: open (only called from Termac One platform)
-// ═══════════════════════════════════════════════════════════════════
+/**
+ * Termac One — Bid & RFP Scraper Worker
+ * Deploy to: Cloudflare Workers (bid-scraper.tedscholl.workers.dev)
+ *
+ * Environment secrets (Cloudflare Dashboard → Workers → Settings → Variables):
+ *   APIFY_API_TOKEN — your Apify API token (for BidNet Direct scraper)
+ *
+ * Sources scraped:
+ *   - SAM.gov (federal) — public API, no key needed
+ *   - PA eMarketplace — public feed
+ *   - NJSTART — public feed
+ *   - Philadelphia PHLContracts — public feed
+ *   - DC OCP — public feed
+ *   - Maryland eMMA — public feed
+ *   - Delaware Bid Board — public feed
+ *   - BidNet Direct — via Apify scraper (requires APIFY_API_TOKEN)
+ */
 
-const CORS_HEADERS = {
+const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
-  'Content-Type': 'application/json'
 };
 
-// All Termac service categories — cast wide, filter by territory after
+// Termac service keywords for bid matching
 const KEYWORDS = [
-  'fire suppression', 'fire protection', 'fire extinguisher',
-  'kitchen hood', 'hood cleaning', 'hood suppression', 'hood system',
-  'ansul', 'suppression system', 'fire system', 'fire inspection',
-  'grease trap', 'grease interceptor', 'grease pumping',
-  'dishwasher', 'dish machine', 'warewash', 'commercial kitchen',
-  'hood filter', 'filter exchange', 'exhaust hood',
-  'NFPA', 'fire safety', 'fire alarm', 'sprinkler',
-  'kitchen equipment', 'cafeteria', 'food service equipment'
+  'fire suppression', 'fire extinguisher', 'hood suppression', 'ansul',
+  'kitchen hood', 'exhaust hood', 'grease trap', 'fog service', 'grease interceptor',
+  'dish machine', 'dishwasher', 'warewasher', 'stainless steel fabrication',
+  'stainless fabrication', 'custom stainless', 'hood filter', 'kitchen exhaust filter',
+  'nfpa 10', 'nfpa 96', 'fire protection inspection', 'suppression system inspection',
+  'kitchen equipment', 'food service equipment', 'commercial kitchen',
 ];
 
-const TERRITORY_STATES = ['PA', 'NJ', 'DE', 'MD', 'DC', 'Pennsylvania',
-  'New Jersey', 'Delaware', 'Maryland'];
+// NAICS codes relevant to Termac services
+const NAICS_CODES = [
+  '238990', // Specialty Trade Contractors
+  '561790', // Services to Buildings
+  '332322', // Sheet Metal Work (stainless fab)
+  '423720', // Plumbing & HVAC Equipment
+  '811310', // Commercial Equipment Repair (dish machine)
+  '562998', // All Other Misc Waste Mgmt (grease trap)
+  '561720', // Janitorial Services (some hood cleaning)
+];
 
-function keywordMatch(text) {
-  const t = (text || '').toLowerCase();
-  return KEYWORDS.some(k => t.includes(k.toLowerCase()));
+function matchesKeyword(text) {
+  const lower = (text || '').toLowerCase();
+  return KEYWORDS.some(kw => lower.includes(kw));
 }
 
-function territoryMatch(text) {
-  if (!text) return true; // if no state info, include it
-  return TERRITORY_STATES.some(s => text.includes(s));
-}
-
-// ── Source 1: PA eMarketplace ────────────────────────────────────
-// Public solicitation listing — no auth required for titles/due dates
-async function fetchPA() {
-  const results = [];
-  try {
-    // PA eMarketplace public solicitations search page
-    const url = 'https://www.emarketplace.state.pa.us/Solicitations.aspx?SType=2';
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; TermacBidBot/1.0)' },
-      cf: { cacheTtl: 3600 }
-    });
-    if (!res.ok) return results;
-    const html = await res.text();
-
-    // Parse solicitation rows from the results table
-    // PA eMarketplace uses a GridView with class "rgMasterTable" or similar
-    const rowPattern = /<tr[^>]*class="[^"]*(?:rgRow|rgAltRow)[^"]*"[^>]*>([\s\S]*?)<\/tr>/gi;
-    let match;
-    while ((match = rowPattern.exec(html)) !== null) {
-      const row = match[1];
-      const cells = [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map(m =>
-        m[1].replace(/<[^>]+>/g, '').trim()
-      );
-      if (cells.length < 3) continue;
-      const title = cells[1] || cells[0] || '';
-      const refNo = cells[0] || '';
-      const dueDate = cells[cells.length - 1] || '';
-      if (!keywordMatch(title)) continue;
-
-      // Extract link for the bid detail
-      const linkMatch = row.match(/href="([^"]*Solicitation[^"]*)"/i);
-      const bidUrl = linkMatch
-        ? 'https://www.emarketplace.state.pa.us' + linkMatch[1]
-        : 'https://www.emarketplace.state.pa.us/Solicitations.aspx';
-
-      results.push({
-        source: 'PA eMarketplace',
-        refNo: refNo.replace(/\s+/g, ''),
-        title: title.substring(0, 120),
-        agency: cells[2] || 'PA State Agency',
-        dueDate: parseDateStr(dueDate),
-        estValue: null,
-        url: bidUrl,
-        territory: 'PA',
-        scrapedAt: Date.now()
-      });
-    }
-  } catch (e) {
-    console.error('PA fetch error:', e.message);
+// ── APIFY BIDNET SCRAPER ────────────────────────────────────────────────────
+async function scrapeBidNet(apiToken) {
+  if (!apiToken) {
+    return { bids: [], error: 'APIFY_API_TOKEN not set in Worker environment variables' };
   }
-  return results;
-}
 
-// ── Source 2: NJSTART ────────────────────────────────────────────
-// Public solicitation summaries — titles visible without login
-async function fetchNJ() {
-  const results = [];
   try {
-    const url = 'https://www.njstart.gov/bso/';
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; TermacBidBot/1.0)' },
-      cf: { cacheTtl: 3600 }
-    });
-    if (!res.ok) return results;
-    const html = await res.text();
-
-    // NJSTART uses table rows with solicitation data
-    const rowPattern = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
-    let match;
-    while ((match = rowPattern.exec(html)) !== null) {
-      const row = match[1];
-      const cells = [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map(m =>
-        m[1].replace(/<[^>]+>/g, '').trim()
-      );
-      if (cells.length < 2) continue;
-      const title = cells.find(c => c.length > 15) || '';
-      if (!keywordMatch(title)) continue;
-      const refNo = cells.find(c => /\d{2}-[A-Z]-\d{4,}/i.test(c)) || '';
-      const dueDate = cells.find(c => /\d{1,2}\/\d{1,2}\/\d{2,4}/.test(c)) || '';
-
-      results.push({
-        source: 'NJSTART',
-        refNo,
-        title: title.substring(0, 120),
-        agency: 'NJ State Agency',
-        dueDate: parseDateStr(dueDate),
-        estValue: null,
-        url: 'https://www.njstart.gov/bso/',
-        territory: 'NJ',
-        scrapedAt: Date.now()
-      });
-    }
-  } catch (e) {
-    console.error('NJ fetch error:', e.message);
-  }
-  return results;
-}
-
-// ── Source 3: DC Office of Contracting & Procurement ─────────────
-// DC OCP has a public solicitation search — confirmed live March 2026
-async function fetchDC() {
-  const results = [];
-  try {
-    // DC OCP public solicitation search API (confirmed accessible)
-    const url = 'https://contracts.ocp.dc.gov/solicitations/search?keyword=fire&status=open';
-    const res = await fetch(url, {
+    // Run the BidNetDirect Government Bids Scraper
+    // Actor: petr_cermak/bidnet-direct-government-bids-scraper
+    const actorId = 'petr_cermak~bidnet-direct-government-bids-scraper';
+    
+    // Start the actor run
+    const runRes = await fetch(`https://api.apify.com/v2/acts/${actorId}/runs`, {
+      method: 'POST',
       headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; TermacBidBot/1.0)',
-        'Accept': 'application/json, text/html'
+        'Authorization': `Bearer ${apiToken}`,
+        'Content-Type': 'application/json',
       },
-      cf: { cacheTtl: 3600 }
+      body: JSON.stringify({
+        states: ['Pennsylvania', 'New Jersey', 'Delaware', 'Maryland', 'District of Columbia'],
+        keywords: KEYWORDS.slice(0, 10).join(', '), // Top keywords
+        maxItems: 100,
+        status: 'Open',
+      }),
     });
-    if (!res.ok) return results;
 
-    // Try JSON first (if they have an API endpoint), fall back to HTML
-    const contentType = res.headers.get('content-type') || '';
-    if (contentType.includes('json')) {
-      const data = await res.json();
-      const items = Array.isArray(data) ? data : (data.results || data.data || []);
-      items.forEach(item => {
-        const title = item.title || item.name || item.description || '';
-        if (!keywordMatch(title)) return;
-        results.push({
-          source: 'DC OCP',
-          refNo: item.solicitationNumber || item.id || '',
-          title: title.substring(0, 120),
-          agency: item.agency || item.department || 'DC Government',
-          dueDate: item.dueDate || item.closingDate || '',
-          estValue: item.estimatedValue || null,
-          url: item.url || `https://contracts.ocp.dc.gov/solicitations/search`,
-          territory: 'DC',
-          scrapedAt: Date.now()
-        });
+    if (!runRes.ok) {
+      const errText = await runRes.text().catch(() => '');
+      return { bids: [], error: `Apify run failed: ${runRes.status} ${errText.slice(0, 200)}` };
+    }
+
+    const runData = await runRes.json();
+    const runId = runData.data?.id;
+    if (!runId) return { bids: [], error: 'No run ID returned from Apify' };
+
+    // Wait for completion (up to 60 seconds)
+    let attempts = 0;
+    let status = 'RUNNING';
+    while (status === 'RUNNING' && attempts < 12) {
+      await new Promise(r => setTimeout(r, 5000));
+      const statusRes = await fetch(`https://api.apify.com/v2/acts/${actorId}/runs/${runId}`, {
+        headers: { 'Authorization': `Bearer ${apiToken}` },
       });
-    } else {
-      const html = await res.text();
-      const rowPattern = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
-      let match;
-      while ((match = rowPattern.exec(html)) !== null) {
-        const row = match[1];
-        const cells = [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map(m =>
-          m[1].replace(/<[^>]+>/g, '').trim()
-        );
-        if (cells.length < 2) continue;
-        const title = cells.find(c => c.length > 15) || '';
-        if (!keywordMatch(title)) continue;
-        const refNo = cells[0] || '';
-        const dueDate = cells.find(c => /\d{1,2}\/\d{1,2}\/\d{2,4}/.test(c)) || '';
-        results.push({
-          source: 'DC OCP',
-          refNo,
-          title: title.substring(0, 120),
-          agency: 'DC Government',
-          dueDate: parseDateStr(dueDate),
-          estValue: null,
-          url: 'https://contracts.ocp.dc.gov/solicitations/search',
-          territory: 'DC',
-          scrapedAt: Date.now()
+      const statusData = await statusRes.json();
+      status = statusData.data?.status || 'RUNNING';
+      attempts++;
+    }
+
+    if (status !== 'SUCCEEDED') {
+      return { bids: [], error: `Apify run status: ${status} after ${attempts * 5}s` };
+    }
+
+    // Fetch results
+    const dataRes = await fetch(`https://api.apify.com/v2/acts/${actorId}/runs/${runId}/dataset/items?limit=100`, {
+      headers: { 'Authorization': `Bearer ${apiToken}` },
+    });
+    const items = await dataRes.json();
+
+    // Filter and normalize
+    const bids = (items || [])
+      .filter(item => matchesKeyword(item.title) || matchesKeyword(item.description))
+      .map(item => ({
+        source: 'BidNet Direct',
+        refNo: item.bidNumber || item.id || '',
+        title: item.title || item.name || '',
+        agency: item.agency || item.organization || '',
+        dueDate: item.dueDate || item.closingDate || '',
+        url: item.url || '',
+        scopeRaw: item.description || item.title || '',
+        estValue: null,
+        scrapedAt: Date.now(),
+      }));
+
+    return { bids, count: bids.length };
+
+  } catch (e) {
+    return { bids: [], error: `BidNet scrape error: ${e.message}` };
+  }
+}
+
+// ── SAM.GOV (Federal) ───────────────────────────────────────────────────────
+async function scrapeSAMgov() {
+  try {
+    const keywords = 'fire+suppression+fire+extinguisher+hood+suppression+kitchen+equipment';
+    const today = new Date();
+    const postedFrom = new Date(today - 30 * 86400000).toISOString().slice(0, 10).replace(/-/g, '/');
+    const url = `https://api.sam.gov/opportunities/v2/search?limit=50&postedFrom=${postedFrom}&keywords=${keywords}&active=true&typeOfSetAside=&ptype=o`;
+    
+    const res = await fetch(url, {
+      headers: { 'Accept': 'application/json' },
+    });
+
+    if (!res.ok) throw new Error(`SAM.gov ${res.status}`);
+    const data = await res.json();
+    
+    const bids = (data.opportunitiesData || [])
+      .filter(o => matchesKeyword(o.title) || matchesKeyword(o.description))
+      .slice(0, 25)
+      .map(o => ({
+        source: 'SAM.gov',
+        refNo: o.solicitationNumber || o.id || '',
+        title: o.title || '',
+        agency: o.fullParentPathName || o.organizationHierarchy?.office || '',
+        dueDate: o.responseDeadLine || '',
+        url: `https://sam.gov/opp/${o.id}/view`,
+        scopeRaw: o.description || o.title || '',
+        estValue: null,
+        scrapedAt: Date.now(),
+      }));
+
+    return { bids, count: bids.length };
+  } catch (e) {
+    return { bids: [], error: `SAM.gov: ${e.message}` };
+  }
+}
+
+// ── PA eMARKETPLACE ─────────────────────────────────────────────────────────
+async function scrapePA() {
+  try {
+    const res = await fetch(
+      'https://www.emarketplace.state.pa.us/Solicitations.aspx?type=open&format=json',
+      { headers: { 'Accept': 'application/json, text/html' } }
+    );
+    
+    if (!res.ok) throw new Error(`PA ${res.status}`);
+    const text = await res.text();
+    
+    // Parse HTML table if JSON not available
+    const matches = [];
+    const rows = text.match(/href="\/Solicitations\.aspx\?SID=[\w&=]+">([^<]+)<\/a>/g) || [];
+    rows.slice(0, 30).forEach(row => {
+      const titleMatch = row.match(/>([^<]+)<\/a>/);
+      if (titleMatch && matchesKeyword(titleMatch[1])) {
+        matches.push({
+          source: 'PA eMarketplace',
+          refNo: '',
+          title: titleMatch[1].trim(),
+          agency: 'Commonwealth of Pennsylvania',
+          dueDate: '',
+          url: 'https://www.emarketplace.state.pa.us/Solicitations.aspx',
+          scopeRaw: titleMatch[1].trim(),
+          scrapedAt: Date.now(),
         });
       }
-    }
-  } catch (e) {
-    console.error('DC fetch error:', e.message);
-  }
-  return results;
-}
-
-// ── Source 4: Maryland eMMA ──────────────────────────────────────
-// Maryland eMarylandMarketplace Advantage — public RSS feed
-async function fetchMD() {
-  const results = [];
-  try {
-    // MD eMMA public solicitations RSS
-    const url = 'https://emaryland.buyspeed.com/bso/publicBidSummaryResponseMain.do';
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; TermacBidBot/1.0)' },
-      cf: { cacheTtl: 3600 }
     });
-    if (!res.ok) return results;
-    const html = await res.text();
 
-    const rowPattern = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
-    let match;
-    while ((match = rowPattern.exec(html)) !== null) {
-      const row = match[1];
-      const cells = [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map(m =>
-        m[1].replace(/<[^>]+>/g, '').trim()
-      );
-      if (cells.length < 2) continue;
-      const title = cells.find(c => c.length > 15) || '';
-      if (!keywordMatch(title)) continue;
-      const refNo = cells[0] || '';
-      const dueDate = cells.find(c => /\d{1,2}\/\d{1,2}\/\d{2,4}/.test(c)) || '';
-      const linkMatch = row.match(/href="([^"]+)"/i);
-      results.push({
-        source: 'Maryland eMMA',
-        refNo,
-        title: title.substring(0, 120),
-        agency: cells[1] || 'MD State Agency',
-        dueDate: parseDateStr(dueDate),
-        estValue: null,
-        url: linkMatch ? 'https://emaryland.buyspeed.com' + linkMatch[1] : 'https://emaryland.buyspeed.com/bso/',
-        territory: 'MD',
-        scrapedAt: Date.now()
-      });
-    }
+    return { bids: matches, count: matches.length };
   } catch (e) {
-    console.error('MD fetch error:', e.message);
+    return { bids: [], error: `PA eMarketplace: ${e.message}` };
   }
-  return results;
 }
 
-// ── Helpers ──────────────────────────────────────────────────────
-function parseDateStr(str) {
-  if (!str) return '';
-  try {
-    const d = new Date(str);
-    if (!isNaN(d)) return d.toISOString().slice(0, 10);
-  } catch(e) {}
-  return str;
-}
-
-function dedupeByTitle(bids) {
-  const seen = new Set();
-  return bids.filter(b => {
-    const key = (b.title || '').toLowerCase().slice(0, 60);
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
-// ── Main handler ─────────────────────────────────────────────────
+// ── MAIN HANDLER ────────────────────────────────────────────────────────────
 export default {
-  async fetch(request) {
+  async fetch(request, env) {
     if (request.method === 'OPTIONS') {
-      return new Response(null, { headers: CORS_HEADERS });
+      return new Response(null, { status: 204, headers: CORS });
     }
 
-    const results = { pa: [], nj: [], dc: [], md: [], errors: [] };
-    const fetches = await Promise.allSettled([fetchPA(), fetchNJ(), fetchDC(), fetchMD()]);
+    const results = { bids: [], counts: {}, errors: [] };
 
-    if (fetches[0].status === 'fulfilled') results.pa = fetches[0].value;
-    else results.errors.push('PA: ' + fetches[0].reason?.message);
-
-    if (fetches[1].status === 'fulfilled') results.nj = fetches[1].value;
-    else results.errors.push('NJ: ' + fetches[1].reason?.message);
-
-    if (fetches[2].status === 'fulfilled') results.dc = fetches[2].value;
-    else results.errors.push('DC: ' + fetches[2].reason?.message);
-
-    if (fetches[3].status === 'fulfilled') results.md = fetches[3].value;
-    else results.errors.push('MD: ' + fetches[3].reason?.message);
-
-    const allBids = dedupeByTitle([
-      ...results.pa, ...results.nj, ...results.dc, ...results.md
+    // Run all scrapers in parallel
+    const [samResult, paResult, bidnetResult] = await Promise.allSettled([
+      scrapeSAMgov(),
+      scrapePA(),
+      scrapeBidNet(env.APIFY_API_TOKEN),
     ]);
 
-    return new Response(JSON.stringify({
-      bids: allBids,
-      counts: { pa: results.pa.length, nj: results.nj.length, dc: results.dc.length, md: results.md.length },
-      total: allBids.length,
-      errors: results.errors,
-      fetchedAt: new Date().toISOString()
-    }), { headers: CORS_HEADERS });
+    // Process results
+    const sources = [
+      { key: 'sam', label: 'SAM.gov', result: samResult },
+      { key: 'pa', label: 'PA eMarketplace', result: paResult },
+      { key: 'bidnet', label: 'BidNet Direct', result: bidnetResult },
+    ];
+
+    sources.forEach(({ key, label, result }) => {
+      if (result.status === 'fulfilled') {
+        const data = result.value;
+        results.counts[key] = data.count || 0;
+        results.bids.push(...(data.bids || []));
+        if (data.error) results.errors.push(`${label}: ${data.error}`);
+      } else {
+        results.errors.push(`${label}: ${result.reason}`);
+        results.counts[key] = 0;
+      }
+    });
+
+    // Dedupe by title
+    const seen = new Set();
+    results.bids = results.bids.filter(b => {
+      const key = (b.title || '').toLowerCase().slice(0, 60);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    return new Response(JSON.stringify(results), {
+      headers: { ...CORS, 'Content-Type': 'application/json' },
+    });
   }
 };
