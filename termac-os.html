@@ -7720,41 +7720,81 @@ function getAccountContext(accountId) {
     l.convertedFrom === accountId
   );
 
+  // Helper: first truthy value across record chain
+  const pick = (...vals) => vals.find(v => v && String(v).trim() !== '') || '';
+
   // Merge: account wins, contact fills gaps, lead fills remaining gaps
   return {
     // Identity
     id:            account.id,
-    name:          account.name || account.business || '',
-    business:      account.business || account.name || '',
+    name:          pick(account.name, account.business, lead?.name, lead?.business),
+    business:      pick(account.business, account.name, lead?.business, lead?.name),
     dba:           account.dba || '',
+    parentCompany: pick(account.parentCompany, lead?.parentCompany),
+    entityType:    pick(account.entityType, lead?.entityType),
+    bizType:       pick(account.bizType, lead?.bizType),
+    pricingMode:   pick(account.pricingMode, lead?.pricingMode, 'per_visit'),
+    pricingTerm:   pick(account.pricingTerm, lead?.pricingTerm, 'no_contract'),
 
     // Location
-    address:       account.address || lead?.address || '',
-    city:          account.city || lead?.city || '',
-    state:         account.state || lead?.state || stateFromZip(account.zip || lead?.zip) || '',
-    zip:           account.zip || lead?.zip || '',
+    address:       pick(account.address, lead?.address),
+    city:          pick(account.city, lead?.city),
+    state:         pick(account.state, lead?.state, stateFromZip(account.zip || lead?.zip)),
+    zip:           pick(account.zip, lead?.zip),
+    billingAddress:pick(account.billingAddress, lead?.billingAddress),
 
-    // Contact
-    contactName:   contact?.name  || account.contact || account.contactName || lead?.contactName || '',
-    contactTitle:  contact?.title || account.title   || lead?.title || '',
-    contactPhone:  contact?.phone || account.phone   || lead?.phone || '',
-    contactMobile: contact?.mobile || account.mobile || '',
-    contactEmail:  contact?.email || account.email   || lead?.email || '',
-    decisionMaker: account.decisionMaker || contact?.decisionMaker || '',
+    // Site Contact (primary)
+    contactName:   pick(contact?.name, account.contact, account.contactName, lead?.contactName, lead?.name),
+    contactTitle:  pick(contact?.title, account.title, lead?.title, account.role, lead?.role),
+    contactPhone:  pick(contact?.phone, account.phone, lead?.phone),
+    contactMobile: pick(contact?.mobile, account.mobile),
+    contactEmail:  pick(contact?.email, account.email, lead?.email),
+
+    // Owner
+    ownerName:     pick(account.ownerName, lead?.ownerName),
+    ownerPhone:    pick(account.ownerPhone, lead?.ownerPhone),
+    ownerEmail:    pick(account.ownerEmail, lead?.ownerEmail),
+
+    // Decision maker
+    decisionMaker: pick(account.decisionMaker, lead?.decisionMaker, contact?.decisionMaker),
+    dmPhone:       pick(account.dmPhone, lead?.dmPhone),
+    dmEmail:       pick(account.dmEmail, lead?.dmEmail),
+
+    // Project manager
+    pmName:        pick(account.pmName, lead?.pmName),
+    pmPhone:       pick(account.pmPhone, lead?.pmPhone),
+    pmEmail:       pick(account.pmEmail, lead?.pmEmail),
+
+    // Landlord / property manager
+    landlord:      pick(account.landlord, lead?.landlord),
+    landlordPhone: pick(account.landlordPhone, lead?.landlordPhone),
+    landlordEmail: pick(account.landlordEmail, lead?.landlordEmail),
 
     // Business info
     services:      account.services || lead?.services || [],
     status:        account.status || 'active',
     annualValue:   account.annualValue || account.contractValue || 0,
     healthScore:   account.healthScore || 0,
-    assignedRep:   account.assignedRep || contact?.assignedRep || lead?.assignedRep || '',
+    assignedRep:   pick(account.assignedRep, contact?.assignedRep, lead?.assignedRep),
+
+    // Competitor / account intel
+    currentVendor: pick(account.vendor, account.currentVendor, lead?.competitor),
+    competitor:    pick(account.competitor, lead?.competitor),
+    contractExp:   pick(account.contractExp, lead?.contractExp),
+    serviceWindow: pick(account.serviceWindow, lead?.serviceWindow),
 
     // Service history
     lastService:   account.lastService || '',
     nextDue:       account.nextDue || '',
-    currentVendor: account.vendor || account.currentVendor || '',
-    source:        account.source || lead?.source || lead?.leadSource || '',
-    notes:         account.notes || lead?.notes || '',
+    source:        pick(account.source, lead?.source, lead?.leadSource),
+    notes:         pick(account.notes, lead?.notes),
+    siteNotes:     pick(account.siteNotes, lead?.siteNotes),
+
+    // AllPro / project specific
+    projectType:   pick(account.projectType, lead?.projectType),
+    facilityType:  pick(account.facilityType, lead?.facilityType),
+    projectStage:  pick(account.projectStage, lead?.projectStage),
+    estValue:      account.estValue || lead?.estValue || 0,
 
     // Raw records for anything else
     _account: account,
@@ -8411,13 +8451,40 @@ function fsPrefillClientInfo() {
   setIfEmpty('fs_visitDate',  new Date().toISOString().slice(0,10));
 
   setIfEmpty('fs_contactName',  r.contactName || r.name || '');
-  setIfEmpty('fs_contactTitle', r.contactTitle || '');
-  setIfEmpty('fs_contactPhone', r.contactPhone || '');
-  setIfEmpty('fs_contactMobile', r.contactMobile || '');
-  setIfEmpty('fs_contactEmail', r.contactEmail || '');
-  setIfEmpty('fs_currentVendor', r.currentVendor || '');
-  setIfEmpty('fs_referredBy',    r.source || '');
+  setIfEmpty('fs_contactTitle', r.contactTitle || r.role || '');
+  setIfEmpty('fs_contactPhone', r.contactPhone || r.phone || '');
+  setIfEmpty('fs_contactMobile', r.contactMobile || r.mobile || '');
+  setIfEmpty('fs_contactEmail', r.contactEmail || r.email || '');
+  setIfEmpty('fs_currentVendor', r.currentVendor || r.competitor || '');
+  setIfEmpty('fs_referredBy',    r.source || r.leadSource || '');
   setIfEmpty('fs_generalObs',    r.notes || '');
+
+  // Owner fields (if survey has them)
+  setIfEmpty('fs_ownerName',  r.ownerName || '');
+  setIfEmpty('fs_ownerPhone', r.ownerPhone || '');
+  setIfEmpty('fs_ownerEmail', r.ownerEmail || '');
+
+  // Decision maker (pre-fill sig screen if owner/DM is known)
+  const sigName = document.getElementById('fs_sigName');
+  if (sigName && !sigName.value) {
+    var sigCandidate = r.ownerName || r.decisionMaker || r.contactName || r.name || '';
+    if (sigCandidate) sigName.value = sigCandidate;
+  }
+  const sigTitle = document.getElementById('fs_sigTitle');
+  if (sigTitle && !sigTitle.value) {
+    var titleCandidate = r.contactTitle || r.role || (r.ownerName ? 'Owner' : '');
+    if (titleCandidate) sigTitle.value = titleCandidate;
+  }
+
+  // Site notes
+  setIfEmpty('fs_siteNotes', r.siteNotes || '');
+
+  // Pricing mode from record (drives per-visit vs annual)
+  if (r.pricingMode && typeof setAccountType === 'function') {
+    var typeMap = { per_visit: 'independent', annual: 'corporate' };
+    if (r.bizType) setAccountType(r.bizType);
+    else if (r.pricingMode === 'per_visit') setAccountType('independent');
+  }
 }
 
 function fsGo(from, to) {
@@ -13972,9 +14039,13 @@ COMPANY PROFILE:
 - Legal Name: ${profile.legalName}
 - Address: ${profile.address}
 - Contact: ${profile.contactName}, ${profile.contactTitle}
+- Phone: 267-421-6336 | Email: tscholl@termac.com
 - PA Business License: ${profile.paBusinessLicense}
+- EIN (Ter-Pro LLC): ${profile.ein}
+- EIN (Capital Suppression Corp): ${profile.einCapitalSuppression}
 - Territory: ${profile.territory}
-- Insurance: GL $1M/$2M, Umbrella $2M, WC $1M, Auto $1M CSL (Lloyd's of London / Erie / Nationwide)
+- Insurance: GL $1M/$2M, Umbrella $2M, WC $1M, Auto $1M CSL — Carrier: Lloyd's of London / Erie / Nationwide — Exp: 5/20/2027
+- Insurance Producer: Gannon Insurance Inc (215) 396-9000
 
 OUR SERVICES:
 ${Object.entries(profile.services).map(([k,v]) => '• ' + v).join('\n')}
