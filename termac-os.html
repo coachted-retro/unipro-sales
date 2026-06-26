@@ -14848,75 +14848,99 @@ async function bidsHarvest(){
   const btn    = document.getElementById('bidsCheckBtn');
 
   if (!BID_SCRAPER_URL) {
-      harvestSetStatus('⚠️ Deploy bid-scraper-worker.js to Cloudflare first, then paste the Worker URL into BID_SCRAPER_URL in this file.');
+    harvestSetStatus('⚠️ Deploy bid-scraper-worker.js to Cloudflare first, then paste the Worker URL into BID_SCRAPER_URL in this file.');
     return;
   }
 
-  harvestSetStatus('🔄 Checking PA eMarketplace, NJSTART, DC OCP, and Maryland eMMA for open bids matching Termac service categories…');
+  harvestSetStatus('🔄 Checking PHLContracts · PA eMarketplace · NJSTART · DC OCP · Maryland eMMA · Delaware · SAM.gov for open bids matching Termac services…');
   if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; }
 
   try {
-    const res = await fetch(BID_SCRAPER_URL);
-    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const res = await fetch(BID_SCRAPER_URL, { signal: AbortSignal.timeout(25000) });
+    if (!res.ok) throw new Error('Worker HTTP ' + res.status);
     const data = await res.json();
 
     const incoming = data.bids || [];
-    if (!incoming.length && !data.errors?.length) {
-      harvestSetStatus(`✅ All sources checked — no new keyword matches found right now. Counts: PA ${data.counts?.pa||0} · NJ ${data.counts?.nj||0} · DC ${data.counts?.dc||0} · MD ${data.counts?.md||0}`);
-      if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
-      setTimeout(() => { if(banner) banner.style.display='none'; }, 10000);
-      return;
-    }
+    const sourcesChecked = (data.sources_checked || ['PA','NJ','DC','MD','DE']).join(' · ');
+    const countStr = Object.entries(data.counts||{}).map(([k,v])=>k.toUpperCase()+' '+v).join(' · ');
 
     // Dedupe against existing bids pipeline
     const existing = bidsLoad();
-    const existingTitles = new Set(existing.map(b => (b.title||'').toLowerCase().slice(0,60)));
+    const existingKeys = new Set(existing.map(b => (b.refNo||b.title||'').toLowerCase().slice(0,60)));
     const now = Date.now();
     let added = 0;
 
-    incoming.forEach(b => {
-      const titleKey = (b.title||'').toLowerCase().slice(0,60);
-      if (existingTitles.has(titleKey)) return;
-      existingTitles.add(titleKey);
+    incoming.forEach(function(b) {
+      const key = (b.refNo||b.title||'').toLowerCase().slice(0,60);
+      if (existingKeys.has(key)) return;
+      existingKeys.add(key);
       existing.unshift({
         id: 'harvest_bid_' + now + '_' + Math.random().toString(36).slice(2,7),
-        source: b.source,
+        source: b.source || 'Harvester',
         refNo: b.refNo || '',
-        title: b.title,
+        title: b.title || 'Untitled Bid',
         agency: b.agency || '',
         category: inferBidCategory(b.title),
+        primaryDivision: inferBidDivision(b.title),
         postedDate: new Date().toISOString().slice(0,10),
         dueDate: b.dueDate || '',
         estValue: b.estValue || estimateBidValue(b.title),
+        contractType: 'government',
         status: 'open',
-        scopeRaw: b.title,
+        scopeRaw: b.scopeRaw || b.title || '',
         url: b.url || '',
-        scrapedAt: b.scrapedAt || now
+        scrapedAt: b.scrapedAt || now,
       });
       added++;
     });
 
     bidsSave(existing);
-
-    const errNote = data.errors?.length
-      ? ` <span style="color:#C8102E">(${data.errors.length} source${data.errors.length>1?'s':''} had errors — check console)</span>`
-      : '';
-    harvestSetStatus(`✅ Checked ${incoming.length + (existing.length - added)} listings across PA · NJ · DC · MD — added <b>${added} new bid${added===1?'':'s'}</b> to the pipeline.${errNote} <a href="#" onclick="event.preventDefault();bidsShowTab('pipeline',document.getElementById('bidsTab_pipeline'))" style="color:#1A1D21;font-weight:700">View Pipeline →</a>`);
-    // Save run diagnostics for Sources panel
     localStorage.setItem('termac_bid_scraper_last', JSON.stringify({
-      ts: Date.now(), counts: data.counts, total: incoming.length,
-      added, errors: data.errors || []
+      ts: now, counts: data.counts||{}, total: incoming.length,
+      added, errors: data.errors||[], sources: sourcesChecked
     }));
-    if (added) bidsRender();
-    if (data.errors?.length) console.warn('Bid scraper errors:', data.errors);
+
+    const errNote = (data.errors||[]).length
+      ? ' <span style="color:#C8102E">(' + data.errors.length + ' source' + (data.errors.length>1?'s':'') + ' had errors)</span>'
+      : '';
+
+    if (!incoming.length) {
+      harvestSetStatus('✅ Sources checked — no new keyword matches found right now. ' + countStr + errNote +
+        ' <span style="color:var(--soft);font-size:11px">Sources checked: ' + sourcesChecked + '</span>');
+    } else {
+      harvestSetStatus('\u2705 Added <b>' + added + ' new bid' + (added===1?'':'s') + '</b> to the pipeline. ' + countStr + errNote + ' <a href="#" onclick="bidsShowPipeline()" style="color:#1A1D21;font-weight:700">View Pipeline &rarr;</a>');
+      if (added) bidsRender();
+    }
+
+    if ((data.errors||[]).length) console.warn('Bid scraper source errors:', data.errors);
 
   } catch(e) {
-    harvestSetStatus(`⚠️ Bid scraper error: ${e.message}. Check that bid-scraper-worker.js is deployed and the Worker URL is correct.`);
+    // Specific messaging for common failures
+    var msg = e.message;
+    if (msg.includes('timeout') || msg.includes('Timeout')) {
+      msg = 'Worker timed out (25s) — the bid boards may be slow. Try again in a few minutes.';
+    } else if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+      msg = 'Cannot reach bid scraper worker. Check that it is deployed at: ' + BID_SCRAPER_URL;
+    }
+    harvestSetStatus('⚠️ ' + msg);
     console.error('bidsHarvest error:', e);
   }
 
   if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
-  setTimeout(() => { if(banner) banner.style.display='none'; }, 15000);
+  setTimeout(function(){ if(banner) banner.style.display='none'; }, 20000);
+}
+
+// Helper: infer primary division from bid title
+function bidsShowPipeline(){bidsShowTab('pipeline',document.getElementById('bidsTab_pipeline'));}
+
+function inferBidDivision(title) {
+  var t = (title||'').toLowerCase();
+  if (t.includes('extinguisher') || t.includes('nfpa 10') || t.includes('suppression') || t.includes('nfpa 96')) return 'UniPro';
+  if (t.includes('grease trap') || t.includes('fog') || t.includes('grease interceptor')) return 'GTO';
+  if (t.includes('hood filter') || t.includes('exhaust filter')) return 'Filter Man';
+  if (t.includes('dish') || t.includes('warewash') || t.includes('chemical')) return 'Termac';
+  if (t.includes('fabricat') || t.includes('stainless') || t.includes('hood install')) return 'ALLPro';
+  return 'UniPro';
 }
 
 function inferBidCategory(title) {
