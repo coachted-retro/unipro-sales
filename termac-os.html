@@ -15271,7 +15271,276 @@ function orphanReassignRep(accountId){
   if (crmCurrentTab === 'accounts') renderCRMView();
 }
 
+// ══════════════════════════════════════════════════════════════
+//  BID SUBMISSION INTELLIGENCE — Session 5
+//  Submission Bundle, Deadline Tracker, Win/Loss Analytics
+// ══════════════════════════════════════════════════════════════
+
+// ── SUBMISSION BUNDLE ──────────────────────────────────────────
+var BUNDLE_ORDER = [
+  { id:'cover',      label:'1. Cover Letter',                   required:true  },
+  { id:'exec',       label:'2. Executive Summary',              required:true  },
+  { id:'quals',      label:'3. Company Qualifications',         required:true  },
+  { id:'scope',      label:'4. Scope Response',                 required:true  },
+  { id:'technical',  label:'5. Technical Approach',             required:true  },
+  { id:'pricing',    label:'6. Pricing Schedule',               required:true  },
+  { id:'references', label:'7. References / Past Performance',  required:true  },
+  { id:'compliance', label:'8. Compliance Certifications',      required:true  },
+  { id:'w9',         label:'9. W-9 (Ter-Pro LLC, EIN 47-1063968)', required:true, static:true },
+  { id:'coi',        label:'10. Certificate of Insurance (ACORD 25)', required:true, static:true },
+  { id:'license',    label:'11. PA Fire Protection License #21783', required:true, static:true },
+];
+
+function bdBundleHTML(b) {
+  var assembled = b.assembledDocs || {};
+  var checklist = b.docChecklist || [];
+
+  // Count assembled sections
+  var aiSections = BUNDLE_ORDER.filter(function(s){ return !s.static; });
+  var doneCount  = aiSections.filter(function(s){ return assembled[s.id]; }).length;
+  var staticDone = checklist.filter(function(c){ return c.done && (c.label||'').match(/W-9|COI|Insurance|License/i); }).length;
+  var totalReady = doneCount + staticDone;
+  var totalItems = BUNDLE_ORDER.length;
+  var pct = Math.round(totalReady/totalItems*100);
+  var pctColor = pct>=80?'#1E7B3C':pct>=50?'#D97706':'#C8102E';
+
+  // Deadline urgency
+  var daysLeft = null;
+  var urgencyHtml = '';
+  if (b.dueDate) {
+    daysLeft = Math.ceil((new Date(b.dueDate)-new Date())/86400000);
+    var urgColor = daysLeft<=3?'#C8102E':daysLeft<=7?'#D97706':'#1E7B3C';
+    urgencyHtml = '<div style="background:'+(daysLeft<=3?'#FEE2E2':daysLeft<=7?'#FEF3C7':'#D1FAE5')+';border:1.5px solid '+urgColor+';border-radius:9px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:12px">' +
+      '<div style="font-size:28px">'+(daysLeft<=3?'🚨':daysLeft<=7?'⚠️':'📅')+'</div>' +
+      '<div><div style="font-weight:700;color:'+urgColor+';font-size:15px">'+daysLeft+' day'+(daysLeft!==1?'s':'')+' until deadline</div>' +
+      '<div style="font-size:12px;color:#374151">Due: '+escH(b.dueDate)+(b.agency?' · '+escH(b.agency):'')+'</div></div></div>';
+  }
+
+  var html = urgencyHtml;
+
+  // Bundle readiness
+  html += '<div style="background:#F8F9FA;border-radius:9px;padding:14px 16px;margin-bottom:16px">';
+  html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">';
+  html += '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:14px">Bundle Readiness: '+totalReady+' / '+totalItems+' items</div>';
+  html += '<div style="font-weight:700;font-size:16px;color:'+pctColor+'">'+pct+'%</div></div>';
+  html += '<div style="height:8px;background:#E5E7EB;border-radius:4px;overflow:hidden;margin-bottom:12px">';
+  html += '<div style="height:100%;background:'+pctColor+';width:'+pct+'%;transition:width .3s"></div></div>';
+  html += '</div>';
+
+  // Section order list
+  html += '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--soft);margin-bottom:8px">Submission Order</div>';
+  html += '<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px">';
+  BUNDLE_ORDER.forEach(function(item) {
+    var ready = item.static
+      ? checklist.some(function(c){return c.done && (c.label||'').includes(item.label.replace(/^\d+\.\s*/,'').split(' ')[0]);})
+      : !!assembled[item.id];
+    var statusIcon = ready ? '✅' : '⬜';
+    var statusColor = ready ? '#1E7B3C' : '#9CA3AF';
+    html += '<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:'+(ready?'#F0FDF4':'#fff')+';border-radius:8px;border:1px solid '+(ready?'#D1FAE5':'#E5E7EB')+'">';
+    html += '<span style="font-size:16px">'+statusIcon+'</span>';
+    html += '<div style="flex:1"><div style="font-size:13px;font-weight:600;color:'+(ready?'#1A1D21':'#6B7280')+'">'+escH(item.label)+'</div>';
+    if (item.static) html += '<div style="font-size:10px;color:var(--soft)">Physical document — mark ready in Checklist tab when attached</div>';
+    else if (!ready) html += '<div style="font-size:10px;color:#D97706">→ Go to Document Assembly tab to generate</div>';
+    html += '</div>';
+    if (!item.static && !ready) {
+      html += '<button onclick="bdShowTab(\'assemble\',\''+b.id+'\')" style="background:#D8690B;color:#fff;border:none;border-radius:6px;padding:5px 10px;font-size:10px;font-weight:700;cursor:pointer">Generate</button>';
+    }
+    html += '</div>';
+  });
+  html += '</div>';
+
+  // Copy bundle button
+  html += '<div style="display:flex;gap:10px;flex-wrap:wrap">';
+  html += '<button onclick="bdCopyFullBundle(\''+b.id+'\')" style="flex:1;background:#1A1D21;color:#fff;border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">📋 Copy Full Bundle to Clipboard</button>';
+  html += '<button onclick="bdPrintBundle(\''+b.id+'\')" style="flex:1;background:#1E7B3C;color:#fff;border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">🖨️ Print / Save as PDF</button>';
+  html += '</div>';
+
+  // Submission instructions
+  html += '<div style="margin-top:14px;background:#EFF6FF;border:1.5px solid #BFDBFE;border-radius:8px;padding:12px 14px;font-size:12px;color:#1E40AF">';
+  html += '<strong>Submission reminder:</strong> Print or export each generated section, combine with physical W-9, COI, and license copies in the order above. Most government portals accept PDF uploads — use browser Print → Save as PDF on each section, then merge using a free PDF merger. For emailed submissions, attach in the numbered order shown above.';
+  html += '</div>';
+
+  return html;
+}
+
+function bdCopyFullBundle(bidId) {
+  var bids = bidsLoad();
+  var b = bids.find(function(x){return x.id===bidId;});
+  if (!b || !b.assembledDocs) { showToast('Generate sections first in Document Assembly tab'); return; }
+
+  var parts = [];
+  BUNDLE_ORDER.forEach(function(item) {
+    if (item.static) return;
+    var content = b.assembledDocs[item.id];
+    if (content) {
+      parts.push('═══════════════════════════════════════\n' + item.label.toUpperCase() + '\n═══════════════════════════════════════\n\n' + content);
+    }
+  });
+
+  if (!parts.length) { showToast('No sections generated yet'); return; }
+
+  var fullText = parts.join('\n\n\n');
+  navigator.clipboard.writeText(fullText).then(function(){
+    showToast('📋 Full bundle copied — ' + parts.length + ' sections ready to paste');
+  }).catch(function(){
+    var ta = document.createElement('textarea');
+    ta.value = fullText;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    showToast('📋 Copied (' + parts.length + ' sections)');
+  });
+}
+
+function bdPrintBundle(bidId) {
+  var bids = bidsLoad();
+  var b = bids.find(function(x){return x.id===bidId;});
+  if (!b || !b.assembledDocs) { showToast('Generate sections first'); return; }
+
+  var vault = bidsVaultLoad();
+  var parts = [];
+  BUNDLE_ORDER.forEach(function(item) {
+    if (item.static) return;
+    var content = b.assembledDocs[item.id];
+    if (content) parts.push({ label: item.label, content: content });
+  });
+
+  if (!parts.length) { showToast('No sections generated yet'); return; }
+
+  var win = window.open('','_blank','width=900,height=1200');
+  var html = '<!DOCTYPE html><html><head><title>'+escH(b.title||'Bid Package')+'</title><style>';
+  html += 'body{font-family:Arial,sans-serif;font-size:11pt;color:#000;margin:0;padding:0}';
+  html += '.cover-page{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;text-align:center;page-break-after:always;padding:40px}';
+  html += '.cover-logo{font-weight:900;font-size:28pt;color:#C8102E;letter-spacing:.04em;margin-bottom:8px}';
+  html += '.cover-sub{font-size:11pt;color:#666;margin-bottom:40px}';
+  html += '.cover-title{font-size:18pt;font-weight:700;margin-bottom:16px;border-top:3px solid #C8102E;border-bottom:3px solid #C8102E;padding:16px 0}';
+  html += '.cover-meta{font-size:10pt;color:#555;line-height:2}';
+  html += '.section{page-break-before:always;padding:40px 48px}';
+  html += '.section-hdr{font-weight:900;font-size:16pt;color:#C8102E;border-bottom:2px solid #C8102E;padding-bottom:8px;margin-bottom:20px}';
+  html += '.section-body{font-size:11pt;line-height:1.7;white-space:pre-wrap}';
+  html += '.footer{position:fixed;bottom:20px;right:40px;font-size:8pt;color:#aaa}';
+  html += '@media print{button{display:none}}';
+  html += '</style></head><body>';
+
+  // Cover page
+  html += '<div class="cover-page">';
+  html += '<div class="cover-logo">TERMAC</div>';
+  html += '<div class="cover-sub">Family of Companies · UniPro Fire Protection · ALLPro Fabrication</div>';
+  html += '<div class="cover-title">'+escH(b.title||'Fire Protection Services Proposal')+'</div>';
+  html += '<div class="cover-meta">';
+  if (b.agency)   html += 'Submitted To: <strong>'+escH(b.agency)+'</strong><br>';
+  if (b.refNo)    html += 'Reference #: '+escH(b.refNo)+'<br>';
+  if (b.dueDate)  html += 'Submission Deadline: '+escH(b.dueDate)+'<br>';
+  html += 'Submitted By: Ted Scholl, Senior Account & Operations Manager<br>';
+  html += '7330 Tulip Street, Philadelphia, PA 19136<br>';
+  html += '267-421-6336 · tscholl@termac.com<br>';
+  html += 'Prepared: '+new Date().toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'});
+  html += '</div></div>';
+
+  // Sections
+  parts.forEach(function(p) {
+    html += '<div class="section"><div class="section-hdr">'+escH(p.label)+'</div><div class="section-body">'+escH(p.content)+'</div></div>';
+  });
+
+  html += '<button onclick="window.print()" style="position:fixed;top:16px;right:16px;background:#C8102E;color:#fff;border:none;padding:10px 20px;font-size:12pt;cursor:pointer;border-radius:6px;z-index:9999">🖨️ Print / Save PDF</button>';
+  html += '</body></html>';
+  win.document.write(html);
+  win.document.close();
+}
+
+// ── DEADLINE TRACKER ───────────────────────────────────────────
+function getBidDeadlineAlerts() {
+  var bids = bidsLoad();
+  var now = Date.now();
+  var alerts = [];
+
+  bids.filter(function(b){ return b.dueDate && ['open','draft','review','submitted'].includes(b.status); }).forEach(function(b) {
+    var deadline = new Date(b.dueDate).getTime();
+    var daysLeft = Math.ceil((deadline - now) / 86400000);
+    if (daysLeft <= 14 && daysLeft >= 0) {
+      alerts.push({
+        bid: b,
+        daysLeft: daysLeft,
+        urgency: daysLeft <= 3 ? 'critical' : daysLeft <= 7 ? 'high' : 'medium',
+      });
+    }
+    if (daysLeft < 0 && b.status !== 'submitted') {
+      alerts.push({ bid:b, daysLeft:daysLeft, urgency:'overdue' });
+    }
+  });
+
+  return alerts.sort(function(a,b){ return a.daysLeft-b.daysLeft; });
+}
+
+// ── UPGRADED WIN/LOSS ANALYTICS ────────────────────────────────
 function bidsRenderWinLoss(){
+  const bids = bidsLoad().filter(b => ['won','lost'].includes(b.status));
+  const won  = bids.filter(b=>b.status==='won');
+  const lost = bids.filter(b=>b.status==='lost');
+  const wonVal = won.reduce((s,b)=>s+(b.estValue||0),0);
+  const lostVal = lost.reduce((s,b)=>s+(b.estValue||0),0);
+  const winRate = bids.length ? Math.round((won.length/bids.length)*100) : 0;
+
+  // Pull outcome log for reason breakdown
+  var outcomes = [];
+  try { outcomes = JSON.parse(localStorage.getItem('termac_bid_outcomes')||'[]'); } catch(e){}
+  var lossReasons = {};
+  var winReasons  = {};
+  outcomes.forEach(function(o) {
+    if (o.outcome==='lost') lossReasons[o.reason||'Unknown']=(lossReasons[o.reason||'Unknown']||0)+1;
+    if (o.outcome==='won')  winReasons[o.reason||'Unknown']=(winReasons[o.reason||'Unknown']||0)+1;
+  });
+
+  var lossTop = Object.entries(lossReasons).sort(function(a,b){return b[1]-a[1];}).slice(0,5);
+  var winTop  = Object.entries(winReasons).sort(function(a,b){return b[1]-a[1];}).slice(0,5);
+
+  const summary = document.getElementById('bidsWinLossSummary');
+  if (summary) {
+    var wrColor = winRate>=60?'#1E7B3C':winRate>=40?'#D97706':'#C8102E';
+    summary.innerHTML =
+      '<div class="rpt-card"><div class="rpt-card-hdr"><div class="rpt-card-title">Win Rate</div></div><div style="padding:16px;font-size:32px;font-weight:900;color:'+wrColor+'">'+winRate+'%</div><div style="padding:0 16px 12px;font-size:11px;color:var(--soft)">'+bids.length+' total decided</div></div>' +
+      '<div class="rpt-card"><div class="rpt-card-hdr"><div class="rpt-card-title">Won Value</div></div><div style="padding:16px;font-size:28px;font-weight:800;color:#1E7B3C">$'+wonVal.toLocaleString()+'</div><div style="padding:0 16px 12px;font-size:11px;color:var(--soft)">'+won.length+' contracts</div></div>' +
+      '<div class="rpt-card"><div class="rpt-card-hdr"><div class="rpt-card-title">Lost Value</div></div><div style="padding:16px;font-size:28px;font-weight:800;color:#C8102E">$'+lostVal.toLocaleString()+'</div><div style="padding:0 16px 12px;font-size:11px;color:var(--soft)">'+lost.length+' contracts</div></div>';
+  }
+
+  // Reason breakdown panels
+  const table = document.getElementById('bidsWinLossTable');
+  if (table) {
+    var reasonHtml = '';
+    if (lossTop.length) {
+      reasonHtml += '<tr style="background:#FFF5F5"><td colspan="5" style="padding:12px 14px">';
+      reasonHtml += '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#C8102E;margin-bottom:8px">Top Loss Reasons</div>';
+      reasonHtml += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
+      lossTop.forEach(function(r) {
+        reasonHtml += '<span style="background:#FEE2E2;color:#C8102E;border-radius:6px;padding:4px 10px;font-size:12px;font-weight:700">'+escH(r[0])+' ('+r[1]+')</span>';
+      });
+      reasonHtml += '</div></td></tr>';
+    }
+    if (winTop.length) {
+      reasonHtml += '<tr style="background:#F0FDF4"><td colspan="5" style="padding:12px 14px">';
+      reasonHtml += '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#1E7B3C;margin-bottom:8px">Top Win Reasons</div>';
+      reasonHtml += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
+      winTop.forEach(function(r) {
+        reasonHtml += '<span style="background:#D1FAE5;color:#1E7B3C;border-radius:6px;padding:4px 10px;font-size:12px;font-weight:700">'+escH(r[0])+' ('+r[1]+')</span>';
+      });
+      reasonHtml += '</div></td></tr>';
+    }
+
+    table.innerHTML = reasonHtml + bids.map(function(b) {
+      var reason = b.outcomeReason ? ' <span style="font-size:10px;color:var(--soft)">— '+escH(b.outcomeReason)+'</span>' : '';
+      return '<tr style="border-bottom:1px solid var(--line)">' +
+        '<td style="padding:10px 14px;font-size:13px"><strong>'+escH(b.title)+'</strong>'+reason+'</td>' +
+        '<td style="padding:10px 14px;font-size:12px">'+escH(b.agency||'—')+'</td>' +
+        '<td style="padding:10px 14px;text-align:right;font-weight:700">$'+(b.estValue||0).toLocaleString()+'</td>' +
+        '<td style="padding:10px 14px;text-align:center"><span style="font-weight:800;color:'+(b.status==='won'?'#1E7B3C':'#C8102E')+'">'+(b.status==='won'?'WON':'LOST')+'</span></td>' +
+        '<td style="padding:10px 14px;font-size:12px;color:var(--soft)">'+(b.outcomeDate||'—')+'</td>' +
+      '</tr>';
+    }).join('') || '<tr><td colspan="5" style="padding:20px;text-align:center;color:var(--soft)">No decided bids yet.</td></tr>';
+  }
+}
+
+function bidsRenderWinLoss_UNUSED(){
   const bids = bidsLoad().filter(b => ['won','lost'].includes(b.status));
   const won = bids.filter(b=>b.status==='won');
   const wonVal = won.reduce((s,b)=>s+(b.estValue||0),0);
@@ -15563,7 +15832,7 @@ var BD_SECTIONS = [
 ];
 
 function bdShowTab(tab, bidId) {
-  ['overview','assemble','checklist','crosssell','pricing'].forEach(function(t) {
+  ['overview','assemble','checklist','crosssell','pricing','bundle'].forEach(function(t) {
     var btn = document.getElementById('bdTab_'+t);
     var panel = document.getElementById('bdPanel_'+t);
     var isActive = t === tab;
@@ -15828,6 +16097,7 @@ function bidsOpenDetail(id){
       <button id="bdTab_checklist" onclick="bdShowTab('checklist','${b.id}')" style="padding:9px 16px;border:none;background:none;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;border-bottom:2px solid transparent;color:var(--soft)">✅ Checklist</button>
       <button id="bdTab_crosssell" onclick="bdShowTab('crosssell','${b.id}')" style="padding:9px 16px;border:none;background:none;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;border-bottom:2px solid transparent;color:var(--soft)">🔀 Cross-Sell</button>
       <button id="bdTab_pricing" onclick="bdShowTab('pricing','${b.id}')" style="padding:9px 16px;border:none;background:none;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;border-bottom:2px solid transparent;color:var(--soft)">💰 Pricing</button>
+      <button id="bdTab_bundle" onclick="bdShowTab('bundle','${b.id}')" style="padding:9px 16px;border:none;background:none;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;border-bottom:2px solid transparent;color:#1E7B3C;font-weight:900">📦 Submit Bundle</button>
     </div>
 
     <!-- Overview tab -->
@@ -15868,6 +16138,11 @@ function bidsOpenDetail(id){
     <!-- Pricing tab -->
     <div id="bdPanel_pricing" style="display:none">
       <div id="bdPricingBody_${b.id}">${bdPricingHTML(b)}</div>
+    </div>
+
+    <!-- Bundle tab -->
+    <div id="bdPanel_bundle" style="display:none">
+      <div id="bdBundleBody_${b.id}">${bdBundleHTML(b)}</div>
     </div>
 
     <div style="display:flex;gap:10px;margin-top:20px;flex-wrap:wrap">
@@ -24299,6 +24574,26 @@ function renderTedPerf() {
     html += '<strong>🗺️ AllPro Geographic Play:</strong> ';
     hotZips.forEach(function(e){html += 'ZIP '+e[0]+' — '+e[1].wins+' win'+(e[1].wins>1?'s':'')+', '+e[1].permits+' permit lead'+(e[1].permits>1?'s':'')+'. ';});
     html += 'Strike while credibility is local.';
+    html += '</div>';
+  }
+
+  // ── Section 8: Deadline Tracker ───────────────────────────
+  var deadlineAlerts = getBidDeadlineAlerts();
+  if (deadlineAlerts.length) {
+    html += sectionHdr('📅', 'Upcoming Bid Deadlines', '#C8102E');
+    html += '<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:4px">';
+    deadlineAlerts.forEach(function(alert) {
+      var b = alert.bid;
+      var urgColor = alert.urgency==='critical'?'#C8102E':alert.urgency==='overdue'?'#7F1D1D':alert.urgency==='high'?'#D97706':'#1B5FA8';
+      var urgBg    = alert.urgency==='critical'?'#FEE2E2':alert.urgency==='overdue'?'#FEE2E2':alert.urgency==='high'?'#FEF3C7':'#EFF6FF';
+      var urgLabel = alert.urgency==='overdue'?'OVERDUE':alert.urgency==='critical'?'CRITICAL — '+alert.daysLeft+'d':alert.urgency==='high'?alert.daysLeft+'d left':alert.daysLeft+'d left';
+      html += '<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:'+urgBg+';border-radius:8px;border-left:4px solid '+urgColor+'">';
+      html += '<div style="min-width:90px;font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:11px;letter-spacing:.06em;color:'+urgColor+'">'+urgLabel+'</div>';
+      html += '<div style="flex:1"><div style="font-weight:600;font-size:13px">'+escH(b.title)+'</div>';
+      html += '<div style="font-size:11px;color:#6B7280">'+escH(b.agency||'')+(b.dueDate?' · Due '+escH(b.dueDate):'')+(b.estValue?' · $'+b.estValue.toLocaleString():'')+'</div></div>';
+      html += '<div style="font-size:11px;font-weight:700;color:'+urgColor+';text-transform:uppercase">'+escH(b.status)+'</div>';
+      html += '</div>';
+    });
     html += '</div>';
   }
 
