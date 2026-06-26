@@ -14216,6 +14216,291 @@ async function bidsAIDraftWithCrossSell(bidId) {
 //  or submission checklist. Fill every [REQUIRED] field before submitting bids.
 // ══════════════════════════════════════════════════════════════
 
+// ══════════════════════════════════════════════════════════════
+//  BID INGESTION + BRIEF GENERATOR — Session 2
+//  Paste RFP text → AI extracts brief → maps scope → cross-sell
+//  signals → add to pipeline → generate full proposal
+// ══════════════════════════════════════════════════════════════
+
+var _rfpParsedBrief = null; // holds latest parsed brief for pipeline add
+
+function rfpClear() {
+  ['rfpRawText','rfpAgency','rfpRefNo','rfpEstValue'].forEach(function(id){
+    var el = document.getElementById(id); if(el) el.value = '';
+  });
+  var deadline = document.getElementById('rfpDeadline'); if(deadline) deadline.value='';
+  var out = document.getElementById('rfpBriefOutput'); if(out) out.style.display='none';
+  _rfpParsedBrief = null;
+}
+
+function bidsRenderIngest() {
+  // Nothing to init — form is static HTML
+}
+
+async function rfpGenerateBrief() {
+  var rawText = (document.getElementById('rfpRawText')?.value||'').trim();
+  if (!rawText) { showToast('Paste RFP text first'); return; }
+
+  var agency   = document.getElementById('rfpAgency')?.value || '';
+  var refNo    = document.getElementById('rfpRefNo')?.value || '';
+  var deadline = document.getElementById('rfpDeadline')?.value || '';
+  var source   = document.getElementById('rfpSource')?.value || '';
+  var estValue = document.getElementById('rfpEstValue')?.value || '';
+  var cType    = document.getElementById('rfpContractType')?.value || 'government';
+
+  var thinkEl = document.getElementById('rfpThinking');
+  var outEl   = document.getElementById('rfpBriefOutput');
+  if (thinkEl) thinkEl.style.display = 'flex';
+  if (outEl)   outEl.style.display   = 'none';
+
+  // Pull vault data for context
+  var vault = bidsVaultLoad();
+  var vaultSummary = 'Legal entities: Ter-Pro LLC (EIN 47-1063968, UniPro/ALLPro) and Capital Suppression Corp (EIN 82-3833757, Quality III). ' +
+    'PA License #21783. Insurance: GL $1M/$2M, Umbrella $2M, WC $1M, Auto $1M. ' +
+    'Territory: ' + vault.territory + '. ' +
+    'Services: fire extinguisher inspection (NFPA 10), hood suppression (NFPA 96), grease trap (GTO), hood filter exchange (Filter Man), stainless fab (ALLPro), dish machine/chemicals (Termac).';
+
+  var prompt = 'You are an expert bid analyst for Termac Family of Companies / UniPro Fire Protection.\n\n' +
+    'COMPANY PROFILE SUMMARY:\n' + vaultSummary + '\n\n' +
+    'RFP TEXT / OPPORTUNITY DESCRIPTION:\n' + rawText.substring(0, 4000) + '\n\n' +
+    'Additional context provided:\n' +
+    (agency   ? 'Agency: ' + agency + '\n' : '') +
+    (refNo    ? 'Reference #: ' + refNo + '\n' : '') +
+    (deadline ? 'Deadline: ' + deadline + '\n' : '') +
+    (estValue ? 'Est. Value: $' + estValue + '\n' : '') +
+    '\nReturn ONLY a valid JSON object in this exact format (no markdown, no explanation):\n' +
+    '{\n' +
+    '  "title": "short bid title",\n' +
+    '  "agency": "agency/client name",\n' +
+    '  "refNo": "solicitation reference number or empty string",\n' +
+    '  "deadline": "YYYY-MM-DD or empty string",\n' +
+    '  "contractType": "government|commercial|institutional|property_mgmt",\n' +
+    '  "estValue": 0,\n' +
+    '  "contractPeriod": "e.g. 1 year with 2 one-year options",\n' +
+    '  "locations": "description of sites/locations covered",\n' +
+    '  "scopeItems": ["line item 1", "line item 2"],\n' +
+    '  "primaryDivision": "UniPro|GTO|FilterMan|ALLPro|Termac|Quality III",\n' +
+    '  "crossSellSignals": [\n' +
+    '    {"division": "division name", "signal": "what triggered it", "estAnnualRevenue": 0, "action": "include in bid|contact separately|monitor"}\n' +
+    '  ],\n' +
+    '  "requiredForms": ["list of forms, certs, attachments they require"],\n' +
+    '  "evalCriteria": ["how they will score/evaluate proposals"],\n' +
+    '  "winProbability": "High|Medium|Low",\n' +
+    '  "winProbabilityReason": "one sentence",\n' +
+    '  "keyRisks": ["risk 1", "risk 2"],\n' +
+    '  "competitiveAdvantage": "one sentence on our strongest differentiator for this bid",\n' +
+    '  "recommendedEntity": "Ter-Pro LLC|Capital Suppression Corp|both",\n' +
+    '  "recommendedEntityReason": "why",\n' +
+    '  "immediateActions": ["action 1 before deadline", "action 2"]\n' +
+    '}';
+
+  try {
+    var res = await fetch('https://unipro-ai-proxy.tedscholl.workers.dev', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        model:'claude-sonnet-4-6', max_tokens:1200,
+        messages:[{role:'user', content:prompt}]
+      })
+    });
+    var data = await res.json();
+    var raw = (data.content||[]).map(function(x){return x.text||'';}).join('');
+
+    try {
+      var clean = raw.replace(/```json|```/g,'').trim();
+      _rfpParsedBrief = JSON.parse(clean);
+      // Merge in user-provided fields if AI didn't extract them
+      if (agency && !_rfpParsedBrief.agency)     _rfpParsedBrief.agency = agency;
+      if (refNo  && !_rfpParsedBrief.refNo)       _rfpParsedBrief.refNo = refNo;
+      if (deadline && !_rfpParsedBrief.deadline)   _rfpParsedBrief.deadline = deadline;
+      if (estValue && !_rfpParsedBrief.estValue)   _rfpParsedBrief.estValue = parseFloat(estValue)||0;
+      if (source)   _rfpParsedBrief.source = source;
+      _rfpParsedBrief.rawText = rawText.substring(0,3000);
+    } catch(e) {
+      _rfpParsedBrief = null;
+      showToast('AI returned an unexpected format — try rephrasing or adding more RFP detail');
+    }
+
+    if (_rfpParsedBrief) rfpRenderBrief(_rfpParsedBrief);
+
+  } catch(err) {
+    showToast('AI connection error — check internet and try again');
+  }
+
+  if (thinkEl) thinkEl.style.display = 'none';
+}
+
+function rfpRenderBrief(b) {
+  var outEl = document.getElementById('rfpBriefOutput');
+  var cardsEl = document.getElementById('rfpBriefCards');
+  var sectionsEl = document.getElementById('rfpBriefSections');
+  if (!outEl || !cardsEl || !sectionsEl) return;
+
+  // Win probability color
+  var wpColor = b.winProbability==='High'?'#1E7B3C':b.winProbability==='Medium'?'#D97706':'#C8102E';
+
+  // KPI cards
+  var cards = '';
+  function kpi(label, value, color, sub) {
+    return '<div style="background:#fff;border-radius:9px;padding:13px 16px;box-shadow:0 1px 3px rgba(26,29,33,.08);border-top:3px solid '+color+'">' +
+      '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:18px;color:'+color+'">'+escH(String(value||'—'))+'</div>' +
+      '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--soft);margin-top:2px">'+escH(label)+'</div>' +
+      (sub?'<div style="font-size:11px;color:#6B7280;margin-top:3px">'+escH(sub)+'</div>':'') +
+      '</div>';
+  }
+  cards += kpi('Win Probability', b.winProbability, wpColor, b.winProbabilityReason);
+  cards += kpi('Est. Contract Value', b.estValue?'$'+Number(b.estValue).toLocaleString():'TBD', '#1B5FA8', b.contractPeriod);
+  cards += kpi('Primary Division', b.primaryDivision, '#D8690B', b.recommendedEntity);
+  cards += kpi('Cross-Sell Signals', (b.crossSellSignals||[]).length, (b.crossSellSignals||[]).length>0?'#5B21B6':'#6B7280', (b.crossSellSignals||[]).length+' division'+(b.crossSellSignals?.length!==1?'s':'')+' detected');
+  cardsEl.innerHTML = cards;
+
+  var sections = '';
+
+  function sec(icon, title, color, content) {
+    return '<div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);overflow:hidden">' +
+      '<div style="background:'+color+';padding:10px 16px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#fff">'+icon+' '+title+'</div>' +
+      '<div style="padding:14px 16px">'+content+'</div>' +
+    '</div>';
+  }
+
+  function list(arr) {
+    if (!arr||!arr.length) return '<div style="color:var(--soft);font-size:12px">None identified</div>';
+    return '<ul style="margin:0;padding-left:16px;font-size:13px;line-height:1.8">'+(arr.map(function(i){return '<li>'+escH(String(i))+'</li>';}).join(''))+'</ul>';
+  }
+
+  // Scope items
+  sections += sec('📋','Scope of Work','#1B5FA8', list(b.scopeItems));
+
+  // Cross-sell signals
+  var csHtml = '';
+  if (b.crossSellSignals && b.crossSellSignals.length) {
+    csHtml = b.crossSellSignals.map(function(cs) {
+      var acColor = cs.action==='include in bid'?'#1E7B3C':cs.action==='contact separately'?'#D8690B':'#6B7280';
+      return '<div style="display:flex;align-items:flex-start;gap:12px;padding:8px 0;border-bottom:1px solid #F3F4F6">' +
+        '<div style="min-width:100px;font-weight:700;font-size:12px;color:#5B21B6">'+escH(cs.division)+'</div>' +
+        '<div style="flex:1;font-size:12px">'+escH(cs.signal)+'</div>' +
+        '<div style="text-align:right;min-width:120px">' +
+          (cs.estAnnualRevenue?'<div style="font-weight:700;color:#1E7B3C;font-size:12px">+$'+Number(cs.estAnnualRevenue).toLocaleString()+'/yr</div>':'') +
+          '<div style="font-size:10px;font-weight:700;color:'+acColor+';text-transform:uppercase">'+escH(cs.action)+'</div>' +
+        '</div></div>';
+    }).join('');
+  } else {
+    csHtml = '<div style="color:var(--soft);font-size:12px">No cross-sell signals detected in this scope.</div>';
+  }
+  sections += sec('🔀','Cross-Sell Opportunities Detected','#5B21B6', csHtml);
+
+  // Required forms
+  sections += sec('📎','Required Submission Forms & Documents','#D8690B', list(b.requiredForms));
+
+  // Eval criteria
+  sections += sec('🏆','Evaluation Criteria','#0D7490', list(b.evalCriteria));
+
+  // Competitive advantage + entity
+  var advHtml = '';
+  if (b.competitiveAdvantage) advHtml += '<div style="font-size:13px;margin-bottom:10px;padding:10px;background:#F0FDF4;border-radius:7px;border-left:3px solid #1E7B3C"><strong>Our Advantage:</strong> '+escH(b.competitiveAdvantage)+'</div>';
+  if (b.recommendedEntity) advHtml += '<div style="font-size:13px;margin-bottom:6px"><strong>Submit as:</strong> '+escH(b.recommendedEntity)+' — '+escH(b.recommendedEntityReason||'')+'</div>';
+  if (b.keyRisks && b.keyRisks.length) advHtml += '<div style="margin-top:8px"><div style="font-size:11px;font-weight:700;color:#C8102E;text-transform:uppercase;margin-bottom:4px">Key Risks</div>'+list(b.keyRisks)+'</div>';
+  sections += sec('🎯','Win Strategy & Risks','#1A1D21', advHtml);
+
+  // Immediate actions
+  sections += sec('⚡','Immediate Actions Before Deadline','#C8102E', list(b.immediateActions));
+
+  sectionsEl.innerHTML = sections;
+  outEl.style.display = 'block';
+  outEl.scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+function rfpAddToPipeline() {
+  if (!_rfpParsedBrief) return;
+  var b = _rfpParsedBrief;
+
+  var bids = bidsLoad();
+  var now = Date.now();
+  var newBid = {
+    id: 'BID' + String(now).slice(-8),
+    title: b.title || (b.agency ? b.agency + ' — Fire Protection Services' : 'Untitled Bid'),
+    agency: b.agency || '',
+    refNo: b.refNo || '',
+    source: b.source || 'Manual Entry',
+    scopeRaw: b.rawText || '',
+    scopeItems: b.scopeItems || [],
+    status: 'open',
+    estValue: b.estValue || 0,
+    dueDate: b.deadline || '',
+    contractType: b.contractType || 'government',
+    contractPeriod: b.contractPeriod || '',
+    primaryDivision: b.primaryDivision || '',
+    crossSellSignals: b.crossSellSignals || [],
+    requiredForms: b.requiredForms || [],
+    evalCriteria: b.evalCriteria || [],
+    winProbability: b.winProbability || 'Medium',
+    recommendedEntity: b.recommendedEntity || '',
+    immediateActions: b.immediateActions || [],
+    briefGeneratedAt: now,
+    scrapedAt: now,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  bids.unshift(newBid);
+  bidsLocalSave(bids);
+
+  showToast('✅ Added to pipeline — ' + newBid.title);
+  bidsShowTab('pipeline', document.getElementById('bidsTab_pipeline'));
+}
+
+async function rfpFullProposal() {
+  if (!_rfpParsedBrief) return;
+
+  var brief = _rfpParsedBrief;
+  // Build a fake bid object for bidsAIFullProposal
+  var fakeBid = {
+    title: brief.title || 'RFP',
+    agency: brief.agency || '',
+    refNo: brief.refNo || '',
+    source: brief.source || 'Manual',
+    scopeRaw: (brief.scopeItems||[]).join('; ') + ' ' + (brief.rawText||''),
+    estValue: brief.estValue || 0,
+    dueDate: brief.deadline || '',
+    id: 'rfp_temp'
+  };
+
+  showToast('🤖 Generating full proposal package — check back in 30 seconds');
+
+  var promptText = await bidsAIFullProposal(fakeBid);
+  try {
+    var res = await fetch('https://unipro-ai-proxy.tedscholl.workers.dev', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        model:'claude-sonnet-4-6', max_tokens:2000,
+        messages:[{role:'user', content:promptText}]
+      })
+    });
+    var data = await res.json();
+    var text = (data.content||[]).map(function(x){return x.text||'';}).join('');
+
+    // Show in a readable overlay
+    var modal = document.createElement('div');
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:20px;overflow-y:auto';
+    modal.innerHTML = '<div style="background:#fff;border-radius:12px;width:min(800px,96vw);padding:24px;box-shadow:0 8px 40px rgba(0,0,0,.3);position:relative">' +
+      '<button onclick="this.closest(\'div\').parentElement.remove()" style="position:absolute;top:14px;right:14px;background:none;border:none;font-size:20px;cursor:pointer;color:#6B7280">✕</button>' +
+      '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:20px;margin-bottom:16px">📝 Full Proposal Package — ' + escH(fakeBid.title) + '</div>' +
+      '<div style="font-size:13px;line-height:1.8;white-space:pre-wrap;color:#1A1D21">' + escH(text) + '</div>' +
+      '<div style="display:flex;gap:10px;margin-top:16px">' +
+      '<button onclick="navigator.clipboard.writeText(document.querySelector(\'#rfpProposalText\').textContent).then(function(){alert(\'Copied!\');})" style="background:#1B5FA8;color:#fff;border:none;border-radius:7px;padding:9px 18px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;cursor:pointer">📋 Copy All</button>' +
+      '<button onclick="this.closest(\'div\').parentElement.remove()" style="background:#F3F4F6;color:#374151;border:none;border-radius:7px;padding:9px 18px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;cursor:pointer">Close</button>' +
+      '</div></div>';
+    // Add a hidden span with id for copy
+    var span = document.createElement('span');
+    span.id = 'rfpProposalText';
+    span.style.display = 'none';
+    span.textContent = text;
+    modal.querySelector('div').appendChild(span);
+    document.body.appendChild(modal);
+  } catch(e) {
+    showToast('AI connection error — try again');
+  }
+}
+
 var VAULT_DEFAULT = {
   // ── LEGAL ENTITIES ──────────────────────────────────────────
   entities: [
@@ -14669,6 +14954,7 @@ function bidsShowTab(tabId, btn){
   if (tabId === 'winloss')  bidsRenderWinLoss();
   if (tabId === 'sources')  bidsRenderSources();
   if (tabId === 'vault')    bidsRenderVault();
+  if (tabId === 'ingest')   bidsRenderIngest();
 }
 
 const BID_STATUS_COLS = [
@@ -25804,6 +26090,7 @@ window.uvCollectData = uvCollectData;
 
   <div style="background:#fff;border-bottom:1px solid var(--line);padding:0 22px;display:flex;gap:0;flex-shrink:0">
     <button class="acct-tab active" id="bidsTab_pipeline" onclick="bidsShowTab('pipeline',this)">📊 Pipeline</button>
+    <button class="acct-tab" id="bidsTab_ingest" onclick="bidsShowTab('ingest',this)" style="color:#D8690B;font-weight:800">📥 Ingest RFP</button>
     <button class="acct-tab" id="bidsTab_winloss" onclick="bidsShowTab('winloss',this)">🏁 Won / Lost</button>
     <button class="acct-tab" id="bidsTab_sources" onclick="bidsShowTab('sources',this)">🌐 Sources</button>
     <button class="acct-tab" id="bidsTab_vault" onclick="bidsShowTab('vault',this)">🏛️ Company Vault</button>
@@ -25824,6 +26111,91 @@ window.uvCollectData = uvCollectData;
 
       <div id="bidsBoard" style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;align-items:start"></div>
     </div>
+
+
+    <!-- ══ RFP INGEST + BRIEF GENERATOR ══ -->
+    <div id="bidsPanel_ingest" style="flex:1;overflow-y:auto;padding:22px;display:none">
+
+      <!-- Header -->
+      <div style="margin-bottom:20px">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:20px;color:var(--ink)">📥 Ingest RFP — Bid Brief Generator</div>
+        <div style="font-size:13px;color:var(--soft);margin-top:2px">Paste RFP text or describe the opportunity. AI extracts the brief, maps scope to your services, and flags cross-sell signals in under 30 seconds.</div>
+      </div>
+
+      <!-- Input area -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+        <div>
+          <label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">RFP Text / Description *</label>
+          <textarea id="rfpRawText" rows="12" placeholder="Paste the full RFP text, solicitation notice, or describe the opportunity here...&#10;&#10;Example: 'Philadelphia Housing Authority is seeking annual fire extinguisher inspection services for 45 residential properties in North Philadelphia. Contract period 2 years with 1-year option. Due July 15...'" style="width:100%;box-sizing:border-box;padding:10px 12px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;font-family:Barlow,sans-serif;resize:vertical"></textarea>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <div>
+            <label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">Agency / Client Name</label>
+            <input id="rfpAgency" placeholder="e.g. Philadelphia Housing Authority" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px">
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">Reference / Solicitation Number</label>
+            <input id="rfpRefNo" placeholder="e.g. RFP-2026-FP-001" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px">
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">Submission Deadline</label>
+            <input id="rfpDeadline" type="date" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px">
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">Source / Bid Board</label>
+            <select id="rfpSource" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px">
+              <option value="">— Select source —</option>
+              <option>SAM.gov</option>
+              <option>PA eMarketplace</option>
+              <option>NJSTART</option>
+              <option>PHLContracts</option>
+              <option>DC OCP</option>
+              <option>Maryland eMMA</option>
+              <option>Delaware Bid Board</option>
+              <option>BidNet Direct</option>
+              <option>DemandStar</option>
+              <option>Dodge Construction</option>
+              <option>ConstructConnect</option>
+              <option>Direct Outreach</option>
+              <option>Referral</option>
+              <option>Other</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">Est. Contract Value ($)</label>
+            <input id="rfpEstValue" type="number" placeholder="e.g. 45000" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px">
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">Contract Type</label>
+            <select id="rfpContractType" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:13px">
+              <option value="government">Government / Public Agency</option>
+              <option value="commercial">Commercial / Private</option>
+              <option value="institutional">Institutional (hospital/school/senior)</option>
+              <option value="property_mgmt">Property Management</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Action buttons -->
+      <div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap">
+        <button onclick="rfpGenerateBrief()" style="background:#C8102E;color:#fff;border:none;border-radius:8px;padding:11px 24px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">⚡ Generate Bid Brief</button>
+        <button onclick="rfpClear()" style="background:#fff;color:var(--ink);border:1.5px solid var(--line);border-radius:8px;padding:11px 18px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;cursor:pointer">Clear</button>
+        <div id="rfpThinking" style="display:none;align-items:center;gap:8px;padding:11px 16px;background:#FFF8E6;border:1.5px solid #F2B705;border-radius:8px;font-size:13px;color:#5A4A00">🤖 Analyzing RFP with AI…</div>
+      </div>
+
+      <!-- Brief output -->
+      <div id="rfpBriefOutput" style="display:none">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:16px;color:var(--ink);margin-bottom:14px;display:flex;align-items:center;gap:10px">
+          📋 Bid Brief
+          <button id="rfpAddToPipelineBtn" onclick="rfpAddToPipeline()" style="background:#1E7B3C;color:#fff;border:none;border-radius:7px;padding:7px 16px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">+ Add to Pipeline</button>
+          <button onclick="rfpFullProposal()" style="background:#1B5FA8;color:#fff;border:none;border-radius:7px;padding:7px 16px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">📝 Generate Full Proposal</button>
+        </div>
+        <div id="rfpBriefCards" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px"></div>
+        <div id="rfpBriefSections" style="display:flex;flex-direction:column;gap:12px"></div>
+      </div>
+
+    </div><!-- /bidsPanel_ingest -->
 
     <div id="bidsPanel_winloss" style="flex:1;overflow-y:auto;padding:22px;display:none">
       <div id="bidsWinLossSummary" style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:18px"></div>
