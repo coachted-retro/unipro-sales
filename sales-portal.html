@@ -939,6 +939,7 @@ function spRenderCRM(tab) {
       <option>new</option><option>hot</option><option>warm</option><option>cold</option><option>active</option>
     </select>
     <button class="sp-btn sp-btn-red" onclick="spOpenAdd('${tab}')">+ Add New</button>
+    <button class="sp-btn" onclick="spOpenAllProForm()" style="background:#1A1D21;color:#fff;border-color:#1A1D21">🏗️ AllPro / Hood</button>
     ${tab === 'opportunities' ? '<button class="sp-btn sp-btn-blue" onclick="spOpenAdd(\'opportunity\')">+ New Opportunity</button>' : ''}
   </div>
   <div class="sp-record-grid" id="spRecGrid">`;
@@ -2138,6 +2139,14 @@ function spOpenDetail(r, tab) {
 const ROLES_LIST = ['','Owner','General Manager','Manager','Chef / Head Chef','Kitchen Manager','Facilities Manager','Purchasing Manager','Landlord','Property Manager','Office Manager','Other'];
 const SVCS_LIST = ['unipro','quality3','allpro','filterman','gto','termac'];
 
+function spOpenAllProForm(r) {
+  _spFormType = 'allpro';
+  _spEditId = r ? r.id : null;
+  document.getElementById('spModalTitle').textContent = r ? 'Edit AllPro / Hood Record' : '🏗️ New AllPro / Hood Contact';
+  document.getElementById('spModalBody').innerHTML = spBuildAllProForm(r || null);
+  document.getElementById('spModalBg').classList.add('open');
+}
+
 function spOpenAdd(tab) {
   _spEditId = null;
   const tabName = tab === 'opportunity' ? 'Opportunity' : tab.charAt(0).toUpperCase() + tab.slice(1,-1);
@@ -2157,83 +2166,305 @@ function spEditRecord(id, tab) {
   document.getElementById('spModalBg').classList.add('open');
 }
 
+// ── BUSINESS TYPE → PRICING MODE MAP ──────────────────────────────────────
+var BIZ_TYPE_PRICING = {
+  'independent':    { mode:'per_visit', term:'no_contract',  label:'Independent / Mom & Pop' },
+  'small_chain':    { mode:'per_visit', term:'no_contract',  label:'Small Local Chain (2-5 loc)' },
+  'regional_chain': { mode:'annual',    term:'1yr',          label:'Regional Chain (6-20 loc)' },
+  'national_chain': { mode:'annual',    term:'3yr',          label:'National Chain / Franchise' },
+  'corporate':      { mode:'annual',    term:'1yr',          label:'Corporate / Industrial' },
+  'institutional':  { mode:'annual',    term:'1yr',          label:'Institutional' },
+  'medical':        { mode:'annual',    term:'1yr',          label:'Medical / Healthcare' },
+  'worship':        { mode:'per_visit', term:'no_contract',  label:'Place of Worship' },
+  'hotel':          { mode:'annual',    term:'1yr',          label:'Hotel / Hospitality' },
+  'property_mgmt':  { mode:'annual',    term:'1yr',          label:'Property Management' },
+  'other':          { mode:'per_visit', term:'no_contract',  label:'Other' },
+};
+
+// Track current form type
+var _spFormType = 'rep'; // 'rep' or 'allpro'
+
 function spBuildForm(tab, r) {
+  // Default to rep form; AllPro form opened separately
+  _spFormType = 'rep';
+  return spBuildRepForm(r);
+}
+
+function spBuildAllProForm(r) {
+  _spFormType = 'allpro';
+  const v = k => r && r[k] ? escH(r[k]) : '';
+  const bizTypes = ['Commercial Restaurant','Fast Casual / QSR','Hotel / Hospitality','Institutional','Chain Location','Place of Worship','Private Club','Healthcare / Medical','Industrial','Other'];
+  const projectTypes = ['New Construction','Renovation / Remodel','Tenant Improvement','Equipment Replacement','Addition to Existing'];
+  const projectStages = ['Pre-permit','Permit pulled','Under construction','Near completion','Already open — needs upgrade'];
+
+  var svcs = [
+    {val:'hood_fab',    label:'Hood Design & Fabrication'},
+    {val:'suppression', label:'Hood Suppression System'},
+    {val:'stainless',   label:'Custom Stainless Fabrication'},
+    {val:'extinguisher',label:'Fire Extinguisher Package'},
+    {val:'supp_inspect',label:'Suppression Inspection (post-install)'},
+    {val:'filters',     label:'Filter Man Exchange (post-open)'},
+    {val:'gto',         label:'GTO Grease Trap'},
+    {val:'dish_machine',label:'Termac Dish Machine'},
+  ];
+  var leadSources = ['Permit harvester','Referral','Cold outreach','Bid / RFP','Driving by','Other'];
+
+  return '<div class="sp-form-grid">' +
+
+    // Header banner
+    '<div class="sp-form-full" style="background:linear-gradient(135deg,#1A1D21,#2D3748);border-radius:9px;padding:12px 16px;margin-bottom:4px">' +
+      '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:14px;color:#fff;letter-spacing:.04em">🏗️ ALLPro / Hood & New Build Contact</div>' +
+      '<div style="font-size:11px;color:#8A909A;margin-top:2px">For new construction, renovation, hood install, and stainless fabrication projects</div>' +
+    '</div>' +
+
+    // Parent + Business
+    '<div class="sp-form-full"><label>Parent Company / Ownership Group</label>' +
+      '<input id="spf_parent" value="' + v('parentCompany') + '" placeholder="e.g. Aramark, AIMCO, Independent"></div>' +
+    '<div class="sp-form-full">' +
+      '<label>Business / Location Name *</label>' +
+      '<input id="spf_business" value="' + (v('business')||v('contact')||'') + '" oninput="spDupeCheck(this.value,\'business\')" autocomplete="off" placeholder="e.g. Harbor View Hotel Kitchen">' +
+      '<div id="spf_dupe_biz" style="display:none;margin-top:4px"></div>' +
+    '</div>' +
+
+    // Project type + Facility type
+    '<div><label>Project Type *</label><select id="spf_project_type">' +
+      projectTypes.map(function(t){ return '<option>' + t + '</option>'; }).join('') +
+    '</select></div>' +
+    '<div><label>Facility Type *</label><select id="spf_facility_type">' +
+      bizTypes.map(function(t){ return '<option>' + t + '</option>'; }).join('') +
+    '</select></div>' +
+
+    // Addresses
+    '<div class="sp-form-full"><label>Site Address *</label>' +
+      '<input id="spf_address" value="' + v('address') + '" placeholder="Where the work happens"></div>' +
+    '<div class="sp-form-full"><label>Billing Address <span style="font-weight:400;text-transform:none">if different</span></label>' +
+      '<input id="spf_billing_addr" value="' + v('billingAddress') + '" placeholder="Leave blank if same as site"></div>' +
+
+    // Contacts — multiple roles
+    '<div class="sp-form-full" style="background:#F8F9FA;border-radius:8px;padding:12px;margin:4px 0">' +
+      '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#5A616B;margin-bottom:10px">Project Contacts</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">' +
+        '<div><label style="font-size:10px">General Contractor</label><input id="spf_gc" placeholder="Name + phone" value="' + v('contactGC') + '"></div>' +
+        '<div><label style="font-size:10px">Project Manager</label><input id="spf_pm" placeholder="Name + phone" value="' + v('contactPM') + '"></div>' +
+        '<div><label style="font-size:10px">End User / Owner</label><input id="spf_owner_contact" placeholder="Name + phone" value="' + v('contactOwner') + '"></div>' +
+      '</div>' +
+    '</div>' +
+
+    // Timeline + Stage
+    '<div><label>Planned Opening / Completion</label>' +
+      '<input type="date" id="spf_open_date" value="' + v('plannedOpenDate') + '"></div>' +
+    '<div><label>Project Stage</label><select id="spf_project_stage">' +
+      projectStages.map(function(s){ return '<option>' + s + '</option>'; }).join('') +
+    '</select></div>' +
+
+    // Services
+    '<div class="sp-form-full">' +
+      '<label>Services of Interest</label>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:4px">' +
+        svcs.map(function(s) {
+          var chk = r && r.allproServices && r.allproServices.includes(s.val) ? 'checked' : '';
+          return '<label style="display:flex;align-items:center;gap:6px;padding:7px 10px;background:#fff;border:1.5px solid #D7DBE0;border-radius:7px;cursor:pointer;font-size:12px">' +
+            '<input type="checkbox" name="sp_allpro_svcs" value="' + s.val + '" ' + chk + ' style="accent-color:#1A1D21"> ' + s.label + '</label>';
+        }).join('') +
+      '</div>' +
+    '</div>' +
+
+    // Lead source + value
+    '<div><label>How did they hear about us</label><select id="spf_lead_source">' +
+      leadSources.map(function(s){ return '<option>' + s + '</option>'; }).join('') +
+    '</select></div>' +
+    '<div><label>Est. Project Value</label>' +
+      '<input type="number" id="spf_est_value" placeholder="e.g. 25000" value="' + v('estValue') + '"></div>' +
+
+    // Notes
+    '<div class="sp-form-full"><label>Scope / Notes <span style="font-weight:400;text-transform:none;font-size:10px">(voice-to-text: type or paste description)</span></label>' +
+      '<textarea id="spf_notes" rows="3" placeholder="Describe the project scope, kitchen configuration, special requirements...">' + v('notes') + '</textarea></div>' +
+
+    '</div>';
+}
+
+function spBuildRepForm(r) {
   const v = k => r && r[k] ? escH(r[k]) : '';
   const svcBoxes = SVCS_LIST.map(s => {
-    const c = spSvcColor(s);
+    const col = spSvcColor(s);
     const chk = r && (r.services||[]).includes(s) ? 'checked' : '';
-    return `<label class="sp-svc-chip" style="background:${c.bg};color:${c.color};border-color:${c.color}40"><input type="checkbox" name="sp_svcs" value="${s}" ${chk}> ${spSvcLabel(s)}</label>`;
+    return '<label class="sp-svc-chip" style="background:' + col.bg + ';color:' + col.color + ';border-color:' + col.color + '40"><input type="checkbox" name="sp_svcs" value="' + s + '" ' + chk + '> ' + spSvcLabel(s) + '</label>';
   }).join('');
-  const roleOpts = ROLES_LIST.map(role => `<option ${v('role')===role?'selected':''}>${escH(role)||'— Select role —'}</option>`).join('');
-  const statusOpts = ['new','hot','warm','cold'].map(s => `<option ${v('status')===s?'selected':''}>${s}</option>`).join('');
 
-  return `<div class="sp-form-grid">
-    <div class="sp-form-full">
-      <label>Business Name</label>
-      <input id="spf_business" value="${v('business')||v('contact')||''}" oninput="spDupeCheck(this.value,'business')" autocomplete="off">
-      <div id="spf_dupe_biz" style="display:none;margin-top:4px"></div>
-    </div>
-    <div><label>Contact Name</label><input id="spf_name" value="${v('name')}"></div>
-    <div>
-      <label>Role / Title</label>
-      <select id="spf_role">${roleOpts}</select>
-    </div>
-    <div>
-      <label>Phone</label>
-      <input id="spf_phone" value="${v('phone')}" oninput="spDupeCheck(this.value,'phone')" autocomplete="off">
-      <div id="spf_dupe_phone" style="display:none;margin-top:4px"></div>
-    </div>
-    <div><label>Email</label><input id="spf_email" value="${v('email')}"></div>
-    <div class="sp-form-full"><label>Address / ZIP</label><input id="spf_address" value="${v('address')}"></div>
-    <div>
-      <label>Division</label>
-      <select id="spf_company">
-        ${['UniPro','Quality III','AllPro','Filter Man','GTO','Termac'].map(c=>`<option ${v('company')===c?'selected':''}>${c}</option>`).join('')}
-      </select>
-    </div>
-    <div><label>Status</label><select id="spf_status">${statusOpts}</select></div>
-    <div class="sp-form-full">
-      <label>Services Interested In</label>
-      <div class="sp-svc-grid">${svcBoxes}</div>
-    </div>
-    <div class="sp-form-full"><label>Notes</label><textarea id="spf_notes" rows="3">${v('notes')}</textarea></div>
-    <div class="sp-form-full">
-      <label style="display:flex;align-items:center;gap:6px">🔶 Site Notes <span style="font-size:10px;font-weight:400;color:var(--soft);text-transform:none;letter-spacing:0">Door codes, delivery instructions, special access</span></label>
-      <textarea id="spf_siteNotes" rows="2" placeholder="e.g. Door code #4521 · Call ahead · No deliveries before 10am">${v('siteNotes')}</textarea>
-    </div>
-  </div>`;
+  var bizTypeOpts = Object.entries(BIZ_TYPE_PRICING).map(function(entry) {
+    var key=entry[0], cfg=entry[1];
+    return '<option value="' + key + '" ' + (v('bizType')===key?'selected':'') + '>' + cfg.label + '</option>';
+  }).join('');
+
+  const roleOpts = ROLES_LIST.map(role => '<option ' + (v('role')===role?'selected':'') + '>' + escH(role||'— Select role —') + '</option>').join('');
+  const statusOpts = ['new','hot','warm','cold'].map(s => '<option ' + (v('status')===s?'selected':'') + '>' + s + '</option>').join('');
+
+  return '<div class="sp-form-grid">' +
+
+    // Parent + Business
+    '<div class="sp-form-full"><label>Parent Company / Franchise Group</label>' +
+      '<input id="spf_parent" value="' + v('parentCompany') + '" placeholder="e.g. Darden, AIMCO (leave blank if independent)"></div>' +
+    '<div class="sp-form-full">' +
+      '<label>Business Name *</label>' +
+      '<input id="spf_business" value="' + (v('business')||v('contact')||'') + '" oninput="spDupeCheck(this.value,\'business\')" autocomplete="off">' +
+      '<div id="spf_dupe_biz" style="display:none;margin-top:4px"></div>' +
+    '</div>' +
+
+    // Business type — this drives survey pricing
+    '<div class="sp-form-full">' +
+      '<label style="display:flex;align-items:center;gap:6px">Business Type ' +
+        '<span style="font-size:10px;font-weight:400;text-transform:none;letter-spacing:0;color:#1E7B3C">→ sets per-visit or annual pricing in the survey</span></label>' +
+      '<select id="spf_biz_type" onchange="spBizTypeChanged(this.value)" style="border-color:#1E7B3C">' +
+        bizTypeOpts +
+      '</select>' +
+      '<div id="spf_pricing_preview" style="margin-top:6px;font-size:11px;color:#1E7B3C;font-weight:600;display:none"></div>' +
+    '</div>' +
+
+    // Addresses
+    '<div class="sp-form-full"><label>Business Address</label><input id="spf_address" value="' + v('address') + '" placeholder="Street, City, State ZIP"></div>' +
+    '<div class="sp-form-full"><label>Billing Address <span style="font-weight:400;text-transform:none">if different</span></label>' +
+      '<input id="spf_billing_addr" value="' + v('billingAddress') + '" placeholder="Leave blank if same"></div>' +
+
+    // Ownership
+    '<div><label>Owner Name</label><input id="spf_owner_name" value="' + v('ownerName') + '" placeholder="Business owner name"></div>' +
+    '<div><label>Entity Type</label><select id="spf_entity_type">' +
+      ['Sole Proprietor','LLC','S-Corp','C-Corp','Franchise','Partnership','Other'].map(function(t){ return '<option ' + (v('entityType')===t?'selected':'') + '>' + t + '</option>'; }).join('') +
+    '</select></div>' +
+
+    // Site contact
+    '<div class="sp-form-full" style="background:#F8F9FA;border-radius:8px;padding:12px;margin:4px 0">' +
+      '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#5A616B;margin-bottom:8px">Contacts</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' +
+        '<div><label style="font-size:10px">Site Contact Name</label><input id="spf_name" value="' + v('name') + '" placeholder="Day-to-day contact"></div>' +
+        '<div><label style="font-size:10px">Role / Title</label><select id="spf_role">' + roleOpts + '</select></div>' +
+        '<div><label style="font-size:10px">Phone</label><input id="spf_phone" value="' + v('phone') + '" oninput="spDupeCheck(this.value,\'phone\')" autocomplete="off">' +
+          '<div id="spf_dupe_phone" style="display:none;margin-top:4px"></div></div>' +
+        '<div><label style="font-size:10px">Email</label><input id="spf_email" value="' + v('email') + '"></div>' +
+        '<div><label style="font-size:10px">Decision Maker <span style="font-weight:400">(if different)</span></label><input id="spf_decision_maker" value="' + v('decisionMaker') + '" placeholder="Name + phone"></div>' +
+        '<div><label style="font-size:10px">Landlord / Property Mgr</label><input id="spf_landlord" value="' + v('landlord') + '" placeholder="Name + company + phone"></div>' +
+      '</div>' +
+    '</div>' +
+
+    // Services (small checkboxes)
+    '<div class="sp-form-full"><label>Services Interested In</label>' +
+      '<div class="sp-svc-grid">' + svcBoxes + '</div>' +
+    '</div>' +
+
+    // Competitor intel
+    '<div><label>Current Service Provider</label><input id="spf_competitor" value="' + v('competitor') + '" placeholder="Who are they with now?"></div>' +
+    '<div><label>Contract Expiration</label><input id="spf_contract_exp" value="' + v('contractExp') + '" placeholder="e.g. Jan 2027 or unknown"></div>' +
+
+    // Status + preferred window
+    '<div><label>Status</label><select id="spf_status">' + statusOpts + '</select></div>' +
+    '<div><label>Preferred Service Window</label>' +
+      '<select id="spf_service_window">' +
+        ['-- No preference --','Mon-Fri mornings','Mon-Fri afternoons','Weekends OK','Specific day — see notes'].map(function(w){ return '<option>' + w + '</option>'; }).join('') +
+      '</select></div>' +
+
+    // Notes
+    '<div class="sp-form-full"><label>Notes</label><textarea id="spf_notes" rows="3">' + v('notes') + '</textarea></div>' +
+    '<div class="sp-form-full">' +
+      '<label style="display:flex;align-items:center;gap:6px">🔶 Site Notes <span style="font-size:10px;font-weight:400;color:var(--soft);text-transform:none;letter-spacing:0">Door codes, delivery instructions, special access</span></label>' +
+      '<textarea id="spf_siteNotes" rows="2" placeholder="e.g. Door code #4521 · Call ahead · No deliveries before 10am">' + v('siteNotes') + '</textarea>' +
+    '</div>' +
+
+  '</div>';
+}
+
+// Business type changed — show pricing preview
+function spBizTypeChanged(typeKey) {
+  var cfg = BIZ_TYPE_PRICING[typeKey];
+  var preview = document.getElementById('spf_pricing_preview');
+  if (!cfg || !preview) return;
+  var modeLabel = cfg.mode === 'per_visit' ? 'Per-Visit Pricing (No Contract)' : 'Annual Contract — ' + cfg.term.replace('yr',' Year');
+  preview.textContent = '→ Survey will show: ' + modeLabel;
+  preview.style.display = 'block';
 }
 
 function spSaveRecord() {
   const business = document.getElementById('spf_business')?.value.trim();
-  const name     = document.getElementById('spf_name')?.value.trim();
+  const name     = document.getElementById('spf_name')?.value.trim() || business;
   if (!business && !name) { spToast('Please enter a business name or contact name'); return; }
 
-  const svcs = Array.from(document.querySelectorAll('[name="sp_svcs"]:checked')).map(c => c.value);
+  const now = Date.now();
   const address = document.getElementById('spf_address')?.value.trim() || '';
   const zip = (address.match(/\b\d{5}\b/) || [''])[0];
 
-  const now = Date.now();
-  const rec = {
-    id: _spEditId || ('SP' + String(now).slice(-6)),
-    name: name || business,
-    business,
-    phone:     document.getElementById('spf_phone')?.value.trim() || '',
-    email:     document.getElementById('spf_email')?.value.trim() || '',
-    address, zip,
-    role:      document.getElementById('spf_role')?.value || '',
-    company:   document.getElementById('spf_company')?.value || 'UniPro',
-    status:    document.getElementById('spf_status')?.value || 'new',
-    services:  svcs,
-    notes:     document.getElementById('spf_notes')?.value.trim() || '',
-    siteNotes: document.getElementById('spf_siteNotes')?.value.trim() || '',
-    lifecycleStage: _spTab === 'contacts' ? 'contact' : _spTab === 'opportunities' ? 'opportunity' : _spTab === 'accounts' ? 'active' : 'lead',
-    assignedRep: _spRep.name,
-    ownedBy:     _spRep.name,
-    createdBy:   _spEditId ? undefined : _spRep.name,
-    updated: now,
-  };
-  if (!_spEditId) rec.created = now;
+  var rec;
+
+  if (_spFormType === 'allpro') {
+    // ── FORM A: Ted's AllPro / Hood / New Build Form ──────────────────────
+    const allproSvcs = Array.from(document.querySelectorAll('[name="sp_allpro_svcs"]:checked')).map(el => el.value);
+    rec = {
+      id: _spEditId || ('AP' + String(now).slice(-6)),
+      name: business,
+      business,
+      address, zip,
+      parentCompany:   document.getElementById('spf_parent')?.value.trim() || '',
+      billingAddress:  document.getElementById('spf_billing_addr')?.value.trim() || '',
+      projectType:     document.getElementById('spf_project_type')?.value || '',
+      facilityType:    document.getElementById('spf_facility_type')?.value || '',
+      contactGC:       document.getElementById('spf_gc')?.value.trim() || '',
+      contactPM:       document.getElementById('spf_pm')?.value.trim() || '',
+      contactOwner:    document.getElementById('spf_owner_contact')?.value.trim() || '',
+      plannedOpenDate: document.getElementById('spf_open_date')?.value || '',
+      projectStage:    document.getElementById('spf_project_stage')?.value || '',
+      allproServices:  allproSvcs,
+      leadSource:      document.getElementById('spf_lead_source')?.value || '',
+      estValue:        parseFloat(document.getElementById('spf_est_value')?.value || 0) || 0,
+      notes:           document.getElementById('spf_notes')?.value.trim() || '',
+      services:        ['allpro'],
+      company:         'AllPro',
+      formType:        'allpro',
+      status:          'new',
+      lifecycleStage:  'lead',
+      assignedRep:     _spRep.name,
+      ownedBy:         _spRep.name,
+      createdBy:       _spEditId ? undefined : _spRep.name,
+      updated:         now,
+    };
+    if (!_spEditId) rec.created = now;
+
+  } else {
+    // ── FORM B: Standard Rep Contact Form ────────────────────────────────
+    const svcs = Array.from(document.querySelectorAll('[name="sp_svcs"]:checked')).map(el => el.value);
+    const bizTypeKey = document.getElementById('spf_biz_type')?.value || 'independent';
+    const bizTypeCfg = BIZ_TYPE_PRICING[bizTypeKey] || BIZ_TYPE_PRICING.independent;
+
+    rec = {
+      id: _spEditId || ('SP' + String(now).slice(-6)),
+      name: name || business,
+      business,
+      phone:          document.getElementById('spf_phone')?.value.trim() || '',
+      email:          document.getElementById('spf_email')?.value.trim() || '',
+      address, zip,
+      parentCompany:  document.getElementById('spf_parent')?.value.trim() || '',
+      billingAddress: document.getElementById('spf_billing_addr')?.value.trim() || '',
+      ownerName:      document.getElementById('spf_owner_name')?.value.trim() || '',
+      entityType:     document.getElementById('spf_entity_type')?.value || '',
+      role:           document.getElementById('spf_role')?.value || '',
+      decisionMaker:  document.getElementById('spf_decision_maker')?.value.trim() || '',
+      landlord:       document.getElementById('spf_landlord')?.value.trim() || '',
+      competitor:     document.getElementById('spf_competitor')?.value.trim() || '',
+      contractExp:    document.getElementById('spf_contract_exp')?.value.trim() || '',
+      serviceWindow:  document.getElementById('spf_service_window')?.value || '',
+      bizType:        bizTypeKey,
+      pricingMode:    bizTypeCfg.mode,      // persists to survey
+      pricingTerm:    bizTypeCfg.term,      // persists to survey
+      company:        'UniPro',
+      status:         document.getElementById('spf_status')?.value || 'new',
+      services:       svcs,
+      notes:          document.getElementById('spf_notes')?.value.trim() || '',
+      siteNotes:      document.getElementById('spf_siteNotes')?.value.trim() || '',
+      formType:       'rep',
+      lifecycleStage: _spTab === 'contacts' ? 'contact' : _spTab === 'opportunities' ? 'opportunity' : _spTab === 'accounts' ? 'active' : 'lead',
+      assignedRep:    _spRep.name,
+      ownedBy:        _spRep.name,
+      createdBy:      _spEditId ? undefined : _spRep.name,
+      updated:        now,
+    };
+    if (!_spEditId) rec.created = now;
+  }
 
   // Save to unified leads pool (same as termac-os)
   const data = crmLoad('leads');
