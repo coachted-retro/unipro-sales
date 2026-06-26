@@ -14482,12 +14482,12 @@ async function rfpFullProposal() {
     var modal = document.createElement('div');
     modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:20px;overflow-y:auto';
     modal.innerHTML = '<div style="background:#fff;border-radius:12px;width:min(800px,96vw);padding:24px;box-shadow:0 8px 40px rgba(0,0,0,.3);position:relative">' +
-      '<button onclick="this.closest(\'div\').parentElement.remove()" style="position:absolute;top:14px;right:14px;background:none;border:none;font-size:20px;cursor:pointer;color:#6B7280">✕</button>' +
+      '<button onclick="document.body.lastElementChild.remove()" style="position:absolute;top:14px;right:14px;background:none;border:none;font-size:20px;cursor:pointer;color:#6B7280">✕</button>' +
       '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:20px;margin-bottom:16px">📝 Full Proposal Package — ' + escH(fakeBid.title) + '</div>' +
       '<div style="font-size:13px;line-height:1.8;white-space:pre-wrap;color:#1A1D21">' + escH(text) + '</div>' +
       '<div style="display:flex;gap:10px;margin-top:16px">' +
       '<button onclick="navigator.clipboard.writeText(document.querySelector(\'#rfpProposalText\').textContent).then(function(){alert(\'Copied!\');})" style="background:#1B5FA8;color:#fff;border:none;border-radius:7px;padding:9px 18px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;cursor:pointer">📋 Copy All</button>' +
-      '<button onclick="this.closest(\'div\').parentElement.remove()" style="background:#F3F4F6;color:#374151;border:none;border-radius:7px;padding:9px 18px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;cursor:pointer">Close</button>' +
+      '<button onclick="document.body.lastElementChild.remove()" style="background:#F3F4F6;color:#374151;border:none;border-radius:7px;padding:9px 18px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;cursor:pointer">Close</button>' +
       '</div></div>';
     // Add a hidden span with id for copy
     var span = document.createElement('span');
@@ -15300,6 +15300,257 @@ function bidsRenderWinLoss(){
 //  AI reads vault + brief brief context for each section
 // ══════════════════════════════════════════════════════════════
 
+// ══════════════════════════════════════════════════════════════
+//  PRICING INTELLIGENCE — Session 4
+//  Catalog-driven pricing, margin rules, volume tiering,
+//  win/loss logging with reason codes, adaptive recommendations
+// ══════════════════════════════════════════════════════════════
+
+var PRICING_CATALOG = {
+  // UniPro / Fire Extinguisher Services
+  annual_inspection: { label:'Annual Extinguisher Inspection', unit:'per unit', base:25, floor:18, target_margin:0.55, notes:'NFPA 10 §7.3 annual visual/maintenance inspection' },
+  six_year_maintenance: { label:'6-Year Maintenance', unit:'per unit', base:65, floor:50, target_margin:0.50, notes:'NFPA 10 §7.5 internal examination' },
+  hydrostatic_test: { label:'Hydrostatic Test', unit:'per unit', base:90, floor:70, target_margin:0.45, notes:'NFPA 10 §8 pressure test, cert issued' },
+  recharge_abc: { label:'Recharge — ABC Dry Chemical', unit:'per unit', base:35, floor:28, target_margin:0.50, notes:'Material + labor' },
+  recharge_co2: { label:'Recharge — CO2', unit:'per unit', base:55, floor:42, target_margin:0.48, notes:'Material + labor' },
+  recharge_classk: { label:'Recharge — Class K', unit:'per unit', base:45, floor:35, target_margin:0.48, notes:'Kitchen suppression recharge' },
+  new_unit_abc: { label:'New ABC Extinguisher (5 lb)', unit:'per unit', base:75, floor:60, target_margin:0.40, notes:'Supply + install + tag' },
+  exit_light_inspection: { label:'Exit Light / Emergency Light Inspection', unit:'per unit', base:18, floor:14, target_margin:0.55, notes:'Annual NFPA 101 inspection' },
+
+  // Hood Suppression — UniPro / Capital Suppression
+  hood_suppression_semi: { label:'Hood Suppression Semi-Annual Inspection', unit:'per system', base:175, floor:140, target_margin:0.50, notes:'NFPA 96 §11.4 semi-annual' },
+  hood_suppression_annual: { label:'Hood Suppression Annual Inspection', unit:'per system', base:295, floor:240, target_margin:0.50, notes:'Full annual + semi combined' },
+  suppression_recharge: { label:'Suppression System Recharge', unit:'per system', base:285, floor:225, target_margin:0.42, notes:'Agent + nozzles + cert' },
+  fusible_link_replacement: { label:'Fusible Link Replacement', unit:'per link', base:12, floor:9, target_margin:0.55, notes:'Per NFPA 96 §11.4.5' },
+
+  // Filter Man
+  filter_exchange_monthly: { label:'Hood Filter Exchange — Monthly', unit:'per visit', base:54, floor:42, target_margin:0.48, notes:'Exchange + haul away' },
+  filter_exchange_bimonthly: { label:'Hood Filter Exchange — Bi-Monthly', unit:'per visit', base:62, floor:48, target_margin:0.48, notes:'Exchange + haul away' },
+  filter_exchange_quarterly: { label:'Hood Filter Exchange — Quarterly', unit:'per visit', base:75, floor:58, target_margin:0.48, notes:'Exchange + haul away' },
+
+  // GTO — Grease Trap
+  grease_trap_pump_sm: { label:'Grease Trap Pump-Out — Small (<500 gal)', unit:'per service', base:285, floor:225, target_margin:0.38, notes:'Includes manifest + cert' },
+  grease_trap_pump_md: { label:'Grease Trap Pump-Out — Medium (500-1500 gal)', unit:'per service', base:425, floor:340, target_margin:0.38, notes:'Includes manifest + cert' },
+  grease_trap_pump_lg: { label:'Grease Trap Pump-Out — Large (>1500 gal)', unit:'per service', base:625, floor:490, target_margin:0.35, notes:'Includes manifest + cert' },
+
+  // ALLPro — Hood Fabrication
+  hood_design: { label:'Hood Design & Engineering', unit:'per project', base:1200, floor:900, target_margin:0.55, notes:'CAD design + submittal drawings' },
+  hood_fab_linear: { label:'Hood Fabrication', unit:'per linear foot', base:185, floor:150, target_margin:0.42, notes:'Type I or Type II, 18ga stainless' },
+  hood_install: { label:'Hood Installation', unit:'per project', base:2400, floor:1800, target_margin:0.45, notes:'Labor + rigging, excludes electrical' },
+  fab_custom: { label:'Custom Stainless Fabrication', unit:'per project', base:0, floor:0, target_margin:0.40, notes:'Quote-based — use AI pricing tool' },
+};
+
+var VOLUME_TIERS = [
+  { minUnits:1,   maxUnits:24,  discount:0,    label:'Standard' },
+  { minUnits:25,  maxUnits:74,  discount:0.05, label:'Volume — 5% off' },
+  { minUnits:75,  maxUnits:149, discount:0.08, label:'High Volume — 8% off' },
+  { minUnits:150, maxUnits:999, discount:0.12, label:'Enterprise — 12% off' },
+];
+
+var MULTI_YEAR_TIERS = [
+  { years:1, discount:0,    label:'1-Year' },
+  { years:2, discount:0.05, label:'2-Year — 5% off' },
+  { years:3, discount:0.10, label:'3-Year — 10% off' },
+];
+
+var JURISDICTION_ADJUSTMENTS = {
+  'philadelphia': { multiplier:1.15, note:'Philadelphia Living Wage + prevailing wage on government contracts' },
+  'dc':          { multiplier:1.20, note:'DC wage requirements + union considerations' },
+  'nj_state':    { multiplier:1.10, note:'NJ prevailing wage on public contracts >$15K' },
+  'md_state':    { multiplier:1.08, note:'MD prevailing wage — check per county' },
+  'de_state':    { multiplier:1.05, note:'DE prevailing wage applies on public works' },
+  'pa_county':   { multiplier:1.00, note:'Standard PA pricing' },
+};
+
+function getPricingTier(unitCount) {
+  return VOLUME_TIERS.find(function(t){ return unitCount >= t.minUnits && unitCount <= t.maxUnits; }) || VOLUME_TIERS[0];
+}
+
+function calcLinePrice(serviceKey, qty, years, jurisdiction) {
+  var item = PRICING_CATALOG[serviceKey];
+  if (!item) return null;
+  var volTier = getPricingTier(qty);
+  var yearTier = MULTI_YEAR_TIERS.find(function(t){return t.years===years;})||MULTI_YEAR_TIERS[0];
+  var jAdj = jurisdiction ? (JURISDICTION_ADJUSTMENTS[jurisdiction]||{multiplier:1}).multiplier : 1;
+  var unitPrice = item.base * jAdj * (1 - volTier.discount) * (1 - yearTier.discount);
+  var totalPerYear = unitPrice * qty;
+  var totalContract = totalPerYear * years;
+  var margin = 1 - (item.floor / unitPrice);
+  return {
+    label: item.label,
+    unitPrice: Math.round(unitPrice * 100)/100,
+    qty: qty,
+    years: years,
+    volDiscount: volTier.discount,
+    yearDiscount: yearTier.discount,
+    jMultiplier: jAdj,
+    totalPerYear: Math.round(totalPerYear),
+    totalContract: Math.round(totalContract),
+    estMargin: Math.round(margin * 100),
+    targetMargin: Math.round(item.target_margin * 100),
+    belowTarget: margin < item.target_margin,
+    floor: item.floor,
+    notes: item.notes,
+  };
+}
+
+// Adaptive pricing recommendation based on win/loss history
+function getPricingRecommendation(serviceKey, jurisdiction) {
+  try {
+    var outcomes = JSON.parse(localStorage.getItem('termac_bid_outcomes')||'[]');
+    var item = PRICING_CATALOG[serviceKey];
+    if (!item || !outcomes.length) return null;
+
+    var relevant = outcomes.filter(function(o){
+      return o.primaryDivision && (serviceKey.includes('hood')?o.primaryDivision==='UniPro':true);
+    });
+    var wins = relevant.filter(function(o){return o.outcome==='won';});
+    var losses = relevant.filter(function(o){return o.outcome==='lost';});
+    var lostToPrice = losses.filter(function(o){return (o.reason||'').toLowerCase().includes('price');});
+
+    var winRate = relevant.length ? Math.round(wins.length/relevant.length*100) : null;
+    var rec = '';
+    if (winRate !== null) {
+      if (winRate >= 60) rec = 'Win rate strong at '+winRate+'% — hold pricing or test +5%.';
+      else if (winRate >= 40) rec = 'Win rate '+winRate+'% — pricing is competitive. Watch for scope issues.';
+      else if (lostToPrice.length > 1) rec = '⚠️ '+lostToPrice.length+' recent losses on price — consider floor pricing on competitive bids.';
+      else rec = 'Win rate '+winRate+'% — review recent losses for non-price factors before cutting margin.';
+    }
+    return { winRate:winRate, wins:wins.length, losses:losses.length, lostToPrice:lostToPrice.length, recommendation:rec };
+  } catch(e) { return null; }
+}
+
+// ── PRICING TAB in bid detail ────────────────────────────────
+function bdPricingHTML(b) {
+  var outcomes = [];
+  try { outcomes = JSON.parse(localStorage.getItem('termac_bid_outcomes')||'[]'); } catch(e){}
+
+  // Detect applicable services from scope
+  var scope = ((b.scopeItems||[]).join(' ') + ' ' + (b.scopeRaw||'')).toLowerCase();
+  var suggested = [];
+  if (scope.includes('extinguish') || scope.includes('nfpa 10') || scope.includes('fire ext')) {
+    suggested.push('annual_inspection','six_year_maintenance','hydrostatic_test');
+  }
+  if (scope.includes('suppression') || scope.includes('nfpa 96') || scope.includes('hood suppression') || scope.includes('ansul')) {
+    suggested.push('hood_suppression_semi','fusible_link_replacement','suppression_recharge');
+  }
+  if (scope.includes('filter') || scope.includes('hood filter') || scope.includes('grease filter')) {
+    suggested.push('filter_exchange_monthly');
+  }
+  if (scope.includes('grease trap') || scope.includes('fog') || scope.includes('grease interceptor')) {
+    suggested.push('grease_trap_pump_sm','grease_trap_pump_md');
+  }
+  if (scope.includes('fabricat') || scope.includes('stainless') || scope.includes('hood design') || scope.includes('allpro')) {
+    suggested.push('hood_design','hood_fab_linear','hood_install');
+  }
+  if (!suggested.length) {
+    suggested = ['annual_inspection','six_year_maintenance','hood_suppression_semi'];
+  }
+
+  // Detect jurisdiction
+  var agency = (b.agency||'').toLowerCase();
+  var jKey = agency.includes('philadelphia')||agency.includes('phl')?'philadelphia':
+             agency.includes(' dc')||agency.includes('district')?'dc':
+             agency.includes(' nj')||agency.includes('new jersey')?'nj_state':
+             agency.includes(' md')||agency.includes('maryland')?'md_state':
+             agency.includes(' de')||agency.includes('delaware')?'de_state':'pa_county';
+
+  var jAdj = JURISDICTION_ADJUSTMENTS[jKey];
+
+  var html = '<div style="margin-bottom:14px;background:#F8F9FA;border-radius:9px;padding:12px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">';
+  html += '<div><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;color:var(--soft);text-transform:uppercase;letter-spacing:.06em">Jurisdiction</div>';
+  html += '<div style="font-size:13px;font-weight:600">'+escH(jKey.replace('_',' ').toUpperCase())+(jAdj?' · '+jAdj.multiplier+'x multiplier':'')+'</div>';
+  if (jAdj) html += '<div style="font-size:11px;color:var(--soft)">'+escH(jAdj.note)+'</div>';
+  html += '</div></div>';
+
+  // Win/Loss intelligence summary
+  var wlData = outcomes.filter(function(o){return o.primaryDivision===(b.primaryDivision||'UniPro');});
+  if (wlData.length) {
+    var wins = wlData.filter(function(o){return o.outcome==='won';}).length;
+    var wr = Math.round(wins/wlData.length*100);
+    var wrColor = wr>=60?'#1E7B3C':wr>=40?'#D97706':'#C8102E';
+    var topLossReason = {};
+    wlData.filter(function(o){return o.outcome==='lost';}).forEach(function(o){
+      topLossReason[o.reason||'Unknown'] = (topLossReason[o.reason||'Unknown']||0)+1;
+    });
+    var topReason = Object.entries(topLossReason).sort(function(a,b){return b[1]-a[1];})[0];
+
+    html += '<div style="background:#fff;border-radius:9px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:14px;margin-bottom:14px">';
+    html += '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--soft);margin-bottom:10px">📊 Pricing Intelligence — '+escH(b.primaryDivision||'UniPro')+' Division</div>';
+    html += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:10px">';
+    html += '<div style="text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:22px;color:'+wrColor+'">'+wr+'%</div><div style="font-size:10px;color:var(--soft)">Win Rate</div></div>';
+    html += '<div style="text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:22px;color:#1E7B3C">'+wins+'</div><div style="font-size:10px;color:var(--soft)">Won</div></div>';
+    html += '<div style="text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:22px;color:#C8102E">'+(wlData.length-wins)+'</div><div style="font-size:10px;color:var(--soft)">Lost</div></div>';
+    html += '<div style="text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:22px;color:#6B7280">'+wlData.length+'</div><div style="font-size:10px;color:var(--soft)">Total</div></div>';
+    html += '</div>';
+    if (topReason) {
+      html += '<div style="font-size:12px;color:#D97706;background:#FEF3C7;padding:8px 10px;border-radius:6px">⚠️ Top loss reason: <strong>'+escH(topReason[0])+'</strong> ('+topReason[1]+' bid'+(topReason[1]>1?'s':'')+')</div>';
+    }
+    html += '</div>';
+  }
+
+  // Pricing calculator
+  html += '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--soft);margin-bottom:8px">💰 Pricing Calculator</div>';
+  html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px">';
+  html += '<div><label style="font-size:10px;font-weight:700;color:var(--soft);display:block;margin-bottom:3px">CONTRACT YEARS</label><select id="px_years" onchange="bdRefreshPricing(\''+b.id+'\')" style="width:100%;padding:7px;border:1.5px solid var(--line);border-radius:6px;font-size:12px"><option value="1">1 Year</option><option value="2">2 Years</option><option value="3" selected>3 Years</option></select></div>';
+  html += '<div><label style="font-size:10px;font-weight:700;color:var(--soft);display:block;margin-bottom:3px">UNIT COUNT (approx)</label><input id="px_units" type="number" value="50" min="1" onchange="bdRefreshPricing(\''+b.id+'\')" style="width:100%;box-sizing:border-box;padding:7px;border:1.5px solid var(--line);border-radius:6px;font-size:12px"></div>';
+  html += '<div><label style="font-size:10px;font-weight:700;color:var(--soft);display:block;margin-bottom:3px">JURISDICTION</label><select id="px_jurisdiction" onchange="bdRefreshPricing(\''+b.id+'\')" style="width:100%;padding:7px;border:1.5px solid var(--line);border-radius:6px;font-size:12px">';
+  Object.keys(JURISDICTION_ADJUSTMENTS).forEach(function(k){
+    html += '<option value="'+k+'" '+(k===jKey?'selected':'')+'>'+k.replace('_',' ').toUpperCase()+'</option>';
+  });
+  html += '</select></div></div>';
+
+  // Service rows
+  html += '<div id="px_lines_'+b.id+'">';
+  suggested.forEach(function(sk) {
+    var item = PRICING_CATALOG[sk];
+    if (!item) return;
+    var line = calcLinePrice(sk, 50, 3, jKey);
+    if (!line) return;
+    var marginColor = line.belowTarget?'#C8102E':'#1E7B3C';
+    html += '<div style="display:grid;grid-template-columns:2fr 80px 80px 80px 80px 60px;gap:6px;align-items:center;padding:7px 10px;background:#fff;border-radius:7px;margin-bottom:4px;border:1px solid #E5E7EB;font-size:12px" data-sk="'+sk+'">';
+    html += '<div style="font-weight:600">'+escH(item.label)+'</div>';
+    html += '<div style="text-align:right;color:#1B5FA8;font-weight:700">$'+line.unitPrice.toFixed(2)+'</div>';
+    html += '<div style="text-align:right">×'+line.qty+'</div>';
+    html += '<div style="text-align:right;font-weight:700">$'+line.totalPerYear.toLocaleString()+'</div>';
+    html += '<div style="text-align:right;color:#5B21B6;font-weight:700">$'+line.totalContract.toLocaleString()+'</div>';
+    html += '<div style="text-align:right;color:'+marginColor+';font-weight:700">'+line.estMargin+'%</div>';
+    html += '</div>';
+  });
+  html += '</div>';
+
+  // Table header
+  html += '<div style="display:grid;grid-template-columns:2fr 80px 80px 80px 80px 60px;gap:6px;padding:4px 10px;font-size:10px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em">';
+  html += '<div>Service</div><div style="text-align:right">Unit $</div><div style="text-align:right">Qty</div><div style="text-align:right">Per Year</div><div style="text-align:right">Contract</div><div style="text-align:right">Margin</div>';
+  html += '</div>';
+
+  html += '<div style="font-size:11px;color:var(--soft);margin-top:10px;padding:8px;background:#F8F9FA;border-radius:6px">Prices auto-adjust for jurisdiction, volume tier, and contract length. Margin shown against floor price. <span style="color:#C8102E;font-weight:700">Red = below target margin</span> — review before submitting.</div>';
+
+  return html;
+}
+
+function bdRefreshPricing(bidId) {
+  var years = parseInt(document.getElementById('px_years')?.value||'3');
+  var units = parseInt(document.getElementById('px_units')?.value||'50');
+  var jKey  = document.getElementById('px_jurisdiction')?.value||'pa_county';
+  var linesEl = document.getElementById('px_lines_'+bidId);
+  if (!linesEl) return;
+
+  var rows = linesEl.querySelectorAll('[data-sk]');
+  rows.forEach(function(row) {
+    var sk = row.dataset.sk;
+    var line = calcLinePrice(sk, units, years, jKey);
+    if (!line) return;
+    var cells = row.querySelectorAll('div');
+    var marginColor = line.belowTarget?'#C8102E':'#1E7B3C';
+    if (cells[1]) { cells[1].textContent = '$'+line.unitPrice.toFixed(2); }
+    if (cells[2]) { cells[2].textContent = '×'+line.qty; }
+    if (cells[3]) { cells[3].textContent = '$'+line.totalPerYear.toLocaleString(); }
+    if (cells[4]) { cells[4].textContent = '$'+line.totalContract.toLocaleString(); }
+    if (cells[5]) { cells[5].style.color = marginColor; cells[5].textContent = line.estMargin+'%'; }
+  });
+}
+
 var BD_SECTIONS = [
   { id:'cover',       icon:'📬', label:'Cover Letter',            color:'#1B5FA8' },
   { id:'exec',        icon:'📊', label:'Executive Summary',       color:'#1E7B3C' },
@@ -15312,7 +15563,7 @@ var BD_SECTIONS = [
 ];
 
 function bdShowTab(tab, bidId) {
-  ['overview','assemble','checklist','crosssell'].forEach(function(t) {
+  ['overview','assemble','checklist','crosssell','pricing'].forEach(function(t) {
     var btn = document.getElementById('bdTab_'+t);
     var panel = document.getElementById('bdPanel_'+t);
     var isActive = t === tab;
@@ -15576,6 +15827,7 @@ function bidsOpenDetail(id){
       <button id="bdTab_assemble" onclick="bdShowTab('assemble','${b.id}')" style="padding:9px 16px;border:none;background:none;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;border-bottom:2px solid transparent;color:var(--soft)">📝 Document Assembly</button>
       <button id="bdTab_checklist" onclick="bdShowTab('checklist','${b.id}')" style="padding:9px 16px;border:none;background:none;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;border-bottom:2px solid transparent;color:var(--soft)">✅ Checklist</button>
       <button id="bdTab_crosssell" onclick="bdShowTab('crosssell','${b.id}')" style="padding:9px 16px;border:none;background:none;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;border-bottom:2px solid transparent;color:var(--soft)">🔀 Cross-Sell</button>
+      <button id="bdTab_pricing" onclick="bdShowTab('pricing','${b.id}')" style="padding:9px 16px;border:none;background:none;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;border-bottom:2px solid transparent;color:var(--soft)">💰 Pricing</button>
     </div>
 
     <!-- Overview tab -->
@@ -15611,6 +15863,11 @@ function bidsOpenDetail(id){
     <!-- Cross-sell tab -->
     <div id="bdPanel_crosssell" style="display:none">
       <div id="bdCrossSellBody_${b.id}">${bdCrossSellHTML(b)}</div>
+    </div>
+
+    <!-- Pricing tab -->
+    <div id="bdPanel_pricing" style="display:none">
+      <div id="bdPricingBody_${b.id}">${bdPricingHTML(b)}</div>
     </div>
 
     <div style="display:flex;gap:10px;margin-top:20px;flex-wrap:wrap">
@@ -15714,6 +15971,12 @@ ${b.scopeRaw}`;
   }
 }
 
+function bidsOutcomeCancel(){
+  var m=document.getElementById('_outcomeModal');
+  if(m)m.remove();
+  else if(document.body.lastElementChild&&document.body.lastElementChild.style.zIndex==='9999')document.body.lastElementChild.remove();
+}
+
 function bidsMarkSubmitted(id){
   const bids = bidsLoad();
   const b = bids.find(x => x.id === id);
@@ -15729,11 +15992,66 @@ function bidsMarkOutcome(id, outcome){
   const bids = bidsLoad();
   const b = bids.find(x => x.id === id);
   if (!b) return;
-  b.status = outcome;
-  b.outcomeDate = new Date().toISOString().slice(0,10);
-  bidsSave(bids);
-  document.getElementById('ovBidDetail').classList.remove('open');
-  bidsRender();
+
+  // Capture reason code for win/loss intelligence
+  var reasons = outcome === 'won'
+    ? ['Price competitive','Single-vendor advantage','Strong references','AHJ relationship','Fast turnaround','Incumbent advantage','Other']
+    : ['Price too high','Incumbent retained','No response / ghosted','Missing cert/license','Bid non-compliant','Scope mismatch','Lost to local competitor','Other'];
+  var reason = '';
+  var modal = document.createElement('div');
+  modal.id = '_outcomeModal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+  modal.innerHTML = '<div style="background:#fff;border-radius:12px;width:min(440px,96vw);padding:22px;box-shadow:0 8px 40px rgba(0,0,0,.3)">' +
+    '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:16px;margin-bottom:4px">'+(outcome==='won'?'🏆 Marking as Won':'❌ Marking as Lost')+'</div>' +
+    '<div style="font-size:13px;color:var(--soft);margin-bottom:14px">'+escH(b.title)+'</div>' +
+    '<div style="font-size:12px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Primary reason:</div>' +
+    '<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px">' +
+      reasons.map(function(r){
+        return '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;padding:6px 8px;border-radius:6px;border:1.5px solid #E5E7EB">' +
+          '<input type="radio" name="outcomeReason" value="'+escH(r)+'" style="width:14px;height:14px"> '+escH(r)+'</label>';
+      }).join('') +
+    '</div>' +
+    '<div style="margin-bottom:14px"><label style="font-size:12px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Notes (optional)</label>' +
+    '<textarea id="outcomeNotes" rows="2" style="width:100%;box-sizing:border-box;padding:8px;border:1.5px solid #E5E7EB;border-radius:7px;font-size:12px;font-family:Barlow,sans-serif" placeholder="Competitor name, price feedback, rep feedback..."></textarea></div>' +
+    '<div style="display:flex;gap:8px">' +
+      '<button id="outcomeConfirmBtn" style="flex:1;background:'+(outcome==='won'?'#1E7B3C':'#C8102E')+';color:#fff;border:none;border-radius:7px;padding:10px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;cursor:pointer">'+(outcome==='won'?'✅ Confirm Won':'❌ Confirm Lost')+'</button>' +
+      '<button onclick="bidsOutcomeCancel()" style="padding:10px 16px;background:#F3F4F6;border:none;border-radius:7px;font-size:12px;cursor:pointer">Cancel</button>' +
+    '</div>' +
+  '</div>';
+  document.body.appendChild(modal);
+
+  modal.querySelector('#outcomeConfirmBtn').onclick = function() {
+    var sel = modal.querySelector('input[name="outcomeReason"]:checked');
+    reason = sel ? sel.value : 'Not specified';
+    var notes = modal.querySelector('#outcomeNotes').value.trim();
+    modal.remove();
+
+    b.status = outcome;
+    b.outcomeDate = new Date().toISOString().slice(0,10);
+    b.outcomeReason = reason;
+    b.outcomeNotes = notes;
+
+    // Log to win/loss intelligence store
+    try {
+      var wlLog = JSON.parse(localStorage.getItem('termac_bid_outcomes')||'[]');
+      wlLog.unshift({
+        bidId: b.id, title: b.title, agency: b.agency||'',
+        source: b.source||'', contractType: b.contractType||'government',
+        primaryDivision: b.primaryDivision||'UniPro',
+        estValue: b.estValue||0, outcome: outcome,
+        reason: reason, notes: notes,
+        submittedDate: b.submittedDate||'', outcomeDate: b.outcomeDate,
+        crossSellCount: (b.crossSellSignals||[]).length,
+        loggedAt: Date.now()
+      });
+      localStorage.setItem('termac_bid_outcomes', JSON.stringify(wlLog));
+    } catch(e){}
+
+    bidsSave(bids);
+    if (document.getElementById('ovBidDetail')) document.getElementById('ovBidDetail').classList.remove('open');
+    bidsRender();
+    showToast(outcome==='won'?'🏆 Marked Won — great work!':'📊 Loss logged — intelligence updated');
+  };
 }
 
 function bidsOpenManualEntry(){
