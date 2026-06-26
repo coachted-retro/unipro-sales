@@ -4066,6 +4066,7 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
           <button onclick="harvestRunLiveMD()" style="background:#F2B705;color:#1A1D21;border:none;border-radius:8px;padding:10px 6px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">🌾 MD</button>
           <button onclick="harvestRunLiveCMSFireSafety()" style="background:#DC2626;color:#fff;border:none;border-radius:8px;padding:10px 6px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">🚨 Fire</button>
           <button onclick="openGoogleMapsHarvest()" style="background:#0F9D58;color:#fff;border:none;border-radius:8px;padding:10px 6px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">🌎 Maps</button>
+          <button onclick="openBidHarvestModal()" style="background:#1B5FA8;color:#fff;border:none;border-radius:8px;padding:10px 6px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer;position:relative" title="Harvest open bids from all government and private procurement sources">📋 BIDS</button>
         </div>
         <div id="mgrHarvestStatus2" style="display:none;background:#FFF8E6;border-radius:8px;padding:8px 12px;font-size:12px;color:#5A4A00"></div>
       </div>
@@ -13614,12 +13615,155 @@ function _dmsRefreshSummary() {
 // ══════════════════════════════════════════════════════════════════════════
 
 const BID_SOURCES = [
-  { name:'PA eMarketplace',          access:'Public listing browsable; full detail requires free Supplier Portal registration', status:'connected' },
-  { name:'NJSTART',                  access:'Public listing browsable; full detail requires free vendor registration',         status:'connected' },
-  { name:'Philadelphia PHLContracts',access:'Requires free supplier registration to view bid detail',                          status:'needs_registration' },
-  { name:'BidNet Direct (PA/NJ)',    access:'Aggregator covering 950+ PA/NJ public entities; registration unlocks full detail', status:'needs_registration' },
-  { name:'ConstructConnect',         access:'Paid subscription; 1.4M+ active commercial construction projects, tracks Fire Suppression as a trade category', status:'paid' },
+  // ── FREE / CONNECTED ──────────────────────────────────────────────────────
+  { name:'SAM.gov (Federal)', category:'government', cost:'Free', territory:'National',
+    url:'https://sam.gov/search/?index=opp',
+    status:'connected', autoHarvest:true,
+    keywords:['fire suppression','fire extinguisher','kitchen hood','grease trap','dish machine','stainless fabrication','NFPA'],
+    notes:'Primary federal source. Covers FEMA, GSA, VA, DoD, federal agencies. Ted routed only.',
+    bestFor:'VA hospitals, federal buildings, military installations in territory' },
+  { name:'PA eMarketplace', category:'government', cost:'Free (registration)', territory:'Pennsylvania',
+    url:'https://www.emarketplace.state.pa.us/',
+    status:'connected', autoHarvest:true,
+    keywords:['fire protection','extinguisher','hood suppression','kitchen','grease trap','stainless','dish machine'],
+    notes:'Commonwealth of PA — all state agencies, universities, school districts. Very active for fire protection contracts.',
+    bestFor:'PA state agencies, Commonwealth universities, school districts, corrections' },
+  { name:'NJSTART', category:'government', cost:'Free (registration)', territory:'New Jersey',
+    url:'https://www.njstart.gov/',
+    status:'connected', autoHarvest:true,
+    keywords:['fire suppression','fire extinguisher','kitchen hood','grease trap','food service equipment','stainless'],
+    notes:'NJ statewide procurement — counties, municipalities, school districts.',
+    bestFor:'NJ counties, municipalities, school districts' },
+  { name:'Philadelphia PHLContracts', category:'government', cost:'Free (registration)', territory:'Philadelphia',
+    url:'https://www.phila.gov/phlcontracts/',
+    status:'connected', autoHarvest:true,
+    keywords:['fire suppression','fire safety','kitchen equipment','grease trap','dishwasher','fabrication'],
+    notes:'City of Philadelphia procurement — very active, multiple Termac-relevant categories per quarter.',
+    bestFor:'City departments, PHA housing, Philadelphia schools, rec centers' },
+  { name:'DC Office of Contracting (OCP)', category:'government', cost:'Free', territory:'Washington DC',
+    url:'https://contracts.ocp.dc.gov/',
+    status:'connected', autoHarvest:true,
+    keywords:['fire suppression','fire extinguisher','kitchen','grease trap','food service','stainless'],
+    notes:'DC government procurement. Strict compliance requirements but high contract values.',
+    bestFor:'DC government buildings, schools, rec centers' },
+  { name:'Maryland eMMA', category:'government', cost:'Free (registration)', territory:'Maryland',
+    url:'https://emma.maryland.gov/',
+    status:'connected', autoHarvest:true,
+    keywords:['fire protection','extinguisher','hood suppression','kitchen equipment','grease trap'],
+    notes:'MD statewide procurement including Montgomery and PG counties.',
+    bestFor:'MD state agencies, county governments, MD school districts' },
+  { name:'Delaware Bid Board', category:'government', cost:'Free', territory:'Delaware',
+    url:'https://bids.delaware.gov/',
+    status:'connected', autoHarvest:true,
+    keywords:['fire protection','fire extinguisher','kitchen','suppression','grease'],
+    notes:'DE state and county procurement. Quality III territory.',
+    bestFor:'DE state buildings, county facilities, schools' },
+  // ── FREE REGISTRATION NEEDED ──────────────────────────────────────────────
+  { name:'BidNet Direct (PA/NJ/DE/MD)', category:'government', cost:'Free registration', territory:'Multi-state',
+    url:'https://www.bidnetdirect.com/',
+    status:'needs_registration',
+    notes:'Aggregator — 950+ PA/NJ/DE/MD public entities. Single registration gives access to all member agencies. HIGH VALUE.',
+    bestFor:'Municipal governments, housing authorities, utility authorities across territory',
+    recommendation:'REGISTER NOW — free access to hundreds of local government entities not on state portals' },
+  { name:'DemandStar', category:'government', cost:'Free (basic)', territory:'Multi-state',
+    url:'https://www.demandstar.com/',
+    status:'needs_registration',
+    notes:'National platform used by thousands of local governments. Often catches bids not on state portals.',
+    bestFor:'Small municipalities, counties, special purpose districts' },
+  // ── COMMERCIAL / PRIVATE BIDS ─────────────────────────────────────────────
+  { name:'Dodge Construction Central', category:'commercial', cost:'$199-499/mo', territory:'National',
+    url:'https://www.construction.com/',
+    status:'paid',
+    notes:'Best private commercial source. Tracks all permitted commercial construction. Fire suppression is a specific trade category. Catch projects at permit stage.',
+    bestFor:'New restaurant construction, hotel renovation, healthcare build-outs, retail chains',
+    roi:'At 1 hood install win/mo = $15K+ — ROI in first win' },
+  { name:'ConstructConnect', category:'commercial', cost:'$299-599/mo', territory:'National',
+    url:'https://www.constructconnect.com/',
+    status:'paid',
+    notes:'1.4M+ active commercial projects. Fire Suppression trade category. Best for AllPro hood and stainless projects.',
+    bestFor:'Commercial kitchen construction, restaurant chains, hospitality projects',
+    roi:'At 1 AllPro project/mo = $20K+ — ROI in first win' },
+  { name:'BuildingConnected (Autodesk)', category:'commercial', cost:'Free (basic)', territory:'National',
+    url:'https://www.buildingconnected.com/',
+    status:'needs_registration',
+    notes:'GC-facing platform — general contractors post RFPs to find subcontractors. Strong for AllPro hood installs and fire suppression subs.',
+    bestFor:'Being found by GCs on new construction and renovation projects',
+    recommendation:'Create company profile — GCs search for fire suppression and stainless subs here' },
+  { name:'Subcontractors USA / iSqFt', category:'commercial', cost:'Free-$149/mo', territory:'Regional',
+    url:'https://www.isqft.com/',
+    status:'needs_registration',
+    notes:'Regional subcontractor bid board. GCs post projects needing fire suppression, kitchen equipment, and specialty trades.',
+    bestFor:'Mid-size commercial construction, restaurant fit-outs, school cafeteria renovations' },
+  // ── SPECIALIZED PROCUREMENT ───────────────────────────────────────────────
+  { name:'Healthcare Facilities Mgmt (HFMA)', category:'specialized', cost:'Free-$149/mo', territory:'Regional',
+    url:'https://www.hfmmagazine.com/procurement',
+    status:'recommended',
+    notes:'Hospital and healthcare facility procurement. High-value fire protection and kitchen contracts.',
+    bestFor:'Hospitals, nursing homes, assisted living — high inspection volumes, multi-year contracts' },
+  { name:'Restaurant365 / Foodservice Procurement', category:'specialized', cost:'Free', territory:'National',
+    url:'https://www.restaurant365.com/',
+    status:'recommended',
+    notes:'Restaurant chain procurement platform. Chain accounts are Termac highest LTV customers.',
+    bestFor:'Regional restaurant chains, institutional food service operators' },
+  { name:'NIGP (National IGA Purchasing)', category:'government', cost:'Free membership', territory:'National',
+    url:'https://www.nigp.org/',
+    status:'recommended',
+    notes:'Government purchasing association — members share bid opportunities across agencies.',
+    bestFor:'Connecting with purchasing officers before bids are posted — relationship building' },
 ];
+
+// ── TERMAC COMPANY PROFILE (for AI proposal assembly) ────────────────────
+const TERMAC_COMPANY_PROFILE = {
+  legalName: 'Ter-Pro, LLC aka Uni-Pro, All-Pro',
+  dbaNames: ['UniPro Fire Protection', 'ALLPro Fabrication', 'GTO Grease Trap', 'Filter Man', 'Termac'],
+  address: '7330 Tulip Street, Philadelphia, PA 19136',
+  phone: '215-400-8000',
+  email: 'tscholl@termac.com',
+  contactName: 'Ted Scholl',
+  contactTitle: 'Senior Account & Operations Manager / Fire Protection Specialist',
+  ein: '47-1063968', // Ter-Pro LLC EIN from W-9
+  einCapitalSuppression: '82-3833757', // Capital Suppression Corp EIN from W-9
+  paBusinessLicense: '21783',
+  territory: 'Eastern PA, NJ, DE, MD, DC',
+  yearsInBusiness: 'Established commercial services provider',
+  insurance: {
+    gl: '$1,000,000 per occurrence / $2,000,000 aggregate',
+    umbrella: '$2,000,000',
+    auto: '$1,000,000 CSL',
+    workersComp: '$1,000,000',
+    property: '$634,700 RCV',
+    carrier: "Lloyd's of London, Erie Insurance Exchange, Nationwide",
+    producer: "Gannon Insurance Inc — admin@gannonriskgroup.com — (215) 396-9000",
+    expiry: '5/20/2027 (GL/Umbrella/WC/Property) | 10/28/2026 (Auto)',
+  },
+  services: {
+    fireProtection: 'Annual fire extinguisher inspection, testing, recharge, sales, 6-year maintenance, hydrostatic testing — NFPA 10 compliant — all extinguisher types including Class K',
+    hoodSuppression: 'Semi-annual hood suppression system inspection, testing, certification, and re-certification — NFPA 96 §11.4 compliant — Ansul, Amerex, Range Guard',
+    hoodFabrication: 'Custom commercial kitchen hood design, fabrication, and installation — NSF-compliant stainless steel — any size or configuration',
+    stainlessFabrication: 'Custom stainless steel countertops, prep tables, shelving, sinks, and specialty fabrication — NSF-compliant — field measurements and CAD design',
+    greaseTrap: 'Commercial grease trap pump-out service — FOG compliance documentation — waste manifest — municipal compliance reporting — monthly to quarterly frequency',
+    dishMachine: 'Commercial dishwasher installation, repair, and preventive maintenance — chemical program management — all major brands',
+    hoodFilters: 'Commercial kitchen exhaust filter exchange — all sizes and types — 2-week to monthly frequency',
+    chemicals: 'Commercial kitchen chemical programs — detergents, sanitizers, degreasers — Termac proprietary formulations',
+  },
+  differentiators: [
+    'Only contractor in territory offering all six services under one company — fire inspection, hood suppression, hood fabrication, grease trap, dish machine, and chemicals',
+    'Single point of contact and single invoice for complete kitchen compliance',
+    'NFPA 10 and NFPA 96 certified technicians',
+    'PA, NJ, DE, MD, DC licensed and insured',
+    'AHJ compliance documentation included with every inspection',
+    'Same-day emergency response capability',
+    'Proprietary Termac One digital platform for service tracking and compliance documentation',
+  ],
+  certifications: [
+    'PA Fire Protection License #21783',
+    'NJ Fire Protection Contractor License',
+    'DE State Fire Marshal Contractor Registration',
+    'NICET-certified technicians (Level II)',
+    'NSF-compliant fabrication',
+    'DOT compliant waste hauler (GTO division)',
+  ],
+};
 
 function bidsLoad(){ try{ return JSON.parse(localStorage.getItem('termac_bids')||'[]'); }catch(e){ return []; } }
 function bidsSave(data){ localStorage.setItem('termac_bids', JSON.stringify(data)); }
@@ -13706,6 +13850,249 @@ function bidsSeedIfEmpty(){
 
 // Paste your deployed Worker URL here after deploying bid-scraper-worker.js:
 const BID_SCRAPER_URL = 'https://bid-scraper.tedscholl.workers.dev/';
+
+// ── BID HARVEST MODAL ────────────────────────────────────────────────────────
+function openBidHarvestModal() {
+  var modal = document.getElementById('bidHarvestModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'bidHarvestModal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9000;display:flex;align-items:center;justify-content:center;padding:16px';
+    modal.innerHTML = buildBidHarvestModalHTML();
+    document.body.appendChild(modal);
+  } else {
+    modal.style.display = 'flex';
+  }
+}
+
+function closeBidHarvestModal() {
+  var modal = document.getElementById('bidHarvestModal');
+  if (modal) modal.style.display = 'none';
+}
+
+function buildBidHarvestModalHTML() {
+  var freeConnected = BID_SOURCES.filter(function(s){ return s.status === 'connected'; });
+  var freeReg = BID_SOURCES.filter(function(s){ return s.status === 'needs_registration'; });
+  var paid = BID_SOURCES.filter(function(s){ return s.status === 'paid'; });
+  var recommended = BID_SOURCES.filter(function(s){ return s.status === 'recommended'; });
+
+  function sourceRow(s) {
+    var badgeColor = s.category === 'government' ? '#1B5FA8' : s.category === 'commercial' ? '#D8690B' : '#5B21B6';
+    var badgeLabel = s.category === 'government' ? 'GOV' : s.category === 'commercial' ? 'COMMERCIAL' : 'SPECIALIZED';
+    var costColor = (s.cost==='Free'||s.cost==='Free (registration)'||s.cost==='Free (basic)'||s.cost==='Free membership') ? '#1E7B3C' : '#C8102E';
+    var h = '<div style="background:#F8F9FA;border-radius:8px;padding:10px 12px;margin-bottom:6px">';
+    h += '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;flex-wrap:wrap">';
+    h += '<div style="flex:1">';
+    h += '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px">';
+    h += '<span style="font-weight:700;font-size:13px">' + s.name + '</span>';
+    h += '<span style="font-size:9px;font-weight:800;letter-spacing:.06em;padding:1px 6px;border-radius:3px;background:' + badgeColor + ';color:#fff">' + badgeLabel + '</span>';
+    h += '<span style="font-size:10px;color:#666">' + (s.territory||'') + '</span></div>';
+    h += '<div style="font-size:11px;color:#5A616B;line-height:1.4">' + (s.notes||'') + '</div>';
+    if (s.bestFor) h += '<div style="font-size:11px;color:#1E7B3C;margin-top:3px"><strong>Best for:</strong> ' + s.bestFor + '</div>';
+    if (s.recommendation) h += '<div style="font-size:11px;color:#C8102E;margin-top:3px;font-weight:600">&#8594; ' + s.recommendation + '</div>';
+    if (s.roi) h += '<div style="font-size:11px;color:#D8690B;margin-top:3px;font-weight:600">&#128176; ' + s.roi + '</div>';
+    h += '</div>';
+    h += '<div style="text-align:right;flex-shrink:0">';
+    h += '<div style="font-weight:700;font-size:12px;color:' + costColor + '">' + (s.cost||'Free') + '</div>';
+    if (s.url) h += '<a href="' + s.url + '" target="_blank" style="font-size:10px;color:#1B5FA8;text-decoration:none">Visit &#8594;</a>';
+    h += '</div></div></div>';
+    return h;
+  }
+
+  function sectionHdr(label, count, color) {
+    return '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:' + color + ';margin:14px 0 8px">' + label + ' (' + count + ')</div>';
+  }
+
+  var h = '<div style="background:#fff;border-radius:14px;width:min(780px,96vw);max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.35)">';
+
+  // Header
+  h += '<div style="background:#1A1D21;border-radius:14px 14px 0 0;padding:16px 20px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:10">';
+  h += '<div><div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:18px;color:#fff;letter-spacing:.04em">&#128203; Bid &amp; RFP Harvester</div>';
+  h += '<div style="font-size:11px;color:#8A909A;margin-top:2px">Government + commercial bids &middot; AI proposal drafting &middot; Ted exclusive pipeline</div></div>';
+  h += '<button onclick="closeBidHarvestModal()" style="background:rgba(255,255,255,.1);border:1.5px solid rgba(255,255,255,.2);border-radius:6px;color:#fff;font-size:14px;cursor:pointer;padding:4px 10px">&#10005;</button>';
+  h += '</div>';
+
+  h += '<div style="padding:20px">';
+
+  // Status bar
+  h += '<div style="background:#EFF6FF;border:1.5px solid #1B5FA8;border-radius:9px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">';
+  h += '<div><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;color:#1B5FA8">&#128309; Ted Exclusive Bid Pipeline</div>';
+  h += '<div style="font-size:12px;color:#1E40AF;margin-top:2px">All bids route directly to you. AI scans every bid for cross-sell opportunities across all 6 divisions.</div></div>';
+  h += '<button onclick="closeBidHarvestModal();bidsHarvest();" style="background:#1B5FA8;color:#fff;border:none;border-radius:8px;padding:10px 20px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">&#9889; Run Full Harvest Now</button>';
+  h += '</div>';
+
+  // What happens
+  h += '<div style="background:#F0FDF4;border:1.5px solid #1E7B3C;border-radius:9px;padding:12px 16px;margin-bottom:16px">';
+  h += '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#1E7B3C;margin-bottom:8px">What Happens When You Harvest</div>';
+  h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px;color:#1A1D21">';
+  h += '<div>1&#65039;&#8419; Scans all connected sources for open bids</div><div>2&#65039;&#8419; Filters by Termac service keywords</div>';
+  h += '<div>3&#65039;&#8419; AI reads full scope and extracts requirements</div><div>4&#65039;&#8419; Detects cross-sell across all 6 divisions</div>';
+  h += '<div>5&#65039;&#8419; Estimates contract value and win probability</div><div>6&#65039;&#8419; AI drafts complete proposal for your review</div>';
+  h += '<div>7&#65039;&#8419; Lists exactly what to submit with the bid</div><div>8&#65039;&#8419; Routes to your pipeline only</div>';
+  h += '</div></div>';
+
+  // Sources
+  h += sectionHdr('&#9989; Connected - Free Sources', freeConnected.length, '#1E7B3C');
+  freeConnected.forEach(function(s){ h += sourceRow(s); });
+
+  h += sectionHdr('&#9889; Register Free - High Value', freeReg.length, '#D97706');
+  freeReg.forEach(function(s){ h += sourceRow(s); });
+
+  h += sectionHdr('&#128176; Paid Subscriptions - Worth Evaluating', paid.length, '#C8102E');
+  paid.forEach(function(s){ h += sourceRow(s); });
+
+  h += sectionHdr('&#127919; Specialized Channels', recommended.length, '#5B21B6');
+  recommended.forEach(function(s){ h += sourceRow(s); });
+
+  // Recommendation
+  h += '<div style="background:#1A1D21;border-radius:9px;padding:14px 16px;margin-top:16px">';
+  h += '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;color:#F2B705;letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px">&#128161; What To Do This Week</div>';
+  h += '<div style="font-size:12px;color:#D0D5DC;line-height:1.6">';
+  h += '<strong style="color:#fff">1. Register on BidNet Direct</strong> - free, unlocks 950+ PA/NJ/DE/MD local governments not on state portals.<br>';
+  h += '<strong style="color:#fff">2. Create a BuildingConnected profile</strong> - free, GCs search for fire suppression and stainless subs here.<br>';
+  h += '<strong style="color:#fff">3. Evaluate Dodge Construction Central ($199/mo)</strong> - best ROI if AllPro has capacity for 1-2 hood projects/month.<br>';
+  h += '<strong style="color:#fff">4. Run Full Harvest Now</strong> - AI drafts proposals for every match in 60 seconds.';
+  h += '</div></div>';
+
+  h += '</div></div>';
+  return h;
+}
+
+
+// ── ENHANCED AI PROPOSAL GENERATOR ───────────────────────────────────────────
+async function bidsAIFullProposal(bid) {
+  const profile = TERMAC_COMPANY_PROFILE;
+  const prompt = `You are an expert bid proposal writer for ${profile.legalName} (doing business as UniPro Fire Protection, ALLPro Fabrication, GTO Grease Trap, Filter Man, and Termac).
+
+COMPANY PROFILE:
+- Legal Name: ${profile.legalName}
+- Address: ${profile.address}
+- Contact: ${profile.contactName}, ${profile.contactTitle}
+- PA Business License: ${profile.paBusinessLicense}
+- Territory: ${profile.territory}
+- Insurance: GL $1M/$2M, Umbrella $2M, WC $1M, Auto $1M CSL (Lloyd's of London / Erie / Nationwide)
+
+OUR SERVICES:
+${Object.entries(profile.services).map(([k,v]) => '• ' + v).join('\n')}
+
+OUR KEY DIFFERENTIATORS:
+${profile.differentiators.map(d => '• ' + d).join('\n')}
+
+BID TO ANALYZE AND RESPOND TO:
+Title: ${bid.title}
+Agency: ${bid.agency}
+Source: ${bid.source}
+Reference #: ${bid.refNo}
+Scope: ${bid.scopeRaw}
+Estimated Value: $${(bid.estValue||0).toLocaleString()}
+Due Date: ${bid.dueDate || 'Not specified'}
+
+YOUR TASK — Produce a complete bid response package in this exact structure:
+
+## 1. BID BRIEF (30-second summary)
+- What they need (2-3 sentences)
+- Why we qualify (1-2 sentences)
+- Win probability: [High/Medium/Low] and why
+- Estimated annual contract value
+
+## 2. CROSS-SELL OPPORTUNITIES DETECTED
+Scan the scope for signals across ALL SIX divisions. For each division, indicate:
+- UniPro (fire inspection/suppression): [opportunity found or N/A]
+- GTO (grease trap): [opportunity found or N/A]
+- Filter Man (hood filters): [opportunity found or N/A]
+- Termac (dish machine/chemicals): [opportunity found or N/A]
+- ALLPro (hood fabrication/stainless): [opportunity found or N/A]
+- Quality III (DE fire protection): [opportunity found or N/A]
+If cross-sell found: describe the opportunity and estimated additional annual revenue.
+
+## 3. EXACT SUBMISSION REQUIREMENTS
+List every document/item we need to submit. Be specific:
+- [ ] Cover letter (addressed to: ?)
+- [ ] Completed bid form (form number if mentioned)
+- [ ] Pricing schedule / unit price sheet
+- [ ] Company qualifications / experience statement
+- [ ] License copies (PA License #21783 — specify which states)
+- [ ] Certificate of Insurance (ACORD 25 — our limits meet standard requirements)
+- [ ] W-9 (Ter-Pro LLC EIN 47-1063968)
+- [ ] References (3 comparable accounts recommended)
+- [ ] Any bond requirements
+- [ ] Any certifications (NICET, NFPA, etc.)
+- [ ] Any specific forms required by this agency
+
+## 4. COVER LETTER DRAFT
+Write a complete, ready-to-submit cover letter addressed to this specific agency. Include:
+- Why we are uniquely qualified for THIS specific contract
+- Our relevant experience and geographic presence
+- Our NFPA compliance methodology
+- Our single-vendor advantage (if multiple services apply)
+- A strong close with Ted Scholl's contact information
+
+## 5. SCOPE RESPONSE
+Write a professional scope response that directly addresses their requirements section by section. Reference NFPA standards, our certifications, and our specific methodology.
+
+## 6. PRICING STRATEGY RECOMMENDATION
+Based on the scope and estimated value:
+- Recommended pricing approach (unit price, lump sum, per-site)
+- Key pricing levers (multi-year discount, volume, bundled services)
+- Competitive positioning notes
+
+## 7. WIN STRATEGY
+3-5 specific actions to maximize our chances of winning this bid.`;
+
+  return prompt;
+}
+
+async function bidsAIDraftWithCrossSell(bidId) {
+  const bids = bidsLoad();
+  const bid = bids.find(function(b){ return b.id === bidId; });
+  if (!bid) return;
+
+  // Mark as drafting
+  bid.status = 'draft';
+  bidsSave(bids);
+
+  const detailEl = document.getElementById('bidsDetailAIContent');
+  if (detailEl) {
+    detailEl.innerHTML = '<div style="color:#D8690B;padding:12px">🤖 AI analyzing bid scope, detecting cross-sell opportunities, and drafting your complete proposal package...</div>';
+  }
+
+  try {
+    const prompt = await bidsAIFullProposal(bid);
+    const res = await fetch('https://unipro-ai-proxy.tedscholl.workers.dev/', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ prompt: prompt, system: 'You are an expert bid proposal writer. Produce detailed, professional, ready-to-use bid response packages. Always cite specific NFPA standards. Always be specific about licensing, insurance, and compliance.' })
+    });
+    const data = await res.json();
+    const text = (data.content&&data.content[0]&&data.content[0].text) || data.result || 'No response';
+
+    bid.aiDraft = text;
+    bid.aiDraftedAt = Date.now();
+    bid.status = 'review';
+
+    // Parse cross-sell opportunities from response
+    if (text.toLowerCase().includes('cross-sell')) {
+      bid.crossSellDetected = true;
+    }
+
+    bidsSave(bids);
+
+    if (detailEl) {
+      detailEl.innerHTML = '<div style="white-space:pre-wrap;font-size:13px;line-height:1.7;color:#1A1D21;padding:4px">' +
+        text.replace(/## /g,'<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:14px;letter-spacing:.04em;color:#1B5FA8;margin:16px 0 6px;border-bottom:1.5px solid #E5E7EB;padding-bottom:4px">').replace(/\n/g,'<br>') +
+        '</div>';
+    }
+
+    bidsRender();
+
+  } catch(e) {
+    if (detailEl) {
+      detailEl.innerHTML = '<div style="color:#C8102E;padding:12px">⚠️ AI draft failed: ' + e.message + '</div>';
+    }
+    bid.status = 'open';
+    bidsSave(bids);
+  }
+}
 
 async function bidsHarvest(){
   const banner = document.getElementById('bidsHarvestBanner');
