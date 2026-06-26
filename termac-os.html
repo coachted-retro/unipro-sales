@@ -3851,6 +3851,7 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
     <button id="mgrTab-divisions" onclick="mgrSwitchTab('divisions')" style="background:none;border:none;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.10em;text-transform:uppercase;padding:11px 14px;cursor:pointer;white-space:nowrap;color:#BFC4CA;border-bottom:2px solid transparent;">🏢 Division Intel</button>
     <button id="mgrTab-cmd" onclick="mgrSwitchTab('cmd')" style="background:none;border:none;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.10em;text-transform:uppercase;padding:11px 14px;cursor:pointer;white-space:nowrap;color:#BFC4CA;border-bottom:2px solid transparent;">🎛 Command Center</button>
     <button id="mgrTab-scorecards" onclick="mgrSwitchTab('scorecards')" style="background:none;border:none;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.10em;text-transform:uppercase;padding:11px 14px;cursor:pointer;white-space:nowrap;color:#BFC4CA;border-bottom:2px solid transparent;">🏆 Scorecards</button>
+    <button id="mgrTab-ted" onclick="mgrSwitchTab('ted')" style="background:none;border:none;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.10em;text-transform:uppercase;padding:11px 14px;cursor:pointer;white-space:nowrap;color:#F2B705;border-bottom:2px solid transparent;">⚡ Ted's Performance</button>
     <button id="mgrTab-reports" onclick="mgrSwitchTab('reports')" style="background:none;border:none;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.10em;text-transform:uppercase;padding:11px 14px;cursor:pointer;white-space:nowrap;color:#BFC4CA;border-bottom:2px solid transparent;">📋 Reports</button>
     <button onclick="window.open('user-manuals.html?role=admin','_blank')" style="background:none;border:1px solid #3A3E43;border-radius:6px;color:#BFC4CA;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:10px;letter-spacing:.10em;text-transform:uppercase;padding:6px 12px;cursor:pointer;white-space:nowrap;margin:auto 0 auto 8px">? Help</button>
   </div>
@@ -4649,6 +4650,13 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
     </div>
 
   </div><!-- /mgrPanel-scorecards -->
+
+  <!-- ══ TED'S PERFORMANCE ══ -->
+  <div id="mgrPanel-ted" class="ov-body" style="display:none;padding:16px;background:var(--bg)">
+    <div id="tedPerfContent">
+      <div style="color:var(--soft);font-size:13px;padding:20px">Loading...</div>
+    </div>
+  </div><!-- /mgrPanel-ted -->
 
   <!-- ══ REPORTS ══ -->
   <div id="mgrPanel-reports" class="ov-body" style="display:none;padding:24px 28px;background:var(--bg)">
@@ -9836,14 +9844,14 @@ function mgrSwitchTab(tab) {
     if (typeof openOverlay === 'function') openOverlay('cmd');
     return;
   }
-  ['dashboard','operations','financial','divisions','scorecards','reports'].forEach(function(t) {
+  ['dashboard','operations','financial','divisions','scorecards','ted','reports'].forEach(function(t) {
     var btn   = document.getElementById('mgrTab-'+t);
     var panel = document.getElementById('mgrPanel-'+t);
     var isActive = t === tab;
     if (btn) {
       btn.classList.toggle('active', isActive);
-      btn.style.borderBottomColor = isActive ? 'var(--red)' : 'transparent';
-      btn.style.color = isActive ? '#fff' : '#BFC4CA';
+      btn.style.borderBottomColor = isActive ? (t==='ted' ? '#F2B705' : 'var(--red)') : 'transparent';
+      btn.style.color = isActive ? (t==='ted' ? '#F2B705' : '#fff') : (t==='ted' ? '#F2B705' : '#BFC4CA');
     }
     if (panel) {
       panel.style.display = isActive ? 'block' : 'none';
@@ -9855,6 +9863,7 @@ function mgrSwitchTab(tab) {
   if (tab === 'operations' && window._mgrInitOps) window._mgrInitOps();
   if (tab === 'financial'  && window._mgrInitFin) window._mgrInitFin();
   if (tab === 'scorecards' && window._mgrInitSc)  window._mgrInitSc();
+  if (tab === 'ted') { renderTedPerf(); }
 }
 
 // ── DMS Activity Calendar ──────────────────────────────────────────────────
@@ -22784,6 +22793,181 @@ function csHdr(title, id, extraRight) {
    MANAGER DASHBOARD LIVE DATA
    Populates dynamic KPI tiles from CRM data
 ───────────────────────────────────────────── */
+// ══════════════════════════════════════════════════════════════
+//  TED'S PERFORMANCE DASHBOARD
+//  Role: Fire Protection Specialist / Bid Manager
+//  UniPro + AllPro ops oversight · Hood design + installation sales
+//  Metrics are QUARTERLY cadence — not weekly like reps
+// ══════════════════════════════════════════════════════════════
+
+function renderTedPerf() {
+  var el = document.getElementById('tedPerfContent');
+  if (!el) return;
+
+  // ── Pull data from platform ─────────────────────────────────
+  var leads     = crmLoad('leads') || [];
+  var bids      = JSON.parse(localStorage.getItem('termac_bids') || '[]');
+  var appts     = JSON.parse(localStorage.getItem('termac_appointments') || '[]');
+
+  var now  = Date.now();
+  var qStart = (function() {
+    var d = new Date(); var q = Math.floor(d.getMonth()/3);
+    return new Date(d.getFullYear(), q*3, 1).getTime();
+  })();
+  var yStart = new Date(new Date().getFullYear(), 0, 1).getTime();
+
+  // Bid pipeline metrics
+  var activeBids     = bids.filter(function(b){ return ['open','draft','review'].includes(b.status); });
+  var submittedBids  = bids.filter(function(b){ return b.status === 'submitted'; });
+  var wonBids        = bids.filter(function(b){ return b.status === 'won' && b.outcomeDate && new Date(b.outcomeDate).getTime() >= qStart; });
+  var pipelineValue  = activeBids.reduce(function(s,b){ return s+(b.estValue||0); }, 0);
+  var wonValueQTD    = wonBids.reduce(function(s,b){ return s+(b.estValue||0); }, 0);
+  var wonValueYTD    = bids.filter(function(b){ return b.status==='won' && b.outcomeDate && new Date(b.outcomeDate).getTime() >= yStart; }).reduce(function(s,b){ return s+(b.estValue||0); },0);
+
+  // Win rate (last 12 bids resolved)
+  var resolved  = bids.filter(function(b){ return b.status==='won'||b.status==='lost'; }).slice(-12);
+  var winRate   = resolved.length ? Math.round(resolved.filter(function(b){ return b.status==='won'; }).length/resolved.length*100) : 0;
+
+  // Avg days to close
+  var closedWithDates = bids.filter(function(b){ return b.status==='won' && b.postedDate && b.outcomeDate; });
+  var avgDaysClose = closedWithDates.length
+    ? Math.round(closedWithDates.reduce(function(s,b){ return s + (new Date(b.outcomeDate)-new Date(b.postedDate))/86400000; },0) / closedWithDates.length)
+    : 0;
+
+  // Stale bids (no movement in 90+ days)
+  var stale90 = activeBids.filter(function(b){
+    var last = b.updatedAt || b.scrapedAt || 0;
+    return (now - last) > 90*86400000;
+  });
+
+  // AllPro / permit leads
+  var allproLeads = leads.filter(function(r){ return (r.services||[]).includes('allpro') || r.company==='AllPro' || r.formType==='allpro'; });
+  var permitLeads = leads.filter(function(r){ return (r.source||'').toLowerCase().includes('permit'); });
+  var allproQTD   = allproLeads.filter(function(r){ return r.created >= qStart; });
+
+  // Site walks from appointments
+  var siteWalks = appts.filter(function(a){
+    return (a.visitType==='permit_site'||a.visitType==='cold_stop'||a.type==='site_visit') && a.createdAt >= qStart;
+  });
+
+  // Open deficiencies
+  var defQueueRaw = [];
+  try { defQueueRaw = JSON.parse(localStorage.getItem('termac_deficiency_queue')||'[]'); } catch(e){}
+  var openDefs = defQueueRaw.filter(function(d){ return !d.quoteWritten && !d.resolved; });
+  var defs5Days = openDefs.filter(function(d){ return d.flaggedAt && (now-d.flaggedAt) > 5*86400000; });
+
+  // Tech performance (UniPro + AllPro)
+  var techData = [];
+  try { techData = JSON.parse(localStorage.getItem('termac_tech_scores')||'[]'); } catch(e){}
+  var myTechs = techData.filter(function(t){ return t.division==='UniPro'||t.division==='AllPro'; });
+  var avgTechScore = myTechs.length ? Math.round(myTechs.reduce(function(s,t){ return s+(t.score||0); },0)/myTechs.length) : 0;
+
+  // Permit-to-proposal speed (AllPro primary KPI)
+  var recentAllpro = allproLeads.filter(function(r){ return r.created >= qStart && r.appointment; });
+  var avgP2P = recentAllpro.length
+    ? Math.round(recentAllpro.reduce(function(s,r){ return s + ((r.appointment.setAt||r.created) - r.created)/3600000; },0) / recentAllpro.length)
+    : null;
+
+  // ── Build HTML ──────────────────────────────────────────────
+  function kpiCard(label, value, sub, color, warn) {
+    return '<div style="background:#fff;border-radius:9px;padding:13px 14px;box-shadow:0 1px 3px rgba(26,29,33,.08);border-top:3px solid '+color+';position:relative">' +
+      (warn ? '<div style="position:absolute;top:8px;right:8px;background:#FEE2E2;color:#C8102E;border-radius:4px;padding:1px 6px;font-size:9px;font-weight:800">⚠️ '+warn+'</div>' : '') +
+      '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:24px;color:'+color+'">'+value+'</div>' +
+      '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--soft);margin-top:2px">'+label+'</div>' +
+      (sub ? '<div style="font-size:11px;color:#6B7280;margin-top:4px">'+sub+'</div>' : '') +
+    '</div>';
+  }
+
+  function sectionHdr(icon, title, color) {
+    return '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:'+color+';margin:18px 0 10px;display:flex;align-items:center;gap:8px">'+
+      icon+' '+title+
+      '<div style="flex:1;height:1px;background:var(--line)"></div>' +
+    '</div>';
+  }
+
+  var html = '';
+
+  // ── Header ──────────────────────────────────────────────────
+  html += '<div style="background:linear-gradient(135deg,#1A1D21,#2D3748);border-radius:12px;padding:16px 20px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">' +
+    '<div>' +
+      '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:18px;color:#fff;letter-spacing:.04em">⚡ Ted Scholl — Performance Dashboard</div>' +
+      '<div style="font-size:12px;color:#8A909A;margin-top:3px">Fire Protection Specialist · Bid Manager · UniPro + AllPro Ops · Hood Design + Installation</div>' +
+    '</div>' +
+    '<div style="background:rgba(242,183,5,.15);border:1px solid rgba(242,183,5,.3);border-radius:8px;padding:6px 14px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;color:#F2B705;letter-spacing:.08em">Q' + (Math.floor(new Date().getMonth()/3)+1) + ' ' + new Date().getFullYear() + ' · QUARTERLY CADENCE</div>' +
+  '</div>';
+
+  // ── Section 1: Pipeline Health ─────────────────────────────
+  html += sectionHdr('📊', 'Pipeline Health', '#1B5FA8');
+  html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:4px">';
+  html += kpiCard('Active Bids', activeBids.length, '$'+pipelineValue.toLocaleString()+' pipeline', '#1B5FA8', activeBids.length===0?'No bids':'');
+  html += kpiCard('Submitted / Pending', submittedBids.length, 'Awaiting decision', '#5B21B6', '');
+  html += kpiCard('Win Rate (last 12)', winRate+'%', resolved.length+' bids resolved', winRate>=40?'#1E7B3C':winRate>=25?'#D97706':'#C8102E', winRate<25&&resolved.length>3?'Low':'');
+  html += kpiCard('Avg Days to Close', avgDaysClose||'—', 'From posting to award', '#0D7490', '');
+  html += kpiCard('Stale >90 Days', stale90.length, 'No movement — review', stale90.length>0?'#C8102E':'#1E7B3C', stale90.length>2?stale90.length+' stale':'');
+  html += '</div>';
+
+  // Bid stage breakdown
+  if (bids.length) {
+    var stageCounts = {open:0,draft:0,review:0,submitted:0,won:0};
+    bids.forEach(function(b){ if(stageCounts[b.status]!==undefined) stageCounts[b.status]++; });
+    html += '<div style="background:#F8F9FA;border-radius:8px;padding:10px 14px;margin-bottom:4px;display:flex;gap:16px;flex-wrap:wrap;font-size:12px">';
+    [{key:'open',label:'New',color:'#1A1D21'},{key:'draft',label:'AI Drafting',color:'#D8690B'},{key:'review',label:'Review',color:'#1B5FA8'},{key:'submitted',label:'Submitted',color:'#5B21B6'},{key:'won',label:'Won',color:'#1E7B3C'}].forEach(function(s){
+      html += '<span><strong style="color:'+s.color+'">'+stageCounts[s.key]+'</strong> <span style="color:var(--soft)">'+s.label+'</span></span>';
+    });
+    html += '</div>';
+  }
+
+  // ── Section 2: Revenue Impact ──────────────────────────────
+  html += sectionHdr('💰', 'Revenue Impact', '#1E7B3C');
+  html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:4px">';
+  html += kpiCard('Won QTD', '$'+wonValueQTD.toLocaleString(), wonBids.length+' contract'+(wonBids.length!==1?'s':''), '#1E7B3C', wonValueQTD===0&&new Date().getMonth()%3>0?'0 won this Q':'');
+  html += kpiCard('Won YTD', '$'+wonValueYTD.toLocaleString(), 'Calendar year to date', '#059669', '');
+  html += kpiCard('Active Pipeline Value', '$'+pipelineValue.toLocaleString(), activeBids.length+' open bid'+(activeBids.length!==1?'s':''), '#1B5FA8', '');
+  html += kpiCard('At Risk (90d stale)', stale90.reduce(function(s,b){return s+(b.estValue||0);},0)>0?'$'+stale90.reduce(function(s,b){return s+(b.estValue||0);},0).toLocaleString():'—', 'Pipeline value at risk', stale90.length?'#C8102E':'#6B7280', '');
+  html += '</div>';
+
+  // ── Section 3: AllPro / Hood Design ───────────────────────
+  html += sectionHdr('🏗️', 'AllPro / Hood Design & Installation', '#D8690B');
+  html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:4px">';
+  html += kpiCard('Permit Leads QTD', permitLeads.filter(function(r){return r.created>=qStart;}).length, 'From permit harvester', '#D8690B', '');
+  html += kpiCard('AllPro Contacts QTD', allproQTD.length, 'New build + reno contacts', '#1B5FA8', '');
+  html += kpiCard('Site Walks QTD', siteWalks.length, 'Permit + cold site visits', '#5B21B6', siteWalks.length===0?'No walks logged':'');
+  html += kpiCard('Permit → Proposal', avgP2P!==null ? avgP2P+'h avg' : '—', 'Target: <48 hours', avgP2P!==null&&avgP2P<=48?'#1E7B3C':avgP2P!==null?'#C8102E':'#6B7280', avgP2P!==null&&avgP2P>48?'>48h':'');
+  html += '</div>';
+
+  // ── Section 4: Operations Oversight ───────────────────────
+  html += sectionHdr('⚙️', 'UniPro + AllPro Operations Oversight', '#6B7280');
+  html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:4px">';
+  html += kpiCard('Tech Score (Avg)', avgTechScore||'—', 'UniPro + AllPro division', avgTechScore>=80?'#1E7B3C':avgTechScore>=60?'#D97706':'#C8102E', avgTechScore>0&&avgTechScore<60?'Below target':'');
+  html += kpiCard('Open Deficiencies', openDefs.length, 'Pending quotes from Lexi', openDefs.length>5?'#C8102E':openDefs.length>0?'#D97706':'#1E7B3C', '');
+  html += kpiCard('Defs Without Quote >5d', defs5Days.length, 'Should have a quote by now', defs5Days.length>0?'#C8102E':'#1E7B3C', defs5Days.length>0?defs5Days.length+' overdue':'');
+  html += kpiCard('Tech Division Coverage', myTechs.length||'—', 'Techs tracked in system', '#6B7280', '');
+  html += '</div>';
+
+  // ── Section 5: Activity ────────────────────────────────────
+  html += sectionHdr('📋', 'Activity This Quarter', '#5B21B6');
+  var bidSubmissionsQTD = bids.filter(function(b){ return b.status==='submitted' || (b.status==='won'&&b.outcomeDate&&new Date(b.outcomeDate).getTime()>=qStart); }).length;
+  html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:4px">';
+  html += kpiCard('Bid Submissions QTD', bidSubmissionsQTD, 'Submitted this quarter', '#5B21B6', '');
+  html += kpiCard('Site Walks / Pop-Ins', siteWalks.length, 'Field visits logged', '#D8690B', '');
+  html += kpiCard('Follow-Up Touchpoints', leads.filter(function(r){ return r.activityLog && r.activityLog.some(function(a){ return a.ts>=qStart && (r.services||[]).some(function(s){ return s==='allpro'||s==='unipro'; }); }); }).length, 'On active bids', '#1B5FA8', '');
+  html += kpiCard('Total Bids in System', bids.length, 'All time in pipeline', '#6B7280', '');
+  html += '</div>';
+
+  // ── Quick Links ────────────────────────────────────────────
+  html += '<div style="background:#F8F9FA;border-radius:9px;padding:12px 16px;margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">';
+  html += '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft);width:100%;margin-bottom:4px">Quick Actions</div>';
+  html += '<button onclick="mgrSwitchTab(\'dashboard\');setTimeout(function(){var b=document.getElementById(\'crmHarvestBtn\');if(b)b.click();},300)" style="background:#1B5FA8;color:#fff;border:none;border-radius:7px;padding:8px 14px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">📋 Open Bid Board</button>';
+  html += '<button onclick="openOverlay(\'bids\')" style="background:#1A1D21;color:#fff;border:none;border-radius:7px;padding:8px 14px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">🌾 Run Bid Harvest</button>';
+  html += '<button onclick="mgrSwitchTab(\'scorecards\')" style="background:#fff;color:var(--ink);border:1.5px solid var(--line);border-radius:7px;padding:8px 14px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">🏆 Team Scorecards</button>';
+  html += '</div>';
+
+  // ── Last updated ───────────────────────────────────────────
+  html += '<div style="font-size:11px;color:var(--soft);text-align:right;margin-top:10px;padding-bottom:8px">Last refreshed: '+new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})+'</div>';
+
+  el.innerHTML = html;
+}
+
 function refreshManagerDashboard() {
   const accounts = (typeof crmLoad==='function') ? crmLoad('accounts') : [];
   const leads    = (typeof crmLoad==='function') ? crmLoad('leads')    : [];
