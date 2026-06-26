@@ -1627,7 +1627,6 @@ function crmSave(key, val){ try{ localStorage.setItem('termac_crm_'+key, JSON.st
       { id:'lead002', business:'Bristol Township Senior Center', name:'Bristol Township Senior Center', status:'warm', temp:'warm', source:'Permit Harvester', city:'Bristol', zip:'19007', services:['UniPro'], assignedRep:'Unassigned', createdAt:Date.now()-12*86400000, notes:'Institutional. Annual compliance required. Multi-building.' },
       { id:'lead003', business:'Levittown Diner', name:'Levittown Diner', status:'cold', temp:'cold', source:'Walk-In / Drive-By', city:'Levittown', zip:'19054', services:['UniPro','Filter Man'], assignedRep:'Unassigned', createdAt:Date.now()-25*86400000, notes:'Spoke to manager briefly. Existing vendor Confires.' },
       { id:'lead004', business:'St. Mary Medical Center', name:'St. Mary Medical Center', status:'hot', temp:'hot', source:'Referral - Existing Client', city:'Langhorne', zip:'19047', services:['UniPro'], assignedRep:'Ted Scholl', createdAt:Date.now()-3*86400000, notes:'Large campus. Multiple kitchens. High priority.' },
-      { id:'lead005', business:'Neshaminy School District', name:'Neshaminy School District', status:'warm', temp:'warm', source:'RFP / Bid Board', city:'Langhorne', zip:'19047', services:['UniPro'], assignedRep:'Unassigned', createdAt:Date.now()-8*86400000, notes:'12 buildings. Annual inspection contract opportunity.' },
       { id:'lead006', business:"Applebee's Langhorne", name:"Applebee's Langhorne", status:'cold', temp:'cold', source:'Cold Call / Phone Outreach', city:'Langhorne', zip:'19047', services:['UniPro','Filter Man'], assignedRep:'Unassigned', createdAt:Date.now()-30*86400000, notes:'GM said call back in Q3.' },
       { id:'lead007', business:'Oxford Valley Mall Food Court', name:'Oxford Valley Mall Food Court', status:'warm', temp:'warm', source:'Email Outreach', city:'Langhorne', zip:'19047', services:['UniPro','Filter Man','GTO'], assignedRep:'Ted Scholl', createdAt:Date.now()-15*86400000, notes:'5 restaurants in food court. Great bundle opportunity.', lifecycleStage:'opportunity', opportunityCreatedAt:Date.now()-3*86400000, opportunityStatus:'pending', opportunityFollowups:[{daysAfter:1,dueAt:Date.now()-2*86400000,done:true,completedAt:Date.now()-2*86400000},{daysAfter:4,dueAt:Date.now()+1*86400000,done:false},{daysAfter:14,dueAt:Date.now()+11*86400000,done:false},{daysAfter:30,dueAt:Date.now()+27*86400000,done:false}] },
     ]);
@@ -6189,6 +6188,11 @@ function isCommandCenterManagerOnly(){
 }
 
 function openOverlay(key){
+  // Bid Pipeline is restricted to Ted (Bid Manager) — no other manager or rep
+  if (key === 'bids' && _currentUser?.email !== 'tscholl@termac.com') {
+    alert('🔒 The Bid Pipeline is restricted to Ted Scholl (Bid Manager).');
+    return;
+  }
   // Employee Portal → redirect straight to HR Portal (single destination for all employees)
   if (key === 'emp') {
     // Preserve return URL so HR portal back button works
@@ -13971,6 +13975,7 @@ const BID_SCRAPER_URL = 'https://bid-scraper.tedscholl.workers.dev/';
 
 // ── BID HARVEST MODAL ────────────────────────────────────────────────────────
 function openBidHarvestModal() {
+  if (_currentUser?.email !== 'tscholl@termac.com') { alert('🔒 Bid harvesting is restricted to Ted Scholl (Bid Manager).'); return; }
   var modal = document.getElementById('bidHarvestModal');
   if (!modal) {
     modal = document.createElement('div');
@@ -14851,6 +14856,7 @@ function bidsRenderVault() {
 }
 
 async function bidsHarvest(){
+  if (_currentUser?.email !== 'tscholl@termac.com') { alert('🔒 Bid harvesting is restricted to Ted Scholl (Bid Manager).'); return; }
   const banner = document.getElementById('bidsHarvestBanner');
   const btn    = document.getElementById('bidsCheckBtn');
 
@@ -22252,6 +22258,15 @@ const ROLE_ACCESS = {
 
 let _currentUser = null;
 
+function maybeOpenPendingBids(){
+  try {
+    if (sessionStorage.getItem('termac_pending_view') === 'bids' && _currentUser && _currentUser.email === 'tscholl@termac.com') {
+      sessionStorage.removeItem('termac_pending_view');
+      setTimeout(function(){ openOverlay('bids'); }, 400);
+    }
+  } catch(e){}
+}
+
 function doRoleLogin() {
   const email    = (document.getElementById('loginEmail')?.value || '').toLowerCase().trim();
   const password = document.getElementById('loginPassword')?.value || '';
@@ -22287,6 +22302,7 @@ function doRoleLogin() {
   document.getElementById('roleLoginBg').classList.remove('open');
   applyRoleAccess(_currentUser);
   renderWelcomeBadge(_currentUser);
+  maybeOpenPendingBids();
 
   // Auto-unlock manager features if manager
   if (user.role === 'manager') {
@@ -22462,6 +22478,13 @@ document.addEventListener('DOMContentLoaded', () => {
       var at  = decodeURIComponent(params.get('at')  || '');
       // Store for use after page init
       window._surveyLaunch = { aid: aid, biz: biz, accountType: at };
+    }
+    if (params.get('view') === 'bids') {
+      history.replaceState(null, '', window.location.pathname);
+      setTimeout(function(){
+        if (_currentUser && _currentUser.email === 'tscholl@termac.com') { openOverlay('bids'); }
+        else { try { sessionStorage.setItem('termac_pending_view','bids'); } catch(e){} }
+      }, 900);
     }
   })();
 
@@ -25356,7 +25379,12 @@ const TERRITORY_REPS = {
 
 function getRepForZip(zip) {
   if (!zip) return 'Unassigned';
-  const z = String(zip).trim();
+  const z = String(zip).trim().substring(0,5);
+  // 1) Exact 5-digit match against each rep's real territory list (authoritative)
+  for (const u of Object.values(TERMAC_USERS)) {
+    if (Array.isArray(u.territory) && u.territory.includes(z)) return u.name;
+  }
+  // 2) Fallback: coarse prefix map for ZIPs not yet in any rep's territory
   return TERRITORY_REPS[z.substring(0,3)] || TERRITORY_REPS[z.substring(0,2)] || 'Unassigned';
 }
 
