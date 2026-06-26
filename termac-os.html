@@ -15294,6 +15294,263 @@ function bidsRenderWinLoss(){
     </tr>`).join('') || '<tr><td colspan="5" style="padding:20px;text-align:center;color:var(--soft)">No decided bids yet.</td></tr>';
 }
 
+// ══════════════════════════════════════════════════════════════
+//  DOCUMENT ASSEMBLY ENGINE — Session 3
+//  8 sections, individually generated, copy-ready
+//  AI reads vault + brief brief context for each section
+// ══════════════════════════════════════════════════════════════
+
+var BD_SECTIONS = [
+  { id:'cover',       icon:'📬', label:'Cover Letter',            color:'#1B5FA8' },
+  { id:'exec',        icon:'📊', label:'Executive Summary',       color:'#1E7B3C' },
+  { id:'scope',       icon:'📋', label:'Scope Response',          color:'#D8690B' },
+  { id:'technical',   icon:'🔧', label:'Technical Approach',      color:'#5B21B6' },
+  { id:'pricing',     icon:'💰', label:'Pricing Schedule',        color:'#C8102E' },
+  { id:'quals',       icon:'🏆', label:'Qualifications Summary',  color:'#0D7490' },
+  { id:'references',  icon:'📞', label:'References Page',         color:'#374151' },
+  { id:'compliance',  icon:'✅', label:'Compliance Checklist',    color:'#1E7B3C' },
+];
+
+function bdShowTab(tab, bidId) {
+  ['overview','assemble','checklist','crosssell'].forEach(function(t) {
+    var btn = document.getElementById('bdTab_'+t);
+    var panel = document.getElementById('bdPanel_'+t);
+    var isActive = t === tab;
+    if (btn) {
+      btn.style.borderBottomColor = isActive ? '#C8102E' : 'transparent';
+      btn.style.color = isActive ? '#C8102E' : 'var(--soft)';
+    }
+    if (panel) panel.style.display = isActive ? 'block' : 'none';
+  });
+}
+
+function bdAssembleSectionsHTML(b) {
+  var assembled = b.assembledDocs || {};
+  return BD_SECTIONS.map(function(sec) {
+    var content = assembled[sec.id] || '';
+    var hasContent = !!content;
+    return '<div id="bdSec_'+sec.id+'_'+b.id+'" style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);margin-bottom:12px;overflow:hidden">' +
+      '<div style="background:'+sec.color+';padding:10px 16px;display:flex;align-items:center;justify-content:space-between">' +
+        '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#fff">'+sec.icon+' '+sec.label+'</div>' +
+        '<div style="display:flex;gap:6px">' +
+          (hasContent ? '<button onclick="bdCopySection(\''+sec.id+'\',\''+b.id+'\')" style="background:rgba(255,255,255,.2);color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:10px;font-weight:700;cursor:pointer">📋 Copy</button>' : '') +
+          '<button onclick="bdGenerateSection(\''+sec.id+'\',\''+b.id+'\')" style="background:rgba(255,255,255,.2);color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:10px;font-weight:700;cursor:pointer">'+(hasContent?'↻ Regenerate':'⚡ Generate')+'</button>' +
+        '</div>' +
+      '</div>' +
+      '<div id="bdSecContent_'+sec.id+'_'+b.id+'" style="padding:14px 16px;font-size:13px;line-height:1.7;color:var(--ink);white-space:pre-wrap;min-height:48px">' +
+        (hasContent ? escH(content) : '<span style="color:var(--soft);font-style:italic">Click Generate to draft this section using your vault and bid details.</span>') +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function bdChecklistHTML(b) {
+  var checklist = b.docChecklist || [];
+  var rfpForms  = b.requiredForms || [];
+
+  // Merge RFP-required forms with standard checklist
+  var standardItems = [
+    { label:'Cover Letter', done:false, required:true },
+    { label:'W-9 — Ter-Pro LLC (EIN 47-1063968)', done:false, required:true },
+    { label:'Certificate of Insurance (ACORD 25)', done:false, required:true },
+    { label:'PA Fire Protection License #21783', done:false, required:true },
+    { label:'Pricing Schedule / Unit Price Sheet', done:false, required:true },
+    { label:'Company Qualifications Statement', done:false, required:true },
+    { label:'Past Performance / References (3 minimum)', done:false, required:true },
+    { label:'Signed Bid Form (if provided)', done:false, required:false },
+    { label:'Performance Bond (if required)', done:false, required:false },
+    { label:'NICET Certifications (if required)', done:false, required:false },
+  ];
+
+  // Add RFP-specific forms
+  rfpForms.forEach(function(f) {
+    if (!standardItems.find(function(s){ return s.label.toLowerCase().includes(f.toLowerCase().slice(0,15)); })) {
+      standardItems.push({ label:f, done:false, required:true });
+    }
+  });
+
+  // Merge with saved checklist state
+  var merged = standardItems.map(function(item, i) {
+    var saved = checklist.find(function(c){ return c.label === item.label; });
+    return { label:item.label, done:saved?saved.done:false, required:item.required };
+  });
+
+  if (!merged.length) return '<div style="color:var(--soft);font-size:13px;padding:10px">No checklist available — analyze the bid first to generate required documents.</div>';
+
+  var done = merged.filter(function(i){return i.done;}).length;
+  var total = merged.length;
+  var pct = Math.round(done/total*100);
+  var barColor = pct>=80?'#1E7B3C':pct>=50?'#D97706':'#C8102E';
+
+  var html = '<div style="background:#F8F9FA;border-radius:9px;padding:14px;margin-bottom:16px">';
+  html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">';
+  html += '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:14px">'+done+' / '+total+' items ready</div>';
+  html += '<div style="font-weight:700;color:'+barColor+'">'+pct+'%</div>';
+  html += '</div>';
+  html += '<div style="height:6px;background:#E5E7EB;border-radius:3px;overflow:hidden">';
+  html += '<div style="height:100%;background:'+barColor+';width:'+pct+'%;transition:width .3s"></div></div></div>';
+
+  html += merged.map(function(item, i) {
+    var reqBadge = item.required ? '<span style="font-size:9px;font-weight:700;color:#C8102E;margin-left:4px">REQUIRED</span>' : '';
+    return '<label style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:7px;cursor:pointer;background:'+(item.done?'#F0FDF4':'#fff')+';margin-bottom:4px;border:1px solid '+(item.done?'#D1FAE5':'#E5E7EB')+'">' +
+      '<input type="checkbox" '+(item.done?'checked':'')+' onchange="bdToggleChecklist(\''+b.id+'\','+i+')" style="width:15px;height:15px;cursor:pointer">' +
+      '<span style="font-size:13px;'+(item.done?'text-decoration:line-through;color:var(--soft)':'')+'">'+escH(item.label)+reqBadge+'</span>' +
+      '</label>';
+  }).join('');
+
+  return html;
+}
+
+function bdCrossSellHTML(b) {
+  var signals = b.crossSellSignals || [];
+  if (!signals.length) {
+    return '<div style="color:var(--soft);font-size:13px;padding:16px;text-align:center">No cross-sell signals saved for this bid.<br>Generate a bid brief first to detect cross-sell opportunities.</div>';
+  }
+  var totalAddedRevenue = signals.reduce(function(s,cs){ return s+(cs.estAnnualRevenue||0); },0);
+  var html = '<div style="background:#F8F9FA;border-radius:9px;padding:14px;margin-bottom:16px;display:flex;gap:16px;flex-wrap:wrap">';
+  html += '<div><div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:20px;color:#5B21B6">'+signals.length+'</div><div style="font-size:11px;color:var(--soft)">Divisions with signals</div></div>';
+  html += '<div><div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:20px;color:#1E7B3C">$'+(totalAddedRevenue/1000).toFixed(0)+'K</div><div style="font-size:11px;color:var(--soft)">Est. added annual revenue</div></div>';
+  html += '</div>';
+  html += signals.map(function(cs) {
+    var acColor = cs.action==='include in bid'?'#1E7B3C':cs.action==='contact separately'?'#D8690B':'#6B7280';
+    return '<div style="background:#fff;border-radius:9px;padding:14px;margin-bottom:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);border-left:4px solid #5B21B6">' +
+      '<div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:8px">' +
+        '<div><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:14px;color:#5B21B6">'+escH(cs.division)+'</div>' +
+        '<div style="font-size:13px;color:var(--ink);margin-top:4px">'+escH(cs.signal)+'</div></div>' +
+        '<div style="text-align:right">' +
+          (cs.estAnnualRevenue?'<div style="font-weight:700;color:#1E7B3C;font-size:14px">+$'+Number(cs.estAnnualRevenue).toLocaleString()+'/yr</div>':'') +
+          '<div style="font-size:10px;font-weight:700;color:'+acColor+';text-transform:uppercase;margin-top:2px">'+escH(cs.action||'')+'</div>' +
+        '</div>' +
+      '</div></div>';
+  }).join('');
+  return html;
+}
+
+function bdToggleChecklist(bidId, idx) {
+  var bids = bidsLoad();
+  var b = bids.find(function(x){return x.id===bidId;});
+  if (!b) return;
+
+  // Build full checklist from HTML state
+  var inputs = document.querySelectorAll('#bdChecklistBody_'+bidId+' input[type="checkbox"]');
+  var items = [];
+  inputs.forEach(function(inp) {
+    var label = inp.parentElement.querySelector('span').textContent.replace('REQUIRED','').trim();
+    items.push({ label:label, done:inp.checked });
+  });
+  items[idx].done = !items[idx].done;
+  b.docChecklist = items;
+  b.updatedAt = Date.now();
+  bidsSave(bids);
+  document.getElementById('bdChecklistBody_'+bidId).innerHTML = bdChecklistHTML(b);
+}
+
+async function bdGenerateSection(secId, bidId) {
+  var bids = bidsLoad();
+  var b = bids.find(function(x){return x.id===bidId;});
+  if (!b) return;
+
+  var sec = BD_SECTIONS.find(function(s){return s.id===secId;});
+  if (!sec) return;
+
+  var contentEl = document.getElementById('bdSecContent_'+secId+'_'+bidId);
+  if (contentEl) contentEl.innerHTML = '<span style="color:#D8690B">🤖 Drafting '+sec.label+'…</span>';
+
+  var vault = bidsVaultLoad();
+  var vaultCtx = 'Company: Ter-Pro LLC / Capital Suppression Corp · 7330 Tulip St, Philadelphia PA 19136 · ' +
+    'Ted Scholl, 267-421-6336, tscholl@termac.com · PA License #21783 · ' +
+    'GL $1M/$2M · Umbrella $2M · WC $1M · Gannon Insurance (215)396-9000 · ' +
+    'Territory: ' + vault.territory;
+
+  var scopeCtx = 'Bid: '+b.title+'\nAgency: '+(b.agency||'N/A')+'\nRef#: '+(b.refNo||'N/A')+
+    '\nDue: '+(b.dueDate||'TBD')+'\nValue: $'+(b.estValue||0).toLocaleString()+
+    '\nScope items: '+((b.scopeItems||[]).join('; ')||b.scopeRaw||'See bid description')+
+    '\nRecommended entity: '+(b.recommendedEntity||'Ter-Pro LLC')+
+    '\nEval criteria: '+((b.evalCriteria||[]).join('; ')||'Not specified');
+
+  var prompts = {
+    cover: 'Write a complete, professional cover letter for this bid. Address it to "To Whom It May Concern" or the agency if known. Include: why we qualify, NFPA compliance methodology, single-vendor advantage if multiple services apply, strong close with Ted Scholl contact info. 3-4 paragraphs. Ready to print.',
+    exec: 'Write a 1-page executive summary for this bid. Include: company overview, relevant experience, why we are the best choice for this contract, key differentiators (multi-division capability, NFPA compliance, territory coverage). Professional tone.',
+    scope: 'Write a detailed scope response that directly addresses each requirement listed. Reference specific NFPA standards (NFPA 10, NFPA 96, etc.). Be specific about our methodology, technician qualifications, inspection procedures, documentation, and AHJ reporting.',
+    technical: 'Write a technical approach section covering: inspection methodology per NFPA standards, technician training and qualifications, equipment and tools used, documentation and reporting process, deficiency notification procedure, emergency response capability. Be specific and compliance-focused.',
+    pricing: 'Write a pricing schedule narrative and structure. Include recommended unit pricing approach (per unit, per site, per visit), multi-year discount recommendation if applicable, bundled service pricing note if cross-sell services detected. Include a blank table structure for unit prices. Note: actual per-unit pricing TBD by Ted Scholl based on site survey.',
+    quals: 'Write a company qualifications summary covering: years in business, service divisions and capabilities, geographic territory, team size, NFPA compliance record, key personnel (Ted Scholl, Jim Kennedy). Keep to 1 page. Professional and factual.',
+    references: 'Write a references page with 3 reference slots formatted professionally. Use [REFERENCE 1 — AGENCY NAME], [CONTACT], [PHONE/EMAIL], [CONTRACT DESCRIPTION], [VALUE], [PERIOD] format for each. Note at bottom that full references available upon request.',
+    compliance: 'Write a compliance checklist / certification page that the company would sign and submit with the bid, confirming: NFPA compliance, insurance coverage, licensing, non-collusion, equal opportunity, etc. Include signature block for Ted Scholl / authorized representative.',
+  };
+
+  var prompt = 'You are writing a professional bid submission document for Termac Family of Companies / UniPro Fire Protection.\n\n' +
+    'COMPANY PROFILE:\n' + vaultCtx + '\n\n' +
+    'BID CONTEXT:\n' + scopeCtx + '\n\n' +
+    'DOCUMENT TO WRITE: ' + sec.label + '\n\n' +
+    (prompts[secId]||'Write this section professionally and completely.') + '\n\n' +
+    'Write the complete document ready for review. Use professional formatting with clear headers. Do not include meta-commentary or notes to self.';
+
+  try {
+    var res = await fetch('https://unipro-ai-proxy.tedscholl.workers.dev', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:1000,
+        messages:[{role:'user',content:prompt}] })
+    });
+    var data = await res.json();
+    var text = (data.content||[]).map(function(x){return x.text||'';}).join('');
+
+    // Save to bid record
+    if (!b.assembledDocs) b.assembledDocs = {};
+    b.assembledDocs[secId] = text;
+    b.updatedAt = Date.now();
+    bidsSave(bids);
+
+    // Re-render section
+    if (contentEl) contentEl.innerHTML = escH(text);
+
+    // Add copy button if not there
+    var secEl = document.getElementById('bdSec_'+secId+'_'+bidId);
+    if (secEl) {
+      var btnArea = secEl.querySelector('div > div:last-child');
+      if (btnArea && !btnArea.querySelector('.copy-btn')) {
+        var copyBtn = document.createElement('button');
+        copyBtn.className = 'copy-btn';
+        copyBtn.onclick = function(){ bdCopySection(secId, bidId); };
+        copyBtn.style.cssText = 'background:rgba(255,255,255,.2);color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:10px;font-weight:700;cursor:pointer;margin-right:4px';
+        copyBtn.textContent = '📋 Copy';
+        btnArea.insertBefore(copyBtn, btnArea.firstChild);
+      }
+    }
+
+  } catch(e) {
+    if (contentEl) contentEl.innerHTML = '<span style="color:#C8102E">AI connection error — try again</span>';
+  }
+}
+
+async function bdAssembleAll(bidId) {
+  showToast('⚡ Assembling all 8 sections — this takes about 60 seconds…');
+  for (var i=0; i<BD_SECTIONS.length; i++) {
+    await bdGenerateSection(BD_SECTIONS[i].id, bidId);
+    // Small delay between calls to avoid rate limits
+    await new Promise(function(r){setTimeout(r,800);});
+  }
+  showToast('✅ All sections assembled — review and copy each one');
+}
+
+function bdCopySection(secId, bidId) {
+  var el = document.getElementById('bdSecContent_'+secId+'_'+bidId);
+  if (!el) return;
+  var text = el.textContent || el.innerText || '';
+  navigator.clipboard.writeText(text).then(function(){
+    showToast('📋 Copied to clipboard');
+  }).catch(function(){
+    // Fallback
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    showToast('📋 Copied');
+  });
+}
+
 function bidsOpenDetail(id){
   const bids = bidsLoad();
   const b = bids.find(x => x.id === id);
@@ -15313,13 +15570,49 @@ function bidsOpenDetail(id){
       <div style="padding:16px;font-size:13px;line-height:1.6;color:var(--ink)">${b.scopeRaw}</div>
     </div>
     ${b.isReferenceExample ? `<div style="font-size:12px;color:var(--soft);padding:10px;background:var(--bg);border-radius:8px;margin-bottom:16px">📌 Reference example from a confirmed past Philadelphia posting.</div>` : ''}
-    <div id="bidAiSection_${b.id}">
-      ${b.aiScope ? bidsAiResultsHTML(b) : `
-        <div style="text-align:center;padding:24px">
-          <button class="act-save-btn" onclick="bidsRunAI('${b.id}')">🤖 Analyze Scope &amp; Draft Response</button>
-          <div style="font-size:11px;color:var(--soft);margin-top:8px">AI will extract the scope, draft a response, run price analysis, and build your document checklist.</div>
-        </div>`}
+    <!-- Bid detail tabs -->
+    <div style="display:flex;gap:0;border-bottom:1px solid var(--line);margin-bottom:16px;flex-wrap:wrap">
+      <button id="bdTab_overview" onclick="bdShowTab('overview','${b.id}')" style="padding:9px 16px;border:none;background:none;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;border-bottom:2px solid #C8102E;color:#C8102E">📋 Overview</button>
+      <button id="bdTab_assemble" onclick="bdShowTab('assemble','${b.id}')" style="padding:9px 16px;border:none;background:none;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;border-bottom:2px solid transparent;color:var(--soft)">📝 Document Assembly</button>
+      <button id="bdTab_checklist" onclick="bdShowTab('checklist','${b.id}')" style="padding:9px 16px;border:none;background:none;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;border-bottom:2px solid transparent;color:var(--soft)">✅ Checklist</button>
+      <button id="bdTab_crosssell" onclick="bdShowTab('crosssell','${b.id}')" style="padding:9px 16px;border:none;background:none;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;border-bottom:2px solid transparent;color:var(--soft)">🔀 Cross-Sell</button>
     </div>
+
+    <!-- Overview tab -->
+    <div id="bdPanel_overview">
+      <div id="bidAiSection_${b.id}">
+        ${b.aiScope ? bidsAiResultsHTML(b) : `
+          <div style="text-align:center;padding:24px">
+            <button class="act-save-btn" onclick="bidsRunAI('${b.id}')">🤖 Analyze Scope &amp; Draft Response</button>
+            <div style="font-size:11px;color:var(--soft);margin-top:8px">AI will extract the scope, draft a response, run price analysis, and build your document checklist.</div>
+          </div>`}
+      </div>
+    </div>
+
+    <!-- Document Assembly tab -->
+    <div id="bdPanel_assemble" style="display:none">
+      <div style="margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+        <div>
+          <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:14px">Document Assembly Engine</div>
+          <div style="font-size:12px;color:var(--soft)">Generate each section individually. AI reads the vault + brief automatically.</div>
+        </div>
+        <button onclick="bdAssembleAll('${b.id}')" style="background:#C8102E;color:#fff;border:none;border-radius:8px;padding:9px 18px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">⚡ Assemble All Sections</button>
+      </div>
+      <div id="bdAssembleBody_${b.id}">
+        ${bdAssembleSectionsHTML(b)}
+      </div>
+    </div>
+
+    <!-- Checklist tab -->
+    <div id="bdPanel_checklist" style="display:none">
+      <div id="bdChecklistBody_${b.id}">${bdChecklistHTML(b)}</div>
+    </div>
+
+    <!-- Cross-sell tab -->
+    <div id="bdPanel_crosssell" style="display:none">
+      <div id="bdCrossSellBody_${b.id}">${bdCrossSellHTML(b)}</div>
+    </div>
+
     <div style="display:flex;gap:10px;margin-top:20px;flex-wrap:wrap">
       ${b.status !== 'submitted' && b.status !== 'won' && b.status !== 'lost' ? `<button class="act-save-btn" onclick="bidsMarkSubmitted('${b.id}')">✅ Mark as Submitted</button>` : ''}
       ${b.status === 'submitted' ? `<button class="act-save-btn" style="background:#3FA34D" onclick="bidsMarkOutcome('${b.id}','won')">🏆 Mark Won</button>
