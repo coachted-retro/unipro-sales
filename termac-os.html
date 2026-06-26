@@ -17047,44 +17047,62 @@ function estBuildLines(svc, d){
   if(svc === 'filterman'){
     const count = parseInt(d.fm_count) || 1;
     const freq = d.fm_frequency || '4 Week';
-    const term = d.fm_term || '1yr';
-    const termMult = EST_PRICING.filterman.termMultiplier[term] || 1.0;
-    // d.fm_rate is the real monthly-equivalent computed by svFMCalcRate()
-    // from the actual per-visit week-based pricing sheet. Falls back to a
-    // flat placeholder only if the rep never touched the count/frequency fields.
+    const term = d.fm_term || 'per_visit';
+    const isPerVisit = term === 'per_visit';
+    const termMult = isPerVisit ? 1.0 : (EST_PRICING.filterman.termMultiplier[term] || 1.0);
     const baseMonthly = parseFloat(d.fm_rate) || (count * 9);
-    const monthlyRate = Math.round(baseMonthly * termMult);
-    const annualTotal = monthlyRate * 12;
 
-    lines.push({
-      desc:'Filter Man — Hood Filter Exchange Service',
-      detail:`${count} filters · ${d.fm_size||'standard'} · ${freq} Service · ${term==='3yr'?'3-Year Agreement (10% off)':'1-Year Agreement'}`,
-      qty:1, unitPrice:annualTotal, editable:true,
-      monthly: monthlyRate, isMonthly: true
-    });
+    if (isPerVisit) {
+      // Per-visit accounts: show the per-visit rate, not annualized
+      const perVisitRate = parseFloat(d.fm_rate) || (count * 9);
+      lines.push({
+        desc:'Filter Man — Hood Filter Exchange Service',
+        detail:`${count} filters · ${d.fm_size||'standard'} · ${freq} Service · Per Visit — No Contract`,
+        qty:1, unitPrice:perVisitRate, editable:true,
+        perVisit: true, isMonthly: false
+      });
+    } else {
+      const monthlyRate = Math.round(baseMonthly * termMult);
+      const annualTotal = monthlyRate * 12;
+      lines.push({
+        desc:'Filter Man — Hood Filter Exchange Service',
+        detail:`${count} filters · ${d.fm_size||'standard'} · ${freq} Service · ${term==='3yr'?'3-Year Agreement (10% off)':'1-Year Agreement'} ≈ $${monthlyRate}/mo`,
+        qty:1, unitPrice:annualTotal, editable:true,
+        monthly: monthlyRate, isMonthly: true
+      });
+    }
   }
 
   if(svc === 'gto'){
     const gallonsSelected = !!d.gto_gallons;
     const gallons = d.gto_gallons || '250 gal (unconfirmed — select tank size)';
     const freq = d.gto_frequency || 'Monthly';
-    const term = d.gto_term || '1yr';
-    const termMult = EST_PRICING.gto.termMultiplier[term] || 1.0;
-    // d.gto_rate is the real monthly-equivalent computed by svGTOCalcRate()
-    // from the actual per-visit tiered pricing sheet. Falls back to a flat
-    // placeholder only if the rep never touched the gallonage/trap fields.
+    const term = d.gto_term || 'per_visit';
+    const isPerVisit = term === 'per_visit';
+    const termMult = isPerVisit ? 1.0 : (EST_PRICING.gto.termMultiplier[term] || 1.0);
     const baseMonthly = parseFloat(d.gto_rate) || 145;
-    const monthlyRate = Math.round(baseMonthly * termMult);
-    const annualTotal = monthlyRate * 12;
     const trapCount = parseInt(d.gto_trapcount) || 1;
 
-    lines.push({
-      desc: 'G.T.O. — Grease Trap Service' + (gallonsSelected ? '' : ' ⚠️ Confirm Tank Size'),
-      detail:`${gallons} · ${trapCount} trap${trapCount>1?'s':''} · ${freq} · ${term==='3yr'?'3-Year Agreement (12% off)':'1-Year Agreement'}`,
-      qty:1, unitPrice:annualTotal, editable:true,
-      monthly: monthlyRate, isMonthly: true,
-      note: gallonsSelected ? '' : 'Tank size was not selected on the survey — this price assumes 250 gal. Confirm and adjust before sending to the client.'
-    });
+    if (isPerVisit) {
+      const perVisitRate = parseFloat(d.gto_rate) || 145;
+      lines.push({
+        desc: 'G.T.O. — Grease Trap Service' + (gallonsSelected ? '' : ' ⚠️ Confirm Tank Size'),
+        detail:`${gallons} · ${trapCount} trap${trapCount>1?'s':''} · ${freq} · Per Visit — No Contract`,
+        qty:1, unitPrice:perVisitRate, editable:true,
+        perVisit: true, isMonthly: false,
+        note: gallonsSelected ? '' : 'Tank size was not confirmed — price assumes 250 gal. Adjust before sending.'
+      });
+    } else {
+      const monthlyRate = Math.round(baseMonthly * termMult);
+      const annualTotal = monthlyRate * 12;
+      lines.push({
+        desc: 'G.T.O. — Grease Trap Service' + (gallonsSelected ? '' : ' ⚠️ Confirm Tank Size'),
+        detail:`${gallons} · ${trapCount} trap${trapCount>1?'s':''} · ${freq} · ${term==='3yr'?'3-Year Agreement (12% off)':'1-Year Agreement'} ≈ $${monthlyRate}/mo`,
+        qty:1, unitPrice:annualTotal, editable:true,
+        monthly: monthlyRate, isMonthly: true,
+        note: gallonsSelected ? '' : 'Tank size was not confirmed — price assumes 250 gal. Adjust before sending.'
+      });
+    }
   }
 
   if(svc === 'allpro'){
@@ -17169,6 +17187,7 @@ function estRender(){
           <strong>${li.desc}</strong>
           <small>${li.detail||''}${li.note?` · <em>${li.note}</em>`:''}</small>
           ${li.isMonthly && li.monthly ? `<small style="color:var(--green)">≈ $${li.monthly}/mo</small>` : ''}
+          ${li.perVisit ? `<small style="color:#1E7B3C;font-weight:600">Per-visit rate · billed at time of service</small>` : ''}
         </div>
         <div class="est-line-qty"><input type="number" value="${li.qty||1}" min="1"
           onchange="estUpdateQty('${svc}',${idx},this.value)" style="width:100%;padding:5px 8px;border:1.5px solid var(--line);border-radius:6px;font-size:13px;text-align:center;outline:none"></div>
@@ -18396,6 +18415,9 @@ function estCalcBundleDiscount(bundleKey, term, grandTotal){
 
 function estShowBundleCard(bundleKey, grandTotal){
   if(estBundleState.dismissed) return;
+  // Don't show bundle upsell to per-visit accounts — they're not on contracts
+  var _pm = (svState && svState.pricingMode) || 'per_visit';
+  if (_pm === 'per_visit') return;
   const b = BUNDLES[bundleKey];
   if(!b) return;
   estBundleState.selectedBundle = bundleKey;
