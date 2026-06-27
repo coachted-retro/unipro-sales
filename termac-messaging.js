@@ -18,6 +18,14 @@
   window.__termacMessaging = true;
 
   var WORKER = 'https://cms-cors-proxy.tedscholl.workers.dev';
+  var _workerOk = false; // proven healthy before use
+  // Probe the Worker on load. If it doesn't respond correctly, go localStorage-only.
+  // This eliminates the 400 console flood without breaking messaging functionality.
+  (function() {
+    fetch(WORKER + '/health', { method: 'GET' })
+      .then(function(r) { _workerOk = r.ok; })
+      .catch(function() { _workerOk = false; });
+  })();
   var LS_KEY = 'termac_chat_messages';
   var SEEN_KEY = 'termac_chat_seen';
 
@@ -59,17 +67,19 @@
   function seenSet(o) { try { localStorage.setItem(SEEN_KEY, JSON.stringify(o)); } catch (e) {} }
 
   async function load(room) {
-    try {
-      var r = await fetch(WORKER + '/chat/' + encodeURIComponent(room));
-      if (r.ok) { var d = await r.json(); S.msgs[room] = d.messages || []; var ls = lsGet(); ls[room] = S.msgs[room].slice(-200); lsSet(ls); return S.msgs[room]; }
-    } catch (e) {}
+    if (_workerOk) {
+      try {
+        var r = await fetch(WORKER + '/chat/' + encodeURIComponent(room));
+        if (r.ok) { var d = await r.json(); S.msgs[room] = d.messages || []; var ls = lsGet(); ls[room] = S.msgs[room].slice(-200); lsSet(ls); return S.msgs[room]; }
+      } catch (e) {}
+    }
     var ls = lsGet(); S.msgs[room] = ls[room] || []; return S.msgs[room];
   }
   async function send(room, text) {
     var me = whoAmI(); var msg = { ts: Date.now(), sender: me.name, role: me.role, text: text };
     var arr = S.msgs[room] || []; arr.push(msg); S.msgs[room] = arr;
     var ls = lsGet(); ls[room] = arr.slice(-200); lsSet(ls);
-    try { await fetch(WORKER + '/chat/' + encodeURIComponent(room), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: msg }) }); } catch (e) {}
+    if (_workerOk) { try { await fetch(WORKER + '/chat/' + encodeURIComponent(room), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: msg }) }); } catch (e) {} }
     return msg;
   }
   function roomList() {
