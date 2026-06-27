@@ -711,6 +711,7 @@ body{font-family:Barlow,sans-serif;background:var(--bg);color:var(--ink);font-si
           <option value="all">All Categories</option>
         </select>
         <button onclick="exportCOGS()" style="background:#1E3A5F;color:#fff;border:1px solid #334155;border-radius:6px;padding:6px 14px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;cursor:pointer">📥 Export CSV</button>
+        <button onclick="openAPExportModal()" style="background:#4C1D95;color:#DDD6FE;border:1px solid #6D28D9;border-radius:6px;padding:6px 14px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;cursor:pointer">&#128181; AP Payables Export</button>
         <button onclick="openImportModal('cogs')" style="background:#1A4731;color:#86EFAC;border:1px solid #166534;border-radius:6px;padding:6px 14px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;cursor:pointer">📤 Import CSV / Invoice</button>
         <button onclick="openInvoiceScanModal()" style="background:#3B2A00;color:#FCD34D;border:1px solid #92400E;border-radius:6px;padding:6px 14px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;cursor:pointer">📷 Scan Invoice (AI)</button>
       </div>
@@ -3410,6 +3411,227 @@ function exportAPRecord() {
   });
   var blob = new Blob([csv],{type:'text/csv'}); var url = URL.createObjectURL(blob);
   var a = document.createElement('a'); a.href=url; a.download='ap_invoice_'+Date.now()+'.csv'; a.click(); URL.revokeObjectURL(url);
+}
+
+
+
+/* ============================================================
+   Termac One — AP Payables Export
+   All-company FIFO invoice queue for accounting.
+   Reads every saved AP record across all companies, sorts by
+   due date (earliest first) so oldest obligations surface at
+   the top regardless of which company or warehouse generated
+   them, allows filtering by week / month / all, and exports
+   a clean CSV that accounting can import directly.
+   ============================================================ */
+
+function openAPExportModal() {
+  var ov = document.getElementById('apExportOverlay');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'apExportOverlay';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:100001;display:flex;align-items:flex-start;justify-content:center;padding:20px;overflow:auto;font-family:-apple-system,Segoe UI,Roboto,sans-serif';
+    ov.innerHTML = [
+      '<div style="background:#fff;border-radius:14px;width:min(820px,98vw);max-height:90vh;display:flex;flex-direction:column">',
+        '<div style="background:#0F172A;color:#fff;padding:14px 18px;border-radius:14px 14px 0 0;display:flex;align-items:center;justify-content:space-between;flex-shrink:0">',
+          '<div>',
+            '<div style="font-weight:800;font-size:15px">&#128181; AP Payables Queue</div>',
+            '<div style="font-size:11px;color:#94A3B8;margin-top:2px">All companies — FIFO by due date — oldest obligations first</div>',
+          '</div>',
+          '<button onclick="document.getElementById(\'apExportOverlay\').style.display=\'none\'" style="background:none;border:none;color:#fff;font-size:20px;cursor:pointer">&#x2715;</button>',
+        '</div>',
+        '<div style="padding:14px 18px;border-bottom:1px solid #E2E8F0;display:flex;gap:10px;align-items:center;flex-wrap:wrap;flex-shrink:0">',
+          '<div>',
+            '<label style="font-size:11px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Period</label>',
+            '<select id="apPeriodSel" onchange="renderAPQueue()" style="padding:7px 10px;border:1px solid #CBD5E1;border-radius:8px;font-size:13px">',
+              '<option value="week">This Week</option>',
+              '<option value="month">This Month</option>',
+              '<option value="all" selected>All Pending</option>',
+            '</select>',
+          '</div>',
+          '<div>',
+            '<label style="font-size:11px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Status</label>',
+            '<select id="apStatusSel" onchange="renderAPQueue()" style="padding:7px 10px;border:1px solid #CBD5E1;border-radius:8px;font-size:13px">',
+              '<option value="pending">Pending</option>',
+              '<option value="paid">Paid</option>',
+              '<option value="all">All</option>',
+            '</select>',
+          '</div>',
+          '<div style="margin-left:auto;display:flex;gap:8px">',
+            '<button onclick="exportAPCSV()" style="background:#1E3A8A;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-weight:700;font-size:12px;cursor:pointer">&#11015; Export CSV</button>',
+            '<button onclick="markAllAPPaid()" style="background:#1E7B3C;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-weight:700;font-size:12px;cursor:pointer">&#10003; Mark Filtered Paid</button>',
+          '</div>',
+        '</div>',
+        '<div style="padding:10px 18px;background:#F8FAFC;border-bottom:1px solid #E2E8F0;flex-shrink:0">',
+          '<div id="apQueueSummary" style="font-size:12px;color:#475569;display:flex;gap:24px;flex-wrap:wrap"></div>',
+        '</div>',
+        '<div style="overflow:auto;flex:1">',
+          '<table style="width:100%;border-collapse:collapse;font-size:12px">',
+            '<thead style="position:sticky;top:0;background:#F1F5F9;z-index:1">',
+              '<tr>',
+                '<th style="text-align:left;padding:8px 12px;font-weight:700;color:#475569">#</th>',
+                '<th style="text-align:left;padding:8px 12px;font-weight:700;color:#475569">Vendor</th>',
+                '<th style="text-align:left;padding:8px 12px;font-weight:700;color:#475569">Invoice #</th>',
+                '<th style="text-align:left;padding:8px 12px;font-weight:700;color:#475569">Company</th>',
+                '<th style="text-align:left;padding:8px 12px;font-weight:700;color:#475569">Invoice Date</th>',
+                '<th style="text-align:left;padding:8px 12px;font-weight:700;color:#475569">Due Date</th>',
+                '<th style="text-align:right;padding:8px 12px;font-weight:700;color:#475569">Amount</th>',
+                '<th style="text-align:left;padding:8px 12px;font-weight:700;color:#475569">Status</th>',
+                '<th style="text-align:left;padding:8px 12px;font-weight:700;color:#475569">Actions</th>',
+              '</tr>',
+            '</thead>',
+            '<tbody id="apQueueBody"></tbody>',
+          '</table>',
+        '</div>',
+      '</div>'
+    ].join('');
+    document.body.appendChild(ov);
+  } else {
+    ov.style.display = 'flex';
+  }
+  renderAPQueue();
+}
+
+function apDueDate(inv) {
+  // Due date = invoice date + terms (default Net 30 if not set)
+  if (inv.dueDate) return new Date(inv.dueDate);
+  var base = inv.invoiceDate ? new Date(inv.invoiceDate) : new Date(inv.ts || Date.now());
+  var terms = inv.paymentTerms || 30;
+  base.setDate(base.getDate() + terms);
+  return base;
+}
+
+function apCompanyLabel(wh) {
+  return { termac:'Termac', unipro:'UniPro / Quality III', allpro:'AllPro', gto:'GTO', filterman:'Filter Man' }[wh] || wh || 'Termac';
+}
+
+function getFilteredAP() {
+  var period = document.getElementById('apPeriodSel') ? document.getElementById('apPeriodSel').value : 'all';
+  var status = document.getElementById('apStatusSel') ? document.getElementById('apStatusSel').value : 'pending';
+  var now = Date.now();
+  var weekStart = now - 7*86400000;
+  var monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0,0,0,0);
+
+  var all = loadAPInvoices();
+  return all
+    .filter(function(inv) {
+      if (status !== 'all' && (inv.status||'pending') !== status) return false;
+      if (period === 'week') return (inv.ts||0) >= weekStart;
+      if (period === 'month') return (inv.ts||0) >= monthStart.getTime();
+      return true;
+    })
+    .sort(function(a, b) {
+      // FIFO: sort by due date ascending — oldest obligation first
+      return apDueDate(a).getTime() - apDueDate(b).getTime();
+    });
+}
+
+function renderAPQueue() {
+  var records = getFilteredAP();
+  var tbody = document.getElementById('apQueueBody');
+  var summary = document.getElementById('apQueueSummary');
+  if (!tbody) return;
+
+  var totalAmt = records.reduce(function(s,r){ return s+(r.total||0); },0);
+  var overdue = records.filter(function(r){ return apDueDate(r).getTime() < Date.now() && (r.status||'pending')==='pending'; }).length;
+  var dueThisWeek = records.filter(function(r){ var d=apDueDate(r).getTime(); return d>=Date.now() && d<Date.now()+7*86400000 && (r.status||'pending')==='pending'; }).length;
+
+  summary.innerHTML = [
+    '<span><b>'+records.length+'</b> invoices</span>',
+    '<span style="color:#C8102E"><b>'+overdue+'</b> overdue</span>',
+    '<span style="color:#D97706"><b>'+dueThisWeek+'</b> due this week</span>',
+    '<span><b>$'+totalAmt.toFixed(2)+'</b> total</span>',
+  ].join('<span style="color:#CBD5E1">|</span>');
+
+  if (!records.length) {
+    tbody.innerHTML = '<tr><td colspan="9" style="padding:24px;text-align:center;color:#94A3B8">No invoices found for this filter</td></tr>';
+    return;
+  }
+
+  var now = Date.now();
+  tbody.innerHTML = records.map(function(inv, i) {
+    var due = apDueDate(inv);
+    var isOverdue = due.getTime() < now && (inv.status||'pending') === 'pending';
+    var isDueSoon = !isOverdue && due.getTime() < now + 7*86400000 && (inv.status||'pending') === 'pending';
+    var rowBg = isOverdue ? '#FFF5F5' : isDueSoon ? '#FFFBEB' : '#fff';
+    var dueTxt = isOverdue
+      ? '<span style="color:#C8102E;font-weight:700">'+due.toLocaleDateString()+' OVERDUE</span>'
+      : isDueSoon
+        ? '<span style="color:#D97706;font-weight:700">'+due.toLocaleDateString()+' (soon)</span>'
+        : due.toLocaleDateString();
+    var statusBadge = (inv.status||'pending') === 'paid'
+      ? '<span style="background:#F0FDF4;color:#1E7B3C;border:1px solid #86EFAC;border-radius:12px;padding:2px 8px;font-size:11px;font-weight:700">PAID</span>'
+      : isOverdue
+        ? '<span style="background:#FFF5F5;color:#C8102E;border:1px solid #FECACA;border-radius:12px;padding:2px 8px;font-size:11px;font-weight:700">OVERDUE</span>'
+        : '<span style="background:#FEF3C7;color:#92400E;border:1px solid #FDE68A;border-radius:12px;padding:2px 8px;font-size:11px;font-weight:700">PENDING</span>';
+    return '<tr style="border-bottom:1px solid #F1F5F9;background:'+rowBg+'">'
+      +'<td style="padding:8px 12px;color:#64748B">'+(i+1)+'</td>'
+      +'<td style="padding:8px 12px;font-weight:700">'+escHtml(inv.vendor||'Unknown')+'</td>'
+      +'<td style="padding:8px 12px;color:#475569">'+escHtml(inv.invoiceNumber||'-')+'</td>'
+      +'<td style="padding:8px 12px">'+escHtml(apCompanyLabel(inv.warehouse))+'</td>'
+      +'<td style="padding:8px 12px;color:#64748B">'+(inv.invoiceDate||'-')+'</td>'
+      +'<td style="padding:8px 12px">'+dueTxt+'</td>'
+      +'<td style="padding:8px 12px;text-align:right;font-weight:700">$'+(inv.total||0).toFixed(2)+'</td>'
+      +'<td style="padding:8px 12px">'+statusBadge+'</td>'
+      +'<td style="padding:8px 12px">'
+        +'<button onclick="markAPPaid(\''+inv.id+'\')" style="font-size:10px;background:none;border:1px solid #CBD5E1;border-radius:6px;padding:3px 8px;cursor:pointer;font-weight:700;color:#1E7B3C">Mark Paid</button> '
+        +'<button onclick="viewAPLines(\''+inv.id+'\')" style="font-size:10px;background:none;border:1px solid #CBD5E1;border-radius:6px;padding:3px 8px;cursor:pointer;font-weight:700;color:#1E3A8A">Lines</button>'
+      +'</td>'
+      +'</tr>';
+  }).join('');
+}
+
+function markAPPaid(id) {
+  var all = loadAPInvoices();
+  var i = all.findIndex(function(r){ return r.id===id; });
+  if (i>=0) { all[i].status='paid'; all[i].paidAt=new Date().toLocaleString(); saveAPInvoices(all); }
+  renderAPQueue();
+}
+
+function markAllAPPaid() {
+  var records = getFilteredAP();
+  var ids = new Set(records.map(function(r){ return r.id; }));
+  var all = loadAPInvoices().map(function(r){ return ids.has(r.id) ? Object.assign({},r,{status:'paid',paidAt:new Date().toLocaleString()}) : r; });
+  saveAPInvoices(all);
+  renderAPQueue();
+}
+
+function viewAPLines(id) {
+  var inv = loadAPInvoices().find(function(r){ return r.id===id; });
+  if (!inv) return;
+  var lines = (inv.lines||[]).map(function(l,i){
+    return (i+1)+'. '+l.description+' — qty '+l.qty+' @ $'+(l.unitPrice||0).toFixed(2)+' = $'+(l.lineTotal||0).toFixed(2)+(l.matchedSKU?' ['+l.matchedSKU+']':'');
+  }).join('\n');
+  alert(inv.vendor+' | Invoice '+inv.invoiceNumber+'\n'+inv.invoiceDate+' | $'+inv.total.toFixed(2)+'\n\n'+lines);
+}
+
+function exportAPCSV() {
+  var records = getFilteredAP();
+  var period = document.getElementById('apPeriodSel').value;
+  var rows = [['#','Vendor','Invoice #','Company / Warehouse','Invoice Date','Due Date','Payment Terms (Days)','Amount','Status','Paid At','Line Items']];
+  records.forEach(function(inv, i) {
+    var due = apDueDate(inv);
+    var linesSummary = (inv.lines||[]).map(function(l){ return l.description+' ('+l.qty+' '+l.unit+' @ $'+(l.unitPrice||0).toFixed(2)+')'; }).join('; ');
+    rows.push([
+      i+1,
+      inv.vendor||'',
+      inv.invoiceNumber||'',
+      apCompanyLabel(inv.warehouse),
+      inv.invoiceDate||'',
+      due.toLocaleDateString(),
+      inv.paymentTerms||30,
+      (inv.total||0).toFixed(2),
+      inv.status||'pending',
+      inv.paidAt||'',
+      linesSummary
+    ]);
+  });
+  var csv = rows.map(function(r){ return r.map(function(v){ return '"'+String(v||'').replace(/"/g,'""')+'"'; }).join(','); }).join('\n');
+  var label = period==='week' ? 'weekly' : period==='month' ? 'monthly' : 'all';
+  var a = document.createElement('a');
+  a.href = 'data:text/csv,' + encodeURIComponent(csv);
+  a.download = 'termac-ap-payables-'+label+'-'+new Date().toISOString().slice(0,10)+'.csv';
+  a.click();
 }
 
 </script>
