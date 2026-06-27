@@ -1427,7 +1427,7 @@ setTimeout(function(){ if(typeof TECHS!=='undefined' && typeof renderLB==='funct
         <option value="dead">💀 Dead</option>
       </select>
       <button class="crm-btn" id="crmHarvestBtn" onclick="harvestRunLivePA()" style="background:#F2B705;color:#1A1D21;display:none">🌾 Harvest PA Leads</button>
-      <button class="crm-btn" id="crmHarvestDEBtn" onclick="harvestRunLiveDE()" style="background:#F2B705;color:#1A1D21;display:none">🌾 Harvest DE Leads</button>
+      <button class="crm-btn" id="crmHarvestDEBtn" onclick="harvestRunLiveDEAll()" style="background:#F2B705;color:#1A1D21;display:none">🌾 Harvest DE Leads</button>
       <button class="crm-btn" id="crmHarvestDCBtn" onclick="harvestRunLiveDC()" style="background:#F2B705;color:#1A1D21;display:none">🌾 Harvest DC Leads</button>
       <button class="crm-btn" id="crmHarvestNJBtn" onclick="harvestRunLiveNJ()" style="background:#F2B705;color:#1A1D21;display:none">🌾 Harvest NJ Leads</button>
       <button class="crm-btn" id="crmHarvestMDBtn" onclick="harvestRunLiveMD()" style="background:#F2B705;color:#1A1D21;display:none">🌾 Harvest MD Leads</button>
@@ -4097,7 +4097,7 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:8px">
           <button onclick="harvestRunLivePA()" style="background:#F2B705;color:#1A1D21;border:none;border-radius:8px;padding:10px 6px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">🌾 PA</button>
           <button onclick="harvestRunLiveNJ()" style="background:#F2B705;color:#1A1D21;border:none;border-radius:8px;padding:10px 6px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">🌾 NJ</button>
-          <button onclick="harvestRunLiveDE()" style="background:#F2B705;color:#1A1D21;border:none;border-radius:8px;padding:10px 6px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">🌾 DE</button>
+          <button onclick="harvestRunLiveDEAll()" style="background:#F2B705;color:#1A1D21;border:none;border-radius:8px;padding:10px 6px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">🌾 DE</button>
           <button onclick="harvestRunLiveDC()" style="background:#F2B705;color:#1A1D21;border:none;border-radius:8px;padding:10px 6px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">🌾 DC</button>
           <button onclick="harvestRunLiveMD()" style="background:#F2B705;color:#1A1D21;border:none;border-radius:8px;padding:10px 6px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">🌾 MD</button>
           <button onclick="harvestRunLiveCMSFireSafety()" style="background:#DC2626;color:#fff;border:none;border-radius:8px;padding:10px 6px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">🚨 Fire</button>
@@ -12131,6 +12131,158 @@ function harvestAppendStatus(html) {
 async function harvestRunLivePA() {
   await harvestRunLive();
   await harvestPAPermits();
+  await harvestPHLViolations();
+}
+
+// ── Philadelphia L&I CODE VIOLATIONS harvester (fire/hood/cooking signals) ──
+// Rides the PA button + same cms-proxy + same leads pool. A fire-suppression,
+// sprinkler, hood, or commercial-cooking code violation is an active pain
+// point = a hotter lead than a new license.
+function vioServicesPHL(text) {
+  const t = (text || '').toLowerCase(); const svc = [];
+  const add = k => { if (svc.indexOf(k) < 0) svc.push(k); };
+  if (/fire|sprinkler|suppress|extinguish|alarm|standpipe/.test(t)) add('unipro');
+  if (/hood|exhaust|ventilation|commercial cooking|kitchen/.test(t)) { add('filterman'); add('unipro'); }
+  if (/mechanical/.test(t)) add('unipro');
+  if (!svc.length) add('unipro');
+  return svc;
+}
+async function harvestPHLViolations() {
+  const btn = document.getElementById('crmHarvestBtn');
+  if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; }
+  try {
+    const since = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
+    const kw = "(violationcodetitle ILIKE '%fire%' OR violationcodetitle ILIKE '%sprinkler%' OR violationcodetitle ILIKE '%suppress%' OR violationcodetitle ILIKE '%hood%' OR violationcodetitle ILIKE '%exhaust%' OR violationcodetitle ILIKE '%ventilation%' OR violationcodetitle ILIKE '%commercial cooking%' OR violationcodetitle ILIKE '%extinguish%')";
+    async function fetchVio(useKw) {
+      const sql = "SELECT * FROM violations WHERE violationdate >= '" + since + "'" + (useKw ? (" AND " + kw) : "") + " ORDER BY violationdate DESC LIMIT " + (useKw ? "300" : "2000");
+      const target = 'https://phl.carto.com/api/v2/sql?q=' + encodeURIComponent(sql);
+      const res = await fetch(HARVEST_CMS_PROXY_URL + '?url=' + encodeURIComponent(target));
+      let body; try { body = await res.json(); } catch (e) { body = null; }
+      return { ok: res.ok, status: res.status, body };
+    }
+    let r = await fetchVio(true);
+    if (!r.ok || (r.body && r.body.error)) r = await fetchVio(false); // schema fallback: pull broad, filter in JS
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    let rows = (r.body && r.body.rows) || [];
+    // group by property, keep only fire/hood/cooking-relevant
+    const byProp = {};
+    rows.forEach(row => {
+      const title = (row.violationcodetitle || row.violationtype || row.violationdescription || '').toString();
+      if (!/fire|sprinkler|suppress|hood|exhaust|ventilation|cooking|extinguish/i.test(title)) return;
+      const addr = (row.address || row.opa_address || '').toString().trim(); if (!addr) return;
+      const zip = (row.zip || (addr.match(/\b\d{5}\b/) || [])[0] || '').toString();
+      const key = addr.toLowerCase() + '|' + zip;
+      if (!byProp[key]) byProp[key] = { addr, zip, owner: (row.opa_owner || '').toString().trim(), date: (row.violationdate || '').toString(), titles: [], status: (row.violationstatus || '').toString() };
+      if (title) byProp[key].titles.push(title);
+    });
+    const props = Object.values(byProp).sort((a, b) => (b.date || '').localeCompare(a.date || '')).slice(0, 60);
+    if (!props.length) { harvestAppendStatus(' Philadelphia L&I code violations: 0 fire/hood/cooking violations in the last 90 days.'); logHarvestRun(0, 0, 'phl-violations success-empty'); return; }
+    const existing = crmLoad('leads');
+    const existingKeys = new Set(existing.map(l => (l.business || '').toLowerCase() + '|' + (l.zip || '')));
+    const now = Date.now(); const newLeads = []; let added = 0;
+    props.forEach((p, i) => {
+      const svc = vioServicesPHL(p.titles.join(' '));
+      const business = p.owner || ('Commercial property  ' + p.addr);
+      const key = business.toLowerCase() + '|' + p.zip;
+      if (existingKeys.has(key)) return; existingKeys.add(key);
+      const dateStr = p.date ? new Date(p.date).toISOString().slice(0, 10) : 'recent';
+      const fit = svc.map(s => ({ unipro: 'UniPro', filterman: 'Filter Man' }[s] || s)).join(', ');
+      newLeads.push({
+        id: 'harvest_phlvio_' + now + '_' + i, name: p.owner || 'Owner  TBD', business: business,
+        phone: '', email: '', address: p.addr, zip: p.zip, company: 'UniPro', status: 'new',
+        services: svc, score: 9,
+        source: 'Live Harvester  Philadelphia L&I Code Violations', created: now,
+        notes: (p.titles.length) + ' fire/hood/cooking code violation(s) as of ' + dateStr + ': ' + p.titles.slice(0, 3).join('; ') + '. Active pain point  strong opener for ' + fit + '.',
+        activityLog: [{ ts: now, type: 'system', icon: '', title: 'Harvested  Philadelphia L&I Code Violations (live)', note: p.titles.slice(0, 3).join('; ') + ' (' + dateStr + ')', who: 'System' }]
+      });
+      added++;
+    });
+    crmSave('leads', [...newLeads, ...existing]);
+    harvestAppendStatus(' Philadelphia L&I code violations: added <b>' + added + ' pain-point lead' + (added === 1 ? '' : 's') + '</b> (fire, hood, suppression, cooking).');
+    logHarvestRun(props.length, added, 'phl-violations success');
+    if (typeof renderCRMView === 'function') renderCRMView();
+  } catch (e) {
+    harvestAppendStatus(' Philadelphia L&I code violations check failed: ' + e.message);
+    logHarvestRun(0, 0, 'phl-violations error: ' + e.message);
+  } finally { if (btn) { btn.disabled = false; btn.style.opacity = '1'; } }
+}
+
+// ── Delaware FOOD ESTABLISHMENT INSPECTION VIOLATIONS harvester ──
+// Rides the DE button + same cms-proxy + same leads pool. Statewide (all 3
+// counties). Delaware fire entity is Quality III, so DE leads lead with
+// Quality III; warewashing/ventilation/equipment violations also tag GTO/
+// Filter Man/Termac. Dataset 384s-wygj fields: restname, restaddress,
+// restcity, restzip, insp_date, insp_type, violation, vio_desc.
+function vioServicesDE(text) {
+  const t = (text || '').toLowerCase(); const svc = ['qualityiii']; // every food est = extinguisher/fire prospect in DE
+  const add = k => { if (svc.indexOf(k) < 0) svc.push(k); };
+  if (/warewash|ware washing|dishwash|dish machine/.test(t)) add('termac');
+  if (/ventilation|exhaust|hood|physical facilities/.test(t)) add('filterman');
+  if (/equipment|good repair|adjustment/.test(t)) add('allpro');
+  if (/plumbing|sewage|grease|waste/.test(t)) add('gto');
+  return svc;
+}
+async function harvestDEViolations() {
+  const btn = document.getElementById('crmHarvestDEBtn');
+  if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; }
+  try {
+    const sinceISO = new Date(Date.now() - 120 * 86400000).toISOString().slice(0, 10);
+    async function fetchDEV(useFilter) {
+      const p = new URLSearchParams({ '$limit': '2000' });
+      if (useFilter) { p.set('$where', "insp_date >= '" + sinceISO + "'"); p.set('$order', 'insp_date DESC'); }
+      const url = 'https://data.delaware.gov/resource/384s-wygj.json?' + p.toString();
+      const res = await fetch(HARVEST_CMS_PROXY_URL + '?url=' + encodeURIComponent(url));
+      let body; try { body = await res.json(); } catch (e) { body = null; }
+      return { ok: res.ok, status: res.status, body };
+    }
+    let result = await fetchDEV(true);
+    if (result.status === 400) result = await fetchDEV(false);
+    if (!result.ok) throw new Error('HTTP ' + result.status);
+    const rows = Array.isArray(result.body) ? result.body : [];
+    const byEst = {};
+    rows.forEach(r => {
+      const name = (r.restname || '').trim(); if (!name) return;
+      const zip = (r.restzip || '').toString();
+      const key = name.toLowerCase() + '|' + zip;
+      if (!byEst[key]) byEst[key] = { name, addr: (r.restaddress || ''), city: (r.restcity || ''), zip, date: (r.insp_date || ''), vios: [] };
+      if (r.vio_desc) byEst[key].vios.push(r.vio_desc);
+      if (r.insp_date && r.insp_date > byEst[key].date) byEst[key].date = r.insp_date;
+    });
+    const ests = Object.values(byEst).sort((a, b) => (b.date || '').localeCompare(a.date || '')).slice(0, 60);
+    if (!ests.length) { harvestAppendStatus(' Delaware food-inspection violations: 0 records in the last 120 days.'); logHarvestRun(0, 0, 'de-violations success-empty'); return; }
+    const existing = crmLoad('leads');
+    const existingKeys = new Set(existing.map(l => (l.business || '').toLowerCase() + '|' + (l.zip || '')));
+    const now = Date.now(); const newLeads = []; let added = 0;
+    ests.forEach((e, i) => {
+      const key = e.name.toLowerCase() + '|' + e.zip;
+      if (existingKeys.has(key)) return; existingKeys.add(key);
+      const svc = vioServicesDE(e.vios.join(' '));
+      const dateStr = e.date ? new Date(e.date).toISOString().slice(0, 10) : 'recent';
+      const addrFull = [e.addr, e.city, 'DE', e.zip].filter(Boolean).join(', ');
+      const fit = svc.map(s => ({ qualityiii: 'Quality III', termac: 'Termac', filterman: 'Filter Man', allpro: 'AllPro', gto: 'GTO' }[s] || s)).join(', ');
+      newLeads.push({
+        id: 'harvest_devio_' + now + '_' + i, name: 'Owner  TBD', business: e.name,
+        phone: '', email: '', address: addrFull, zip: e.zip, company: 'Quality III', status: 'new',
+        services: svc, score: 8,
+        source: 'Live Harvester  Delaware Food Inspection Violations', created: now,
+        notes: e.vios.length + ' health violation(s) on ' + dateStr + (e.vios.length ? ' (incl. ' + e.vios.slice(0, 2).join('; ') + ')' : '') + '. Active food establishment  extinguisher, hood, grease, and dish prospect. Fit: ' + fit + '.',
+        activityLog: [{ ts: now, type: 'system', icon: '', title: 'Harvested  Delaware Food Inspection Violations (live)', note: e.vios.slice(0, 3).join('; ') + ' (' + dateStr + ')', who: 'System' }]
+      });
+      added++;
+    });
+    crmSave('leads', [...newLeads, ...existing]);
+    harvestAppendStatus(' Delaware food-inspection violations: added <b>' + added + ' lead' + (added === 1 ? '' : 's') + '</b> (statewide, all 3 counties).');
+    logHarvestRun(ests.length, added, 'de-violations success');
+    if (typeof renderCRMView === 'function') renderCRMView();
+  } catch (e) {
+    harvestAppendStatus(' Delaware food-inspection violations check failed: ' + e.message);
+    logHarvestRun(0, 0, 'de-violations error: ' + e.message);
+  } finally { if (btn) { btn.disabled = false; btn.style.opacity = '1'; } }
+}
+// One DE button → licenses + food-inspection violations, same leads pool.
+async function harvestRunLiveDEAll() {
+  await harvestRunLiveDE();
+  await harvestDEViolations();
 }
 
 function logHarvestRun(checked, added, result){
