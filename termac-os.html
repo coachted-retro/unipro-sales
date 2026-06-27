@@ -1426,7 +1426,7 @@ setTimeout(function(){ if(typeof TECHS!=='undefined' && typeof renderLB==='funct
         <option value="winback">Win-Back</option>
         <option value="dead">💀 Dead</option>
       </select>
-      <button class="crm-btn" id="crmHarvestBtn" onclick="harvestRunLive()" style="background:#F2B705;color:#1A1D21;display:none">🌾 Harvest PA Leads</button>
+      <button class="crm-btn" id="crmHarvestBtn" onclick="harvestRunLivePA()" style="background:#F2B705;color:#1A1D21;display:none">🌾 Harvest PA Leads</button>
       <button class="crm-btn" id="crmHarvestDEBtn" onclick="harvestRunLiveDE()" style="background:#F2B705;color:#1A1D21;display:none">🌾 Harvest DE Leads</button>
       <button class="crm-btn" id="crmHarvestDCBtn" onclick="harvestRunLiveDC()" style="background:#F2B705;color:#1A1D21;display:none">🌾 Harvest DC Leads</button>
       <button class="crm-btn" id="crmHarvestNJBtn" onclick="harvestRunLiveNJ()" style="background:#F2B705;color:#1A1D21;display:none">🌾 Harvest NJ Leads</button>
@@ -4095,7 +4095,7 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
       <div id="cs-body-harvest_dash">
         <p style="font-size:12px;color:#5A616B;margin:0 0 12px">Pull leads from open data sources into the Sales CRM. Assign before reps see them — do not let reps harvest at random.</p>
         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:8px">
-          <button onclick="harvestRunLive()" style="background:#F2B705;color:#1A1D21;border:none;border-radius:8px;padding:10px 6px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">🌾 PA</button>
+          <button onclick="harvestRunLivePA()" style="background:#F2B705;color:#1A1D21;border:none;border-radius:8px;padding:10px 6px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">🌾 PA</button>
           <button onclick="harvestRunLiveNJ()" style="background:#F2B705;color:#1A1D21;border:none;border-radius:8px;padding:10px 6px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">🌾 NJ</button>
           <button onclick="harvestRunLiveDE()" style="background:#F2B705;color:#1A1D21;border:none;border-radius:8px;padding:10px 6px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">🌾 DE</button>
           <button onclick="harvestRunLiveDC()" style="background:#F2B705;color:#1A1D21;border:none;border-radius:8px;padding:10px 6px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">🌾 DC</button>
@@ -12019,6 +12019,118 @@ async function harvestRunLive(){
 
   if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
   setTimeout(() => { const _b=document.getElementById('harvestStatusBanner'); if(_b) _b.style.display='none'; const _m=document.getElementById('mgrHarvestStatus'); if(_m) _m.style.display='none'; }, 15000);
+}
+
+// ── Philadelphia L&I building/zoning PERMITS harvester ──
+// Shares the "Harvest PA Leads" button, the same cms-cors-proxy, and the
+// same `leads` pool as the business-license harvester above. Pulls recent
+// permits whose scope signals a Termac opportunity (kitchen build-outs,
+// hoods, suppression, sprinklers, grease, dish machines, fabrication) that
+// the license feed does not surface.
+function permitDivisions(text) {
+  const t = (text || '').toLowerCase();
+  const svc = [];
+  const add = (k) => { if (svc.indexOf(k) < 0) svc.push(k); };
+  if (/hood|exhaust|ventilation|range hood/.test(t)) { add('filterman'); add('unipro'); }
+  if (/suppress|ansul|wet chemical|k-class/.test(t)) add('unipro');
+  if (/sprinkler|fire alarm|standpipe|fire protection|fire system/.test(t)) add('unipro');
+  if (/grease|interceptor|\bfog\b|grease trap/.test(t)) add('gto');
+  if (/dishwash|dish machine|warewash/.test(t)) add('termac');
+  if (/stainless|metal fabrication|custom fabrication/.test(t)) add('allpro');
+  if (/restaurant|commercial kitchen|food prep|food establishment|food service|cafe|caterer|catering|takeout|take-out|bakery|deli|pizzeria/.test(t)) {
+    add('unipro'); add('gto'); add('filterman'); add('termac');
+  }
+  return svc;
+}
+function permitPrimaryCompany(svc) {
+  if (svc.indexOf('gto') === 0) return 'GTO';
+  const map = { unipro:'UniPro', filterman:'Filter Man', gto:'GTO', termac:'Termac', allpro:'AllPro' };
+  return map[svc[0]] || 'UniPro';
+}
+async function harvestPAPermits() {
+  const btn = document.getElementById('crmHarvestBtn');
+  if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; }
+  try {
+    const since = new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 10);
+    const sql = "SELECT permitnumber,permittype,permitdescription,typeofwork,approvedscopeofwork,opa_owner,address,zip,permitissuedate,status FROM permits WHERE permitissuedate >= '" + since +
+      "' AND (permitdescription ILIKE '%hood%' OR permitdescription ILIKE '%kitchen%' OR permitdescription ILIKE '%restaurant%' OR permitdescription ILIKE '%food%' OR permitdescription ILIKE '%suppress%' OR permitdescription ILIKE '%sprinkler%' OR permitdescription ILIKE '%fire alarm%' OR approvedscopeofwork ILIKE '%hood%' OR approvedscopeofwork ILIKE '%kitchen%' OR approvedscopeofwork ILIKE '%suppress%' OR approvedscopeofwork ILIKE '%sprinkler%' OR approvedscopeofwork ILIKE '%grease%' OR approvedscopeofwork ILIKE '%fire alarm%') ORDER BY permitissuedate DESC LIMIT 60";
+    const target = 'https://phl.carto.com/api/v2/sql?q=' + encodeURIComponent(sql);
+    const res = await fetch(HARVEST_CMS_PROXY_URL + '?url=' + encodeURIComponent(target));
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (data.error) throw new Error((data.error && data.error.message) || 'Carto query error  permits column names may need checking.');
+    const rows = data.rows || [];
+    if (!rows.length) {
+      harvestAppendStatus(' Philadelphia L&I permits: 0 new kitchen/fire build-out permits in the last 60 days.');
+      logHarvestRun(0, 0, 'permits success-empty');
+      return;
+    }
+
+    const existing = crmLoad('leads');
+    const existingKeys = new Set(existing.map(l => (l.business || '').toLowerCase() + '|' + (l.zip || '')));
+    const now = Date.now();
+    const newLeads = [];
+    let added = 0;
+
+    rows.forEach((r, i) => {
+      const work = r.approvedscopeofwork || r.permitdescription || r.typeofwork || r.permittype || '';
+      const svc = permitDivisions(work);
+      if (!svc.length) return;
+      const addr = r.address || '';
+      const zip = r.zip || (addr.match(/\b\d{5}\b/) ? addr.match(/\b\d{5}\b/)[0] : '');
+      const owner = (r.opa_owner || '').trim();
+      const business = owner || ('Commercial property  ' + (addr || 'Philadelphia'));
+      const key = business.toLowerCase() + '|' + zip;
+      if (existingKeys.has(key)) return;
+      existingKeys.add(key);
+      const issueDateStr = r.permitissuedate ? new Date(r.permitissuedate).toISOString().slice(0, 10) : 'recent';
+      const company = permitPrimaryCompany(svc);
+      const fit = svc.map(s => ({ unipro:'UniPro', filterman:'Filter Man', gto:'GTO', termac:'Termac', allpro:'AllPro' }[s] || s)).join(', ');
+      newLeads.push({
+        id: 'harvest_permit_' + now + '_' + i,
+        name: owner ? owner : 'Owner  TBD',
+        business: business,
+        phone: '', email: '',
+        address: addr, zip: zip, company: company, status: 'new',
+        services: svc, score: 8,
+        source: 'Live Harvester  Philadelphia L&I Permits',
+        created: now,
+        notes: 'Permit issued ' + issueDateStr + ': ' + work + '. Fit: ' + fit + '. Likely kitchen build-out or fire-system work  confirm current coverage.',
+        activityLog: [{
+          ts: now, type: 'system', icon: '',
+          title: 'Harvested  Philadelphia L&I Permits (live)',
+          note: 'Permit #' + (r.permitnumber || '') + ' issued ' + issueDateStr + '  ' + work,
+          who: 'System'
+        }]
+      });
+      added++;
+    });
+
+    crmSave('leads', [...newLeads, ...existing]);
+    harvestAppendStatus(' Philadelphia L&I permits: added <b>' + added + ' build-out lead' + (added === 1 ? '' : 's') + '</b> (hood, suppression, sprinkler, grease, kitchen).');
+    logHarvestRun(rows.length, added, 'permits success');
+    if (typeof renderCRMView === 'function') renderCRMView();
+  } catch (e) {
+    harvestAppendStatus(' Philadelphia L&I permits check failed: ' + e.message);
+    logHarvestRun(0, 0, 'permits error: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
+  }
+}
+// Append a line to the harvest status banner without clobbering the license result.
+function harvestAppendStatus(html) {
+  const ids = ['harvestStatusBanner', 'mgrHarvestStatus'];
+  let wrote = false;
+  ids.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) { el.style.display = ''; el.innerHTML = (el.innerHTML && el.innerHTML.trim() ? el.innerHTML + '<br>' : '') + html; wrote = true; }
+  });
+  if (!wrote && typeof harvestSetStatus === 'function') harvestSetStatus(html);
+}
+// One button → licenses + permits, into the same leads pool (same state).
+async function harvestRunLivePA() {
+  await harvestRunLive();
+  await harvestPAPermits();
 }
 
 function logHarvestRun(checked, added, result){
