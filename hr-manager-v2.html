@@ -667,7 +667,10 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--ink);min-h
     </div>
     <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-top:1px solid var(--line)">
       <button onclick="document.getElementById('hmBundleModal').classList.remove('open')" class="hm-btn hm-btn-ghost">Cancel</button>
-      <button onclick="hmPrintBundle()" class="hm-btn" style="background:#1A4731;color:#fff;border-color:#1A4731">🖨️ Print Bundle</button>
+      <div style="display:flex;gap:8px">
+        <button onclick="hmPrintFirstWeekPlan()" class="hm-btn" style="background:#1B5FA8;color:#fff;border-color:#1B5FA8">🖨️ Print Week Plan</button>
+        <button onclick="hmPrintBundle()" class="hm-btn" style="background:#1A4731;color:#fff;border-color:#1A4731">🖨️ Print Bundle</button>
+      </div>
     </div>
   </div>
 </div>
@@ -3918,6 +3921,9 @@ function hmOpenNewHireBundle(roleId) {
     </label>`).join('');
 
   modal.classList.add('open');
+  // Load first week plan for this role
+  hmBundleTab('docs');
+  hmLoadFirstWeekPlan('role_'+roleId, role.name);
 }
 
 function hmPrintBundle() {
@@ -5445,4 +5451,199 @@ function hmCloseJob(jobId) {
 }
 
 
+
+
+/* ================================================================
+   FIRST WEEK PLAN — editable 5-day onboarding roadmap
+================================================================ */
+const FW_DEFAULTS = [
+  { day:1, title:'Day 1 — Orientation & Welcome', items:[
+    'Complete all new-hire paperwork (W-4, I-9, direct deposit, handbook acknowledgment)',
+    'Facility tour: office, warehouse, parking, emergency exits',
+    'Meet the team — department introductions',
+    'Safety briefing: PPE requirements, emergency procedures, incident reporting',
+    'Termac One login setup and employee portal walkthrough',
+    'Uniform and PPE issued',
+    'Review company overview and six-division structure',
+  ]},
+  { day:2, title:'Day 2 — Company & Product Knowledge', items:[
+    'Learning Center — Safety First module (required, complete before field work)',
+    'Division deep-dive: services, service catalog, pricing overview',
+    'Compliance forms introduction: NFPA 10, NFPA 96, FOG service report',
+    'Ride-along with experienced tech — observation only, no independent work',
+    'Q&A session with direct manager at end of day',
+  ]},
+  { day:3, title:'Day 3 — Field Ride-Along (Active)', items:[
+    'Ride-along day two — active participation on job with tech supervisor present',
+    'Complete one compliance form on a real job under supervision',
+    'Practice job close-out process: invoice, deficiency flag, photos',
+    'Review Termac One tech portal: job card, work order flow, completion steps',
+    'End-of-day debrief with manager: questions, observations, concerns',
+  ]},
+  { day:4, title:'Day 4 — Systems, Tools & First Solo Task', items:[
+    'Termac One full walkthrough: portal navigation, reporting, AI assistant',
+    'Work order creation, assignment, and completion flow',
+    'Deficiency flagging and routing to office quote queue',
+    'Cross-sell checklist and how leads route to territory rep',
+    'First solo assigned task with supervisor present for support',
+    'Review certification requirements and expiration tracking',
+  ]},
+  { day:5, title:'Day 5 — Wrap-Up & Goal Setting', items:[
+    'First-week Q&A — open discussion with manager',
+    'Territory overview and account assignment',
+    'Review 30/60/90-day check-in schedule and what to expect',
+    'Set 30-day performance expectations — discuss metrics and KPIs',
+    'Review Learning Center track assignments due by end of month',
+    'Manager and new hire sign First Week Plan as completion acknowledgment',
+  ]},
+];
+
+let _fwPlan=null, _fwUserId=null, _fwUserName='';
+
+function hmBundleTab(tab){
+  var docPane=document.getElementById('hmBundlePane-docs');
+  var planPane=document.getElementById('hmBundlePane-plan');
+  var docBtn=document.getElementById('hmBundleTab-docs');
+  var planBtn=document.getElementById('hmBundleTab-plan');
+  if(docPane) docPane.style.display=tab==='docs'?'':'none';
+  if(planPane) planPane.style.display=tab==='plan'?'':'none';
+  if(docBtn){docBtn.style.borderBottomColor=tab==='docs'?'#C8102E':'transparent';docBtn.style.color=tab==='docs'?'#C8102E':'var(--soft)';}
+  if(planBtn){planBtn.style.borderBottomColor=tab==='plan'?'#C8102E':'transparent';planBtn.style.color=tab==='plan'?'#C8102E':'var(--soft)';}
+  if(tab==='plan') hmRenderFirstWeekPlan();
+}
+
+function hmLoadFirstWeekPlan(userId, userName){
+  _fwUserId=userId; _fwUserName=userName||'';
+  try{
+    var saved=localStorage.getItem('termac_hr_firstweek_'+userId);
+    _fwPlan=saved?JSON.parse(saved):JSON.parse(JSON.stringify(FW_DEFAULTS));
+  }catch(e){ _fwPlan=JSON.parse(JSON.stringify(FW_DEFAULTS)); }
+}
+
+function hmSaveFirstWeekPlan(){
+  if(!_fwUserId||!_fwPlan) return;
+  try{localStorage.setItem('termac_hr_firstweek_'+_fwUserId,JSON.stringify(_fwPlan));}catch(e){}
+}
+
+function hmRenderFirstWeekPlan(){
+  var el=document.getElementById('hmFirstWeekPlan'); if(!el) return;
+  if(!_fwPlan) _fwPlan=JSON.parse(JSON.stringify(FW_DEFAULTS));
+  el.innerHTML='<div style="font-size:12px;color:var(--soft);margin-bottom:12px">Click any day title or activity to edit. Add or remove items per day. Changes save automatically.</div>'
+    +_fwPlan.map(function(day,di){
+      return '<div style="border:1.5px solid var(--line);border-radius:10px;margin-bottom:10px;overflow:hidden">'
+        +'<div style="background:#1A1D21;padding:8px 12px;display:flex;align-items:center;gap:8px">'
+        +'<div contenteditable="true" id="fw-day-title-'+di+'" onblur="hmFwSaveDayTitle('+di+',this.innerText)" '
+        +'style="flex:1;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;color:#fff;'
+        +'letter-spacing:.04em;outline:none;border-bottom:1px dashed rgba(255,255,255,.3);padding-bottom:2px">'
+        +escH(day.title)+'</div>'
+        +'<button onclick="hmFwResetDay('+di+')" title="Reset to default" '
+        +'style="background:none;border:none;color:rgba(255,255,255,.4);cursor:pointer;font-size:11px;font-family:Barlow Condensed,sans-serif">Reset</button>'
+        +'</div>'
+        +'<div style="padding:10px 12px">'
+        +day.items.map(function(item,ii){
+          return '<div id="fw-item-'+di+'-'+ii+'" style="display:flex;align-items:flex-start;gap:6px;margin-bottom:6px">'
+            +'<span style="color:var(--soft);font-size:14px;cursor:ns-resize;padding-top:2px;flex-shrink:0" title="Reorder">\u2195</span>'
+            +'<div contenteditable="true" '
+            +'onblur="this.style.borderColor=\'transparent\';hmFwSaveItem('+di+','+ii+',this.innerText)" '
+            +'onfocus="this.style.borderColor=\'var(--line)\'" '
+            +'style="flex:1;font-size:12px;border:1px solid transparent;border-radius:5px;padding:3px 6px;outline:none;line-height:1.4;cursor:text">'
+            +escH(item)+'</div>'
+            +'<button onclick="hmFwRemoveItem('+di+','+ii+')" '
+            +'style="background:none;border:none;color:var(--soft);cursor:pointer;font-size:16px;padding:0 4px;line-height:1;flex-shrink:0" title="Remove">&times;</button>'
+            +'</div>';
+        }).join('')
+        +'<button onclick="hmFwAddItem('+di+')" '
+        +'style="margin-top:4px;background:none;border:1px dashed var(--line);border-radius:6px;width:100%;'
+        +'padding:5px;font-size:11px;color:var(--soft);cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:700">+ Add Activity</button>'
+        +'</div></div>';
+    }).join('');
+}
+
+function hmFwSaveDayTitle(di,val){if(_fwPlan&&_fwPlan[di])_fwPlan[di].title=val.trim()||_fwPlan[di].title;hmSaveFirstWeekPlan();}
+function hmFwSaveItem(di,ii,val){if(_fwPlan&&_fwPlan[di])_fwPlan[di].items[ii]=val.trim();hmSaveFirstWeekPlan();}
+function hmFwRemoveItem(di,ii){if(!_fwPlan||!_fwPlan[di])return;_fwPlan[di].items.splice(ii,1);hmSaveFirstWeekPlan();hmRenderFirstWeekPlan();}
+function hmFwResetDay(di){if(!_fwPlan||!FW_DEFAULTS[di])return;_fwPlan[di]=JSON.parse(JSON.stringify(FW_DEFAULTS[di]));hmSaveFirstWeekPlan();hmRenderFirstWeekPlan();}
+function hmFwAddItem(di){
+  if(!_fwPlan||!_fwPlan[di])return;
+  _fwPlan[di].items.push('New activity \u2014 click to edit');
+  hmSaveFirstWeekPlan();hmRenderFirstWeekPlan();
+  setTimeout(function(){
+    var items=document.querySelectorAll('[id^="fw-item-'+di+'-"]');
+    var last=items[items.length-1];
+    if(last){var ed=last.querySelector('[contenteditable]');if(ed){ed.focus();document.execCommand('selectAll');}}
+  },60);
+}
+
+function hmPrintFirstWeekPlan(){
+  if(!_fwPlan){hmToast('Open the First Week Plan tab first');return;}
+  _fwPlan.forEach(function(day,di){
+    var t=document.getElementById('fw-day-title-'+di);
+    if(t) day.title=t.innerText.trim()||day.title;
+    day.items.forEach(function(item,ii){
+      var el=document.querySelector('#fw-item-'+di+'-'+ii+' [contenteditable]');
+      if(el) day.items[ii]=el.innerText.trim()||item;
+    });
+  });
+  hmSaveFirstWeekPlan();
+  var win=window.open('','_blank');
+  var startDate=new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});
+  var daysHtml=_fwPlan.map(function(day){
+    return '<div class="fw-day"><div class="fw-day-hdr">'+escH(day.title)+'</div>'
+      +'<div class="fw-day-body">'
+      +day.items.filter(function(i){return i.trim();}).map(function(item){
+        return '<div class="fw-item"><div class="fw-check"></div><div class="fw-text">'+escH(item)+'</div></div>';
+      }).join('')
+      +'</div></div>';
+  }).join('');
+  win.document.write('<!DOCTYPE html><html><head><title>First Week Plan \u2014 Termac</title><style>'
+    +'*{box-sizing:border-box;margin:0;padding:0}'
+    +'body{font-family:Arial,sans-serif;font-size:11px;color:#1A1D21}'
+    +'.banner{width:100%;max-height:90px;object-fit:contain;display:block;padding:8px 32px}'
+    +'.doc-header{background:#1A1D21;color:#fff;padding:10px 32px}'
+    +'.doc-title{font-weight:900;font-size:20px;text-transform:uppercase;letter-spacing:.06em}'
+    +'.doc-sub{font-size:10px;color:rgba(255,255,255,.65);margin-top:3px}'
+    +'.doc-meta{font-size:9px;color:rgba(255,255,255,.45);margin-top:6px;border-top:1px solid rgba(255,255,255,.2);padding-top:5px}'
+    +'.plan-body{padding:14px 32px}'
+    +'.intro{font-size:11px;color:#475569;margin-bottom:14px;padding:8px 12px;background:#F8FAFC;border-left:3px solid #C8102E;border-radius:0 6px 6px 0}'
+    +'.fw-day{margin-bottom:12px;border:1px solid #E2E8F0;border-radius:6px;overflow:hidden}'
+    +'.fw-day-hdr{background:#1A4731;color:#fff;font-weight:700;font-size:11px;padding:7px 12px;letter-spacing:.03em}'
+    +'.fw-day-body{padding:8px 12px}'
+    +'.fw-item{display:flex;align-items:flex-start;gap:8px;margin-bottom:5px}'
+    +'.fw-check{width:12px;height:12px;border:1.5px solid #94A3B8;border-radius:2px;flex-shrink:0;margin-top:1px}'
+    +'.fw-text{font-size:10.5px;line-height:1.4;flex:1}'
+    +'.sig-section{margin-top:18px;border-top:2px solid #E2E8F0;padding-top:14px}'
+    +'.sig-title{font-weight:900;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#64748B;margin-bottom:10px}'
+    +'.sig-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;margin-bottom:14px}'
+    +'.sig-label{font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:#94A3B8;margin-bottom:3px}'
+    +'.sig-line{border-bottom:1px solid #1A1D21;height:22px}'
+    +'.doc-footer{display:flex;justify-content:space-between;margin-top:14px;font-size:8px;color:#94A3B8;border-top:1px solid #E2E8F0;padding-top:6px}'
+    +'@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}'
+    +'</style></head><body>'
+    +'<img src="https://coachted-retro.github.io/unipro-sales/termac-docs/Banner_edited.png" class="banner" alt="Termac Family of Companies">'
+    +'<div class="doc-header">'
+    +'<div class="doc-title">First Week Onboarding Plan</div>'
+    +'<div class="doc-sub">Termac Family of Companies &nbsp;|&nbsp; New Hire Training Roadmap</div>'
+    +'<div class="doc-meta">Employee: '+escH(_fwUserName||'________________')
+    +' &nbsp;|&nbsp; Start Date: '+startDate+' &nbsp;|&nbsp; Manager: ________________</div>'
+    +'</div>'
+    +'<div class="plan-body">'
+    +'<div class="intro">This plan outlines your first five days at Termac. Work through each activity with your manager. '
+    +'Check each box as it is completed. Both signatures at the bottom confirm the week was completed.</div>'
+    +daysHtml
+    +'<div class="sig-section"><div class="sig-title">Completion Sign-Off</div>'
+    +'<div class="sig-row">'
+    +'<div><div class="sig-label">Employee Name (Print)</div><div class="sig-line"></div></div>'
+    +'<div><div class="sig-label">Employee Signature</div><div class="sig-line"></div></div>'
+    +'<div><div class="sig-label">Date</div><div class="sig-line"></div></div>'
+    +'</div>'
+    +'<div class="sig-row">'
+    +'<div><div class="sig-label">Manager Name (Print)</div><div class="sig-line"></div></div>'
+    +'<div><div class="sig-label">Manager Signature</div><div class="sig-line"></div></div>'
+    +'<div><div class="sig-label">Date</div><div class="sig-line"></div></div>'
+    +'</div></div>'
+    +'<div class="doc-footer"><span>Termac Family of Companies &mdash; Confidential</span><span>First Week Onboarding Plan</span></div>'
+    +'</div></body></html>');
+  win.document.close();
+  setTimeout(function(){win.print();},400);
+}
 </script>
