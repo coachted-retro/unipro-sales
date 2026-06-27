@@ -3465,26 +3465,42 @@ function openAddModal(){
 }
 
 function quickCreateOpportunity(){
-  // Show account type gate FIRST — must select before proceeding
-  openAccountTypeGate(function(typeValue) {
-    _modalTab = 'leads';
-    _modalId = null;
-    const cfg = getAccountTypeCfg(typeValue);
-    document.getElementById('crmModalTitle').textContent = '💼 New Opportunity';
-    document.getElementById('crmModalBody').innerHTML = buildModalForm('leads', null) +
-      '<input type="hidden" id="mf_quickOppty" value="1">' +
-      '<input type="hidden" id="mf_accountType" value="' + typeValue + '">' +
-      '<input type="hidden" id="mf_pricingMode" value="' + cfg.pricingMode + '">' +
-      '<div style="background:#F3E8FF;border:1px solid #7C3AED;border-radius:7px;padding:10px 14px;margin-top:8px">' +
-        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">' +
-          '<span style="font-size:16px">' + cfg.label.split(' ')[0] + '</span>' +
-          '<strong style="font-size:13px;color:#5B21B6">' + cfg.label.slice(cfg.label.indexOf(' ')+1) + '</strong>' +
-          '<span style="margin-left:auto;background:' + (cfg.pricingMode==='per_visit'?'#DCFCE7':'#EFF6FF') + ';color:' + (cfg.pricingMode==='per_visit'?'#1E7B3C':'#1E40AF') + ';border-radius:4px;padding:1px 8px;font-size:10px;font-weight:700;font-family:Barlow Condensed,sans-serif;letter-spacing:.06em">' + (cfg.pricingMode==='per_visit'?'PER VISIT':'ANNUAL CONTRACT') + '</span>' +
-        '</div>' +
-        '<div style="font-size:11px;color:#6B7280">' + cfg.contractNote + '</div>' +
-      '</div>';
-    document.getElementById('crmModalBg').classList.add('open');
-  });
+  // Skip the gate  open the form immediately with account type inline.
+  // Rep fills one form. Auto-back-fills Lead + Contact on save.
+  _modalTab = 'leads';
+  _modalId  = null;
+  const defaultType = 'independent';
+  const cfg = getAccountTypeCfg(defaultType);
+  const typeOpts = (typeof ACCOUNT_TYPES !== 'undefined' ? ACCOUNT_TYPES : []).map(function(t){
+    return '<option value="'+t.value+'"'+(t.value===defaultType?' selected':'')+'>'+t.label+'</option>';
+  }).join('');
+  const inlineTypeBlock =
+    '<div style="background:#F3E8FF;border:1px solid #7C3AED;border-radius:7px;padding:10px 14px;margin-top:8px">'
+    +'<label style="display:block;font-size:11px;font-weight:700;font-family:Barlow Condensed,sans-serif;'
+    +'letter-spacing:.08em;text-transform:uppercase;color:#5B21B6;margin-bottom:6px">Account Type</label>'
+    +'<select id="mf_accountType_select" onchange="qcUpdateTypeBlock(this.value)" '
+    +'style="width:100%;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;'
+    +'border:1px solid #7C3AED;border-radius:6px;padding:6px 10px;background:#fff;cursor:pointer">'
+    +typeOpts+'</select>'
+    +'<div id="qcTypeNote" style="font-size:11px;color:#6B7280;margin-top:6px">'+(cfg?cfg.contractNote:'')+'</div>'
+    +'</div>'
+    +'<input type="hidden" id="mf_quickOppty" value="1">'
+    +'<input type="hidden" id="mf_accountType" value="'+defaultType+'">'
+    +'<input type="hidden" id="mf_pricingMode" value="'+(cfg?cfg.pricingMode:'per_visit')+'">';
+  document.getElementById('crmModalTitle').textContent = ' Quick Opportunity';
+  document.getElementById('crmModalBody').innerHTML = buildModalForm('leads', null) + inlineTypeBlock;
+  document.getElementById('crmModalBg').classList.add('open');
+  setTimeout(function(){
+    var nf=document.getElementById('mf_name')||document.querySelector('#crmModalBody input[type=text]');
+    if(nf) nf.focus();
+  }, 80);
+}
+
+function qcUpdateTypeBlock(typeValue){
+  var cfg=getAccountTypeCfg(typeValue);
+  var h=document.getElementById('mf_accountType'); if(h) h.value=typeValue;
+  var p=document.getElementById('mf_pricingMode'); if(p&&cfg) p.value=cfg.pricingMode;
+  var n=document.getElementById('qcTypeNote'); if(n&&cfg) n.textContent=cfg.contractNote;
 }
 
 function editRecord(id,tab){
@@ -3716,6 +3732,23 @@ function saveModalRecord(){
     };
     contactData.push(autoContact);
     crmSave('contacts', contactData);
+
+    // Auto-create a Lead record so the opportunity appears in all three pools
+    const leadPool = crmLoad('leads');
+    if (!leadPool.find(function(l){ return l.id === rec.id; })) {
+      const autoLead = {
+        id: rec.id, name: rec.name, business: rec.business,
+        phone: rec.phone, email: rec.email, address: rec.address,
+        zip: rec.zip, company: rec.company, services: rec.services,
+        accountType: rec.accountType, pricingMode: rec.pricingMode,
+        assignedRep: rec.assignedRep, status: 'warm',
+        lifecycleStage: 'opportunity', source: rec.source || 'Quick Create',
+        notes: rec.notes || '', activityLog: rec.activityLog || [],
+        created: Date.now(), updated: Date.now()
+      };
+      leadPool.push(autoLead);
+      crmSave('leads', leadPool);
+    }
   }
 
   if(_modalId){
