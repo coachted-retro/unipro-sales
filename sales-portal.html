@@ -6609,6 +6609,7 @@ function svStep6(body, footer) {
       '{"action":"remember","kind":"objection|win|pref","text":"...","response":"...","account":"..."} to save a takeaway (an objection and what answered it, a cross-sell win, or how this rep likes to work) so you get smarter about them over time.\n'+
       '{"action":"change_contact","account":"...","new_contact":"...","new_phone":"..."}\n'+
       '{"action":"set_special_pricing","account":"..."} to open grandfathered/fixed pricing setup for an account.\n'+
+      '{"action":"scan_document","account":"..."} to scan and file a document (inspection report, service tag) to an account.\n'+
       '{"action":"draft_calendar","title":"...","datetime":"YYYY-MM-DDTHH:MM","location":"...","notes":"...","minutes":60}\n'+
       '{"action":"draft_appointment","account":"...","datetime":"YYYY-MM-DDTHH:MM","type":"site visit"}\n'+
       'Resolve relative dates (today/tomorrow) to absolute datetimes. Never invent customer records; use search_customer, advise, or find_nearby for real data.';
@@ -6653,6 +6654,7 @@ function svStep6(body, footer) {
       bubble('ai', rn.error?rn.error:('Saved a note on '+rn.name+'.'));
       saHistory.push({role:'assistant',content:'Note saved.'}); return;
     }
+    if(act.action==='scan_document'){ t.remove(); var dr=act.account?((findInStores(act.account)||{}).rec):window._siCurrentRecord; if(typeof window.openDocScanner==='function'){ window.openDocScanner(dr||null); bubble('ai', dr?('Opening the document scanner for '+nameOf(dr)+'.'):'Opening the document scanner.'); } else { bubble('ai','Scanner not available here.'); } return; }
     if(act.action==='set_special_pricing'){ t.remove(); var fp=findInStores(act.account); if(fp&&typeof window.openSpecialPricing==='function'){ window.openSpecialPricing(fp.rec.id); bubble('ai','Opening special pricing for '+nameOf(fp.rec)+'.'); } else { bubble('ai','Could not find that account.'); } return; }
     if(act.action==='change_contact'){ t.remove(); return confirmCard('contact',act); }
     if(act.action==='draft_calendar'){ t.remove(); return confirmCard('calendar',act); }
@@ -6703,5 +6705,106 @@ function svStep6(body, footer) {
   window.saAssistant={ open:saOpen, send:send };
 })();
 </script>
+<script>
+/* ============================================================
+   Termac One — Rep Document Scanner
+   Capture a prospect's inspection report, service tag, or any
+   document, file it to that account, and (optionally) have the AI
+   read it into structured findings: deficiencies, equipment, dates,
+   and cross-sell signals. Pages upload to the same R2 photo path the
+   platform already uses; metadata and findings attach to the account.
+   ============================================================ */
+(function(){
+  'use strict';
+  var R2_UPLOAD='https://termac-photo-upload.tedscholl.workers.dev/';
+  var AI_PROXY='https://unipro-ai-proxy.tedscholl.workers.dev/';
+
+  function curRecord(passed){ if(passed) return passed; try{ if(window._siCurrentRecord) return window._siCurrentRecord; }catch(e){} return null; }
+  function recName(r){ return r.business||r.name||'account'; }
+  function recKind(r){ try{ var a=(typeof crmLoad==='function'?crmLoad('accounts'):[])||[]; if(a.find(function(x){return x.id===r.id;})) return 'accounts'; }catch(e){} return 'leads'; }
+  function stripB64(d){ return (d||'').replace(/^data:[^;]+;base64,/,''); }
+
+  async function uploadPage(accountId, docId, n, base64){
+    try{ var res=await fetch(R2_UPLOAD,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ accountId:accountId, key:'doc_'+docId+'_p'+n, base64:stripB64(base64), contentType:'image/jpeg' })});
+      var d=await res.json(); if(d&&d.ok&&d.url) return d.url; }catch(e){}
+    return null;
+  }
+  async function aiRead(base64){
+    try{ var res=await fetch(AI_PROXY,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+        model:'claude-sonnet-4-6', max_tokens:700,
+        messages:[{ role:'user', content:[
+          { type:'image', source:{ type:'base64', media_type:'image/jpeg', data:stripB64(base64) } },
+          { type:'text', text:'This is a photo of a commercial kitchen or fire-protection inspection or service document. Extract ONLY a JSON object: {"summary":"...","equipment":["..."],"deficiencies":["..."],"dates":[{"label":"...","date":"..."}],"cross_sell_signals":["..."]}. No prose, no code fences.' }
+        ]}]
+      })});
+      var d=await res.json(); var raw=(d.content||[]).map(function(x){return x.text||'';}).join('');
+      return JSON.parse(raw.replace(/```json|```/g,'').trim());
+    }catch(e){ return null; }
+  }
+  function persistDoc(record, doc){
+    var kind=recKind(record);
+    try{ var arr=(typeof crmLoad==='function'?crmLoad(kind):JSON.parse(localStorage.getItem('termac_crm_'+kind)||'[]'))||[];
+      var i=arr.findIndex(function(x){ return x.id===record.id; }); if(i<0) return;
+      arr[i].documents=arr[i].documents||[]; arr[i].documents.push(doc);
+      arr[i].activityLog=arr[i].activityLog||[];
+      var note=(doc.findings&&doc.findings.summary)||(doc.pages.length+' page(s)');
+      arr[i].activityLog.push({ ts:Date.now(), type:'rep', icon:'\uD83D\uDCC4', title:'Document scanned: '+doc.title, note:note, who:(localStorage.getItem('termac_current_user')||'Rep') });
+      if(typeof crmSave==='function') crmSave(kind,arr); else localStorage.setItem('termac_crm_'+kind,JSON.stringify(arr));
+    }catch(e){}
+  }
+
+  function el(t,s,x){ var e=document.createElement(t); if(s) Object.assign(e.style,s); if(x!=null) e.textContent=x; return e; }
+  function openDocScanner(passed){
+    var record=curRecord(passed);
+    if(!record){ alert('Open a prospect or account first, then scan a document for it.'); return; }
+    var pages=[];
+    var ov=el('div',{position:'fixed',inset:'0',background:'rgba(0,0,0,.55)',zIndex:'100001',display:'flex',alignItems:'center',justifyContent:'center',padding:'14px'});
+    var card=el('div',{background:'#fff',borderRadius:'14px',width:'min(440px,96vw)',maxHeight:'90vh',overflow:'auto',padding:'16px',fontFamily:'-apple-system,Segoe UI,Roboto,sans-serif'});
+    card.appendChild(el('div',{fontWeight:'800',fontSize:'16px',marginBottom:'2px'},'Scan document'));
+    card.appendChild(el('div',{fontSize:'12px',color:'#64748B',marginBottom:'12px'},'Filing to: '+recName(record)));
+    card.appendChild(el('div',{fontSize:'12px',fontWeight:'700',marginBottom:'4px'},'Type'));
+    var typeSel=el('select',{width:'100%',padding:'8px',border:'1px solid #CBD5E1',borderRadius:'8px',marginBottom:'10px'});
+    [['inspection','Inspection report'],['tag','Service tag / nameplate'],['other','Other document']].forEach(function(o){ var op=document.createElement('option'); op.value=o[0]; op.textContent=o[1]; typeSel.appendChild(op); });
+    card.appendChild(typeSel);
+    var aiWrap=el('label',{display:'flex',alignItems:'center',gap:'8px',fontSize:'13px',marginBottom:'10px'});
+    var aiChk=document.createElement('input'); aiChk.type='checkbox'; aiChk.checked=true; aiWrap.appendChild(aiChk); aiWrap.appendChild(document.createTextNode('Read it with AI (deficiencies, dates, cross-sell)'));
+    card.appendChild(aiWrap);
+    var pagesWrap=el('div',{display:'flex',gap:'6px',flexWrap:'wrap',alignItems:'center',marginBottom:'10px'});
+    card.appendChild(pagesWrap);
+    function renderPages(){ pagesWrap.innerHTML=''; pages.forEach(function(p){ var im=document.createElement('img'); im.src=p.base64; Object.assign(im.style,{width:'58px',height:'58px',objectFit:'cover',borderRadius:'8px',border:'1px solid #E2E8F0'}); pagesWrap.appendChild(im); }); pagesWrap.appendChild(el('span',{fontSize:'12px',color:'#64748B'}, pages.length?(pages.length+' page(s)'):'No pages yet')); }
+    var fileInput=document.createElement('input'); fileInput.type='file'; fileInput.accept='image/*'; fileInput.setAttribute('capture','environment'); fileInput.style.display='none';
+    fileInput.onchange=function(){ var f=fileInput.files&&fileInput.files[0]; if(!f) return; var rd=new FileReader(); rd.onload=function(){ pages.push({base64:rd.result}); renderPages(); }; rd.readAsDataURL(f); fileInput.value=''; };
+    card.appendChild(fileInput);
+    var addBtn=el('button',{width:'100%',padding:'10px',border:'1px dashed #CBD5E1',borderRadius:'10px',background:'#F8FAFC',fontWeight:'700',cursor:'pointer',marginBottom:'10px'},'\uD83D\uDCF7 Add page');
+    addBtn.onclick=function(){ fileInput.click(); };
+    card.appendChild(addBtn);
+    var status=el('div',{fontSize:'12px',color:'#64748B',marginBottom:'8px'});
+    card.appendChild(status);
+    var btns=el('div',{display:'flex',gap:'8px'});
+    var save=el('button',{flex:'1',padding:'10px',border:'none',borderRadius:'8px',background:'#16A34A',color:'#fff',fontWeight:'700',cursor:'pointer'},'Save to account');
+    var cancel=el('button',{flex:'1',padding:'10px',border:'1px solid #CBD5E1',borderRadius:'8px',background:'#fff',cursor:'pointer'},'Cancel');
+    cancel.onclick=function(){ if(ov.parentElement) document.body.removeChild(ov); };
+    save.onclick=async function(){
+      if(!pages.length){ status.textContent='Add at least one page first.'; return; }
+      save.disabled=true; cancel.disabled=true;
+      var docId='doc_'+Date.now(), urls=[];
+      for(var i=0;i<pages.length;i++){ status.textContent='Uploading page '+(i+1)+' of '+pages.length+'\u2026'; var u=await uploadPage(record.id, docId, i+1, pages[i].base64); urls.push(u||pages[i].base64); }
+      var findings=null;
+      if(aiChk.checked){ status.textContent='Reading the document\u2026'; findings=await aiRead(pages[0].base64); }
+      var doc={ id:docId, title:({inspection:'Inspection report',tag:'Service tag',other:'Document'})[typeSel.value]+' \u2014 '+new Date().toLocaleDateString(), type:typeSel.value, pages:urls, findings:findings, by:(localStorage.getItem('termac_current_user')||'Rep'), ts:Date.now() };
+      persistDoc(record, doc);
+      if(ov.parentElement) document.body.removeChild(ov);
+      var msg='Document saved to '+recName(record);
+      if(findings&&(findings.deficiencies||[]).length) msg+=' \u2014 '+findings.deficiencies.length+' deficiency findings';
+      try{ if(typeof spToast==='function') spToast(msg); else alert(msg); }catch(e){ alert(msg); }
+    };
+    btns.appendChild(save); btns.appendChild(cancel); card.appendChild(btns);
+    renderPages();
+    ov.appendChild(card); document.body.appendChild(ov);
+  }
+  window.openDocScanner=openDocScanner;
+})();
+</script>
+
 </body>
 </html>
