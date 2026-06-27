@@ -6336,5 +6336,299 @@ function svStep6(body, footer) {
   footer.innerHTML = '';
 }
 </script>
+<script>
+/* ============================================================
+   Termac One — Sales Field Assistant (global, action-capable)
+   Tap-anywhere assistant for reps on the road. Reuses the AI proxy,
+   the CRM stores (crmLoad), the geocoder worker, and writes
+   appointments + scheduler queue in the existing record shapes.
+   Replaces the old per-account chat: window.siSendChat now funnels
+   into this engine. Confirms before it ever books anything.
+   ============================================================ */
+(function(){
+  'use strict';
+  var AI_PROXY    = 'https://unipro-ai-proxy.tedscholl.workers.dev';
+  var ROUTE_PROXY = 'https://ors-route-proxy.tedscholl.workers.dev';
+  var saHistory = [];
+  var saGeo = {};
+  try { saGeo = JSON.parse(localStorage.getItem('termac_geocode_cache')||'{}'); } catch(e){ saGeo = {}; }
+  function saveGeo(){ try{ localStorage.setItem('termac_geocode_cache', JSON.stringify(saGeo)); }catch(e){} }
+
+  function repName(){ try{ return (window._spRep&&_spRep.name) || localStorage.getItem('termac_current_user') || 'Rep'; }catch(e){ return 'Rep'; } }
+  function nameOf(r){ return r.business||r.name||'(unnamed)'; }
+  function addrOf(r){ return ((r.address||r.addr||'')+(r.zip?(' '+r.zip):'')).trim(); }
+  function loadAll(){
+    var a=[], l=[];
+    try{ a=(typeof crmLoad==='function'?crmLoad('accounts'):JSON.parse(localStorage.getItem('termac_crm_accounts')||'[]'))||[]; }catch(e){}
+    try{ l=(typeof crmLoad==='function'?crmLoad('leads'):JSON.parse(localStorage.getItem('termac_crm_leads')||'[]'))||[]; }catch(e){}
+    return a.map(function(x){var y=Object.assign({},x);y.__kind='account';return y;})
+            .concat(l.map(function(x){var y=Object.assign({},x);y.__kind='lead';return y;}));
+  }
+
+  async function geocode(addr){
+    addr=(addr||'').trim(); if(!addr) return null;
+    if(saGeo[addr]) return saGeo[addr];
+    try{
+      var r=await fetch(ROUTE_PROXY+'/geocode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({address:addr})});
+      if(r.ok){ var d=await r.json(); if(typeof d.lat==='number'){ saGeo[addr]=[d.lat,d.lng]; saveGeo(); return saGeo[addr]; } }
+    }catch(e){}
+    return null;
+  }
+  function haversine(a,b){ var R=3958.8,dLat=(b[0]-a[0])*Math.PI/180,dLng=(b[1]-a[1])*Math.PI/180,l1=a[0]*Math.PI/180,l2=b[0]*Math.PI/180; var h=Math.sin(dLat/2)*Math.sin(dLat/2)+Math.cos(l1)*Math.cos(l2)*Math.sin(dLng/2)*Math.sin(dLng/2); return 2*R*Math.asin(Math.sqrt(h)); }
+
+  /* ---- TOOLS ---- */
+  function toolSearch(query){
+    var q=(query||'').toLowerCase();
+    return loadAll().filter(function(r){ return (nameOf(r)+' '+(r.contact||'')+' '+addrOf(r)).toLowerCase().indexOf(q)>=0; })
+      .slice(0,8).map(function(r){ return { name:nameOf(r), kind:r.__kind, stage:r.lifecycleStage||'lead', score:r.score||null, address:addrOf(r), phone:r.phone||'', services:(r.services||[]).join(', ')||'none tagged' }; });
+  }
+  async function toolNearby(area, radiusMi){
+    radiusMi=radiusMi||15;
+    var center=await geocode(area);
+    if(!center) return { error:'Could not locate "'+area+'". Try a city, ZIP, or full address.' };
+    var all=loadAll(), out=[];
+    for(var i=0;i<all.length;i++){
+      var r=all[i], a=addrOf(r); if(!a) continue;
+      var ll=await geocode(a); if(!ll) continue;
+      var mi=haversine(center,ll); if(mi>radiusMi) continue;
+      var why=[];
+      if((r.score||0)>=7) why.push('hot lead '+r.score+'/10');
+      if(!r.lifecycleStage||r.lifecycleStage==='lead') why.push('not yet a customer');
+      if(r.openDeficiency) why.push('open deficiency');
+      if(!r.services||!r.services.length) why.push('cross-sell, no services tagged');
+      out.push({ name:nameOf(r), miles:Math.round(mi*10)/10, stage:r.lifecycleStage||'lead', score:r.score||null, address:a, why:why.join('; ')||'in your area' });
+    }
+    out.sort(function(x,y){ return (y.score||0)-(x.score||0) || x.miles-y.miles; });
+    return { center:area, radius_mi:radiusMi, count:out.length, stops:out.slice(0,12) };
+  }
+
+  /* ---- commit (after confirm) ---- */
+  function p2(n){ return String(n).padStart(2,'0'); }
+  function icsStamp(d){ return d.getUTCFullYear()+p2(d.getUTCMonth()+1)+p2(d.getUTCDate())+'T'+p2(d.getUTCHours())+p2(d.getUTCMinutes())+'00Z'; }
+  function outlookLink(title,start,end,loc,notes){
+    return 'https://outlook.office.com/calendar/0/deeplink/compose?subject='+encodeURIComponent(title||'Termac visit')
+      +'&startdt='+encodeURIComponent(start.toISOString().slice(0,19))
+      +'&enddt='+encodeURIComponent(end.toISOString().slice(0,19))
+      +'&location='+encodeURIComponent(loc||'')+'&body='+encodeURIComponent(notes||'');
+  }
+  function icsUri(title,start,end,loc,notes){
+    var ics='BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//Termac One//Sales//EN\nBEGIN:VEVENT\nUID:'+Date.now()+'@termac\nDTSTAMP:'+icsStamp(new Date())+'\nDTSTART:'+icsStamp(start)+'\nDTEND:'+icsStamp(end)+'\nSUMMARY:'+(title||'Termac visit')+'\nLOCATION:'+(loc||'')+'\nDESCRIPTION:'+(notes||'')+'\nEND:VEVENT\nEND:VCALENDAR';
+    return 'data:text/calendar;charset=utf-8,'+encodeURIComponent(ics);
+  }
+  function parseWhen(s){ var d=new Date(s); if(isNaN(d)) d=new Date(Date.now()+86400000); return d; }
+  function commitCalendar(p){
+    var start=parseWhen(p.datetime), end=new Date(start.getTime()+(p.minutes||60)*60000);
+    try{ var ap=JSON.parse(localStorage.getItem('termac_appointments')||'[]'); ap.push({ id:'appt_'+Date.now(), recordId:null, tab:'assistant', type:'calendar', date:start.toISOString(), isFlexStop:false, createdAt:Date.now(), createdBy:repName(), title:p.title||'Termac visit', location:p.location||'' }); localStorage.setItem('termac_appointments',JSON.stringify(ap)); }catch(e){}
+    return { outlook:outlookLink(p.title,start,end,p.location,p.notes), ics:icsUri(p.title,start,end,p.location,p.notes) };
+  }
+  function commitAppointment(p){
+    var start=parseWhen(p.datetime);
+    var rec=loadAll().find(function(r){ return nameOf(r).toLowerCase().indexOf((p.account||'').toLowerCase())>=0; });
+    try{ var ap=JSON.parse(localStorage.getItem('termac_appointments')||'[]'); ap.push({ id:'appt_'+Date.now(), recordId:rec?rec.id:null, tab:'assistant', type:p.type||'visit', date:start.toISOString(), isFlexStop:false, createdAt:Date.now(), createdBy:repName() }); localStorage.setItem('termac_appointments',JSON.stringify(ap)); }catch(e){}
+    try{ var sq=JSON.parse(localStorage.getItem('termac_scheduler_queue')||'[]'); sq.push({ id:rec?rec.id:'appt_'+Date.now(), business:rec?nameOf(rec):(p.account||'Customer'), contact:rec?(rec.contact||rec.name||''):'', phone:rec?(rec.phone||''):'', address:rec?addrOf(rec):'', services:rec?(rec.services||[]):[], acceptedAt:Date.now(), assignedRep:repName(), status:'needs_scheduling' }); localStorage.setItem('termac_scheduler_queue',JSON.stringify(sq)); }catch(e){}
+    var end=new Date(start.getTime()+3600000);
+    return { outlook:outlookLink('Appt: '+(p.account||'Customer'),start,end,rec?addrOf(rec):'',p.type||''), ics:icsUri('Appt: '+(p.account||'Customer'),start,end,rec?addrOf(rec):'',p.type||'') };
+  }
+
+  /* ---- account writes (note / contact) ---- */
+  function rawLoad(kind){ try{ return (typeof crmLoad==='function'?crmLoad(kind):JSON.parse(localStorage.getItem('termac_crm_'+kind)||'[]'))||[]; }catch(e){ return []; } }
+  function rawSave(kind,arr){ try{ if(typeof crmSave==='function') crmSave(kind,arr); else localStorage.setItem('termac_crm_'+kind,JSON.stringify(arr)); }catch(e){} }
+  function findInStores(nameQ){
+    var q=(nameQ||'').toLowerCase();
+    var kinds=['accounts','leads'];
+    for(var i=0;i<kinds.length;i++){
+      var arr=rawLoad(kinds[i]);
+      var idx=arr.findIndex(function(r){ return nameOf(r).toLowerCase().indexOf(q)>=0; });
+      if(idx>=0) return { kind:kinds[i], arr:arr, idx:idx, rec:arr[idx] };
+    }
+    return null;
+  }
+  function fullRecord(account){ var f=findInStores(account); return f?f.rec:null; }
+  function doAddNote(account,note){
+    var f=findInStores(account); if(!f) return { error:'No account matching "'+account+'".' };
+    f.rec.activityLog=f.rec.activityLog||[];
+    f.rec.activityLog.push({ ts:Date.now(), type:'rep', icon:'\uD83D\uDCDD', title:'Note added via assistant', note:note, who:repName() });
+    f.rec.notes=((f.rec.notes||'')+(f.rec.notes?'\n':'')+(note||'')).trim();
+    f.rec.updated=Date.now(); f.arr[f.idx]=f.rec; rawSave(f.kind,f.arr);
+    return { ok:true, name:nameOf(f.rec) };
+  }
+  function doChangeContact(account,newContact,newPhone){
+    var f=findInStores(account); if(!f) return { error:'No account matching "'+account+'".' };
+    var old={ contact:f.rec.contact||'', phone:f.rec.phone||'' };
+    if(newContact) f.rec.contact=newContact;
+    if(newPhone) f.rec.phone=newPhone;
+    f.rec.activityLog=f.rec.activityLog||[];
+    f.rec.activityLog.push({ ts:Date.now(), type:'rep', icon:'\uD83D\uDC64', title:'Primary contact updated', note:(old.contact||'\u2014')+' \u2192 '+(newContact||old.contact||'\u2014'), who:repName() });
+    f.rec.updated=Date.now(); f.arr[f.idx]=f.rec; rawSave(f.kind,f.arr);
+    return { ok:true, name:nameOf(f.rec), old:old };
+  }
+
+  /* ---- adaptive memory: learns the rep over time (localStorage now, Cosmos DB at go-live) ---- */
+  function memAll(){ try{ return JSON.parse(localStorage.getItem('termac_assistant_memory')||'{}'); }catch(e){ return {}; } }
+  function memGet(){ var a=memAll(); return a[repName()]||{ territory:{}, objections:[], wins:[], prefs:[], interactions:0 }; }
+  function memSave(m){ var a=memAll(); m.updatedAt=Date.now(); a[repName()]=m; try{ localStorage.setItem('termac_assistant_memory',JSON.stringify(a)); }catch(e){} }
+  function capArr(arr,n){ arr=arr||[]; return arr.slice(Math.max(0,arr.length-n)); }
+  function memLearn(kind,payload){
+    var m=memGet(); m.interactions=(m.interactions||0)+1;
+    if(kind==='area'){ var a=(payload||'').trim().toLowerCase(); if(a) m.territory[a]=(m.territory[a]||0)+1; }
+    else if(kind==='objection'){ m.objections=capArr((m.objections||[]).concat([{ text:payload.text||'', response:payload.response||'', account:payload.account||'', ts:Date.now() }]),30); }
+    else if(kind==='win'){ m.wins=capArr((m.wins||[]).concat([{ account:payload.account||'', product:payload.product||payload.text||'', ts:Date.now() }]),30); }
+    else { m.prefs=capArr((m.prefs||[]).concat([String((payload&&payload.text)||payload||'')]),20); }
+    memSave(m); return m;
+  }
+  function topAreas(t,n){ t=t||{}; return Object.keys(t).sort(function(a,b){ return t[b]-t[a]; }).slice(0,n); }
+  function memContext(){
+    var m=memGet(); if(!m.interactions) return '';
+    var bits=[];
+    var ta=topAreas(m.territory,4); if(ta.length) bits.push('Usual territory: '+ta.join(', ')+'.');
+    if((m.objections||[]).length) bits.push('Objections this rep has handled before: '+capArr(m.objections,5).map(function(o){ return '"'+o.text+'"'+(o.response?(' -> '+o.response):''); }).join(' | ')+'.');
+    if((m.wins||[]).length) bits.push('Recent cross-sell wins: '+capArr(m.wins,5).map(function(w){ return (w.product||'?')+(w.account?(' at '+w.account):''); }).join(', ')+'.');
+    if((m.prefs||[]).length) bits.push('Notes about this rep: '+capArr(m.prefs,5).join('; ')+'.');
+    return bits.length ? ('\nWHAT YOU HAVE LEARNED ABOUT '+repName()+' (use it to tailor advice): '+bits.join(' ')) : '';
+  }
+
+  /* ---- UI ---- */
+  var panel, msgs, input;
+  function el(tag,props,txt){ var e=document.createElement(tag); if(props) Object.assign(e.style,props); if(txt!=null) e.textContent=txt; return e; }
+  function bubble(role,txt){
+    var b=el('div',{margin:'6px 0',padding:'9px 12px',borderRadius:'12px',fontSize:'14px',lineHeight:'1.4',maxWidth:'85%',whiteSpace:'pre-wrap'});
+    if(role==='user'){ b.style.background='#C8102E'; b.style.color='#fff'; b.style.marginLeft='auto'; }
+    else { b.style.background='#F1F5F9'; b.style.color='#0F172A'; }
+    b.textContent=txt; msgs.appendChild(b); msgs.scrollTop=msgs.scrollHeight; return b;
+  }
+  function confirmCard(kind,p){
+    var card=el('div',{margin:'6px 0',padding:'12px',borderRadius:'12px',background:'#FFF7ED',border:'1px solid #FED7AA',fontSize:'13px'});
+    var title = kind==='calendar'?'Add to calendar?':kind==='appointment'?'Book appointment?':'Change primary contact?';
+    card.appendChild(el('div',{fontWeight:'700',marginBottom:'6px',color:'#9A3412'},title));
+    var cur = (kind==='contact') ? (function(){ var f=findInStores(p.account); return f?(f.rec.contact||'\u2014'):'\u2014'; })() : null;
+    var lines = kind==='calendar'
+      ? [['What',p.title||'Termac visit'],['When',p.datetime||'tomorrow'],['Where',p.location||'\u2014']]
+      : kind==='appointment'
+      ? [['Customer',p.account||'\u2014'],['When',p.datetime||'tomorrow'],['Type',p.type||'site visit']]
+      : [['Account',p.account||'\u2014'],['Current',cur],['New contact',p.new_contact||'\u2014'],['New phone',p.new_phone||'(unchanged)']];
+    lines.forEach(function(L){ var row=el('div',{margin:'2px 0'}); row.textContent=L[0]+': '+L[1]; card.appendChild(row); });
+    var btns=el('div',{marginTop:'8px',display:'flex',gap:'8px'});
+    var yes=el('button',{flex:'1',padding:'8px',border:'none',borderRadius:'8px',background:'#16A34A',color:'#fff',fontWeight:'700'},'Confirm');
+    var no=el('button',{flex:'1',padding:'8px',border:'1px solid #CBD5E1',borderRadius:'8px',background:'#fff'},'Cancel');
+    yes.onclick=function(){
+      card.remove();
+      if(kind==='contact'){ var rc=doChangeContact(p.account,p.new_contact,p.new_phone); bubble('ai', rc.error?rc.error:('Updated primary contact on '+rc.name+'.')); return; }
+      var res=kind==='calendar'?commitCalendar(p):commitAppointment(p);
+      var done=bubble('ai', kind==='calendar'?'Added. Open it in Outlook below.':'Booked and sent to scheduling. Open in Outlook below.');
+      var link=el('a',{display:'inline-block',marginTop:'6px',color:'#2563EB',fontWeight:'700'}); link.textContent='Open in Outlook'; link.href=res.outlook; link.target='_blank';
+      done.appendChild(document.createElement('br')); done.appendChild(link);
+    };
+    no.onclick=function(){ card.remove(); bubble('ai', kind==='contact'?'No change made.':'No problem, nothing booked.'); };
+    btns.appendChild(yes); btns.appendChild(no); card.appendChild(btns);
+    msgs.appendChild(card); msgs.scrollTop=msgs.scrollHeight;
+  }
+
+  async function aiCall(){
+    var ctx='';
+    try{ var rr=window._siCurrentRecord; if(rr){ ctx='\nCurrently viewing account: '+nameOf(rr)+' (stage '+(rr.lifecycleStage||'lead')+', score '+(rr.score||'?')+'/10, services '+((rr.services||[]).join(', ')||'none')+').'; } }catch(e){}
+    try{ ctx += memContext(); }catch(e){}
+    var sys='You are the Termac field sales assistant for '+repName()+', a B2B rep for fire protection and commercial kitchen services across PA, NJ, DE, MD, DC. Be brief and practical; the rep is on the road.'+
+      ' Termac has six divisions to cross-sell: UniPro and Quality III (fire suppression and extinguisher inspection/service; Quality III is the Delaware entity), GTO (grease trap service), Filter Man (hood filter exchange), AllPro (stainless fabrication), and Termac (dish machines, chemicals, paper supplies).'+ctx+
+      '\n\nReply with ONLY one JSON object, no prose, no markdown fences. Pick one action:\n'+
+      '{"action":"reply","text":"..."}\n'+
+      '{"action":"search_customer","query":"..."}\n'+
+      '{"action":"find_nearby","area":"<city/zip/address>","radius_mi":15}\n'+
+      '{"action":"advise","account":"..."} to pull a customer record and recommend cross-sell products, the 1-2 most likely objections with a response to each, and the next best action.\n'+
+      '{"action":"add_note","account":"...","note":"..."}\n'+
+      '{"action":"remember","kind":"objection|win|pref","text":"...","response":"...","account":"..."} to save a takeaway (an objection and what answered it, a cross-sell win, or how this rep likes to work) so you get smarter about them over time.\n'+
+      '{"action":"change_contact","account":"...","new_contact":"...","new_phone":"..."}\n'+
+      '{"action":"draft_calendar","title":"...","datetime":"YYYY-MM-DDTHH:MM","location":"...","notes":"...","minutes":60}\n'+
+      '{"action":"draft_appointment","account":"...","datetime":"YYYY-MM-DDTHH:MM","type":"site visit"}\n'+
+      'Resolve relative dates (today/tomorrow) to absolute datetimes. Never invent customer records; use search_customer, advise, or find_nearby for real data.';
+    var resp=await fetch(AI_PROXY,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:700, system:sys, messages:saHistory.slice(-10) })});
+    var data=await resp.json();
+    var raw=(data.content||[]).map(function(x){ return x.text||''; }).join('');
+    try{ return JSON.parse(raw.replace(/```json|```/g,'').trim()); }catch(e){ return { action:'reply', text: raw||'Sorry, try again.' }; }
+  }
+  async function followUp(){
+    var t=bubble('ai','…');
+    try{ var act=await aiCall(); t.textContent=act.text||JSON.stringify(act); saHistory.push({role:'assistant',content:act.text||''}); }
+    catch(e){ t.textContent='Connection error.'; }
+  }
+  async function send(text){
+    text=(text||'').trim(); if(!text) return;
+    bubble('user',text); saHistory.push({role:'user',content:text});
+    var t=bubble('ai','…'); var act;
+    try{ act=await aiCall(); }catch(e){ t.textContent='Connection error — try again.'; return; }
+    if(act.action==='search_customer'){
+      var res=toolSearch(act.query); t.remove();
+      saHistory.push({role:'assistant',content:JSON.stringify(act)});
+      saHistory.push({role:'user',content:'TOOL RESULT search_customer: '+JSON.stringify(res)+'\nSummarize in 1-2 sentences with a next step. Reply {"action":"reply","text":"..."}.'});
+      return followUp();
+    }
+    if(act.action==='find_nearby'){
+      t.textContent='Finding stops near '+(act.area||'')+'…';
+      try{ memLearn('area', act.area); }catch(e){}
+      var res=await toolNearby(act.area, act.radius_mi); t.remove();
+      saHistory.push({role:'assistant',content:JSON.stringify(act)});
+      saHistory.push({role:'user',content:'TOOL RESULT find_nearby: '+JSON.stringify(res)+'\nGive a short ranked list (name, miles, why) and which to prioritize. Reply {"action":"reply","text":"..."}.'});
+      return followUp();
+    }
+    if(act.action==='remember'){ try{ memLearn(act.kind||'pref', act); }catch(e){} t.remove(); bubble('ai','Got it. I will remember that for next time.'); saHistory.push({role:'assistant',content:'Remembered.'}); return; }
+    if(act.action==='advise'){
+      var rec=fullRecord(act.account); t.remove();
+      saHistory.push({role:'assistant',content:JSON.stringify(act)});
+      saHistory.push({role:'user',content:'TOOL RESULT advise (full record for '+(act.account||'')+'): '+JSON.stringify(rec||{error:'not found'})+'\nRecommend cross-sell products across the six divisions that fit this customer, the 1-2 most likely objections with a short response to each, and the single next best action. Keep it tight. Reply {"action":"reply","text":"..."}.'});
+      return followUp();
+    }
+    if(act.action==='add_note'){
+      var rn=doAddNote(act.account, act.note); t.remove();
+      bubble('ai', rn.error?rn.error:('Saved a note on '+rn.name+'.'));
+      saHistory.push({role:'assistant',content:'Note saved.'}); return;
+    }
+    if(act.action==='change_contact'){ t.remove(); return confirmCard('contact',act); }
+    if(act.action==='draft_calendar'){ t.remove(); return confirmCard('calendar',act); }
+    if(act.action==='draft_appointment'){ t.remove(); return confirmCard('appointment',act); }
+    t.textContent=act.text||'(no answer)'; saHistory.push({role:'assistant',content:act.text||''});
+  }
+
+  /* voice (own recognizer, separate from camera) */
+  var recog=null;
+  function toggleVoice(btn){
+    var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+    if(!SR){ bubble('ai','Voice not supported on this browser — type instead.'); return; }
+    if(recog){ try{recog.stop();}catch(e){} recog=null; btn.textContent='🎙️'; return; }
+    recog=new SR(); recog.lang='en-US'; recog.interimResults=false; btn.textContent='⏺️';
+    recog.onresult=function(ev){ var txt=ev.results[0][0].transcript; input.value=txt; };
+    recog.onend=function(){ btn.textContent='🎙️'; recog=null; if(input.value.trim()){ var v=input.value.trim(); input.value=''; send(v); } };
+    try{ recog.start(); }catch(e){ btn.textContent='🎙️'; recog=null; }
+  }
+
+  function build(){
+    var fab=el('button',{position:'fixed',right:'18px',bottom:'18px',zIndex:'99998',width:'58px',height:'58px',borderRadius:'50%',border:'none',background:'#C8102E',color:'#fff',fontSize:'24px',boxShadow:'0 6px 18px rgba(0,0,0,.3)',cursor:'pointer'});
+    fab.textContent='💬'; fab.title='Talk to AI Assistant'; fab.setAttribute('aria-label','Talk to AI Assistant');
+    panel=el('div',{position:'fixed',right:'18px',bottom:'86px',zIndex:'99999',width:'min(380px,92vw)',height:'min(560px,72vh)',background:'#fff',borderRadius:'16px',boxShadow:'0 12px 40px rgba(0,0,0,.35)',display:'none',flexDirection:'column',overflow:'hidden',border:'1px solid #E2E8F0'});
+    var head=el('div',{padding:'12px 14px',background:'#0F172A',color:'#fff',display:'flex',alignItems:'center',justifyContent:'space-between'});
+    var ht=el('div',null,'🤖 Sales Assistant'); ht.style.fontWeight='700';
+    var hx=el('button',{border:'none',background:'transparent',color:'#fff',fontSize:'20px',cursor:'pointer'},'×');
+    hx.onclick=function(){ panel.style.display='none'; };
+    head.appendChild(ht); head.appendChild(hx);
+    msgs=el('div',{flex:'1',overflowY:'auto',padding:'12px',background:'#fff'});
+    var bar=el('div',{display:'flex',gap:'6px',padding:'10px',borderTop:'1px solid #E2E8F0',background:'#F8FAFC'});
+    input=el('input',{flex:'1',padding:'10px',border:'1px solid #CBD5E1',borderRadius:'10px',fontSize:'14px'});
+    input.placeholder='Ask, or tap the mic…';
+    input.addEventListener('keydown',function(e){ if(e.key==='Enter'){ var v=input.value.trim(); input.value=''; if(v) send(v); } });
+    var mic=el('button',{width:'42px',border:'1px solid #CBD5E1',borderRadius:'10px',background:'#fff',fontSize:'18px',cursor:'pointer'},'🎙️');
+    mic.onclick=function(){ toggleVoice(mic); };
+    var go=el('button',{padding:'0 14px',border:'none',borderRadius:'10px',background:'#C8102E',color:'#fff',fontWeight:'700',cursor:'pointer'},'Send');
+    go.onclick=function(){ var v=input.value.trim(); input.value=''; if(v) send(v); };
+    bar.appendChild(input); bar.appendChild(mic); bar.appendChild(go);
+    panel.appendChild(head); panel.appendChild(msgs); panel.appendChild(bar);
+    fab.onclick=function(){ var open=panel.style.display==='none'; panel.style.display=open?'flex':'none'; if(open&&!msgs.childNodes.length){ bubble('ai','Hey '+repName().split(' ')[0]+'. I can search a customer, find stops near where you\u2019ll be, add to your calendar, or book an appointment. What do you need?'); } };
+    document.body.appendChild(fab); document.body.appendChild(panel);
+  }
+  function saOpen(){ if(panel){ panel.style.display='flex'; } }
+
+  if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded',build); } else { build(); }
+  // Old account panel now funnels into this one engine
+  window.siSendChat=function(){ var i=document.getElementById('siChatInput'); var q=i?i.value.trim():''; if(i) i.value=''; saOpen(); if(q) send(q); };
+  window.saAssistant={ open:saOpen, send:send };
+})();
+</script>
 </body>
 </html>
