@@ -1132,7 +1132,32 @@ function spOpenApptModal(accountId, tab) {
 //  Stored in localStorage so rep's additions persist across refresh
 // ════════════════════════════════════════════════════════
 
-var CHECKIN_INTERVAL_DAYS = 30;
+// Rep check-in cadence (days): how often an active account resurfaces on the
+// agenda for a relationship / inventory check-in. Configurable per division —
+// tune any value here. Keys match normalized service names (lowercase, no spaces).
+var CHECKIN_INTERVAL_DAYS = 30; // global fallback when an account's division is unknown
+var CHECKIN_INTERVAL_BY_DIVISION = {
+  gto:        30,   // monthly grease-trap service — frequent touch
+  filterman:  45,   // hood-filter exchange
+  termac:     60,   // dish machine / chemical program
+  unipro:     90,   // annual fire — keep a quarterly relationship touch
+  qualityiii: 90,   // Delaware fire — same cadence as UniPro
+  allpro:     90    // project-based fabrication
+};
+
+// Resolve the check-in interval for an account from its services.
+// Multi-division accounts use the SHORTEST cadence (most active service drives the touch).
+function spCheckinDaysFor(account) {
+  var svcs = (account && account.services) ? account.services : [];
+  var days = null;
+  svcs.forEach(function(s) {
+    var key = String(s).toLowerCase().replace(/[^a-z0-9]/g, ''); // 'Filter Man' -> 'filterman'
+    var d = CHECKIN_INTERVAL_BY_DIVISION[key];
+    if (d != null && (days === null || d < days)) days = d;
+  });
+  return (days != null) ? days : CHECKIN_INTERVAL_DAYS;
+}
+
 var AGENDA_STORE = 'termac_today_agenda';
 
 // ── Persist today's agenda (manual additions survive refresh) ───────────────
@@ -1307,9 +1332,9 @@ function spBuildAgenda() {
 
   // ── 3. Existing accounts due for check-in ────────────────────────────────
   var accounts = crmLoad('accounts');
-  var cutoff = Date.now() - (CHECKIN_INTERVAL_DAYS * 86400000);
   accounts.filter(function(a) {
     var isRep = !a.assignedRep || a.assignedRep === repName || a.ownedBy === repName;
+    var cutoff = Date.now() - (spCheckinDaysFor(a) * 86400000);
     return isRep && a.status === 'active' && (!a.lastCheckin || a.lastCheckin < cutoff);
   }).slice(0,4).forEach(function(a) {
     agenda.push({
