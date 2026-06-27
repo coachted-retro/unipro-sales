@@ -673,17 +673,63 @@ async function stOptimizeRoute() {
   if(!jobs.length){ alert('No active jobs to resequence.'); return; }
   var techId = window._stReseqTechId;
   var tech = TECHS.find(function(t){ return t.id===techId; });
-  var startLL = (tech && tech.zip && ZIPLL[tech.zip]) ? ZIPLL[tech.zip] : [40.05,-74.95];
+  var startLL = (tech && tech.zip && typeof ZIPLL!=='undefined' && ZIPLL[tech.zip]) ? ZIPLL[tech.zip] : [40.05,-74.95];
+
+  // Split into time-anchored jobs (committed appointment time) and flex jobs.
+  // Anchors are pinned in their time slots; flex jobs fill the gaps via ORS.
+  var anchors = jobs.filter(function(j){ return j.isAnchor || j.isFixed; })
+    .sort(function(a,b){ return (a.time||'').localeCompare(b.time||''); });
+  var flex = jobs.filter(function(j){ return !j.isAnchor && !j.isFixed; });
 
   var optimized, saving;
-  var road = await routeOptimize(jobs, startLL, function(j){ return j.addr||''; });
-  if(road){
-    optimized = road.order;
-    saving = (road.savedMin != null) ? road.savedMin
-           : Math.round((calcRouteDist(jobs) - calcRouteDist(optimized)) * 2.5);
-  } else {
-    optimized = greedyOrder(jobs, startLL, function(j){ return zipLL(j.addr||''); });
+
+  if(anchors.length && flex.length) {
+    // Anchor-aware: cluster flex stops between anchors using ORS
+    var result = [];
+    var prevLL = startLL;
+    var remaining = flex.slice();
+
+    for(var ai=0; ai<anchors.length; ai++) {
+      // Pick up to 3 flex stops closest to the midpoint before this anchor
+      var anchorAddr = anchors[ai].addr||'';
+      var anchorLL = zipLL(anchorAddr) || startLL;
+      var segment = [];
+      var scored = remaining.map(function(j){
+        var ll=zipLL(j.addr||''); if(!ll) return {j:j,d:999};
+        var dFrom=calcDist(prevLL,ll), dTo=calcDist(ll,anchorLL);
+        return {j:j, d:dFrom+dTo};
+      }).sort(function(a,b){return a.d-b.d;});
+      var take=Math.min(3, Math.floor(remaining.length/(anchors.length-ai||1)+0.5));
+      for(var si=0;si<take&&si<scored.length;si++){
+        segment.push(scored[si].j);
+        remaining.splice(remaining.indexOf(scored[si].j),1);
+      }
+      // Road-optimize this segment then append anchor
+      if(segment.length>1){
+        var segRoad = await routeOptimize(segment, prevLL, function(j){return j.addr||'';});
+        segment = segRoad ? segRoad.order : segment;
+      }
+      segment.forEach(function(j){result.push(j);});
+      result.push(anchors[ai]);
+      prevLL = anchorLL;
+    }
+    // Remaining flex after last anchor
+    if(remaining.length){
+      var tailRoad = await routeOptimize(remaining, prevLL, function(j){return j.addr||'';});
+      (tailRoad ? tailRoad.order : remaining).forEach(function(j){result.push(j);});
+    }
+    optimized = result;
     saving = Math.round((calcRouteDist(jobs) - calcRouteDist(optimized)) * 2.5);
+  } else {
+    // No anchors or all anchors: full ORS optimize
+    var road = await routeOptimize(jobs, startLL, function(j){ return j.addr||''; });
+    if(road){
+      optimized = road.order;
+      saving = (road.savedMin != null) ? road.savedMin : Math.round((calcRouteDist(jobs) - calcRouteDist(optimized)) * 2.5);
+    } else {
+      optimized = greedyOrder(jobs, startLL, function(j){ return zipLL(j.addr||''); });
+      saving = Math.round((calcRouteDist(jobs) - calcRouteDist(optimized)) * 2.5);
+    }
   }
 
   document.getElementById('stReseqOptimized').innerHTML = optimized.map(function(j,i){
