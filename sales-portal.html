@@ -5980,11 +5980,82 @@ function svStep3(body, footer) {
     <button onclick="svStep3Next()" style="background:#C8102E;color:#fff;border:none;border-radius:8px;padding:10px 28px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">Next: Customer Sign-Off →</button>`;
 }
 
+/* ---- Grandfathered / fixed special pricing (per account) ---- */
+function svGetSpecialFor(acctId){
+  try{ var accts=(typeof crmLoad==='function'?crmLoad('accounts'):JSON.parse(localStorage.getItem('termac_crm_accounts')||'[]'))||[]; var a=accts.find(function(x){return x.id===acctId;}); var sp=a&&a.specialPricing; return (sp&&sp.mode&&sp.mode!=='none')?sp:null; }catch(e){ return null; }
+}
+function svGetSpecial(){ return svGetSpecialFor(typeof _svAcctId!=='undefined'?_svAcctId:null); }
+function svPriceFor(prodId,size,catalogPrice){
+  var sp=svGetSpecial(); if(!sp) return catalogPrice;
+  if(sp.mode==='fixed'&&sp.items){
+    if(typeof sp.items[prodId+'|'+size]==='number') return sp.items[prodId+'|'+size];
+    if(typeof sp.items[prodId]==='number') return sp.items[prodId];
+    return catalogPrice;
+  }
+  if(sp.mode==='discount'&&sp.discountPct) return Math.round(catalogPrice*(1-sp.discountPct/100)*100)/100;
+  return catalogPrice;
+}
+function openSpecialPricing(acctId){
+  if(!acctId){ alert('Select an account first.'); return; }
+  var accts=(typeof crmLoad==='function'?crmLoad('accounts'):JSON.parse(localStorage.getItem('termac_crm_accounts')||'[]'))||[];
+  var idx=accts.findIndex(function(x){ return x.id===acctId; });
+  if(idx<0){ alert('Account not found.'); return; }
+  var acct=accts[idx]; var sp=acct.specialPricing||{ mode:'none', discountPct:0, items:{}, note:'', effectiveDate:'' };
+  var prods=(typeof svGetProducts==='function')?svGetProducts():[];
+  function mk(tag,style,txt){ var e=document.createElement(tag); if(style) Object.assign(e.style,style); if(txt!=null) e.textContent=txt; return e; }
+  var ov=mk('div',{position:'fixed',inset:'0',background:'rgba(0,0,0,.5)',zIndex:'100000',display:'flex',alignItems:'center',justifyContent:'center',padding:'16px'});
+  var card=mk('div',{background:'#fff',borderRadius:'14px',width:'min(460px,96vw)',maxHeight:'88vh',overflow:'auto',padding:'16px',fontFamily:'inherit'});
+  card.appendChild(mk('div',{fontWeight:'800',fontSize:'16px',marginBottom:'4px',color:'#0F172A'},'Special pricing \u2014 '+(acct.business||acct.name||'')));
+  card.appendChild(mk('div',{fontSize:'12px',color:'#64748B',marginBottom:'12px'},'Locked-in pricing for this customer. Applied automatically on every reorder.'));
+  card.appendChild(mk('div',{fontSize:'12px',fontWeight:'700',marginBottom:'4px'},'Pricing type'));
+  var modeSel=mk('select',{width:'100%',padding:'8px',border:'1px solid #CBD5E1',borderRadius:'8px',marginBottom:'10px'});
+  [['none','No special pricing (use catalog)'],['discount','Percent off catalog'],['fixed','Fixed prices per item']].forEach(function(o){ var op=document.createElement('option'); op.value=o[0]; op.textContent=o[1]; if(sp.mode===o[0]) op.selected=true; modeSel.appendChild(op); });
+  card.appendChild(modeSel);
+  var discWrap=mk('div',{marginBottom:'10px'});
+  discWrap.appendChild(mk('div',{fontSize:'12px',fontWeight:'700',marginBottom:'4px'},'Percent off (%)'));
+  var discInput=mk('input',{width:'100%',padding:'8px',border:'1px solid #CBD5E1',borderRadius:'8px'}); discInput.type='number'; discInput.min='0'; discInput.max='100'; discInput.value=sp.discountPct||'';
+  discWrap.appendChild(discInput); card.appendChild(discWrap);
+  var fixedWrap=mk('div',{marginBottom:'10px'});
+  fixedWrap.appendChild(mk('div',{fontSize:'12px',fontWeight:'700',marginBottom:'4px'},'Fixed prices (blank = catalog)'));
+  var fixedInputs={};
+  prods.forEach(function(p){ (p.sizes||[]).forEach(function(s){ var key=p.id+'|'+s.unit; var row=mk('div',{display:'flex',alignItems:'center',gap:'8px',margin:'3px 0'});
+    row.appendChild(mk('div',{flex:'1',fontSize:'12px'},p.name+' ('+s.unit+')'));
+    var inp=mk('input',{width:'90px',padding:'6px',border:'1px solid #CBD5E1',borderRadius:'6px',fontSize:'12px'}); inp.type='number'; inp.step='0.01'; inp.placeholder=s.price.toFixed(2); if(sp.items&&typeof sp.items[key]==='number') inp.value=sp.items[key];
+    fixedInputs[key]=inp; row.appendChild(inp); fixedWrap.appendChild(row); }); });
+  card.appendChild(fixedWrap);
+  var noteInput=mk('input',{width:'100%',padding:'8px',border:'1px solid #CBD5E1',borderRadius:'8px',marginBottom:'8px'}); noteInput.placeholder='Note (e.g. grandfathered 2019 rate)'; noteInput.value=sp.note||'';
+  card.appendChild(noteInput);
+  var dateInput=mk('input',{width:'100%',padding:'8px',border:'1px solid #CBD5E1',borderRadius:'8px',marginBottom:'12px'}); dateInput.type='date'; dateInput.value=sp.effectiveDate||'';
+  card.appendChild(dateInput);
+  function syncVis(){ discWrap.style.display=modeSel.value==='discount'?'block':'none'; fixedWrap.style.display=modeSel.value==='fixed'?'block':'none'; }
+  modeSel.onchange=syncVis; syncVis();
+  var btns=mk('div',{display:'flex',gap:'8px'});
+  var save=mk('button',{flex:'1',padding:'10px',border:'none',borderRadius:'8px',background:'#16A34A',color:'#fff',fontWeight:'700',cursor:'pointer'},'Save');
+  var cancel=mk('button',{flex:'1',padding:'10px',border:'1px solid #CBD5E1',borderRadius:'8px',background:'#fff',cursor:'pointer'},'Cancel');
+  save.onclick=function(){
+    var mode=modeSel.value, items={};
+    if(mode==='fixed'){ Object.keys(fixedInputs).forEach(function(k){ var v=parseFloat(fixedInputs[k].value); if(!isNaN(v)) items[k]=v; }); }
+    acct.specialPricing={ mode:mode, discountPct:parseFloat(discInput.value)||0, items:items, note:noteInput.value.trim(), effectiveDate:dateInput.value, setAt:Date.now(), setBy:(localStorage.getItem('termac_current_user')||'') };
+    accts[idx]=acct;
+    try{ if(typeof crmSave==='function') crmSave('accounts',accts); else localStorage.setItem('termac_crm_accounts',JSON.stringify(accts)); }catch(e){}
+    document.body.removeChild(ov);
+    if(typeof svRenderOrderRows==='function' && document.getElementById('svOrderRows')) svRenderOrderRows();
+  };
+  cancel.onclick=function(){ document.body.removeChild(ov); };
+  btns.appendChild(save); btns.appendChild(cancel); card.appendChild(btns);
+  ov.appendChild(card); document.body.appendChild(ov);
+}
+window.openSpecialPricing=openSpecialPricing;
+
 function svRenderOrderRows() {
   const container = document.getElementById('svOrderRows');
   if (!container) return;
   const products = svGetProducts();
-  container.innerHTML = _svOrderLines.map((row, i) => {
+  const _sp = svGetSpecial();
+  const _spBadge = _sp
+    ? `<div style="background:#ECFDF5;border:1px solid #A7F3D0;color:#065F46;padding:6px 10px;border-radius:8px;font-size:12px;margin-bottom:8px">Special pricing active${_sp.mode==='discount'?(' \u2014 '+_sp.discountPct+'% off catalog'):' \u2014 fixed rates'}${_sp.note?(' \u00b7 '+svEscH(_sp.note)):''} \u00b7 <a href="#" style="color:#065F46;font-weight:700" onclick="openSpecialPricing(_svAcctId);return false;">edit</a></div>`
+    : (_svAcctId ? `<div style="font-size:12px;margin-bottom:8px"><a href="#" style="color:#2563EB;font-weight:700" onclick="openSpecialPricing(_svAcctId);return false;">+ Set special pricing for this account</a></div>` : '');
+  container.innerHTML = _spBadge + _svOrderLines.map((row, i) => {
     const prodOpts = products.map(p => `<option value="${p.id}" ${p.id===row.productId?'selected':''}>${svEscH(p.name)}</option>`).join('');
     const selProd = products.find(p => p.id === row.productId);
     const sizeOpts = selProd ? selProd.sizes.map(s => `<option value="${s.unit}" data-price="${s.price}" ${s.unit===row.size?'selected':''}>${svEscH(s.unit)} — $${s.price.toFixed(2)}</option>`).join('') : '<option>Select product first</option>';
@@ -6008,8 +6079,8 @@ function svOrderProdChange(i, prodId) {
   _svOrderLines[i].name = prod ? prod.name : '';
   if (prod) {
     _svOrderLines[i].size = prod.sizes[0].unit;
-    _svOrderLines[i].unitPrice = prod.sizes[0].price;
-    _svOrderLines[i].lineTotal = prod.sizes[0].price * (_svOrderLines[i].qty || 1);
+    _svOrderLines[i].unitPrice = svPriceFor(prodId, prod.sizes[0].unit, prod.sizes[0].price);
+    _svOrderLines[i].lineTotal = _svOrderLines[i].unitPrice * (_svOrderLines[i].qty || 1);
     const sizeEl = document.getElementById('svOrdSize_' + i);
     if (sizeEl) sizeEl.innerHTML = prod.sizes.map(s => `<option value="${s.unit}" data-price="${s.price}">${svEscH(s.unit)} — $${s.price.toFixed(2)}</option>`).join('');
   }
@@ -6023,7 +6094,7 @@ function svOrderSizeChange(i) {
   if (!sizeEl) return;
   const opt = sizeEl.options[sizeEl.selectedIndex];
   _svOrderLines[i].size = opt.value;
-  _svOrderLines[i].unitPrice = parseFloat(opt.dataset.price || 0);
+  _svOrderLines[i].unitPrice = svPriceFor(_svOrderLines[i].productId, opt.value, parseFloat(opt.dataset.price || 0));
   _svOrderLines[i].lineTotal = _svOrderLines[i].unitPrice * (_svOrderLines[i].qty || 1);
   const lineEl = document.getElementById('svOrdLine_' + i);
   if (lineEl) lineEl.textContent = '$' + _svOrderLines[i].lineTotal.toFixed(2);
@@ -6061,7 +6132,7 @@ function svStep3Next() {
     if (sizeEl) {
       const opt = sizeEl.options[sizeEl.selectedIndex];
       row.size = opt?.value || row.size;
-      row.unitPrice = parseFloat(opt?.dataset?.price || row.unitPrice);
+      row.unitPrice = svPriceFor(row.productId, (opt?.value||row.size), parseFloat(opt?.dataset?.price || row.unitPrice));
       row.lineTotal = row.unitPrice * (row.qty || 1);
     }
   });
@@ -6537,6 +6608,7 @@ function svStep6(body, footer) {
       '{"action":"add_note","account":"...","note":"..."}\n'+
       '{"action":"remember","kind":"objection|win|pref","text":"...","response":"...","account":"..."} to save a takeaway (an objection and what answered it, a cross-sell win, or how this rep likes to work) so you get smarter about them over time.\n'+
       '{"action":"change_contact","account":"...","new_contact":"...","new_phone":"..."}\n'+
+      '{"action":"set_special_pricing","account":"..."} to open grandfathered/fixed pricing setup for an account.\n'+
       '{"action":"draft_calendar","title":"...","datetime":"YYYY-MM-DDTHH:MM","location":"...","notes":"...","minutes":60}\n'+
       '{"action":"draft_appointment","account":"...","datetime":"YYYY-MM-DDTHH:MM","type":"site visit"}\n'+
       'Resolve relative dates (today/tomorrow) to absolute datetimes. Never invent customer records; use search_customer, advise, or find_nearby for real data.';
@@ -6581,6 +6653,7 @@ function svStep6(body, footer) {
       bubble('ai', rn.error?rn.error:('Saved a note on '+rn.name+'.'));
       saHistory.push({role:'assistant',content:'Note saved.'}); return;
     }
+    if(act.action==='set_special_pricing'){ t.remove(); var fp=findInStores(act.account); if(fp&&typeof window.openSpecialPricing==='function'){ window.openSpecialPricing(fp.rec.id); bubble('ai','Opening special pricing for '+nameOf(fp.rec)+'.'); } else { bubble('ai','Could not find that account.'); } return; }
     if(act.action==='change_contact'){ t.remove(); return confirmCard('contact',act); }
     if(act.action==='draft_calendar'){ t.remove(); return confirmCard('calendar',act); }
     if(act.action==='draft_appointment'){ t.remove(); return confirmCard('appointment',act); }
