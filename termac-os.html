@@ -10203,6 +10203,122 @@ function _initFinCharts() {
 
 const red='#C8102E',blue='#1B5FA8',green='#1E7B3C',orange='#D8690B',yellow='#F2B705',
       purple='#6B21A8',teal='#0D7490',soft='#5A616B',line='rgba(0,0,0,.07)';
+
+/* ── Chart drilldown wiring ─────────────────────────────────────
+   attachChartDrilldown() already exists (pipeline forecast section).
+   This block wires it to every management chart after the dashboard
+   sections initialise. Called once per section via the existing
+   _mgrInited guards so it never double-attaches.                 */
+function _wireChartDrilldowns() {
+  function getC(id) { return Chart.getChart(document.getElementById(id)); }
+  function dd(id, fn) { var c=getC(id); if(c) attachChartDrilldown(c, fn); }
+
+  // ── Health radar ─────────────────────────────────────────────
+  if (_healthChart) attachChartDrilldown(_healthChart, function(ds, idx, label) {
+    var tips = { Revenue:'Compare against prior quarter. Dig into deal closures and upsell rate.',
+      Accounts:'Check account health scores — any in jeopardy tier?', Renewals:'Review 60-day renewal pipeline. Flag accounts with no recent contact.',
+      'Service Vol':'Cross-reference with tech wrench-time. Low volume = scheduling gap.',
+      Referrals:'Run the referral engine report. NPS 4-5 accounts are the top targets.',
+      Satisfaction:'Pull any NPS below 3 from the last 30 days for manager review.' };
+    return [{ label:'Action', value: tips[label] || 'Review this metric in detail below.' }];
+  });
+
+  // ── Division growth bar ───────────────────────────────────────
+  var growthChart = getC('growthChart');
+  if (growthChart) attachChartDrilldown(growthChart, function(ds, idx, label) {
+    var pct = growthChart.data.datasets[ds]?.data[idx];
+    return [{ label:'Division', value: label }, { label:'Growth %', value: (pct || 0) + '%' },
+      { label:'Action', value: pct >= 20 ? 'Strong growth — confirm tech capacity and supply chain can support.' : pct >= 10 ? 'Solid growth — review account retention and cross-sell rate.' : 'Lagging growth — check pipeline health and lead volume for this division.' }];
+  });
+
+  // ── Ops: wrench time ─────────────────────────────────────────
+  dd('wrenchChart', function(ds, idx, label) {
+    var wt=84,tr=16; try { var c=getC('wrenchChart'); wt=c.data.datasets[0].data[idx]; tr=c.data.datasets[1].data[idx]; } catch(e) {}
+    return [{ label:'Tech', value: label }, { label:'Wrench Time', value: wt + '%' }, { label:'Transit', value: tr + '%' },
+      { label:'Action', value: wt >= 78 ? 'On target. Check for route optimisation opportunities.' : 'Below 75% threshold. Review route clustering and job-to-job transit times.' }];
+  });
+
+  // ── Ops: latency line ────────────────────────────────────────
+  dd('latencyChart', function(ds, idx, label) {
+    var c=getC('latencyChart'); var name=c?.data.datasets[ds]?.label||'Tech'; var val=c?.data.datasets[ds]?.data[idx]||0;
+    return [{ label:'Tech', value: name }, { label:'Day', value: label }, { label:'Avg Response (hrs)', value: val },
+      { label:'Action', value: val <= 2.5 ? 'Well within SLA.' : val <= 4 ? 'Approaching SLA threshold — monitor trend.' : 'Exceeding SLA. Review job closure rate and pending work order queue.' }];
+  });
+
+  // ── Ops: utilisation line ────────────────────────────────────
+  dd('utilizationChart', function(ds, idx, label) {
+    var c=getC('utilizationChart'); var val=c?.data.datasets[0]?.data[idx]||0;
+    return [{ label:'Month', value: label }, { label:'Billable %', value: val + '%' },
+      { label:'Action', value: val >= 80 ? 'At or above 80% target.' : 'Below target. Check unfilled slots in the scheduler for this month.' }];
+  });
+
+  // ── Ops: on-time delivery bar ────────────────────────────────
+  dd('otdChart', function(ds, idx, label) {
+    var c=getC('otdChart'); var cur=c?.data.datasets[0]?.data[idx]||0; var prev=c?.data.datasets[1]?.data[idx]||0;
+    return [{ label:'Division', value: label }, { label:'This Month', value: cur + '%' }, { label:'Last Month', value: prev + '%' },
+      { label:'Trend', value: cur > prev ? '\u2197 Improving' : cur < prev ? '\u2198 Declining' : '\u2192 Flat' },
+      { label:'Action', value: cur >= 90 ? 'On target.' : 'Below 90%. Review dispatcher job-close rate and tech route compliance.' }];
+  });
+
+  // ── Ops: avg ticket line ─────────────────────────────────────
+  dd('ticketSizeChart', function(ds, idx, label) {
+    var c=getC('ticketSizeChart'); var val=c?.data.datasets[0]?.data[idx]||0;
+    return [{ label:'Month', value: label }, { label:'Avg Ticket', value: '$' + val },
+      { label:'Action', value: val >= 370 ? 'Strong ticket value. Maintain cross-sell focus.' : 'Check upsell capture rate on completed jobs. Are techs logging cross-sell flags?' }];
+  });
+
+  // ── Fin: revenue synergy stacked bar ────────────────────────
+  dd('synergyChart', function(ds, idx, label) {
+    var c=getC('synergyChart'); var ext=c?.data.datasets[0]?.data[idx]||0; var int=c?.data.datasets[1]?.data[idx]||0;
+    return [{ label:'Division', value: label }, { label:'External Sales', value: '$' + (ext/1000).toFixed(0) + 'K' },
+      { label:'Internal Service', value: '$' + (int/1000).toFixed(0) + 'K' }, { label:'Total', value: '$' + ((ext+int)/1000).toFixed(0) + 'K' },
+      { label:'Action', value: 'Compare to prior quarter. Internal service revenue indicates cross-sell conversion. Low ratio = untapped bundle opportunity.' }];
+  });
+
+  // ── Division doughnuts ───────────────────────────────────────
+  ['uniproMixChart','termacMixChart'].forEach(function(id) {
+    dd(id, function(ds, idx, label) {
+      var c=getC(id); var val=c?.data.datasets[0]?.data[idx]||0;
+      return [{ label:'Segment', value: label }, { label:'Value', value: '$' + (val/1000).toFixed(1) + 'K' },
+        { label:'Action', value: label.includes('Recurring') || label.includes('RMR') ? 'Core recurring base — protect retention.' : label.includes('Install') || label.includes('New') ? 'New install revenue feeds next year\'s recurring base.' : 'Review mix balance with Jim Kennedy.' }];
+    });
+  });
+
+  // ── Termac chem attachment combo ────────────────────────────
+  dd('attachmentChart', function(ds, idx, label) {
+    var c=getC('attachmentChart'); var clients=c?.data.datasets[0]?.data[idx]||0; var pct=c?.data.datasets[1]?.data[idx]||0;
+    return [{ label:'Month', value: label }, { label:'Dishwasher Clients', value: clients }, { label:'Chemical Attach %', value: pct + '%' },
+      { label:'Action', value: pct >= 66 ? 'Strong attachment.' : 'Clients without chemical programme are revenue at risk. Pull list and assign rep touchpoints.' }];
+  });
+
+  // ── GTO driver throughput bar ────────────────────────────────
+  dd('gtoRouteChart', function(ds, idx, label) {
+    var c=getC('gtoRouteChart'); var val=c?.data.datasets[0]?.data[idx]||0;
+    return [{ label:'Driver', value: label }, { label:'Traps / Day', value: val },
+      { label:'Action', value: val >= 9 ? 'On pace.' : val >= 8 ? 'Slightly below average. Review route clustering.' : 'Below standard. Check manifest volume and route assignment.' }];
+  });
+
+  // ── Filter Man completion line ───────────────────────────────
+  dd('filterCompletionChart', function(ds, idx, label) {
+    var c=getC('filterCompletionChart'); var val=c?.data.datasets[0]?.data[idx]||0;
+    return [{ label:'Month', value: label }, { label:'Completion %', value: val + '%' },
+      { label:'Action', value: val >= 95 ? 'At or above target.' : 'Below 95% target. Check for missed stops in scheduler and tech time-on-site logs.' }];
+  });
+
+  // ── Filter Man inventory doughnut ───────────────────────────
+  dd('filterInventoryChart', function(ds, idx, label) {
+    var c=getC('filterInventoryChart'); var val=c?.data.datasets[0]?.data[idx]||0;
+    return [{ label:'Segment', value: label }, { label:'Filters', value: val },
+      { label:'Action', value: label.includes('Replace') ? val > 30 ? 'High replacement queue — prioritise procurement.' : 'Within normal replacement range.' : label.includes('Warehouse') ? val < 40 ? 'Warehouse stock running low — check reorder queue.' : 'Stock adequate.' : 'Active field filters. Cross-check against route manifest.' }];
+  });
+}
+// Wire immediately if charts already exist, and again after each lazy-init
+var _drilldownWired = false;
+function _wireDrilldownsOnce() { if (!_drilldownWired) { _drilldownWired=true; _wireChartDrilldowns(); } }
+setTimeout(_wireDrilldownsOnce, 800); // catch initial load
+['_initOpsCharts','_initFinCharts'].forEach(function(fn) {
+  var orig = window[fn]; if (typeof orig === 'function') window[fn] = function() { orig.apply(this,arguments); setTimeout(_wireChartDrilldowns, 100); };
+});
 const months=['Jan','Feb','Mar','Apr','May','Jun'];
 const font=(s,w)=>{return{family:'Barlow Condensed',size:s||11,weight:w||'700'}}
 const gridOpts={color:line};
