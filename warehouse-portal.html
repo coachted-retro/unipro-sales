@@ -319,6 +319,7 @@ body{font-family:Barlow,sans-serif;background:var(--bg);color:var(--ink);font-si
         <div class="search-bar"><input type="text" placeholder="Search product…" oninput="renderTermacTable(this.value)"></div>
         <button class="btn btn-green" onclick="openReceiveModal('termac')">+ Receive Shipment</button>
         <button class="btn btn-navy" onclick="openScanModal('inv-termac')" style="background:#3B2A00;color:#FCD34D;border:1px solid #92400E">📷 Camera Count</button>
+        <button class="btn btn-navy" onclick="openInvoiceScanModal('termac')" style="background:#1A3333;color:#6EE7B7;border:1px solid #065F46">🧾 Scan Invoice</button>
         <button class="btn btn-navy" onclick="openImportModal('inv-termac')" style="background:#1E3A5F;color:#93C5FD;border:1px solid #2D5A8E">📤 Import CSV</button>
         <button class="btn btn-navy" onclick="openUseModal('termac')">− Use / Deduct</button>
       </div>
@@ -364,6 +365,7 @@ body{font-family:Barlow,sans-serif;background:var(--bg);color:var(--ink);font-si
         <div class="search-bar"><input type="text" placeholder="Search part…" oninput="renderUniproTable(this.value)"></div>
         <button class="btn btn-green" onclick="openReceiveModal('unipro')">+ Receive Shipment</button>
         <button class="btn btn-navy" onclick="openScanModal('inv-unipro')" style="background:#3B2A00;color:#FCD34D;border:1px solid #92400E">📷 Camera Count</button>
+        <button class="btn btn-navy" onclick="openInvoiceScanModal('unipro')" style="background:#1A3333;color:#6EE7B7;border:1px solid #065F46">🧾 Scan Invoice</button>
         <button class="btn btn-navy" onclick="openImportModal('inv-unipro')" style="background:#1E3A5F;color:#93C5FD;border:1px solid #2D5A8E">📤 Import CSV</button>
         <button class="btn btn-navy" onclick="openUseModal('unipro')">− Use / Deduct</button>
       </div>
@@ -406,6 +408,7 @@ body{font-family:Barlow,sans-serif;background:var(--bg);color:var(--ink);font-si
         <div class="search-bar"><input type="text" placeholder="Search material…" oninput="renderAllproTable(this.value)"></div>
         <button class="btn btn-green" onclick="openReceiveModal('allpro')">+ Receive Material</button>
         <button class="btn btn-navy" onclick="openScanModal('inv-allpro')" style="background:#3B2A00;color:#FCD34D;border:1px solid #92400E">📷 Camera Count</button>
+        <button class="btn btn-navy" onclick="openInvoiceScanModal('allpro')" style="background:#1A3333;color:#6EE7B7;border:1px solid #065F46">🧾 Scan Invoice</button>
         <button class="btn btn-navy" onclick="openImportModal('inv-allpro')" style="background:#1E3A5F;color:#93C5FD;border:1px solid #2D5A8E">📤 Import CSV</button>
         <button class="btn btn-navy" onclick="openUseModal('allpro')">− Allocate to Job</button>
       </div>
@@ -709,7 +712,7 @@ body{font-family:Barlow,sans-serif;background:var(--bg);color:var(--ink);font-si
         </select>
         <button onclick="exportCOGS()" style="background:#1E3A5F;color:#fff;border:1px solid #334155;border-radius:6px;padding:6px 14px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;cursor:pointer">📥 Export CSV</button>
         <button onclick="openImportModal('cogs')" style="background:#1A4731;color:#86EFAC;border:1px solid #166534;border-radius:6px;padding:6px 14px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;cursor:pointer">📤 Import CSV / Invoice</button>
-        <button onclick="openScanModal('cogs')" style="background:#3B2A00;color:#FCD34D;border:1px solid #92400E;border-radius:6px;padding:6px 14px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;cursor:pointer">📷 Scan Invoice (AI)</button>
+        <button onclick="openInvoiceScanModal()" style="background:#3B2A00;color:#FCD34D;border:1px solid #92400E;border-radius:6px;padding:6px 14px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;cursor:pointer">📷 Scan Invoice (AI)</button>
       </div>
     </div>
 
@@ -3197,5 +3200,216 @@ function scanAddAnother() {
 
 // CSS for import mode buttons (inject into style block)
 
+
+
+
+/* ============================================================
+   Termac One — Warehouse Invoice Scan (AI-powered)
+   Reads a vendor invoice photo → extracts line items + prices
+   → auto-matches to warehouse SKUs → populates receiving
+   → flags any pricing changes vs current unit cost
+   → saves an AP record for accounting
+   ============================================================ */
+const WH_AP_KEY = 'wh_ap_invoices_v1';
+const AI_PROXY_WH = 'https://unipro-ai-proxy.tedscholl.workers.dev/';
+
+function loadAPInvoices() { try { return JSON.parse(localStorage.getItem(WH_AP_KEY)||'[]'); } catch(e) { return []; } }
+function saveAPInvoices(arr) { try { localStorage.setItem(WH_AP_KEY, JSON.stringify(arr)); } catch(e) {} }
+
+function getAllWHProducts() {
+  const all = [];
+  const keys = [WH_TERMAC_KEY, WH_UNIPRO_KEY, WH_ALLPRO_KEY];
+  const labels = ['termac','unipro','allpro'];
+  keys.forEach((k,i) => {
+    const stock = loadWH(k)||{};
+    Object.entries(stock).forEach(([id,v]) => {
+      all.push({ id, warehouse: labels[i], unitCost: v.unitCost||0, name: v.name||id });
+    });
+  });
+  return all;
+}
+
+function fuzzyMatchProduct(name, products) {
+  const n = (name||'').toLowerCase().replace(/[^a-z0-9 ]/g,'');
+  let best = null, bestScore = 0;
+  products.forEach(p => {
+    const pn = (p.name||p.id||'').toLowerCase().replace(/[^a-z0-9 ]/g,'');
+    let score = 0;
+    n.split(' ').forEach(w => { if(w.length>2 && pn.includes(w)) score++; });
+    if(score > bestScore) { bestScore=score; best=p; }
+  });
+  return bestScore > 0 ? best : null;
+}
+
+let _invScanWH = 'termac';
+let _invScanLines = [];
+
+function openInvoiceScanModal(wh) {
+  _invScanWH = wh || 'termac';
+  _invScanLines = [];
+  var ov = document.getElementById('invoiceScanOverlay');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'invoiceScanOverlay';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:100000;display:flex;align-items:flex-start;justify-content:center;padding:20px;overflow:auto';
+    ov.innerHTML = `
+      <div style="background:#fff;border-radius:14px;width:min(680px,96vw);font-family:-apple-system,Segoe UI,Roboto,sans-serif">
+        <div style="background:#0F172A;color:#fff;padding:14px 18px;border-radius:14px 14px 0 0;display:flex;align-items:center;justify-content:space-between">
+          <div style="font-weight:800;font-size:15px">🧾 Scan Invoice (AI)</div>
+          <button onclick="document.getElementById('invoiceScanOverlay').style.display='none'" style="background:none;border:none;color:#fff;font-size:20px;cursor:pointer">✕</button>
+        </div>
+        <div style="padding:18px">
+          <div style="margin-bottom:12px">
+            <label style="font-weight:700;font-size:12px;color:#64748B;text-transform:uppercase;letter-spacing:.06em">Warehouse</label>
+            <select id="invScanWHSel" style="display:block;width:100%;padding:8px;border:1px solid #CBD5E1;border-radius:8px;margin-top:4px">
+              <option value="termac">Termac (Chemicals & Supplies)</option>
+              <option value="unipro">UniPro (Fire Protection)</option>
+              <option value="allpro">AllPro (Fabrication)</option>
+            </select>
+          </div>
+          <div style="border:2px dashed #CBD5E1;border-radius:10px;padding:20px;text-align:center;margin-bottom:14px">
+            <div style="font-size:32px;margin-bottom:6px">📄</div>
+            <div style="font-weight:700;margin-bottom:8px">Photo or scan of vendor invoice</div>
+            <div style="font-size:12px;color:#94A3B8;margin-bottom:12px">The AI will read line items, quantities, and unit prices from the document</div>
+            <input type="file" id="invScanFile" accept="image/*" capture="environment" style="display:none" onchange="runInvoiceScan(this)">
+            <button onclick="document.getElementById('invScanFile').click()" style="background:#1E293B;color:#fff;border:none;border-radius:8px;padding:10px 20px;font-weight:700;cursor:pointer">📷 Take Photo / Choose File</button>
+          </div>
+          <div id="invScanStatus" style="display:none;padding:10px;border-radius:8px;background:#F1F5F9;font-size:13px;margin-bottom:12px"></div>
+          <div id="invScanResults" style="display:none">
+            <div style="font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:#64748B;margin-bottom:8px">Extracted Line Items</div>
+            <div id="invScanLineTable" style="margin-bottom:14px"></div>
+            <div id="invScanPricingAlerts" style="display:none;background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px"></div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button onclick="applyInvoiceReceiving()" style="flex:1;background:#1E7B3C;color:#fff;border:none;border-radius:8px;padding:10px;font-weight:700;cursor:pointer">✅ Apply to Receiving</button>
+              <button onclick="saveAPRecord()" style="flex:1;background:#1E3A8A;color:#fff;border:none;border-radius:8px;padding:10px;font-weight:700;cursor:pointer">💾 Save AP Record</button>
+              <button onclick="exportAPRecord()" style="background:#374151;color:#fff;border:none;border-radius:8px;padding:10px 14px;font-weight:700;cursor:pointer">⬇ Export</button>
+            </div>
+          </div>
+        </div>
+      </div>`;
+    document.body.appendChild(ov);
+  } else { ov.style.display='flex'; }
+  var sel = document.getElementById('invScanWHSel');
+  if (sel) sel.value = _invScanWH;
+  document.getElementById('invScanStatus').style.display='none';
+  document.getElementById('invScanResults').style.display='none';
+  _invScanLines = [];
+}
+
+async function runInvoiceScan(input) {
+  var file = input.files[0]; if (!file) return;
+  var st = document.getElementById('invScanStatus');
+  st.style.display='block'; st.style.background='#F1F5F9'; st.textContent='Reading invoice with AI...';
+  document.getElementById('invScanResults').style.display='none';
+  _invScanWH = document.getElementById('invScanWHSel').value;
+  var reader = new FileReader();
+  reader.onload = async function(e) {
+    var b64 = e.target.result.replace(/^data:[^;]+;base64,/,'');
+    try {
+      var res = await fetch(AI_PROXY_WH, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({
+        model:'claude-sonnet-4-6', max_tokens:1000,
+        messages:[{ role:'user', content:[
+          { type:'image', source:{ type:'base64', media_type:'image/jpeg', data:b64 } },
+          { type:'text', text:'This is a vendor invoice or packing slip. Extract all line items as a JSON array. Each item: {"description":"...","qty":0,"unit":"...","unitPrice":0.00,"lineTotal":0.00}. Also extract {"vendor":"...","invoiceNumber":"...","invoiceDate":"...","invoiceTotal":0.00}. Return only a JSON object: {"vendor":"...","invoiceNumber":"...","invoiceDate":"...","invoiceTotal":0.00,"lines":[...]}. No prose, no code fences.' }
+        ]}]
+      })});
+      var d = await res.json();
+      var raw = (d.content||[]).map(function(x){return x.text||'';}).join('');
+      var parsed = JSON.parse(raw.replace(/```json|```/g,'').trim());
+      _invScanLines = (parsed.lines||[]).map(function(l){ return Object.assign({vendor:parsed.vendor,invoiceNum:parsed.invoiceNumber,invoiceDate:parsed.invoiceDate,matched:null},l); });
+      // Auto-match to products
+      var products = getAllWHProducts();
+      _invScanLines.forEach(function(l){ l.matched = fuzzyMatchProduct(l.description, products); });
+      renderInvoiceScanResults(parsed);
+      st.style.background='#F0FDF4'; st.textContent='Invoice read. Review and confirm the lines below.';
+    } catch(e) {
+      st.style.background='#FEF2F2'; st.textContent='Could not read the invoice: '+e.message+'. Try a clearer photo.';
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
+function renderInvoiceScanResults(meta) {
+  var products = getAllWHProducts();
+  var html = '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:#F8FAFC">'
+    +'<th style="text-align:left;padding:6px 8px">Description</th><th style="text-align:left;padding:6px 8px">Matched SKU</th>'
+    +'<th style="text-align:right;padding:6px 8px">Qty</th><th style="text-align:right;padding:6px 8px">Unit $</th>'
+    +'<th style="text-align:right;padding:6px 8px">Total</th></tr></thead><tbody>';
+  var alerts = [];
+  _invScanLines.forEach(function(l,i) {
+    var match = l.matched;
+    var priceFlag = '';
+    if (match && match.unitCost > 0 && Math.abs((l.unitPrice||0) - match.unitCost) > 0.01) {
+      var pct = Math.round(((l.unitPrice - match.unitCost)/match.unitCost)*100);
+      priceFlag = '<span style="color:#D97706;font-weight:700;font-size:11px"> ▲ '+(pct>0?'+':'')+pct+'%</span>';
+      alerts.push('<b>'+l.description+'</b>: was $'+match.unitCost.toFixed(2)+' → now $'+(l.unitPrice||0).toFixed(2)+' ('+(pct>0?'+':'')+pct+'%)');
+    }
+    html += '<tr style="border-bottom:1px solid #EEF2F6">'
+      +'<td style="padding:6px 8px">'+escHtml(l.description||'')+'</td>'
+      +'<td style="padding:6px 8px;color:#1E7B3C;font-size:11px">'+(match?escHtml(match.name||match.id):('<span style="color:#94A3B8">Unmatched</span>'))+'</td>'
+      +'<td style="padding:6px 8px;text-align:right">'+(l.qty||'')+'</td>'
+      +'<td style="padding:6px 8px;text-align:right">$'+(l.unitPrice||0).toFixed(2)+priceFlag+'</td>'
+      +'<td style="padding:6px 8px;text-align:right">$'+(l.lineTotal||0).toFixed(2)+'</td>'
+      +'</tr>';
+  });
+  html += '</tbody></table>';
+  document.getElementById('invScanLineTable').innerHTML = html;
+  var alertDiv = document.getElementById('invScanPricingAlerts');
+  if (alerts.length) {
+    alertDiv.style.display='block';
+    alertDiv.innerHTML = '<b>⚠ Pricing Changes vs Current Cost:</b><br>' + alerts.join('<br>');
+  } else { alertDiv.style.display='none'; }
+  document.getElementById('invScanResults').style.display='block';
+}
+
+function escHtml(s){ return String(s||'').replace(/[&<>]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;'}[c];}); }
+
+function applyInvoiceReceiving() {
+  var wh = document.getElementById('invScanWHSel').value;
+  var key = wh==='termac' ? WH_TERMAC_KEY : wh==='unipro' ? WH_UNIPRO_KEY : WH_ALLPRO_KEY;
+  var stock = loadWH(key)||{};
+  var applied = 0;
+  _invScanLines.forEach(function(l) {
+    if (!l.matched) return;
+    var id = l.matched.id;
+    if (!stock[id]) stock[id]={onHand:0,txns:[]};
+    stock[id].onHand = (stock[id].onHand||0) + (l.qty||0);
+    if (l.unitPrice > 0) stock[id].unitCost = l.unitPrice;
+    stock[id].txns = stock[id].txns||[];
+    stock[id].txns.push({ type:'invoice_receive', qty:l.qty, unitPrice:l.unitPrice, lineTotal:l.lineTotal, vendor:l.vendor, invoiceNum:l.invoiceNum, ts:Date.now() });
+    applied++;
+  });
+  saveWH(key, stock);
+  if (wh==='termac')  { if(typeof renderTermacTab==='function')  renderTermacTab(); }
+  if (wh==='unipro')  { if(typeof renderUniproTab==='function')  renderUniproTab(); }
+  if (wh==='allpro')  { if(typeof renderAllproTab==='function')  renderAllproTab(); }
+  alert('Applied '+applied+' line item(s) to receiving. Pricing updated where invoiced cost differed.');
+}
+
+function saveAPRecord() {
+  var wh = document.getElementById('invScanWHSel').value;
+  var l0 = _invScanLines[0]||{};
+  var record = {
+    id: 'ap_'+Date.now(), ts: Date.now(), saved: new Date().toLocaleString(),
+    warehouse: wh, vendor: l0.vendor||'Unknown Vendor',
+    invoiceNumber: l0.invoiceNum||'', invoiceDate: l0.invoiceDate||'',
+    total: _invScanLines.reduce(function(s,l){return s+(l.lineTotal||0);},0),
+    lines: _invScanLines.map(function(l){ return { description:l.description, qty:l.qty, unitPrice:l.unitPrice, lineTotal:l.lineTotal, matchedSKU:l.matched?l.matched.id:null }; }),
+    status: 'pending'
+  };
+  var all = loadAPInvoices(); all.unshift(record); saveAPInvoices(all);
+  alert('AP record saved for '+record.vendor+' ('+record.lines.length+' lines, $'+record.total.toFixed(2)+'). View all AP records in the COGS & Margins tab or export to CSV for accounting.');
+}
+
+function exportAPRecord() {
+  var l0 = _invScanLines[0]||{};
+  var wh = document.getElementById('invScanWHSel').value;
+  var csv = 'Vendor,Invoice #,Invoice Date,Warehouse,Description,Qty,Unit,Unit Price,Line Total,Matched SKU\n';
+  _invScanLines.forEach(function(l) {
+    csv += [l.vendor||'',l.invoiceNum||'',l.invoiceDate||'',wh,l.description||'',l.qty||'',l.unit||'',l.unitPrice||0,l.lineTotal||0,l.matched?l.matched.id:''].map(function(v){return '"'+String(v).replace(/"/g,'""')+'"';}).join(',')+'\n';
+  });
+  var blob = new Blob([csv],{type:'text/csv'}); var url = URL.createObjectURL(blob);
+  var a = document.createElement('a'); a.href=url; a.download='ap_invoice_'+Date.now()+'.csv'; a.click(); URL.revokeObjectURL(url);
+}
 
 </script>
