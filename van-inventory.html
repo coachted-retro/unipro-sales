@@ -394,5 +394,117 @@ loadInventory();
 renderAll();
 try { _currentTech = JSON.parse(localStorage.getItem('termac_current_user')||'{}').name || 'Tech'; } catch(e) {}
 </script>
+<script>
+/* ============================================================
+   Termac One — Van Inventory Scanner (barcode + QR)
+   Scan to count. Codes are learned the first time: scan an item,
+   pick which part it is once, and that barcode is remembered for good.
+   After that, restocking is scan-and-go. Load mode adds, Use mode
+   subtracts. Decoding via html5-qrcode (loaded on first use); works
+   on iOS and Android. Guards every host call so it can't break the page.
+   ============================================================ */
+(function(){
+  'use strict';
+  var BC_KEY='termac_van_barcodes';
+  var INV_KEY='termac_van_inventory';
+  var mode=1; // +1 load, -1 use
+  var h5=null, scanning=false;
+
+  function bcMap(){ try{ return JSON.parse(localStorage.getItem(BC_KEY)||'{}'); }catch(e){ return {}; } }
+  function bcSave(m){ try{ localStorage.setItem(BC_KEY,JSON.stringify(m)); }catch(e){} }
+  function allItems(){ var out=[]; try{ for(var k in VAN_CATALOG){ VAN_CATALOG[k].forEach(function(it){ out.push({id:it.id,name:it.name,cat:k}); }); } }catch(e){} return out; }
+  function itemOf(id){ try{ if(typeof getItem==='function') return getItem(id); }catch(e){} var a=allItems().find(function(x){return x.id===id;}); return a||null; }
+
+  function el(tag,style,txt){ var e=document.createElement(tag); if(style) Object.assign(e.style,style); if(txt!=null) e.textContent=txt; return e; }
+  var _toast;
+  function toast(msg){ if(!_toast){ _toast=el('div',{position:'fixed',left:'50%',bottom:'120px',transform:'translateX(-50%)',background:'#0F172A',color:'#fff',padding:'10px 16px',borderRadius:'10px',fontSize:'14px',zIndex:'100002',boxShadow:'0 6px 20px rgba(0,0,0,.3)',fontFamily:'-apple-system,Segoe UI,Roboto,sans-serif'}); document.body.appendChild(_toast); } _toast.textContent=msg; _toast.style.opacity='1'; clearTimeout(_toast._t); _toast._t=setTimeout(function(){ _toast.style.transition='opacity .4s'; _toast.style.opacity='0'; },1800); }
+
+  function bump(id){
+    var it=itemOf(id), name=it?it.name:id, newQty=null;
+    try{ adjustQty(id, mode); if(typeof saveInventory==='function') saveInventory(); if(typeof getQty==='function') newQty=getQty(id); }
+    catch(e){
+      try{ var inv=JSON.parse(localStorage.getItem(INV_KEY)||'{}'); var cur=(inv[id]!=null)?inv[id]:(it&&it.par!=null?it.par:0); newQty=Math.max(0,cur+mode); inv[id]=newQty; localStorage.setItem(INV_KEY,JSON.stringify(inv)); if(typeof updateBadge==='function') updateBadge(id); }catch(e2){}
+    }
+    toast(name+'  '+(mode>0?'+1':'\u22121')+(newQty!=null?('  \u2192  '+newQty):''));
+  }
+
+  function applyCode(code){
+    code=(code||'').trim(); if(!code) return;
+    var map=bcMap();
+    if(map[code]){ bump(map[code]); return; }
+    showPicker(code);
+  }
+
+  /* picker for an unknown code */
+  function showPicker(code){
+    pauseScan();
+    var ov=el('div',{position:'fixed',inset:'0',background:'rgba(0,0,0,.55)',zIndex:'100003',display:'flex',alignItems:'flex-end',justifyContent:'center'});
+    var sheet=el('div',{background:'#fff',width:'min(460px,100%)',maxHeight:'70vh',overflow:'auto',borderRadius:'16px 16px 0 0',padding:'16px',fontFamily:'-apple-system,Segoe UI,Roboto,sans-serif'});
+    sheet.appendChild(el('div',{fontWeight:'800',fontSize:'16px',marginBottom:'4px'},'New code — which item?'));
+    sheet.appendChild(el('div',{fontSize:'12px',color:'#64748B',marginBottom:'12px',wordBreak:'break-all'},'Code: '+code));
+    allItems().forEach(function(it){
+      var b=el('button',{display:'block',width:'100%',textAlign:'left',padding:'10px 12px',margin:'4px 0',border:'1px solid #E2E8F0',borderRadius:'10px',background:'#F8FAFC',fontSize:'14px',cursor:'pointer'}, it.name+'  ('+it.cat+')');
+      b.onclick=function(){ var m=bcMap(); m[code]=it.id; bcSave(m); document.body.removeChild(ov); bump(it.id); resumeScan(); };
+      sheet.appendChild(b);
+    });
+    var cancel=el('button',{display:'block',width:'100%',padding:'10px',marginTop:'8px',border:'none',borderRadius:'10px',background:'#FEE2E2',color:'#991B1B',fontWeight:'700',cursor:'pointer'},'Cancel');
+    cancel.onclick=function(){ document.body.removeChild(ov); resumeScan(); };
+    sheet.appendChild(cancel);
+    ov.appendChild(sheet); document.body.appendChild(ov); ov.__picker=true;
+  }
+
+  /* scanner overlay */
+  var overlay, readerDiv;
+  function ensureLib(cb){
+    if(window.Html5Qrcode){ cb(); return; }
+    var s=document.createElement('script'); s.src='https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js';
+    s.onload=cb; s.onerror=function(){ alert('Scanner failed to load. Check your connection and try again.'); };
+    document.head.appendChild(s);
+  }
+  function openScanner(){
+    overlay=el('div',{position:'fixed',inset:'0',background:'#000',zIndex:'100001',display:'flex',flexDirection:'column'});
+    var top=el('div',{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'12px 14px',background:'#0F172A',color:'#fff'});
+    top.appendChild(el('div',{fontWeight:'700'},'Scan inventory'));
+    var x=el('button',{border:'none',background:'transparent',color:'#fff',fontSize:'22px',cursor:'pointer'},'\u00d7'); x.onclick=closeScanner; top.appendChild(x);
+    readerDiv=el('div',{flex:'1',minHeight:'0'}); readerDiv.id='vanReader';
+    var ctrl=el('div',{display:'flex',gap:'8px',padding:'12px',background:'#0F172A'});
+    var load=el('button',{flex:'1',padding:'12px',border:'none',borderRadius:'10px',fontWeight:'700',cursor:'pointer'},'Loading  +1');
+    var use=el('button',{flex:'1',padding:'12px',border:'none',borderRadius:'10px',fontWeight:'700',cursor:'pointer'},'Using  \u22121');
+    function paint(){ load.style.background=mode>0?'#16A34A':'#1E293B'; load.style.color='#fff'; use.style.background=mode<0?'#C8102E':'#1E293B'; use.style.color='#fff'; }
+    load.onclick=function(){ mode=1; paint(); }; use.onclick=function(){ mode=-1; paint(); }; paint();
+    ctrl.appendChild(load); ctrl.appendChild(use);
+    overlay.appendChild(top); overlay.appendChild(readerDiv); overlay.appendChild(ctrl);
+    document.body.appendChild(overlay);
+    ensureLib(startScan);
+  }
+  function startScan(){
+    try{
+      h5=new Html5Qrcode('vanReader');
+      scanning=true;
+      h5.start({ facingMode:'environment' }, { fps:10, qrbox:240 },
+        function(text){ applyCode(text); },
+        function(){} 
+      ).catch(function(){ alert('Could not start the camera. Allow camera access and try again.'); });
+    }catch(e){ alert('Scanner error: '+e.message); }
+  }
+  function pauseScan(){ try{ if(h5&&scanning){ h5.pause(true); } }catch(e){} }
+  function resumeScan(){ try{ if(h5&&scanning){ h5.resume(); } }catch(e){} }
+  function closeScanner(){
+    try{ if(h5){ h5.stop().then(function(){ try{h5.clear();}catch(e){} }).catch(function(){}); } }catch(e){}
+    scanning=false; h5=null;
+    if(overlay&&overlay.parentElement){ document.body.removeChild(overlay); }
+  }
+
+  function build(){
+    var fab=el('button',{position:'fixed',right:'18px',bottom:'18px',zIndex:'99998',padding:'14px 18px',borderRadius:'999px',border:'none',background:'#C8102E',color:'#fff',fontSize:'15px',fontWeight:'800',boxShadow:'0 6px 18px rgba(0,0,0,.3)',cursor:'pointer',fontFamily:'-apple-system,Segoe UI,Roboto,sans-serif'});
+    fab.textContent='\uD83D\uDCF7 Scan'; fab.title='Scan barcode / QR';
+    fab.onclick=openScanner;
+    document.body.appendChild(fab);
+  }
+  if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded',build); } else { build(); }
+  window.vanScanner={ open:openScanner };
+})();
+</script>
+
 </body>
 </html>
