@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Field Reports — Termac One</title>
+<style>
+  :root{ --navy:#0F172A; --red:#C8102E; --ink:#1A1D21; --muted:#64748B; --line:#E2E8F0; --bg:#F1F5F9; }
+  *{ box-sizing:border-box; }
+  body{ margin:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:var(--ink); }
+  header{ background:var(--navy); color:#fff; padding:14px 18px; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:10; }
+  header h1{ font-size:17px; margin:0; font-weight:800; letter-spacing:.2px; }
+  header .sub{ font-size:12px; opacity:.7; }
+  .wrap{ max-width:780px; margin:0 auto; padding:14px 14px 60px; }
+  .chips{ display:flex; gap:8px; flex-wrap:wrap; margin:10px 0; }
+  .chip{ background:#fff; border:1px solid var(--line); border-radius:999px; padding:6px 12px; font-size:13px; font-weight:700; cursor:pointer; color:var(--muted); }
+  .chip.active{ background:var(--navy); color:#fff; border-color:var(--navy); }
+  .summary{ display:flex; gap:10px; flex-wrap:wrap; margin:6px 0 14px; }
+  .stat{ flex:1; min-width:120px; background:#fff; border:1px solid var(--line); border-radius:12px; padding:12px 14px; }
+  .stat .n{ font-size:24px; font-weight:800; }
+  .stat .l{ font-size:12px; color:var(--muted); }
+  .card{ background:#fff; border:1px solid var(--line); border-radius:14px; padding:14px; margin-bottom:10px; }
+  .card.resolved{ opacity:.55; }
+  .row1{ display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+  .badge{ font-size:11px; font-weight:800; padding:3px 8px; border-radius:6px; text-transform:uppercase; letter-spacing:.3px; }
+  .b-note{ background:#F1F5F9; color:#475569; } .b-status{ background:#EFF6FF; color:#1D4ED8; }
+  .b-parts{ background:#ECFEFF; color:#0E7490; } .b-deficiency,.b-failed{ background:#FEE2E2; color:#B91C1C; }
+  .b-short,.b-restock{ background:#FEF3C7; color:#92400E; }
+  .who{ font-size:12px; color:var(--muted); margin-left:auto; }
+  .stop{ font-weight:700; font-size:15px; }
+  .detail{ font-size:14px; margin:6px 0; line-height:1.4; }
+  .items{ display:flex; gap:6px; flex-wrap:wrap; margin:6px 0; }
+  .item{ background:#F8FAFC; border:1px solid var(--line); border-radius:6px; padding:3px 8px; font-size:12px; }
+  .meta{ display:flex; align-items:center; gap:10px; margin-top:8px; }
+  .route{ font-size:12px; color:var(--muted); }
+  .btn{ border:none; border-radius:8px; padding:7px 14px; font-weight:700; font-size:13px; cursor:pointer; margin-left:auto; }
+  .btn-resolve{ background:#16A34A; color:#fff; } .btn-reopen{ background:#fff; color:var(--ink); border:1px solid var(--line); }
+  .empty{ text-align:center; color:var(--muted); padding:50px 20px; font-size:14px; }
+  .note{ font-size:11px; color:var(--muted); text-align:center; margin-top:18px; }
+</style>
+</head>
+<body>
+<header>
+  <div><h1>Field Reports</h1><div class="sub">Notes, parts, deficiencies & delivery issues from the field</div></div>
+  <div class="sub" id="ts"></div>
+</header>
+<div class="wrap">
+  <div class="summary" id="summary"></div>
+  <div class="chips" id="routeChips"></div>
+  <div class="chips" id="statusChips"></div>
+  <div id="list"></div>
+  <div class="note">Live on this device now. Centralizes for the whole office at the Cosmos DB go-live.</div>
+</div>
+<script>
+  var FR_KEY='termac_field_reports';
+  var fRoute='all', fStatus='open';
+  function load(){ try{ return JSON.parse(localStorage.getItem(FR_KEY)||'[]'); }catch(e){ return []; } }
+  function save(arr){ try{ localStorage.setItem(FR_KEY,JSON.stringify(arr)); }catch(e){} }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  function when(ts){ try{ return new Date(ts).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}); }catch(e){ return ''; } }
+  function kindLabel(k){ return ({note:'Note',parts:'Parts',deficiency:'Deficiency',status:'Status',failed:'Failed',short:'Short',restock:'Restock'})[k]||k||'Note'; }
+  function routeOf(r){ return r.route||'office'; }
+  function stopOf(r){ return r.account||r.stop||'(unspecified)'; }
+
+  function render(){
+    var all=load().sort(function(a,b){ return (b.ts||0)-(a.ts||0); });
+    document.getElementById('ts').textContent='Updated '+when(Date.now());
+    var open=all.filter(function(r){ return !r.resolved; });
+    var byRoute={office:0,quoting:0,dispatch:0};
+    open.forEach(function(r){ var rt=routeOf(r); if(byRoute[rt]==null) byRoute[rt]=0; byRoute[rt]++; });
+    document.getElementById('summary').innerHTML=
+      '<div class="stat"><div class="n">'+open.length+'</div><div class="l">Open total</div></div>'+
+      '<div class="stat"><div class="n">'+(byRoute.office||0)+'</div><div class="l">Office</div></div>'+
+      '<div class="stat"><div class="n">'+(byRoute.quoting||0)+'</div><div class="l">Quoting</div></div>'+
+      '<div class="stat"><div class="n">'+(byRoute.dispatch||0)+'</div><div class="l">Dispatch</div></div>';
+
+    var routes=[['all','All routes'],['office','Office'],['quoting','Quoting'],['dispatch','Dispatch']];
+    document.getElementById('routeChips').innerHTML=routes.map(function(r){ return '<span class="chip'+(fRoute===r[0]?' active':'')+'" onclick="setRoute(\''+r[0]+'\')">'+r[1]+'</span>'; }).join('');
+    var statuses=[['open','Open'],['resolved','Resolved'],['all','All']];
+    document.getElementById('statusChips').innerHTML=statuses.map(function(s){ return '<span class="chip'+(fStatus===s[0]?' active':'')+'" onclick="setStatus(\''+s[0]+'\')">'+s[1]+'</span>'; }).join('');
+
+    var shown=all.filter(function(r){
+      if(fRoute!=='all' && routeOf(r)!==fRoute) return false;
+      if(fStatus==='open' && r.resolved) return false;
+      if(fStatus==='resolved' && !r.resolved) return false;
+      return true;
+    });
+    var list=document.getElementById('list');
+    if(!shown.length){ list.innerHTML='<div class="empty">No reports here yet. When techs and drivers log notes, parts lists, deficiencies, or delivery issues, they land here.</div>'; return; }
+    list.innerHTML=shown.map(function(r){
+      var k=r.kind||'note';
+      var items=(r.items||[]).map(function(it){ return '<span class="item">'+esc(it)+'</span>'; }).join('');
+      var sev=r.severity?(' · '+esc(r.severity)):'';
+      var src=r.source==='delivery'?'Delivery':'Field';
+      return '<div class="card'+(r.resolved?' resolved':'')+'">'+
+        '<div class="row1"><span class="badge b-'+k+'">'+kindLabel(k)+'</span>'+
+        '<span class="who">'+esc(r.by||'')+' · '+when(r.ts)+'</span></div>'+
+        '<div class="stop">'+esc(stopOf(r))+'</div>'+
+        (r.detail?'<div class="detail">'+esc(r.detail)+'</div>':'')+
+        (items?'<div class="items">'+items+'</div>':'')+
+        '<div class="meta"><span class="route">→ '+esc(routeOf(r))+sev+' · '+src+'</span>'+
+        (r.resolved
+          ? '<button class="btn btn-reopen" onclick="toggle(\''+r.id+'\')">Reopen</button>'
+          : '<button class="btn btn-resolve" onclick="toggle(\''+r.id+'\')">Mark resolved</button>')+
+        '</div></div>';
+    }).join('');
+  }
+  function setRoute(r){ fRoute=r; render(); }
+  function setStatus(s){ fStatus=s; render(); }
+  function toggle(id){
+    var all=load();
+    var r=all.find(function(x){ return x.id===id; });
+    if(r){ if(r.resolved){ r.resolved=false; r.resolvedAt=null; } else { r.resolved=true; r.resolvedAt=Date.now(); } save(all); render(); }
+  }
+  render();
+  window.addEventListener('focus', render);
+</script>
+</body>
+</html>
