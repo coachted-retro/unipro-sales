@@ -2498,33 +2498,66 @@ function stTriggerReseq(techId) {
   stOptimizeRoute();
 }
 
-function stOptimizeRoute() {
+/* ============================================================
+   Termac One — Road-aware route engine (scheduler copy)
+   Same shared worker as the dispatch board, called from the
+   scheduler's own page. Falls back to the original nearest-neighbor
+   if the worker is unreachable, so scheduling never depends on it.
+   ============================================================ */
+var ROUTE_PROXY = 'https://ors-route-proxy.tedscholl.workers.dev';
+var _geoCache = {};
+try { _geoCache = JSON.parse(localStorage.getItem('termac_geocode_cache') || '{}'); } catch(e){ _geoCache = {}; }
+function _saveGeoCache(){ try { localStorage.setItem('termac_geocode_cache', JSON.stringify(_geoCache)); } catch(e){} }
+async function resolveLL(addr){
+  addr = (addr||'').trim(); if(!addr) return null;
+  if(_geoCache[addr]) return _geoCache[addr];
+  try {
+    var r = await fetch(ROUTE_PROXY + '/geocode', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ address: addr }) });
+    if(r.ok){ var d = await r.json(); if(d && typeof d.lat === 'number' && typeof d.lng === 'number'){ _geoCache[addr] = [d.lat, d.lng]; _saveGeoCache(); return _geoCache[addr]; } }
+  } catch(e){}
+  return (typeof zipLL === 'function') ? zipLL(addr) : null;
+}
+function greedyOrder(jobs, startLL, llFn){
+  var remaining = jobs.slice(), optimized = [], curLL = startLL;
+  while(remaining.length){
+    var best=null, bestD=999, bestI=0;
+    remaining.forEach(function(j,i){ var ll = llFn(j); if(!ll) return; var d = calcDist(curLL, ll); if(d < bestD){ bestD=d; best=j; bestI=i; } });
+    if(best){ optimized.push(best); curLL = llFn(best) || curLL; remaining.splice(bestI,1); }
+    else { optimized = optimized.concat(remaining); break; }
+  }
+  return optimized;
+}
+async function routeOptimize(jobs, startLL, addrFn){
+  if(!jobs || !jobs.length) return null;
+  addrFn = addrFn || function(j){ return j.addr || ''; };
+  try {
+    var coords = [];
+    for(var i=0;i<jobs.length;i++){ coords.push(await resolveLL(addrFn(jobs[i]))); }
+    if(coords.some(function(c){ return !c; })) return null;
+    var r = await fetch(ROUTE_PROXY + '/optimize', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ start: startLL, stops: coords }) });
+    if(!r.ok) return null;
+    var d = await r.json();
+    if(!d || !Array.isArray(d.order)) return null;
+    return { order: d.order.map(function(idx){ return jobs[idx]; }), savedMin: (typeof d.savedMin === 'number') ? d.savedMin : null, totalMin: (typeof d.totalMin === 'number') ? d.totalMin : null };
+  } catch(e){ return null; }
+}
+
+async function stOptimizeRoute() {
   var jobs = window._stReseqJobs || [];
   if(!jobs.length){ alert('No active jobs to resequence.'); return; }
   var techId = window._stReseqTechId;
   var tech = TECHS.find(function(t){ return t.id===techId; });
-  var startLL = tech&&tech.zone ? [40.05,-74.95] : [40.05,-74.95];
+  var startLL = (tech && tech.zip && typeof ZIPLL!=='undefined' && ZIPLL[tech.zip]) ? ZIPLL[tech.zip] : [40.05,-74.95];
 
-  // Nearest-neighbor from tech's current location
-  var remaining = jobs.slice();
-  var optimized = [];
-  var curLL = startLL;
-
-  while(remaining.length) {
-    var best=null, bestD=999, bestI=0;
-    remaining.forEach(function(j,i) {
-      var ll = zipLL(j.addr||'');
-      if(!ll) return;
-      var d = calcDist(curLL, ll);
-      if(d < bestD){ bestD=d; best=j; bestI=i; }
-    });
-    if(best){ optimized.push(best); curLL=zipLL(best.addr||'')||curLL; remaining.splice(bestI,1); }
-    else{ optimized=optimized.concat(remaining); break; }
+  var optimized, saving;
+  var road = await routeOptimize(jobs, startLL, function(j){ return j.addr||''; });
+  if(road){
+    optimized = road.order;
+    saving = (road.savedMin != null) ? road.savedMin : Math.round((calcRouteDist(jobs) - calcRouteDist(optimized)) * 2.5);
+  } else {
+    optimized = greedyOrder(jobs, startLL, function(j){ return zipLL(j.addr||''); });
+    saving = Math.round((calcRouteDist(jobs) - calcRouteDist(optimized)) * 2.5);
   }
-
-  var origD = calcRouteDist(jobs);
-  var optD = calcRouteDist(optimized);
-  var saving = Math.round((origD-optD)*2.5);
 
   document.getElementById('stReseqOptimized').innerHTML = optimized.map(function(j,i){
     var orig = jobs.findIndex(function(x){ return x.id===j.id; });
