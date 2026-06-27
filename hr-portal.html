@@ -332,6 +332,8 @@ function hrNav(page){
 }
 function hrRenderPage(p){
   const map={dashboard:hrRenderDashboard,profile:hrRenderProfile,timeoff:hrRenderTimeOff,certs:hrRenderCerts,training:hrRenderTraining,onboarding:hrRenderOnboarding,announcements:hrRenderAnnouncements,calendar:hrRenderCalendar,recognition:hrRenderRecognition,policies:hrRenderPolicies,employees:hrRenderEmployees,approvals:hrRenderApprovals,reviews:hrRenderReviews,conduct:hrRenderConduct,certdash:hrRenderCertDash,'onboarding-mgr':hrRenderOnboardingMgr,talent:hrRenderTalent,harvest:hrRenderHarvest,jobs:hrRenderJobs,skills:hrRenderSkills,payroll:hrRenderPayroll,compliance:hrRenderCompliance,docvault:hrRenderDocVault};
+  if(p==='exitinterview'){hrRenderExitInterview();return;}
+  if(p==='onboarding'){hrRenderOnboarding();setTimeout(hrRenderCheckinTracker,50);return;}
   if(map[p])map[p]();
 }
 
@@ -756,6 +758,122 @@ document.addEventListener('DOMContentLoaded',function(){
     <div style="text-align:center;margin-top:12px;font-size:11px;color:#9CA3AF">Manager: <strong>chrystal.bush</strong> / Admin: <strong>ted.scholl</strong></div>
   </div>
 </div>
+
+<script>
+/* 30/60/90-DAY CHECK-IN TRACKER */
+function hrRenderCheckinTracker(){
+  var user=_hrUser; if(!user||!user.startDate)return;
+  var el=document.getElementById('hrOnboardingContent'); if(!el)return;
+  var start=new Date(user.startDate); var today=new Date();
+  var daysSince=Math.floor((today-start)/86400000);
+  var checkins=hrLoad('checkins_'+user.id);
+  var milestones=[
+    {days:30,label:'30-Day Check-In',desc:'How is the role matching your expectations?'},
+    {days:60,label:'60-Day Check-In',desc:'Confident in core responsibilities? What support do you need?'},
+    {days:90,label:'90-Day Check-In',desc:'Full onboarding review: goals, feedback, and path forward.'}
+  ];
+  var rows=milestones.map(function(m){
+    var due=new Date(start); due.setDate(start.getDate()+m.days);
+    var daysLeft=Math.ceil((due-today)/86400000);
+    var existing=checkins.find(function(c){return c.milestone===m.days;});
+    var status=existing?'complete':daysLeft<0?'overdue':daysLeft<=7?'upcoming':'scheduled';
+    var colors={complete:'#D1FAE5',overdue:'#FEE2E2',upcoming:'#FEF3C7',scheduled:'#F3F4F6'};
+    var labels={complete:'Complete',overdue:'Overdue',upcoming:'Due Soon',scheduled:'Scheduled'};
+    return '<div style="display:flex;align-items:flex-start;gap:14px;padding:14px;border-radius:10px;background:'+colors[status]+';margin-bottom:10px">'
+      +'<div style="width:48px;height:48px;border-radius:50%;background:#fff;display:flex;align-items:center;justify-content:center;font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:13px;flex-shrink:0">'+m.days+'d</div>'
+      +'<div style="flex:1"><div style="font-weight:700;font-size:14px">'+m.label+'</div>'
+      +'<div style="font-size:12px;color:#475569;margin:3px 0">'+m.desc+'</div>'
+      +'<div style="font-size:11px;color:#64748B">Due: '+due.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})+' &nbsp;|&nbsp; <strong>'+labels[status]+'</strong></div>'
+      +(existing?'<div style="font-size:11px;color:#065F46;margin-top:4px">Completed '+new Date(existing.ts).toLocaleDateString()+' &mdash; "'+escH(existing.note||'')+'"</div>':'')
+      +'</div>'
+      +(!existing&&daysSince>=m.days-7?'<button onclick="hrLogCheckin('+m.days+')" style="background:#1A1D21;color:#fff;border:none;border-radius:8px;padding:8px 14px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;cursor:pointer;white-space:nowrap">Log Check-In</button>':'')
+      +'</div>';
+  }).join('');
+  var section=document.createElement('div');
+  section.innerHTML='<div class="hr-card" style="margin-top:20px">'
+    +'<div style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:#64748B;margin-bottom:12px">30 / 60 / 90 Day Check-Ins</div>'
+    +(daysSince<25?'<div style="font-size:12px;color:#64748B;padding:12px;background:#F8FAFC;border-radius:8px">Your first check-in is scheduled at 30 days. Check back soon.</div>':rows)
+    +'</div>';
+  el.appendChild(section);
+}
+function hrLogCheckin(milestone){
+  var note=prompt('Log your '+milestone+'-day check-in\n\nBrief note (optional):');
+  if(note===null)return;
+  var all=hrLoad('checkins_'+_hrUser.id);
+  all.push({milestone:milestone,note:note,ts:Date.now(),userId:_hrUser.id});
+  hrSave('checkins_'+_hrUser.id,all);
+  hrRenderOnboarding();
+  setTimeout(hrRenderCheckinTracker,50);
+  hrToast('Check-in logged.');
+}
+
+/* EXIT INTERVIEW PORTAL */
+function hrRenderExitInterview(){
+  var el=document.getElementById('hrExitContent'); if(!el)return;
+  var userId=_hrUser&&_hrUser.id;
+  var existing=hrLoad('exit_interviews').find(function(e){return e.userId===userId;});
+  if(existing){
+    el.innerHTML='<div class="hr-card"><div style="text-align:center;padding:30px">'
+      +'<div style="font-size:32px;margin-bottom:10px"></div>'
+      +'<div style="font-weight:700;font-size:16px;margin-bottom:6px">Exit Interview Submitted</div>'
+      +'<div style="font-size:13px;color:#64748B">Submitted on '+new Date(existing.ts).toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'})+'</div>'
+      +'<div style="font-size:12px;color:#94A3B8;margin-top:8px">Thank you. HR will follow up within 3 business days.</div>'
+      +'</div></div>';
+    return;
+  }
+  var questions=[
+    ['exRole','Did your role match what was described when you were hired?'],
+    ['exMgmt','How would you describe your experience with your direct manager?'],
+    ['exTeam','How was your experience working with your team?'],
+    ['exGrowth','Did you feel there were opportunities to grow here?'],
+    ['exImprove','What is one thing Termac could do better?'],
+    ['exHighlight','What did you enjoy most about working here?']
+  ];
+  el.innerHTML='<div class="hr-alert hr-alert-blue" style="margin-bottom:16px">Your responses are confidential and reviewed only by HR leadership.</div>'
+    +'<div class="hr-card" style="margin-bottom:14px"><div class="hr-card-title">Departure Details</div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">'
+    +'<div><label class="hr-label">Last Day</label><input class="hr-input" type="date" id="exLastDay" style="width:100%"></div>'
+    +'<div><label class="hr-label">Primary Reason for Leaving</label>'
+    +'<select class="hr-select" id="exReason" style="width:100%"><option value="">Select...</option>'
+    +'<option>New opportunity / career growth</option><option>Compensation</option>'
+    +'<option>Work-life balance</option><option>Relocation</option>'
+    +'<option>Management or culture concerns</option><option>Personal / family reasons</option>'
+    +'<option>Returning to school</option><option>Role was not what I expected</option><option>Other</option>'
+    +'</select></div></div>'
+    +'<label class="hr-label">Would you recommend Termac as an employer?</label>'
+    +'<select class="hr-select" id="exRecommend" style="width:100%">'
+    +'<option value="">Select...</option><option value="5">Definitely yes</option>'
+    +'<option value="4">Probably yes</option><option value="3">Not sure</option>'
+    +'<option value="2">Probably not</option><option value="1">Definitely not</option>'
+    +'</select></div>'
+    +'<div class="hr-card" style="margin-bottom:14px"><div class="hr-card-title">Your Experience</div>'
+    +questions.map(function(q){return '<div style="margin-bottom:14px"><label class="hr-label">'+q[1]+'</label>'
+      +'<textarea class="hr-input" id="'+q[0]+'" rows="2" style="width:100%;resize:vertical"></textarea></div>';}).join('')
+    +'</div>'
+    +'<div class="hr-card" style="margin-bottom:14px"><div class="hr-card-title">Final Notes</div>'
+    +'<label class="hr-label">Any final comments or things you want HR to know?</label>'
+    +'<textarea class="hr-input" id="exFinal" rows="3" style="width:100%;margin-bottom:14px;resize:vertical"></textarea>'
+    +'<label class="hr-label">Would you consider returning to Termac in the future?</label>'
+    +'<select class="hr-select" id="exReturn" style="width:100%">'
+    +'<option value="">Select...</option><option value="yes">Yes, absolutely</option>'
+    +'<option value="maybe">Maybe, under the right circumstances</option><option value="no">No</option>'
+    +'</select></div>'
+    +'<button onclick="hrSubmitExitInterview()" style="background:#C8102E;color:#fff;border:none;border-radius:8px;padding:12px 28px;font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:13px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer"> Submit Exit Interview</button>';
+}
+function hrSubmitExitInterview(){
+  var g=function(id){return (document.getElementById(id)||{}).value||'';};
+  if(!g('exLastDay')||!g('exReason')){hrToast('Please fill in your last day and primary reason');return;}
+  var interview={id:'exit_'+Date.now(),userId:_hrUser&&_hrUser.id,employeeName:(_hrUser&&_hrUser.name)||'',
+    division:(_hrUser&&_hrUser.division)||'',title:(_hrUser&&_hrUser.title)||'',
+    lastDay:g('exLastDay'),reason:g('exReason'),recommend:g('exRecommend'),
+    role:g('exRole'),management:g('exMgmt'),team:g('exTeam'),growth:g('exGrowth'),
+    improve:g('exImprove'),highlight:g('exHighlight'),final:g('exFinal'),
+    returnLikely:g('exReturn'),ts:Date.now(),status:'pending_review'};
+  var all=hrLoad('exit_interviews');all.unshift(interview);hrSave('exit_interviews',all);
+  hrToast('Exit interview submitted. Thank you.');
+  hrRenderExitInterview();
+}
+</script>
 </body>
 <!-- v202606240344 -->
 <!-- v2 --></html>

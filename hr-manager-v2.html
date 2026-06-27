@@ -274,6 +274,8 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--ink);min-h
       <div class="hm-rail-item" onclick="hmNav('jobdesc')" id="hmSide-jobdesc"><div class="hm-rail-icon">📋</div><div class="hm-rail-label">Job Descriptions</div></div>
       <div class="hm-rail-item" onclick="hmNav('policies')" id="hmSide-policies"><div class="hm-rail-icon">📜</div><div class="hm-rail-label">Policies</div></div>
 
+      <div class="hm-rail-item" onclick="hmNav('exitinterviews')" id="hmSide-exitinterviews"><div class="hm-rail-icon"></div><div class="hm-rail-label">Exit Interviews</div></div>
+      <div class="hm-rail-item" onclick="hmNav('checkins')" id="hmSide-checkins"><div class="hm-rail-icon"></div><div class="hm-rail-label">30/60/90 Check-Ins</div></div>
       <div class="hm-rail-item" onclick="hmNav('benefits')" id="hmSide-benefits"><div class="hm-rail-icon"></div><div class="hm-rail-label">Benefits</div></div>
       <div class="hm-rail-item" onclick="hmNav('selfservice')" id="hmSide-selfservice"><div class="hm-rail-icon"></div><div class="hm-rail-label">Self-Service</div></div>
       <div class="hm-rail-item" onclick="hmNav('recognition')" id="hmSide-recognition"><div class="hm-rail-icon"></div><div class="hm-rail-label">Recognition</div></div>
@@ -486,6 +488,8 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--ink);min-h
         <div id="hmPolicyContent"></div>
       </div>
 
+      <div class="hm-page" id="hmPage-exitinterviews"><div class="hm-page-title">Exit Interviews</div><div class="hm-page-sub">Confidential responses from departing employees</div><div id="hmExitInterviewsContent"></div></div>
+      <div class="hm-page" id="hmPage-checkins"><div class="hm-page-title">30 / 60 / 90 Check-Ins</div><div class="hm-page-sub">Upcoming and overdue new hire check-ins across all active employees</div><div id="hmCheckinAlertsContent"></div></div>
       <div class="hm-page" id="hmPage-benefits">
         <div class="hm-page-title">Benefits Hub</div>
         <div class="hm-page-sub">Medical, dental, vision, 401k, open enrollment, and life events</div>
@@ -801,6 +805,8 @@ function hmRenderPage(p){
     orgchart:hmRenderOrgChart,
     jobdesc:hmRenderJobDesc,
     policies:hmRenderPolicies,
+    exitinterviews:hmRenderExitInterviews,
+    checkins:hmRenderCheckinAlerts,
     benefits:hmRenderBenefits,
     selfservice:hmRenderSelfService,
     recognition:hmRenderRecognition,
@@ -5292,6 +5298,85 @@ function hmExportSkills() {
    INTERNAL JOB BOARD
    Post open roles internally first before going external.
 ================================================================ */
+
+/* ================================================================
+   EXIT INTERVIEW READER (HR Manager view)
+   Reads the same termac_hr_exit_interviews key the employee portal writes.
+================================================================ */
+function hmRenderExitInterviews() {
+  const el = document.getElementById('hmExitInterviewsContent'); if(!el) return;
+  const interviews = hrLoad('exit_interviews');
+  if(!interviews.length){
+    el.innerHTML='<div class="hm-alert hm-alert-blue">No exit interviews submitted yet.</div>';
+    return;
+  }
+  const ratingLabel = {5:'Definitely yes',4:'Probably yes',3:'Not sure',2:'Probably not',1:'Definitely not'};
+  el.innerHTML=interviews.map(function(e){
+    return '<div class="hm-card" style="margin-bottom:14px">'
+      +'<div class="hm-card-hdr"><div class="hm-card-title">'
+        +escH(e.employeeName||'Employee')+' &mdash; '+escH(e.division||'')+' &mdash; '+escH(e.title||'')
+        +'</div><div style="font-size:11px;color:var(--soft)">Last day: '+hrFmtDate(e.lastDay)
+        +' &nbsp;&middot;&nbsp; Submitted: '+new Date(e.ts).toLocaleDateString()
+        +'</div></div>'
+      +'<div class="hm-card-body">'
+      +'<div class="hm-grid-2" style="margin-bottom:12px">'
+      +'<div><div class="hm-label">Primary Reason</div><div style="font-weight:700">'+escH(e.reason||'')+'</div></div>'
+      +'<div><div class="hm-label">Would Recommend Termac</div><div style="font-weight:700">'+escH(ratingLabel[e.recommend]||e.recommend||'')+'</div></div>'
+      +'<div><div class="hm-label">Would Return</div><div style="font-weight:700">'+escH(e.returnLikely||'')+'</div></div>'
+      +'</div>'
+      +[['Role Match',e.role],['Manager Experience',e.management],['Team Experience',e.team],
+        ['Growth Opportunities',e.growth],['Improvement Suggestion',e.improve],
+        ['What They Enjoyed',e.highlight],['Final Notes',e.final]
+       ].filter(function(q){return q[1];}).map(function(q){
+         return '<div style="margin-bottom:10px"><div class="hm-label">'+q[0]+'</div>'
+           +'<div style="font-size:13px;background:#F8FAFC;border-radius:6px;padding:8px 10px">'+escH(q[1])+'</div></div>';
+       }).join('')
+      +'</div></div>';
+  }).join('');
+}
+
+/* ================================================================
+   30/60/90 CHECK-IN MANAGER VIEW
+   Shows all upcoming and overdue check-ins across all new hires.
+================================================================ */
+function hmRenderCheckinAlerts() {
+  const el = document.getElementById('hmCheckinAlertsContent'); if(!el) return;
+  const users = hmGetUsers().filter(function(u){return u.status==='Active'&&u.startDate;});
+  const today = new Date();
+  const flags = [];
+  users.forEach(function(u){
+    const start=new Date(u.startDate);
+    const daysSince=Math.floor((today-start)/86400000);
+    const checkins=hrLoad('checkins_'+u.id);
+    [30,60,90].forEach(function(days){
+      if(daysSince<days-7) return; // not relevant yet
+      const existing=checkins.find(function(c){return c.milestone===days;});
+      if(existing) return; // done
+      const due=new Date(start); due.setDate(start.getDate()+days);
+      const daysLeft=Math.ceil((due-today)/86400000);
+      flags.push({user:u,days:days,daysLeft:daysLeft,
+        overdue:daysLeft<0,label:days+'-Day Check-In'});
+    });
+  });
+  if(!flags.length){
+    el.innerHTML='<div class="hm-alert hm-alert-green"> No check-ins overdue or due within 7 days.</div>';
+    return;
+  }
+  flags.sort(function(a,b){return a.daysLeft-b.daysLeft;});
+  el.innerHTML=flags.map(function(f){
+    var color=f.overdue?'#FEE2E2':'#FEF3C7';
+    var label=f.overdue?'Overdue '+Math.abs(f.daysLeft)+' days':'Due in '+f.daysLeft+' days';
+    return '<div style="display:flex;align-items:center;gap:12px;padding:12px;border-radius:8px;background:'+color+';margin-bottom:8px">'
+      +'<div class="hm-emp-avatar" style="background:'+f.user.color+'">'+f.user.avatar+'</div>'
+      +'<div style="flex:1">'
+        +'<div style="font-weight:700">'+escH(f.user.name)+' &mdash; '+escH(f.label)+'</div>'
+        +'<div style="font-size:12px;color:#475569">'+escH(f.user.division||'')+' &middot; Started '+hrFmtDate(f.user.startDate)+'</div>'
+      +'</div>'
+      +'<span style="font-weight:700;font-size:12px;color:'+(f.overdue?'#991B1B':'#92400E')+'">'+label+'</span>'
+      +'</div>';
+  }).join('');
+}
+
 function hmRenderJobBoard() {
   const el = document.getElementById('hmJobBoardContent'); if (!el) return;
   const postings = hrLoad('internal_jobs');
