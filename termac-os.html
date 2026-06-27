@@ -12603,7 +12603,10 @@ async function harvestRunLiveNJ(){
   // No $where filter -- field names aren't confirmed, so nothing here to
   // get wrong syntactically. $limit only; all matching/extraction happens
   // client-side via findField() against whatever keys actually come back.
-  const params = new URLSearchParams({ '$limit': '50' });
+  // Pull a wider window than we keep -- we filter to Ted's NJ counties and
+  // rank by commercial/fire relevance client-side below, so we need more
+  // than 50 raw rows to have enough in-territory matches after filtering.
+  const params = new URLSearchParams({ '$limit': '400' });
 
   try {
     const njTargetUrl = HARVEST_NJ_PERMITS_URL + '?' + params.toString();
@@ -12622,6 +12625,22 @@ async function harvestRunLiveNJ(){
       logHarvestRun(0, 0, 'success-empty');
       return;
     }
+
+    // Territory + relevance (client-side, so we never guess at the live
+    // schema's exact column values in the query string). This dataset is
+    // municipality/county level -- no business name, street address, or ZIP
+    // -- so we can't manufacture a contact. What we CAN do is stop dumping
+    // random statewide permits: scope to Ted's North/Central NJ counties and
+    // float commercial / fire-subcode activity to the top.
+    const NJ_TERRITORY = ['mercer','middlesex','monmouth','somerset','hunterdon','burlington','union','morris','essex','hudson','ocean','warren','sussex','passaic','bergen'];
+    const njCountyOf = r => (findField(r, ['county']) || '').toLowerCase();
+    const NJ_REL = /commercial|fire|restaurant|food|kitchen|mercantile|assembly|business|addition|alteration|renovation|new construction|tenant fit/i;
+    const njRelText = r => [findField(r, ['recordtype','type']), findField(r, ['permittype','worktype','category']), findField(r, ['usegroup','use_group','description'])].filter(Boolean).join(' ');
+    if (records.some(r => njCountyOf(r))) {
+      records = records.filter(r => { const c = njCountyOf(r); return !c || NJ_TERRITORY.some(t => c.indexOf(t) >= 0); });
+    }
+    records.sort((a, b) => (NJ_REL.test(njRelText(b)) ? 1 : 0) - (NJ_REL.test(njRelText(a)) ? 1 : 0));
+    records = records.slice(0, 40);
 
     const existing = crmLoad('leads');
     const existingKeys = new Set(existing.map(l => (l.business||'').toLowerCase() + '|' + (l.zip||'')));
@@ -12654,7 +12673,7 @@ async function harvestRunLiveNJ(){
         business: business,
         phone: '', email: '',
         address: addr, zip: '', company: 'UniPro', status: 'new',
-        services: ['unipro'], score: 5,
+        services: ['unipro'], score: (NJ_REL.test(njRelText(r)) ? 8 : 4),
         source: 'Live Harvester — NJ Construction Permits',
         created: now,
         notes: `${recordType||'Permit'} #${permitNum||'—'} issued ${dateStr} in ${municipality||'NJ'}${county?', '+county+' County':''}. NJ Uniform Construction Code includes the fire protection subcode -- worth a call to check on suppression/extinguisher needs for the buildout. No ZIP in source data -- needs manual territory assignment.`,
