@@ -29282,6 +29282,7 @@ function renderTripStackRows(opps) {
         <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:16px;color:var(--red);text-align:center">${o.score}</div>
         <div style="font-size:9px;color:var(--soft);text-align:center;text-transform:uppercase;letter-spacing:.04em">Score</div>
         <button onclick="closeModal('tripStackModal');setTimeout(()=>openAcctDetail('${o.id}','${o.tab}'),100)" style="background:var(--red);color:#fff;border:none;border-radius:5px;padding:4px 8px;font-size:10px;font-family:Barlow Condensed,sans-serif;font-weight:700;cursor:pointer;white-space:nowrap">View →</button>
+        <button onclick="closeModal('tripStackModal');setTimeout(()=>openApptModal('${o.id}','${o.tab}','site_visit'),100)" style="background:#D8690B;color:#fff;border:none;border-radius:5px;padding:4px 8px;font-size:10px;font-family:Barlow Condensed,sans-serif;font-weight:700;cursor:pointer;white-space:nowrap"> Plan</button>
       </div>
     </div>`).join('');
 }
@@ -32901,21 +32902,76 @@ function mgrCalRender() {
 // fast enough to run client-side without an API call.
 function optimizeRoute(anchorAddress, opps) {
   if (!opps.length) return [];
+  // Separate confirmed anchors (appointments) from flex stops (planned visits).
+  // Anchors are pinned in their time slots; flex stops are clustered between
+  // anchors using nearest-neighbour so reps don't drive across the territory
+  // between a morning and an afternoon anchor.
+  const anchors = opps.filter(o => o.source === 'platform' || o.source === 'outlook' || o._isAnchor)
+    .sort((a,b) => (a.time||'').localeCompare(b.time||''));
+  const flex = opps.filter(o => !(o.source === 'platform' || o.source === 'outlook' || o._isAnchor))
+    .map((o, origIdx) => ({ ...o, origIdx }));
+
+  if (!anchors.length) {
+    // No anchors: pure nearest-neighbour from the physical starting point
+    const anchorZip = extractZip(anchorAddress) || '';
+    const remaining = flex.slice();
+    const route = [];
+    let curZip = anchorZip;
+    while (remaining.length) {
+      let best = null, bestDist = Infinity;
+      remaining.forEach((o, i) => {
+        const d = zipDistance(curZip, extractZip(o.address) || '');
+        if (d < bestDist) { bestDist = d; best = i; }
+      });
+      const chosen = remaining.splice(best, 1)[0];
+      curZip = extractZip(chosen.address) || curZip;
+      route.push(chosen);
+    }
+    return route;
+  }
+
+  // With anchors: insert flex stops between anchor windows.
+  // Divide the day into segments separated by anchor times.
+  // Each segment gets the flex stops geographically closest to the
+  // midpoint between the bounding anchors.
   const anchorZip = extractZip(anchorAddress) || '';
-  const remaining = opps.map((o, origIdx) => ({ ...o, origIdx }));
+  const segments = [anchorZip, ...anchors.map(a => extractZip(a.address)||anchorZip)];
+  const remaining = flex.slice();
   const route = [];
-  let currentZip = anchorZip;
+
+  // Before first anchor
+  const beforeFlex = clusterFlex(remaining, anchorZip, segments[1]||anchorZip, 2);
+  beforeFlex.forEach(o => { route.push(o); remaining.splice(remaining.indexOf(o), 1); });
+  route.push(anchors[0]);
+
+  // Between anchors
+  for (let i=1; i<anchors.length; i++) {
+    const mid = segments[i]; const next = segments[i+1]||segments[i];
+    const segFlex = clusterFlex(remaining, mid, next, 3);
+    segFlex.forEach(o => { route.push(o); remaining.splice(remaining.indexOf(o), 1); });
+    route.push(anchors[i]);
+  }
+
+  // After last anchor: nearest-neighbour from last anchor
+  const lastZip = extractZip(anchors[anchors.length-1].address)||anchorZip;
+  let curZip2 = lastZip;
   while (remaining.length) {
-    let best = null, bestDist = Infinity;
-    remaining.forEach((o, i) => {
-      const d = zipDistance(currentZip, extractZip(o.address) || '');
-      if (d < bestDist) { bestDist = d; best = i; }
-    });
-    const chosen = remaining.splice(best, 1)[0];
-    currentZip = extractZip(chosen.address) || currentZip;
-    route.push(chosen);
+    let best=null, bestDist=Infinity;
+    remaining.forEach((o,i)=>{ const d=zipDistance(curZip2,extractZip(o.address)||''); if(d<bestDist){bestDist=d;best=i;} });
+    const chosen=remaining.splice(best,1)[0]; curZip2=extractZip(chosen.address)||curZip2; route.push(chosen);
   }
   return route;
+}
+
+// Pick up to maxCount flex stops geographically closest to the midpoint
+// between fromZip and toZip (the surrounding anchor addresses).
+function clusterFlex(pool, fromZip, toZip, maxCount) {
+  if (!pool.length) return [];
+  const scored = pool.map(o => {
+    const z = extractZip(o.address) || '';
+    return { o, d: zipDistance(fromZip, z) + zipDistance(z, toZip) };
+  }).sort((a,b) => a.d - b.d);
+  return scored.slice(0, maxCount).map(x => x.o);
 }
 
 // Total zip-distance along a sequence of stops, starting from anchor.
