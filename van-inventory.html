@@ -51,7 +51,7 @@ body{font-family:'Barlow',-apple-system,sans-serif;background:var(--bg);color:va
     <div class="trn-logo">Termac One</div>
     <div class="trn-title">🚐 Van Inventory</div>
     <div class="trn-spacer"></div>
-    <button onclick="history.back()" style="background:none;border:1.5px solid #3A3E43;border-radius:6px;color:#BFC4CA;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;text-transform:uppercase;padding:5px 12px;cursor:pointer">← Back</button>
+    <button onclick="if(history.length>1){history.back();}else if(document.referrer){location.href=document.referrer;}else{window.close();}" style="background:none;border:1.5px solid #3A3E43;border-radius:6px;color:#BFC4CA;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;text-transform:uppercase;padding:5px 12px;cursor:pointer">← Back</button>
     <button onclick="window.open('user-manuals.html?role=driver','_blank')" style="background:none;border:1.5px solid #3A3E43;border-radius:6px;color:#BFC4CA;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;text-transform:uppercase;padding:5px 10px;cursor:pointer">? Help</button>
   </div>
 </nav>
@@ -78,21 +78,21 @@ body{font-family:'Barlow',-apple-system,sans-serif;background:var(--bg);color:va
   <div id="tab-inventory">
     <div class="card">
       <div class="card-hdr">
-        🧪 Chemicals
+        🧪 Termac &middot; Termac Warehouse
         <span style="font-size:11px;font-weight:500;color:var(--soft)">Tap +/− to adjust on-hand</span>
       </div>
       <div id="chemList"></div>
     </div>
     <div class="card">
-      <div class="card-hdr">🔧 Parts & Supplies</div>
+      <div class="card-hdr">🔧 GTO &middot; GTO Warehouse</div>
       <div id="partsList"></div>
     </div>
     <div class="card">
-      <div class="card-hdr">🪣 GTO / Filter Supplies</div>
+      <div class="card-hdr">🪣 Filter Man &middot; Filter Man Warehouse</div>
       <div id="gtoList"></div>
     </div>
     <div class="card">
-      <div class="card-hdr">🔥 UniPro Fire Safety</div>
+      <div class="card-hdr">🔥 UniPro / Quality III &middot; UniPro Warehouse</div>
       <div id="uniproList"></div>
     </div>
     <button class="load-btn" onclick="saveInventory()">💾 Save Inventory Count</button>
@@ -130,18 +130,21 @@ body{font-family:'Barlow',-apple-system,sans-serif;background:var(--bg);color:va
 <script>
 /* ══ VAN INVENTORY SYSTEM ══════════════════════════════════════════════════ */
 
+const COMPANY_META = {
+  termac:    { name:'Termac',               warehouse:'Termac Warehouse' },
+  gto:       { name:'GTO',                  warehouse:'GTO Warehouse' },
+  filterman: { name:'Filter Man',           warehouse:'Filter Man Warehouse' },
+  unipro:    { name:'UniPro / Quality III', warehouse:'UniPro Warehouse' },
+};
 const VAN_CATALOG = {
-  chemicals: [
+  termac: [
     { id:'chem_det',    name:'Dish Machine Detergent',       unit:'gal',  par:4,  weight:8.5  },
     { id:'chem_san',    name:'Dish Machine Sanitizer',        unit:'gal',  par:2,  weight:8.5  },
     { id:'chem_rinse',  name:'Rinse Aid',                     unit:'gal',  par:2,  weight:8.5  },
     { id:'chem_deg',    name:'Kitchen Degreaser',             unit:'gal',  par:2,  weight:8.0  },
     { id:'chem_desc',   name:'Descaler / Delimer',            unit:'qt',   par:4,  weight:2.5  },
-    { id:'chem_fog',    name:'BioAugmentation (GTO)',         unit:'gal',  par:2,  weight:8.5  },
     { id:'chem_paper',  name:'Paper Towels (case)',           unit:'case', par:2,  weight:25   },
-    { id:'chem_hand',   name:'Hand Soap / Dispenser Soap',   unit:'gal',  par:1,  weight:8.5  },
-  ],
-  parts: [
+    { id:'chem_hand',   name:'Hand Soap / Dispenser Soap',    unit:'gal',  par:1,  weight:8.5  },
     { id:'part_seal',   name:'Door Gaskets / Seals (asst)',   unit:'set',  par:2,  weight:0.5  },
     { id:'part_pump',   name:'Chem Dispenser Pump Tubes',     unit:'pk',   par:2,  weight:0.1  },
     { id:'part_filter', name:'Inline Filter Screen',          unit:'ea',   par:3,  weight:0.2  },
@@ -151,9 +154,12 @@ const VAN_CATALOG = {
     { id:'part_zip',    name:'Zip Ties / Wire Nuts (asst)',   unit:'bag',  par:1,  weight:0.3  },
   ],
   gto: [
+    { id:'chem_fog',    name:'BioAugmentation (GTO)',         unit:'gal',  par:2,  weight:8.5  },
     { id:'gto_gloves',  name:'Heavy Nitrile Gloves (L)',      unit:'box',  par:2,  weight:1.0  },
     { id:'gto_suit',    name:'Tyvek Suit',                    unit:'ea',   par:2,  weight:0.3  },
     { id:'gto_bags',    name:'Waste Containment Bags',        unit:'pk',   par:1,  weight:0.5  },
+  ],
+  filterman: [
     { id:'fil_filters', name:'Standard Hood Filters',         unit:'ea',   par:6,  weight:2.0  },
     { id:'fil_lg',      name:'Large Hood Filters',            unit:'ea',   par:4,  weight:3.0  },
     { id:'fil_degreaser',name:'Filter Degreaser Spray',       unit:'qt',   par:2,  weight:2.5  },
@@ -167,6 +173,7 @@ const VAN_CATALOG = {
     { id:'uni_exitbulb',name:'Exit Sign LED Bulbs',           unit:'pk',   par:1,  weight:0.1  },
   ],
 };
+function itemCompany(id){ for(const k of Object.keys(VAN_CATALOG)){ if(VAN_CATALOG[k].some(i=>i.id===id)) return k; } return 'termac'; }
 
 let _inventory = {};
 let _currentTech = 'Tech';
@@ -234,9 +241,9 @@ function renderCategory(catKey, containerId) {
 }
 
 function renderAll() {
-  renderCategory('chemicals','chemList');
-  renderCategory('parts','partsList');
-  renderCategory('gto','gtoList');
+  renderCategory('termac','chemList');
+  renderCategory('gto','partsList');
+  renderCategory('filterman','gtoList');
   renderCategory('unipro','uniproList');
   updateStats();
 }
@@ -309,50 +316,43 @@ function printLoadList() {
 
 /* ── Transfer / Resupply Request ──────────────────────────────────────── */
 function renderTransfer() {
-  const allItems = Object.values(VAN_CATALOG).flat();
-  const low = allItems.filter(i => getQty(i.id) < i.par);
   const el = document.getElementById('transferBody');
-  if (!low.length) {
-    el.innerHTML = '<div style="color:var(--green);font-size:12px;font-weight:600;padding:8px 0">✅ All items at or above par — no resupply needed</div>';
-    return;
-  }
-  el.innerHTML = low.map(i => {
-    const qty = getQty(i.id);
-    return `<div class="item-row">
-      <div style="flex:1"><div class="item-name">${i.name}</div><div class="item-sub">On hand: ${qty} · Par: ${i.par} · Needs: ${i.par-qty} ${i.unit}</div></div>
-      <span class="stock-badge ${qty===0?'stock-out':'stock-low'}">${qty===0?'OUT':'LOW'}</span>
-    </div>`;
+  const low = Object.values(VAN_CATALOG).flat().filter(i => getQty(i.id) < i.par);
+  if (!low.length) { el.innerHTML = '<div style=\"color:var(--green);font-size:12px;font-weight:600;padding:8px 0\">All items at or above par - no resupply needed</div>'; return; }
+  const byCo = {}; low.forEach(i => { const c = itemCompany(i.id); (byCo[c]=byCo[c]||[]).push(i); });
+  el.innerHTML = Object.keys(byCo).map(co => {
+    const meta = COMPANY_META[co] || {};
+    const rows = byCo[co].map(i => { const qty=getQty(i.id); return `<div class=\"item-row\"><div style=\"flex:1\"><div class=\"item-name\">${i.name}</div><div class=\"item-sub\">On hand: ${qty} - Par: ${i.par} - Needs: ${i.par-qty} ${i.unit}</div></div><span class=\"stock-badge ${qty===0?'stock-out':'stock-low'}\">${qty===0?'OUT':'LOW'}</span></div>`; }).join('');
+    return `<div style=\"margin-bottom:14px\"><div style=\"font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--soft);padding:6px 0;border-bottom:1px solid #eee;margin-bottom:4px\">${meta.name||co} &middot; ${meta.warehouse||''}</div>${rows}</div>`;
   }).join('');
 }
 
 function submitTransfer() {
-  const allItems = Object.values(VAN_CATALOG).flat();
-  const low = allItems.filter(i => getQty(i.id) < i.par);
-  if (!low.length) { alert('Nothing below par — van is fully stocked.'); return; }
+  const low = Object.values(VAN_CATALOG).flat().filter(i => getQty(i.id) < i.par);
+  if (!low.length) { alert('Nothing below par - van is fully stocked.'); return; }
   const notes = document.getElementById('transferNotes').value;
-  const request = {
-    id: 'xfr_' + Date.now(),
-    date: new Date().toLocaleDateString('en-US'),
-    ts: Date.now(),
-    tech: _currentTech,
-    items: low.map(i => ({ id:i.id, name:i.name, unit:i.unit, onHand:getQty(i.id), par:i.par, needed:i.par-getQty(i.id) })),
-    notes,
-    status: 'pending',
-  };
-  try {
-    const reqs = JSON.parse(localStorage.getItem('termac_transfer_requests') || '[]');
+  const byCo = {}; low.forEach(i => { const c = itemCompany(i.id); (byCo[c]=byCo[c]||[]).push(i); });
+  let reqs = []; try { reqs = JSON.parse(localStorage.getItem('termac_transfer_requests') || '[]'); } catch(e) {}
+  let wa = [];   try { wa   = JSON.parse(localStorage.getItem('warehouse_alerts') || '[]'); } catch(e) {}
+  let count = 0;
+  Object.keys(byCo).forEach(co => {
+    const items = byCo[co]; const meta = COMPANY_META[co] || {};
+    const request = {
+      id: 'xfr_' + Date.now() + '_' + co,
+      date: new Date().toLocaleDateString('en-US'), ts: Date.now(),
+      tech: _currentTech, company: meta.name || co, warehouse: meta.warehouse || '',
+      items: items.map(i => ({ id:i.id, name:i.name, unit:i.unit, onHand:getQty(i.id), par:i.par, needed:i.par-getQty(i.id) })),
+      notes, status: 'pending',
+    };
     reqs.unshift(request);
-    localStorage.setItem('termac_transfer_requests', JSON.stringify(reqs));
-  } catch(e) {}
-  // Also write to warehouse alerts
-  try {
-    const wa = JSON.parse(localStorage.getItem('warehouse_alerts') || '[]');
-    wa.unshift({ id:request.id, ts:Date.now(), type:'van_resupply', tech:_currentTech, itemCount:low.length, status:'pending' });
-    localStorage.setItem('warehouse_alerts', JSON.stringify(wa));
-  } catch(e) {}
+    wa.unshift({ id:request.id, ts:Date.now(), type:'van_resupply', company:meta.name||co, warehouse:meta.warehouse||'', tech:_currentTech, itemCount:items.length, status:'pending' });
+    count++;
+  });
+  try { localStorage.setItem('termac_transfer_requests', JSON.stringify(reqs)); } catch(e) {}
+  try { localStorage.setItem('warehouse_alerts', JSON.stringify(wa)); } catch(e) {}
   document.getElementById('transferNotes').value = '';
   renderTransferHistory();
-  showToast('✅ Resupply request submitted — warehouse notified');
+  showToast('Resupply sent to ' + count + ' warehouse' + (count===1?'':'s'));
 }
 
 function renderTransferHistory() {
