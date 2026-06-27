@@ -33854,4 +33854,315 @@ function executeReset() {
   </div>
 </div>
 <script src="termac-messaging.js"></script>
+
+<script>
+/* ============================================================
+   Termac One — Account Lifecycle Alert Engine
+   Runs in the background every 5 minutes. Checks:
+     1. 48-hour rep follow-up: any active/onboarding account
+        with no activity in the last 48 hours
+     2. 90-day check-in: active accounts with no rep contact
+        logged in 90+ days
+     3. Renewal window: accounts whose renewalDate is within
+        60 days with no renewal conversation logged
+     4. Health score auto-recalc: any account saved without a
+        current health score gets one computed and written back
+     5. Jeopardy escalation: health score 1 accounts get a
+        manager-visible flag in the alert store
+   Results written to localStorage as structured alert objects
+   that surface in the manager dashboard and rep portal.
+   ============================================================ */
+(function() {
+  'use strict';
+
+  var LC_ALERTS_KEY = 'termac_lifecycle_alerts';
+  var LC_LAST_RUN   = 'termac_lc_last_run';
+  var RUN_INTERVAL  = 5 * 60 * 1000; // 5 minutes
+  var DAY = 86400000;
+
+  function loadAlerts() { try { return JSON.parse(localStorage.getItem(LC_ALERTS_KEY) || '[]'); } catch(e) { return []; } }
+  function saveAlerts(a) { try { localStorage.setItem(LC_ALERTS_KEY, JSON.stringify(a.slice(0, 200))); } catch(e) {} }
+
+  function healthScore(acct) {
+    if (typeof acctCalcHealth === 'function') return acctCalcHealth(acct).score;
+    // Inline fallback if function not available
+    var now = Date.now(); var score = 0;
+    if (acct.nextDue) score += new Date(acct.nextDue) > new Date() ? 1.25 : 0;
+    else score += 0.625;
+    if (acct.invoicePaid === true) score += 1.0; else if (acct.invoicePaid === false) score += 0; else score += 0.8;
+    if (acct.lastCheckin && (now - acct.lastCheckin) < 90*DAY) score += 1.0;
+    if (!acct.openDeficiencies) score += 1.0;
+    if (acct.lastActivity) score += acct.lastActivity.positive ? 0.75 : 0.375;
+    return Math.max(1, Math.min(5, Math.round(score)));
+  }
+
+  function lastActivityTs(acct) {
+    var log = acct.activityLog || [];
+    if (!log.length) return acct.createdAt || 0;
+    return Math.max.apply(null, log.map(function(e) { return e.ts || 0; }));
+  }
+
+  function daysSince(ts) { return Math.floor((Date.now() - (ts || 0)) / DAY); }
+
+  function makeAlert(type, acct, detail, severity) {
+    return {
+      id: type + '_' + acct.id,
+      type: type,
+      severity: severity || 'medium', // 'high' | 'medium' | 'low'
+      accountId: acct.id,
+      account: acct.name || acct.business || 'Account',
+      assignedRep: acct.assignedRep || 'Unassigned',
+      detail: detail,
+      ts: Date.now(),
+      dismissed: false,
+    };
+  }
+
+  function runLifecycleCheck() {
+    localStorage.setItem(LC_LAST_RUN, Date.now().toString());
+
+    var accounts = [];
+    var leads = [];
+    try { accounts = JSON.parse(localStorage.getItem('termac_crm_accounts') || '[]'); } catch(e) {}
+    try { leads    = JSON.parse(localStorage.getItem('termac_crm_leads')    || '[]'); } catch(e) {}
+
+    var alerts = loadAlerts().filter(function(a) { return !a.dismissed && (Date.now() - a.ts) < 7*DAY; });
+    var alertMap = {};
+    alerts.forEach(function(a) { alertMap[a.id] = true; });
+
+    var newAlerts = [];
+    var acctUpdated = false;
+
+    accounts.forEach(function(acct) {
+      var stage = acct.lifecycleStage || acct.status || 'active';
+      var isActive = (stage === 'active' || stage === 'onboarding' || stage === 'first_service' || stage === 'renewal');
+      if (!isActive) return;
+
+      // Auto-compute and write health score if missing or stale
+      var hs = healthScore(acct);
+      if (!acct.healthScore || Math.abs(acct.healthScore - hs) > 0) {
+        acct.healthScore = hs;
+        acctUpdated = true;
+      }
+
+      var lastAct = lastActivityTs(acct);
+      var repName = acct.assignedRep || 'Unassigned';
+
+      // 48-hour follow-up check (onboarding + first_service stages get tighter SLA)
+      var slaHours = (stage === 'onboarding' || stage === 'first_service') ? 24 : 48;
+      var slaDays  = slaHours / 24;
+      if (daysSince(lastAct) >= slaDays) {
+        var aid = 'followup_' + acct.id;
+        if (!alertMap[aid]) {
+          newAlerts.push(makeAlert('followup', acct,
+            'No activity logged in ' + daysSince(lastAct) + ' days. ' + slaHours + '-hour follow-up SLA.',
+            stage === 'onboarding' ? 'high' : 'medium'));
+          alertMap[aid] = true;
+        }
+      }
+
+      // 90-day check-in
+      if (acct.lastCheckin && daysSince(acct.lastCheckin) >= 90) {
+        var cid = 'checkin_' + acct.id;
+        if (!alertMap[cid]) {
+          newAlerts.push(makeAlert('checkin', acct,
+            'No rep check-in logged in ' + daysSince(acct.lastCheckin) + ' days. 90-day cadence overdue.', 'medium'));
+          alertMap[cid] = true;
+        }
+      }
+
+      // Renewal window: 60 days out, no renewal conversation
+      if (acct.renewalDate) {
+        var daysToRenewal = Math.floor((new Date(acct.renewalDate).getTime() - Date.now()) / DAY);
+        if (daysToRenewal >= 0 && daysToRenewal <= 60) {
+          var hasRenewalLog = (acct.activityLog || []).some(function(e) {
+            return e.type === 'renewal' || (e.title && e.title.toLowerCase().indexOf('renewal') >= 0);
+          });
+          if (!hasRenewalLog) {
+            var rid = 'renewal_' + acct.id;
+            if (!alertMap[rid]) {
+              newAlerts.push(makeAlert('renewal', acct,
+                'Renewal in ' + daysToRenewal + ' days. No renewal conversation logged.', daysToRenewal <= 30 ? 'high' : 'medium'));
+              alertMap[rid] = true;
+            }
+          }
+        }
+      }
+
+      // Jeopardy escalation (health score 1)
+      if (hs <= 1) {
+        var jid = 'jeopardy_' + acct.id;
+        if (!alertMap[jid]) {
+          newAlerts.push(makeAlert('jeopardy', acct,
+            'Health score ' + hs + '/5. Immediate manager outreach required.', 'high'));
+          alertMap[jid] = true;
+        }
+      }
+
+      // At-risk watch (health score 2)
+      if (hs === 2) {
+        var aid2 = 'atrisk_' + acct.id;
+        if (!alertMap[aid2]) {
+          newAlerts.push(makeAlert('atrisk', acct,
+            'Health score 2/5. Account trending toward jeopardy.', 'medium'));
+          alertMap[aid2] = true;
+        }
+      }
+    });
+
+    // Write updated health scores back
+    if (acctUpdated) {
+      try { localStorage.setItem('termac_crm_accounts', JSON.stringify(accounts)); } catch(e) {}
+    }
+
+    // Opportunity follow-up: any open opportunity not touched in 4 days
+    leads.filter(function(l) {
+      return l.lifecycleStage === 'opportunity' || l.lifecycleStage === 'proposal';
+    }).forEach(function(l) {
+      var lastAct = lastActivityTs(l);
+      if (daysSince(lastAct) >= 4) {
+        var oid = 'opp_stale_' + l.id;
+        if (!alertMap[oid]) {
+          newAlerts.push({
+            id: oid, type: 'opp_stale', severity: 'medium',
+            accountId: l.id, account: l.business || l.name || 'Opportunity',
+            assignedRep: l.assignedRep || 'Unassigned',
+            detail: l.lifecycleStage === 'proposal' ? 'Proposal sent ' + daysSince(lastAct) + ' days ago with no follow-up.' : 'Opportunity stale for ' + daysSince(lastAct) + ' days.',
+            ts: Date.now(), dismissed: false,
+          });
+          alertMap[oid] = true;
+        }
+      }
+    });
+
+    saveAlerts(alerts.concat(newAlerts));
+
+    // Refresh manager dashboard if open
+    if (typeof refreshManagerDashboard === 'function') {
+      try { refreshManagerDashboard(); } catch(e) {}
+    }
+
+    // Update rep alert banner
+    renderRepAlertBanner();
+    renderMgrAlertPanel();
+  }
+
+  // ── Rep alert banner ──────────────────────────────────────────
+  // Shows in the manager dashboard and sales portal when the
+  // current user has unacknowledged alerts on their accounts.
+  function renderRepAlertBanner() {
+    var banner = document.getElementById('lcRepAlertBanner');
+    if (!banner) return;
+    var user = '';
+    try { user = (window._currentUser && _currentUser.name) || (window._spRep && _spRep.name) || localStorage.getItem('termac_current_user') || ''; } catch(e) {}
+    if (!user) { banner.style.display = 'none'; return; }
+    var alerts = loadAlerts().filter(function(a) { return !a.dismissed && a.assignedRep === user; });
+    if (!alerts.length) { banner.style.display = 'none'; return; }
+    var high = alerts.filter(function(a) { return a.severity === 'high'; });
+    var total = alerts.length;
+    var color = high.length ? '#C8102E' : '#D97706';
+    var msg = high.length
+      ? '\uD83D\uDEA8 ' + high.length + ' urgent alert' + (high.length > 1 ? 's' : '') + ' on your accounts'
+      : '\u26A0\uFE0F ' + total + ' account alert' + (total > 1 ? 's' : '') + ' need attention';
+    banner.style.display = '';
+    banner.style.background = color;
+    banner.innerHTML = '<span style="flex:1">' + msg + '</span><button onclick="openLCAlertModal()" style="background:rgba(255,255,255,.2);border:none;border-radius:6px;color:#fff;padding:4px 12px;font-weight:700;cursor:pointer;font-size:11px">View All</button><button onclick="document.getElementById(\'lcRepAlertBanner\').style.display=\'none\'" style="background:none;border:none;color:#fff;font-size:16px;cursor:pointer;padding:0 4px">\u2715</button>';
+  }
+
+  // ── Manager alert panel refresh ───────────────────────────────
+  function renderMgrAlertPanel() {
+    var panel = document.getElementById('lcMgrAlertCount');
+    if (!panel) return;
+    var alerts = loadAlerts().filter(function(a) { return !a.dismissed; });
+    var high = alerts.filter(function(a) { return a.severity === 'high'; });
+    panel.textContent = alerts.length;
+    panel.style.background = high.length ? '#C8102E' : '#D97706';
+    panel.style.display = alerts.length ? '' : 'none';
+  }
+
+  // ── Alert modal (view all) ────────────────────────────────────
+  window.openLCAlertModal = function() {
+    var alerts = loadAlerts().filter(function(a) { return !a.dismissed; });
+    var ov = document.getElementById('lcAlertModal');
+    if (!ov) {
+      ov = document.createElement('div');
+      ov.id = 'lcAlertModal';
+      ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:100002;display:flex;align-items:flex-start;justify-content:center;padding:20px;overflow:auto;font-family:-apple-system,Segoe UI,Roboto,sans-serif';
+      ov.onclick = function(e) { if (e.target === ov) ov.style.display = 'none'; };
+      document.body.appendChild(ov);
+    }
+    var typeLabel = { followup:'Follow-Up Due', checkin:'Check-In Overdue', renewal:'Renewal Window', jeopardy:'Jeopardy', atrisk:'At Risk', opp_stale:'Opportunity Stale' };
+    var typeIcon  = { followup:'\u23F0', checkin:'\uD83D\uDCC5', renewal:'\uD83D\uDD04', jeopardy:'\uD83D\uDEA8', atrisk:'\u26A0\uFE0F', opp_stale:'\uD83D\uDCCA' };
+    var sevColor  = { high:'#FEF2F2', medium:'#FFFBEB', low:'#F0FDF4' };
+    var sevBorder = { high:'#C8102E', medium:'#D97706', low:'#1E7B3C' };
+    ov.innerHTML = '<div style="background:#fff;border-radius:14px;width:min(680px,96vw);max-height:88vh;display:flex;flex-direction:column">'
+      + '<div style="background:#0F172A;color:#fff;padding:14px 18px;border-radius:14px 14px 0 0;display:flex;align-items:center;justify-content:space-between;flex-shrink:0">'
+      + '<div><div style="font-weight:800;font-size:15px">\uD83D\uDEA8 Lifecycle Alerts</div><div style="font-size:11px;color:#94A3B8;margin-top:2px">' + alerts.length + ' unacknowledged</div></div>'
+      + '<button onclick="document.getElementById(\'lcAlertModal\').style.display=\'none\'" style="background:none;border:none;color:#fff;font-size:20px;cursor:pointer">\u2715</button></div>'
+      + '<div style="overflow:auto;padding:16px;flex:1">'
+      + (alerts.length ? alerts.sort(function(a,b){ return (b.severity==='high'?2:b.severity==='medium'?1:0)-(a.severity==='high'?2:a.severity==='medium'?1:0); }).map(function(a) {
+          return '<div style="background:' + (sevColor[a.severity]||'#fff') + ';border-left:4px solid ' + (sevBorder[a.severity]||'#ccc') + ';border-radius:8px;padding:12px 14px;margin-bottom:8px;display:flex;align-items:flex-start;gap:10px">'
+            + '<div style="font-size:20px;flex-shrink:0">' + (typeIcon[a.type]||'\u26A0\uFE0F') + '</div>'
+            + '<div style="flex:1">'
+            + '<div style="font-weight:700;font-size:13px">' + a.account + '</div>'
+            + '<div style="font-size:11px;color:#475569;font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin:2px 0">' + (typeLabel[a.type]||a.type) + ' \u2014 ' + a.assignedRep + '</div>'
+            + '<div style="font-size:12px;color:#64748B">' + a.detail + '</div>'
+            + '</div>'
+            + '<div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0">'
+            + (a.accountId ? '<button onclick="document.getElementById(\'lcAlertModal\').style.display=\'none\';if(typeof openAcctDetail===\'function\')openAcctDetail(\''+a.accountId+'\');" style="font-size:10px;background:#0F172A;color:#fff;border:none;border-radius:6px;padding:4px 10px;cursor:pointer;font-weight:700">View</button>' : '')
+            + '<button onclick="(function(){var a=JSON.parse(localStorage.getItem(\''+LC_ALERTS_KEY+'\')||\'[]\');var i=a.findIndex(function(x){return x.id===\''+a.id+'\';});if(i>=0){a[i].dismissed=true;localStorage.setItem(\''+LC_ALERTS_KEY+'\',JSON.stringify(a));}openLCAlertModal();renderRepAlertBanner();renderMgrAlertPanel();})()" style="font-size:10px;background:none;border:1px solid #CBD5E1;border-radius:6px;padding:4px 10px;cursor:pointer;color:#64748B">Dismiss</button>'
+            + '</div>'
+            + '</div>';
+        }).join('') : '<div style="text-align:center;padding:24px;color:#94A3B8">No active alerts</div>')
+      + '</div></div>';
+    ov.style.display = 'flex';
+  };
+
+  // ── Dismiss helper exposed globally ──────────────────────────
+  window.lcDismissAlert = function(alertId) {
+    var a = loadAlerts();
+    var i = a.findIndex(function(x) { return x.id === alertId; });
+    if (i >= 0) { a[i].dismissed = true; saveAlerts(a); }
+    renderRepAlertBanner();
+    renderMgrAlertPanel();
+  };
+
+  // ── Inject rep alert banner into manager and sales pages ──────
+  function injectBanners() {
+    // Rep banner: fixed top bar just below the nav
+    if (!document.getElementById('lcRepAlertBanner')) {
+      var b = document.createElement('div');
+      b.id = 'lcRepAlertBanner';
+      b.style.cssText = 'display:none;position:fixed;top:56px;left:0;right:0;z-index:9000;background:#C8102E;color:#fff;padding:8px 16px;font-size:12px;font-weight:700;display:none;align-items:center;gap:10px;font-family:-apple-system,Segoe UI,Roboto,sans-serif';
+      document.body.appendChild(b);
+    }
+    // Manager badge: attach to jeopardy section header if present
+    var jeop = document.querySelector('[id*="jeopardy"]');
+    if (jeop && !document.getElementById('lcMgrAlertCount')) {
+      var badge = document.createElement('span');
+      badge.id = 'lcMgrAlertCount';
+      badge.style.cssText = 'display:none;background:#C8102E;color:#fff;border-radius:10px;padding:1px 8px;font-size:10px;font-weight:900;margin-left:6px;cursor:pointer';
+      badge.title = 'View lifecycle alerts';
+      badge.onclick = window.openLCAlertModal;
+      if (jeop.parentElement) jeop.parentElement.appendChild(badge);
+    }
+  }
+
+  // ── Boot ─────────────────────────────────────────────────────
+  function boot() {
+    injectBanners();
+    runLifecycleCheck();
+    setInterval(runLifecycleCheck, RUN_INTERVAL);
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+
+  // Expose so manual refresh is possible from console or other code
+  window.lcRunCheck = runLifecycleCheck;
+  window.renderRepAlertBanner = renderRepAlertBanner;
+  window.renderMgrAlertPanel  = renderMgrAlertPanel;
+
+})();
+</script>
 </body></html>
