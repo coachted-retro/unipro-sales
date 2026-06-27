@@ -3105,7 +3105,9 @@ function viewRecord(tab,id){
   const r=data.find(x=>x.id===id);
   if(!r) return;
   addRecent(tab,r);
-  editRecord(id,tab);
+  // Open full-screen overlay for all record types.
+  // Edit form is still reachable via the Edit button inside the overlay.
+  openAcctDetail(id, tab);
 }
 function quickOpenRecord(tab,id){ viewRecord(tab,id); }
 
@@ -21160,6 +21162,7 @@ window.svOpenEstimate = function(){
       <span id="acctHdrStatus" style="font-size:11px;padding:3px 9px;border-radius:20px;font-weight:700;font-family:Barlow Condensed,sans-serif;letter-spacing:.06em"></span>
       <span id="acctHdrStageBadge" style="font-size:11px;padding:3px 9px;border-radius:20px;font-weight:700;font-family:Barlow Condensed,sans-serif"></span>
       <span id="acctHdrOwner" style="font-size:11px;color:rgba(255,255,255,.65);font-family:Barlow Condensed,sans-serif;font-weight:600"></span>
+      <select id="acctStageSelect" onchange="acctAdvanceStageFromOverlay(this.value)" onclick="event.stopPropagation()" style="margin-left:10px;background:#2A2E33;color:#CBD5E1;border:1px solid #3A3E43;border-radius:6px;padding:3px 8px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:10px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer"></select>
     </div>
     <div class="acct-hdr-btns">
       <button class="acct-nav-btn" onclick="acctOpenEdit()">✏️ Edit</button>
@@ -21170,6 +21173,9 @@ window.svOpenEstimate = function(){
       <button class="acct-nav-btn" onclick="closeAcctDetail()">✕</button>
     </div>
   </div>
+
+  <!-- Stage progress track (lifecycle pipeline position) -->
+  <div id="acctStageTrack" style="background:#1A1D21;border-bottom:1px solid #2A2E33;padding:8px 22px;display:flex;align-items:center;gap:0;flex-shrink:0;overflow-x:auto"></div>
 
   <!-- Two-column body -->
   <div class="acct-body">
@@ -21414,6 +21420,8 @@ function openAcctDetail(id, tab) {
   acctShowTab('timeline', document.querySelector('.acct-tab'));
 
   document.getElementById('acctOverlay').classList.add('open');
+  // Render stage progress track and header dropdown
+  if (typeof acctRenderStageTrack === 'function') acctRenderStageTrack(r, tab);
 }
 
 function closeAcctDetail() {
@@ -22002,6 +22010,93 @@ function acctShowTab(tabId, btn) {
 }
 
 // ── ACTION BUTTONS ──
+/* ── Unified record overlay: lifecycle stage track ─────────────
+   Renders a 5-stop sliding progress track showing where in the
+   Lead to Active journey the current record sits, plus a header
+   dropdown to advance the stage without leaving the overlay.    */
+
+const ALL_LIFECYCLE_STAGES = [
+  { key:'lead',          label:'Lead',         icon:'' },
+  { key:'contacted',     label:'Contacted',    icon:'' },
+  { key:'qualified',     label:'Qualified',    icon:'' },
+  { key:'contact',       label:'Contact',      icon:'' },
+  { key:'appointment',   label:'Appt Set',     icon:'' },
+  { key:'site_visit',    label:'Site Visit',   icon:'' },
+  { key:'opportunity',   label:'Opportunity',  icon:'' },
+  { key:'survey',        label:'Survey',       icon:'' },
+  { key:'proposal',      label:'Proposal',     icon:'' },
+  { key:'accepted',      label:'Accepted',     icon:'' },
+  { key:'onboarding',    label:'Onboarding',   icon:'' },
+  { key:'first_service', label:'1st Service',  icon:'' },
+  { key:'active',        label:'Active',       icon:'' },
+  { key:'renewal',       label:'Renewal',      icon:'' },
+];
+
+function acctRenderStageTrack(r, pool) {
+  var track = document.getElementById('acctStageTrack');
+  var sel   = document.getElementById('acctStageSelect');
+  if (!track || !r) return;
+
+  var cur    = r.lifecycleStage || (r.status === 'active' ? 'active' : 'lead');
+  var curIdx = ALL_LIFECYCLE_STAGES.findIndex(function(st) { return st.key === cur; });
+  if (curIdx < 0) curIdx = 0;
+
+  var total    = ALL_LIFECYCLE_STAGES.length;
+  var winStart = Math.max(0, Math.min(curIdx - 2, total - 5));
+  var window5  = ALL_LIFECYCLE_STAGES.slice(winStart, winStart + 5);
+
+  track.innerHTML = window5.map(function(stage, wi) {
+    var absIdx    = winStart + wi;
+    var isPast    = absIdx < curIdx;
+    var isCurrent = absIdx === curIdx;
+    var dotBg     = isCurrent ? '#C8102E' : isPast ? '#1E7B3C' : '#3A3E43';
+    var dotBorder = isCurrent ? '2px solid #fff' : '2px solid transparent';
+    var lblColor  = isCurrent ? '#fff' : isPast ? '#94A3B8' : '#5A616B';
+    var lineColor = absIdx < curIdx ? '#1E7B3C' : '#3A3E43';
+    var connector = wi < 4
+      ? ('<div style="flex:1;height:2px;background:' + lineColor + ';min-width:20px;max-width:60px;'
+         + 'align-self:center;margin-top:-14px"></div>')
+      : '';
+    var dotInner  = isPast ? '\u2713' : (stage.icon || (absIdx + 1));
+    return '<div style="display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;'
+      + 'min-width:48px" onclick="acctAdvanceStageFromOverlay(\'' + stage.key + '\')" title="Set stage: ' + stage.label + '">'
+      + '<div style="width:26px;height:26px;border-radius:50%;background:' + dotBg + ';border:' + dotBorder + ';'
+      + 'display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;'
+      + 'color:#fff">' + dotInner + '</div>'
+      + '<div style="font-size:8px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;'
+      + 'color:' + lblColor + ';white-space:nowrap;text-align:center">' + stage.label + '</div>'
+      + '</div>' + connector;
+  }).join('');
+
+  // Populate header dropdown
+  if (sel) {
+    var tab  = pool || _acctTab || 'leads';
+    var opts = (typeof TAB_STAGE_OPTIONS !== 'undefined' ? (TAB_STAGE_OPTIONS[tab] || TAB_STAGE_OPTIONS.accounts || []) : []);
+    sel.innerHTML = '<option value="">Advance stage...</option>'
+      + opts.map(function(o) {
+          return '<option value="' + o.key + '"' + (o.key === cur ? ' selected' : '') + '>'
+            + o.label + '</option>';
+        }).join('');
+    sel.value = cur;
+  }
+}
+
+function acctAdvanceStageFromOverlay(newStage) {
+  if (!newStage) return;
+  var pool = _acctTab || 'leads';
+  var rec  = crmLoad(pool).find(function(r) { return r.id === _acctId; });
+  if (!rec || rec.lifecycleStage === newStage) return;
+  advanceStage(_acctId, pool, newStage, null);
+  // Re-open the overlay on the (possibly relocated) record
+  setTimeout(function() {
+    var inAccts = crmLoad('accounts').find(function(r) { return r.id === _acctId; });
+    var newPool = inAccts ? 'accounts' : pool;
+    if (inAccts || crmLoad(newPool).find(function(r) { return r.id === _acctId; })) {
+      openAcctDetail(_acctId, newPool);
+    }
+  }, 220);
+}
+
 function acctOpenEdit() {
   closeAcctDetail();
   editRecord(_acctId, _acctTab);
