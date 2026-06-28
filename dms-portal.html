@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <script src="termac-intelligence.js"></script>
+<script src="termac-notify.js"></script>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Termac One — DMS</title>
 <link rel="icon" type="image/png" sizes="32x32" href="icons/icon-main-32.png">
@@ -718,8 +719,14 @@ function dmsCallRow(r, today){
     {v:'do_not_call',l:'🚫 Do Not Call'},
   ].map(o=>`<option value="${o.v}" ${r.status===o.v?'selected':''}>${escH(o.l)}</option>`).join('');
 
-  const escOpts = ['','Sales Rep','Scheduling','Dispatch','Manager']
-    .map(o=>`<option value="${o}">${escH(o)||'Escalate…'}</option>`).join('');
+  const escOpts = [
+      {v:'',          l:'Escalate…'},
+      {v:'ted_direct',l:'🔥 Ted Scholl (Direct)'},
+      {v:'sales',     l:'Sales (Auto-Route)'},
+      {v:'manager',   l:'Manager — Jim Kennedy'},
+      {v:'scheduling',l:'Scheduling'},
+      {v:'dispatch',  l:'Dispatch'},
+    ].map(o=>`<option value="${o.v}">${o.l}</option>`).join('');
 
   const cbScheduler = ''; // callback scheduling now via modal popup
 
@@ -960,14 +967,23 @@ function dmsEscalate(id){
   r.dmsEscalatedBy = _dmsUser.name;
   r.dmsEscalatedTs = Date.now();
   r.updated = Date.now();
-  if(sel.value==='Sales (auto-route)'){
+  const escVal = sel.value;
+  if(escVal==='sales' || escVal==='ted_direct'){
     r.lifecycleStage = 'lead';
     r.status = 'hot';
     const leads = crmLoad('leads');
     if(!leads.find(x=>x.id===id)) { leads.unshift(r); crmSave('leads',leads); }
   }
+  r.dmsEscalated = escVal;
   crmSave('dms_coldcall', data);
-  dmsToast(`Escalated to: ${sel.value}`);
+
+  // Fire notification engine
+  if (typeof notifyOnDmsEscalation === 'function') {
+    notifyOnDmsEscalation(r, escVal);
+  } else if (typeof _dmsFireMailto === 'function') {
+    _dmsFireMailto(r, escVal);
+  }
+  dmsToast('🔥 Escalated: ' + (escVal === 'ted_direct' ? 'Ted Scholl notified' : escVal));
   dmsRender('leads');
 }
 
