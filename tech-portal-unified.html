@@ -811,7 +811,59 @@ function buildJobCard(job) {
 
 function arriveJob(id) {
   _activeJobId = id;
-  showToast('📍 Arrived — job started');
+  showToast('\U0001F4CD Arrived \u2014 job started');
+
+  // Notify the assigned rep
+  try {
+    var jk=(window.DIV&&DIV.jobsKey)||'unipro_jobs';
+    var jobs=JSON.parse(localStorage.getItem(jk)||'[]');
+    var job=jobs.find(function(j){return j.id===id;});
+    if(job){
+      var accts=JSON.parse(localStorage.getItem('termac_crm_accounts')||'[]');
+      var acct=accts.find(function(a){
+        return (a.name||a.business||'').toLowerCase()===(job.accountName||job.account||'').toLowerCase();
+      });
+      var repName=(acct&&acct.assignedRep)||'';
+      var techName=(window.currentTech&&currentTech.name)||'Tech';
+      var notif={
+        id:'arrived_'+id+'_'+Date.now(),
+        type:'tech_arrived',
+        title:'Tech On-Site: '+(job.accountName||job.account||''),
+        body:techName+' arrived at '+(job.accountName||'')+
+          (job.address?' \u00b7 '+job.address:'')+
+          ' \u00b7 '+(job.serviceType||job.type||'')+
+          ' \u00b7 '+new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}),
+        account:job.accountName||job.account||'',
+        techName:techName,repName:repName,jobId:id,
+        ts:Date.now(),read:false,
+        source:(window.DIV&&DIV.label)||'Termac',
+      };
+      var notifs=[];
+      try{notifs=JSON.parse(localStorage.getItem('termac_hotlead_notifs')||'[]');}catch(e){}
+      notifs.unshift(notif);
+      localStorage.setItem('termac_hotlead_notifs',JSON.stringify(notifs.slice(0,100)));
+
+      // mailto to rep
+      var REP_EMAILS={
+        'Ted Scholl':'tscholl@termac.com',
+        'Tom Pittakas':'tpittakas@termac.com',
+        'Jim Kennedy':'jkennedy@termac.com',
+        'Paul Brahan':'pbrahan@termac.com',
+      };
+      var repEmail=repName?REP_EMAILS[repName]:null;
+      if(repEmail){
+        var sub=encodeURIComponent('Tech On-Site: '+(job.accountName||'')+' \u2014 '+(job.serviceType||''));
+        var bod=encodeURIComponent(
+          techName+' has arrived at '+(job.accountName||'')+'\n'+
+          (job.address||'')+'\n'+
+          'Service: '+(job.serviceType||job.type||'')+'\n'+
+          'Time: '+new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})+'\n\n'+
+          'Open your sales portal to see the full job brief and contact the tech or customer directly.'
+        );
+        window.open('mailto:'+repEmail+'?subject='+sub+'&body='+bod,'_blank');
+      }
+    }
+  }catch(e){}
 }
 
 function navToJob(addr) {

@@ -926,6 +926,8 @@ function spRenderCRM(tab) {
   ${spRecentlyViewed()}
   <!-- Appointments Calendar (leads tab only) -->
   ${tab === 'leads' ? spRenderTodayAgenda() : ''}
+  <!-- My Accounts Today (leads tab only) -->
+  ${tab === 'leads' ? spRenderMyAccountsToday() : ''}
   <!-- Plan My Day (leads tab only) -->
   ${tab === 'leads' ? spPlanMyDay() : ''}
   <!-- Needs Attention (leads tab only) -->
@@ -3719,6 +3721,196 @@ function siResetChat() {
   window._siChatHistory = [];
   const msgs = document.getElementById('siChatMsgs');
   if(msgs) msgs.innerHTML = '<div class="si-chat-msg ai">Hi! I know this account. Ask me anything — objection handlers, opening lines, pricing anchors, follow-up scripts.</div>';
+}
+
+/* =============================================================
+   MY ACCOUNTS TODAY — rep daily brief
+   Shows every job scheduled today across all job stores
+   for accounts owned by the logged-in rep.
+   Includes tech name, service type, scope, status, and
+   direct contact buttons for tech and customer.
+   Also receives "tech arrived" notifications via the same
+   termac_hotlead_notifs store (type = 'tech_arrived').
+============================================================= */
+function spRenderMyAccountsToday() {
+  var rep = window._spRep && _spRep.name ? _spRep.name : '';
+  if (!rep) return '';
+
+  var today = new Date().toISOString().slice(0, 10);
+
+  // All job store keys across divisions
+  var JOB_KEYS = [
+    'unipro_jobs','termac_scheduled_jobs','gto_jobs',
+    'filterman_jobs','allpro_jobs','quality3_jobs'
+  ];
+
+  // Pull all CRM accounts owned by this rep
+  var myAccounts = [];
+  try {
+    var accts = JSON.parse(localStorage.getItem('termac_crm_accounts') || '[]');
+    myAccounts = accts.filter(function(a) {
+      return (a.assignedRep || '') === rep;
+    });
+  } catch(e) {}
+
+  // Index accounts by name for quick lookup
+  var acctIndex = {};
+  myAccounts.forEach(function(a) {
+    acctIndex[(a.name || a.business || '').toLowerCase()] = a;
+  });
+
+  // Pull all jobs across all division stores for today
+  var todayJobs = [];
+  JOB_KEYS.forEach(function(key) {
+    try {
+      var jobs = JSON.parse(localStorage.getItem(key) || '[]');
+      jobs.forEach(function(j) {
+        var jDate = (j.scheduledDate || j.date || '').slice(0, 10);
+        var jAcct = (j.accountName || j.account || '').toLowerCase();
+        // Include if: scheduled today OR in_progress, AND account belongs to this rep
+        if ((jDate === today || j.status === 'in_progress') && acctIndex[jAcct]) {
+          todayJobs.push(Object.assign({}, j, {
+            _acctData: acctIndex[jAcct],
+            _storeKey: key
+          }));
+        }
+      });
+    } catch(e) {}
+  });
+
+  // Also check CRM leads/contacts for accounts this rep owns that have
+  // service flags set by techs (emergency, deficiency, etc.)
+  var alerts = [];
+  try {
+    var leads = JSON.parse(localStorage.getItem('termac_crm_leads') || '[]');
+    leads.filter(function(l) {
+      return (l.assignedRep || '') === rep && l.emergencyFlag;
+    }).forEach(function(l) {
+      alerts.push({ type: 'emergency', account: l.name || l.business, notes: l.emergencyNotes || '' });
+    });
+  } catch(e) {}
+
+  // Unread "tech arrived" notifications for this rep's accounts
+  var arrivals = [];
+  try {
+    var notifs = JSON.parse(localStorage.getItem('termac_hotlead_notifs') || '[]');
+    arrivals = notifs.filter(function(n) {
+      return n.type === 'tech_arrived' && !n.read
+        && myAccounts.some(function(a) {
+          return (a.name || a.business || '').toLowerCase() === (n.account || '').toLowerCase();
+        });
+    });
+  } catch(e) {}
+
+  if (!todayJobs.length && !arrivals.length) {
+    return '<div style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:12px;padding:16px 18px;margin-bottom:14px">'
+      + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:#64748B;margin-bottom:6px">My Accounts Today</div>'
+      + '<div style="font-size:12px;color:#94A3B8">No jobs scheduled today on your accounts. Check back or refresh.</div>'
+      + '</div>';
+  }
+
+  // Sort by scheduled time
+  todayJobs.sort(function(a, b) {
+    return (a.scheduledTime || a.time || '00:00').localeCompare(b.scheduledTime || b.time || '00:00');
+  });
+
+  function statusColor(st) {
+    if (st === 'in_progress') return '#FEF3C7;color:#92400E';
+    if (st === 'complete')    return '#D1FAE5;color:#065F46';
+    if (st === 'emergency')   return '#FEE2E2;color:#991B1B';
+    return '#EFF6FF;color:#1E40AF';
+  }
+  function statusLabel(st) {
+    if (st === 'in_progress') return 'In Progress';
+    if (st === 'complete')    return 'Complete';
+    if (st === 'emergency')   return 'Emergency';
+    return 'Scheduled';
+  }
+
+  var arrivalBanner = arrivals.length
+    ? '<div style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;padding:9px 12px;margin-bottom:10px;font-size:12px;color:#92400E;font-weight:700">'
+      + '\u{1F6A8} ' + arrivals.length + ' tech arrival' + (arrivals.length > 1 ? 's' : '') + ' on your accounts \u2014 '
+      + arrivals.map(function(n) { return (n.techName || 'Tech') + ' at ' + (n.account || ''); }).join(', ')
+      + '</div>'
+    : '';
+
+  var jobCards = todayJobs.map(function(j) {
+    var acct = j._acctData || {};
+    var st   = j.status || 'scheduled';
+    var time = j.scheduledTime || j.time || '';
+    var tech = j.techName || j.tech || j.assignedTech || '';
+    var type = j.serviceType || j.type || '';
+    var scope = j.scope || j.dispatchNotes || j.notes || '';
+    var custPhone = acct.phone || j.contactPhone || '';
+    var custContact = acct.contacts && acct.contacts[0] ? acct.contacts[0].name : (j.contactName || '');
+    var techPhone = j.techPhone || '';
+    var acctName = j.accountName || j.account || '';
+
+    // Mismatch flag — if scope in job differs from what was sold (services on account)
+    var soldServices = (acct.services || []).join(', ');
+
+    return '<div style="border:1.5px solid #E2E8F0;border-radius:10px;padding:13px 15px;margin-bottom:8px;background:#fff">'
+      // Header row: account name + status + time
+      + '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:8px">'
+      +   '<div style="font-weight:800;font-size:14px">' + escH(acctName) + '</div>'
+      +   '<div style="display:flex;align-items:center;gap:6px">'
+      +     (time ? '<span style="font-family:Barlow Condensed,sans-serif;font-size:12px;color:#64748B;font-weight:700">' + escH(time) + '</span>' : '')
+      +     '<span style="border-radius:20px;padding:2px 9px;font-size:10px;font-weight:800;background:' + statusColor(st) + '">' + statusLabel(st) + '</span>'
+      +   '</div>'
+      + '</div>'
+      // Service + tech row
+      + '<div style="font-size:12px;color:#475569;margin-bottom:6px">'
+      +   '<strong>' + escH(type) + '</strong>'
+      +   (tech ? ' \u00b7 Tech: <strong>' + escH(tech) + '</strong>' : '')
+      + '</div>'
+      // Scope / notes
+      + (scope ? '<div style="font-size:11px;color:#64748B;background:#F8FAFC;border-radius:6px;padding:6px 9px;margin-bottom:8px">' + escH(scope) + '</div>' : '')
+      // Sold vs scheduled check
+      + (soldServices ? '<div style="font-size:10px;color:#94A3B8;margin-bottom:8px">Sold services: ' + escH(soldServices) + '</div>' : '')
+      // Action buttons
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap">'
+      +   (techPhone ? '<a href="tel:' + escH(techPhone) + '" style="background:#1B5FA8;color:#fff;border-radius:6px;padding:5px 12px;font-size:11px;font-weight:700;text-decoration:none;font-family:Barlow Condensed,sans-serif">\uD83D\uDCDE Tech</a>' : '')
+      +   (custPhone ? '<a href="tel:' + escH(custPhone) + '" style="background:#059669;color:#fff;border-radius:6px;padding:5px 12px;font-size:11px;font-weight:700;text-decoration:none;font-family:Barlow Condensed,sans-serif">\uD83D\uDCDE Customer</a>' : '')
+      +   '<button onclick="spFlagJobMismatch(\'' + escH(j.id || '') + '\')" style="background:#FEF3C7;color:#92400E;border:none;border-radius:6px;padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer;font-family:Barlow Condensed,sans-serif">\u26A0\uFE0F Flag Issue</button>'
+      +   '<button onclick="spOpenJobThread(\'' + escH(j.id || '') + '\',\'' + escH(acctName) + '\')" style="background:#F3F4F6;color:#374151;border:none;border-radius:6px;padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer;font-family:Barlow Condensed,sans-serif">\uD83D\uDCAC Thread</button>'
+      + '</div>'
+      + '</div>';
+  }).join('');
+
+  return '<div style="margin-bottom:14px">'
+    + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:#1A1D21;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between">'
+    +   '<span>My Accounts Today <span style="font-weight:600;color:#64748B;font-size:11px;text-transform:none;letter-spacing:0">(' + todayJobs.length + ' job' + (todayJobs.length !== 1 ? 's' : '') + ')</span></span>'
+    +   '<button onclick="spRenderCRM(\'accounts\')" style="background:none;border:none;color:#1B5FA8;font-size:11px;font-weight:700;cursor:pointer;font-family:Barlow Condensed,sans-serif;letter-spacing:.04em">All Accounts \u2192</button>'
+    + '</div>'
+    + arrivalBanner
+    + jobCards
+    + '</div>';
+}
+
+function spFlagJobMismatch(jobId) {
+  var note = prompt('Describe the mismatch or issue:\n(This will be logged and the dispatcher will be notified)');
+  if (!note) return;
+  // Log to compliance queue as a scope mismatch
+  var flags = [];
+  try { flags = JSON.parse(localStorage.getItem('termac_scope_flags') || '[]'); } catch(e) {}
+  flags.unshift({ jobId: jobId, rep: (_spRep && _spRep.name) || '', note: note, ts: Date.now(), status: 'open' });
+  localStorage.setItem('termac_scope_flags', JSON.stringify(flags));
+  showToast('Issue flagged. Dispatcher and manager have been notified.');
+  // Fire mailto to dispatcher
+  var sub = encodeURIComponent('Scope Mismatch Flagged — Job ' + jobId);
+  var body = encodeURIComponent('Rep: ' + ((_spRep && _spRep.name) || '') + '\nJob ID: ' + jobId + '\nIssue: ' + note + '\n\nPlease review in Termac One.');
+  window.open('mailto:tscholl@termac.com?subject=' + sub + '&body=' + body);
+}
+
+function spOpenJobThread(jobId, acctName) {
+  // Open messaging to a job-specific channel
+  if (typeof openChannel === 'function') {
+    openChannel('job_' + jobId, acctName + ' \u2014 Job Thread');
+  } else {
+    // Fallback: open messages panel if available
+    var msgBtn = document.querySelector('.msg-pill') || document.getElementById('msgPill');
+    if (msgBtn) msgBtn.click();
+  }
 }
 </script>
 
