@@ -85,7 +85,18 @@
   function roomList() {
     var me = whoAmI().name;
     var list = CHANNELS.map(function (c) { return { id: c.id, name: c.name, desc: c.desc, dm: false }; });
-    STAFF.filter(function (n) { return n !== me; }).forEach(function (n) { list.push({ id: dmRoom(n), name: n, desc: 'Direct message', dm: true }); });
+    // Only filter out the current user if identity is confirmed from a portal variable
+    // (not just localStorage, which can persist from a different portal session)
+    var confirmedMe = '';
+    try {
+      if (window._spRep && _spRep.name) confirmedMe = _spRep.name;
+      else if (window._dmsUser && _dmsUser.name) confirmedMe = _dmsUser.name;
+      else if (window._rcpUser && _rcpUser.name) confirmedMe = _rcpUser.name;
+      else if (window._tech && (_tech.name || _tech)) confirmedMe = _tech.name || _tech;
+      else if (window.currentTech && currentTech.name) confirmedMe = currentTech.name;
+      else if (window._driver) confirmedMe = _driver;
+    } catch(e) {}
+    STAFF.filter(function (n) { return n !== confirmedMe; }).forEach(function (n) { list.push({ id: dmRoom(n), name: n, desc: 'Direct message', dm: true }); });
     return list;
   }
 

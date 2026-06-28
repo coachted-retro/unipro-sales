@@ -173,6 +173,9 @@ input.field:focus,select.field:focus{border-color:var(--div-primary)}
     </div>
     <div class="sb-section">
       <div class="sb-label">Field Tools</div>
+      <button class="sb-btn" onclick="openTechAIAssistant()">
+        <span class="sb-icon">⚡</span> Ask AI
+      </button>
       <button class="sb-btn" onclick="openAICamera()">
         <span class="sb-icon">📷</span> AI Camera
       </button>
@@ -1253,6 +1256,110 @@ function showToast(msg) {
   setTimeout(function(){ t.classList.remove('show'); }, 3000);
 }
 </script>
+<!-- AI Field Assistant Modal -->
+<div id="techAIModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99999;align-items:flex-end;justify-content:flex-end;padding:20px">
+  <div style="background:#1A1D21;border-radius:14px;width:min(440px,96vw);max-height:72vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.5)">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid rgba(255,255,255,.1)">
+      <div>
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:16px;color:#fff;letter-spacing:.04em">⚡ AI Field Assistant</div>
+        <div style="font-size:10px;color:#64748B;margin-top:2px">Ask anything about your job, products, or compliance</div>
+      </div>
+      <button onclick="closeTechAIAssistant()" style="background:none;border:none;color:#64748B;font-size:20px;cursor:pointer">×</button>
+    </div>
+    <div id="techAIMessages" style="flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-height:120px">
+      <div style="background:rgba(255,255,255,.06);border-radius:10px;padding:10px 12px;font-size:13px;color:#CBD5E1">
+        Hi, I'm your Termac field assistant. Ask me anything about your job today, chemical programs, compliance requirements, equipment, or cross-sell opportunities.
+      </div>
+    </div>
+    <div style="padding:12px 14px;border-top:1px solid rgba(255,255,255,.08);display:flex;gap:8px">
+      <input id="techAIInput" type="text" placeholder="Ask something..." onkeydown="if(event.key==='Enter')sendTechAIMessage()"
+        style="flex:1;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;font-family:-apple-system,sans-serif;outline:none">
+      <button onclick="sendTechAIMessage()"
+        style="background:#C8102E;color:#fff;border:none;border-radius:8px;padding:9px 16px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;letter-spacing:.04em;cursor:pointer">Send</button>
+    </div>
+  </div>
+</div>
+
+<script>
+function openTechAIAssistant() {
+  var modal = document.getElementById('techAIModal');
+  modal.style.display = 'flex';
+  setTimeout(function(){ var inp=document.getElementById('techAIInput'); if(inp) inp.focus(); }, 100);
+}
+function closeTechAIAssistant() {
+  document.getElementById('techAIModal').style.display = 'none';
+}
+async function sendTechAIMessage() {
+  var inp = document.getElementById('techAIInput');
+  var msgs = document.getElementById('techAIMessages');
+  var text = inp.value.trim();
+  if (!text) return;
+  inp.value = '';
+
+  // Show user message
+  var userEl = document.createElement('div');
+  userEl.style.cssText = 'background:#C8102E;border-radius:10px;padding:9px 12px;font-size:13px;color:#fff;align-self:flex-end;max-width:85%';
+  userEl.textContent = text;
+  msgs.appendChild(userEl);
+  msgs.scrollTop = msgs.scrollHeight;
+
+  // Show typing indicator
+  var typingEl = document.createElement('div');
+  typingEl.id = 'techAITyping';
+  typingEl.style.cssText = 'background:rgba(255,255,255,.06);border-radius:10px;padding:9px 12px;font-size:12px;color:#64748B;font-style:italic';
+  typingEl.textContent = 'Thinking…';
+  msgs.appendChild(typingEl);
+  msgs.scrollTop = msgs.scrollHeight;
+
+  // Build system context from current job if available
+  var jobContext = '';
+  try {
+    if (window.currentTech) {
+      jobContext = 'Tech: ' + (currentTech.name||'') + ', Division: ' + (currentTech.division||'Termac') + '. ';
+    }
+    if (window._activeJobId) {
+      var jobs = JSON.parse(localStorage.getItem('unipro_jobs')||'[]');
+      var job = jobs.find(function(j){return j.id===_activeJobId;});
+      if (job) jobContext += 'Current job: ' + (job.accountName||'') + ', ' + (job.address||'') + ', type: ' + (job.serviceType||'') + '. ';
+    }
+  } catch(e) {}
+
+  var systemPrompt = 'You are a Termac field assistant helping a service technician. '
+    + 'Termac has six divisions: UniPro and Quality III (fire protection), GTO (grease trap), '
+    + 'Filter Man (hood filter exchange), AllPro (stainless fabrication), Termac (dish machines and chemicals). '
+    + jobContext
+    + 'Answer concisely. Focus on practical field guidance: compliance, chemical programs, equipment, cross-sell opportunities. '
+    + 'If asked about chemical programs: high-temp machines (ADC-44, ADC-66, HT-25) use 340X detergent + Maxaid or B100 rinse aid, no sanitizer. '
+    + 'Low-temp machines (ET, AFB, ASQ, Single/Double Tank, UC-180) use 340X detergent + 310X rinse aid + 600X sanitizer required.';
+
+  try {
+    var res = await fetch('https://unipro-ai-proxy.tedscholl.workers.dev/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 600,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: text }]
+      })
+    });
+    var data = await res.json();
+    var reply = (data.content && data.content[0] && data.content[0].text) || 'Sorry, I could not get a response. Try again.';
+    var typing = document.getElementById('techAITyping');
+    if (typing) {
+      typing.id = '';
+      typing.style.color = '#CBD5E1';
+      typing.style.fontStyle = 'normal';
+      typing.textContent = reply;
+    }
+  } catch(e) {
+    var typing = document.getElementById('techAITyping');
+    if (typing) { typing.textContent = 'Connection error. Check your signal and try again.'; }
+  }
+  msgs.scrollTop = msgs.scrollHeight;
+}
+</script>
+
 <script src="termac-messaging.js"></script>
 </body>
 </html>
