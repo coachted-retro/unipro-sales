@@ -3990,13 +3990,7 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
         </a>
       </div>
       <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px">
-        <a href="compliance-forms.html" style="background:linear-gradient(135deg,#1A1D21,#2D3748);border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:13px 14px;text-decoration:none;display:flex;align-items:center;gap:10px;border:1.5px solid #374151;transition:border-color .12s" onmouseover="this.style.borderColor='#C8102E'" onmouseout="this.style.borderColor='#374151'">
-              <span style="font-size:22px">📋</span>
-              <div>
-                <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;color:#fff;letter-spacing:.04em">Compliance Form Generator</div>
-                <div style="font-size:11px;color:#6B7280;margin-top:2px">NFPA 10 · NFPA 96 · COI · FOG Report · Deficiency Notice</div>
-              </div>
-            </a>
+        <div style="background:linear-gradient(135deg,#1A1D21,#2D3748);border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.3);padding:14px;cursor:pointer;display:block" onclick="mgrShowComplianceQueue()"><div style="font-size:20px;margin-bottom:6px">&#x1F4CB;</div><div style="font-weight:800;font-size:13px;color:#fff">Compliance Queue</div><div id="mgr-compliance-stats" style="font-size:10px;color:#94A3B8;margin-top:3px">click to view</div></div>
             <a onclick="nsOpenPanel()" href="#" style="background:linear-gradient(135deg,#0A2540,#1A4731);border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:13px 14px;text-decoration:none;display:flex;align-items:center;gap:10px;border:1.5px solid #1A4731;transition:border-color .12s" onmouseover="this.style.borderColor='#34D399'" onmouseout="this.style.borderColor='#1A4731'">
           <span style="font-size:20px">☁️</span>
           <div><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;color:#fff">NetSuite</div><div style="font-size:10px;color:#86EFAC;margin-top:1px">ERP sync & integration</div></div>
@@ -34357,5 +34351,112 @@ function executeReset() {
   window.renderMgrAlertPanel  = renderMgrAlertPanel;
 
 })();
+</script>
+
+<script>
+function mgrShowComplianceQueue(){
+  var recs=[];
+  try{recs=JSON.parse(localStorage.getItem('termac_compliance_queue')||'[]');}catch(e){}
+  var done=recs.filter(function(r){return r.status==='complete';}).length;
+  var pend=recs.length-done;
+
+  // Remove old overlay if present
+  var old=document.getElementById('mgrCQ'); if(old) old.remove();
+
+  // Build overlay with DOM — no innerHTML string concat means no quote issues
+  var ov=document.createElement('div');
+  ov.id='mgrCQ';
+  Object.assign(ov.style,{position:'fixed',inset:'0',background:'rgba(0,0,0,.6)',
+    zIndex:'99999',display:'flex',alignItems:'flex-start',justifyContent:'center',
+    padding:'20px',overflow:'auto',fontFamily:'-apple-system,Segoe UI,sans-serif'});
+  ov.onclick=function(e){if(e.target===ov)ov.remove();};
+
+  var box=document.createElement('div');
+  Object.assign(box.style,{background:'#fff',borderRadius:'14px',width:'min(780px,98vw)',
+    maxHeight:'88vh',display:'flex',flexDirection:'column',boxShadow:'0 20px 60px rgba(0,0,0,.4)'});
+  ov.appendChild(box);
+
+  // Header
+  var hdr=document.createElement('div');
+  Object.assign(hdr.style,{background:'#1A1D21',color:'#fff',padding:'14px 20px',
+    borderRadius:'14px 14px 0 0',display:'flex',alignItems:'center',justifyContent:'space-between'});
+  var hdrL=document.createElement('div');
+  hdrL.innerHTML='<div style="font-weight:900;font-size:16px">Compliance Queue</div>'
+    +'<div style="font-size:11px;color:#94A3B8;margin-top:2px">'+done+' submitted &middot; '+pend+' pending</div>';
+  var closeBtn=document.createElement('button');
+  closeBtn.textContent='\u00d7';
+  Object.assign(closeBtn.style,{background:'none',border:'none',color:'#fff',fontSize:'22px',cursor:'pointer'});
+  closeBtn.onclick=function(){ov.remove();};
+  hdr.appendChild(hdrL); hdr.appendChild(closeBtn); box.appendChild(hdr);
+
+  // Body — table
+  var body=document.createElement('div');
+  Object.assign(body.style,{overflow:'auto',padding:'16px',flex:'1'});
+  var tbl=document.createElement('table');
+  tbl.style.cssText='width:100%;border-collapse:collapse';
+  var thead=document.createElement('thead');
+  var hrow=document.createElement('tr');
+  hrow.style.background='#F9FAFB';
+  ['Form','Account','Tech','Date','Status'].forEach(function(h){
+    var th=document.createElement('th');
+    th.style.cssText='text-align:left;padding:8px 10px;font-size:11px;color:#6B7280;text-transform:uppercase;letter-spacing:.06em';
+    th.textContent=h; hrow.appendChild(th);
+  });
+  thead.appendChild(hrow); tbl.appendChild(thead);
+  var tbody=document.createElement('tbody');
+  if(!recs.length){
+    var erow=document.createElement('tr');
+    var etd=document.createElement('td');
+    etd.colSpan=5; etd.style.cssText='text-align:center;color:#94A3B8;padding:24px;font-size:13px';
+    etd.textContent='No compliance records yet. Forms submitted by techs appear here.';
+    erow.appendChild(etd); tbody.appendChild(erow);
+  } else {
+    recs.slice(0,40).forEach(function(r){
+      var row=document.createElement('tr');
+      row.style.borderBottom='1px solid #F3F4F6';
+      [r.formType||'',r.account||'',r.tech||'',r.date||''].forEach(function(v,i){
+        var td=document.createElement('td');
+        td.style.cssText='padding:8px 10px;font-size:12px'+(i===0?';font-weight:700':'');
+        td.textContent=v; row.appendChild(td);
+      });
+      var stTd=document.createElement('td'); stTd.style.padding='8px 10px';
+      var pill=document.createElement('span');
+      var st=r.status||'pending';
+      var bg=st==='complete'?'#D1FAE5':st==='overdue'?'#FEE2E2':'#FEF3C7';
+      var fg=st==='complete'?'#065F46':st==='overdue'?'#991B1B':'#92400E';
+      pill.style.cssText='border-radius:20px;padding:2px 8px;font-size:10px;font-weight:700;background:'+bg+';color:'+fg;
+      pill.textContent=st; stTd.appendChild(pill); row.appendChild(stTd);
+      tbody.appendChild(row);
+    });
+  }
+  tbl.appendChild(tbody); body.appendChild(tbl); box.appendChild(body);
+
+  // Footer buttons
+  var ftr=document.createElement('div');
+  ftr.style.cssText='padding:12px 20px;border-top:1px solid #E2E8F0;display:flex;gap:8px';
+  var btnOpen=document.createElement('button');
+  btnOpen.style.cssText='background:#C8102E;color:#fff;border:none;border-radius:8px;padding:8px 18px;font-weight:700;cursor:pointer;font-size:13px';
+  btnOpen.textContent='Open Form Generator';
+  btnOpen.onclick=function(){window.open('compliance-forms.html','_blank');};
+  var btnClose=document.createElement('button');
+  btnClose.style.cssText='background:#F3F4F6;color:#374151;border:none;border-radius:8px;padding:8px 18px;font-weight:700;cursor:pointer;font-size:13px';
+  btnClose.textContent='Close';
+  btnClose.onclick=function(){ov.remove();};
+  ftr.appendChild(btnOpen); ftr.appendChild(btnClose); box.appendChild(ftr);
+
+  document.body.appendChild(ov);
+
+  // Update stat line
+  var st=document.getElementById('mgr-compliance-stats');
+  if(st) st.textContent=done+' submitted \u00b7 '+pend+' pending';
+}
+
+// Stat on dashboard load
+setTimeout(function(){
+  var r=[];try{r=JSON.parse(localStorage.getItem('termac_compliance_queue')||'[]');}catch(e){}
+  var done=r.filter(function(x){return x.status==='complete';}).length;
+  var st=document.getElementById('mgr-compliance-stats');
+  if(st) st.textContent=done+' submitted \u00b7 '+(r.length-done)+' pending';
+},1000);
 </script>
 </body></html>
