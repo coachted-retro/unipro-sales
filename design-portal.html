@@ -114,6 +114,7 @@ function renderList(){
 function newProject(){
   var p={ id:'sp'+Date.now(), client:'', site:'', contact:'', pm:'', division:'AllPro', status:'draft', createdAt:Date.now(),
     spec:{dims:'',grade:'304',gauge:'14 ga',finish:'#4 Brushed',weld:'TIG continuous',drains:'',backsplash:'',edges:'',hardware:'',nsf:'',notes:''},
+    layout:{units:'in',pieces:[]},
     photos:[], revisions:[], approval:{status:'',client:'',date:'',note:''} };
   save(p); openProject(p.id);
 }
@@ -153,6 +154,8 @@ function openProject(id){
     '<div class="fld"><label>NSF / compliance notes</label><input id="f_nsf" value="'+esc(s.nsf)+'" placeholder="NSF requirement, AHJ notes"></div>'+
     '<div class="fld"><label>Other notes</label><textarea id="f_notes" rows="2">'+esc(s.notes)+'</textarea></div></div>'+
 
+    '<div id="layoutBlock">'+layoutBlock(p)+'</div>'+
+
     '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">'+
     '<button class="btn btn-green" onclick="saveSpec()">Save Spec</button>'+
     '<button class="btn btn-purple" onclick="saveRevision()">Save as Revision</button>'+
@@ -161,6 +164,76 @@ function openProject(id){
     '</div>'+
 
     photosBlock(p)+ approvalBlock(p)+ revisionsBlock(p);
+}
+
+function num(v){ var n=parseFloat(v); return isFinite(n)&&n>0?n:0; }
+function sel(v,opt){ return v===opt?' selected':''; }
+function buildLayoutSVG(p){
+  var pieces=((p.layout&&p.layout.pieces)||[]).filter(function(pc){ return num(pc.length)&&num(pc.width); });
+  if(!pieces.length) return '<div class="muted" style="text-align:left;padding:6px 0">Add a piece with a length and width to generate the dimensioned drawing.</div>';
+  var usableW=560, maxLen=Math.max.apply(null,pieces.map(function(pc){return num(pc.length);}));
+  var scale=Math.min(usableW/maxLen, 5), LM=64, RM=26, TM=30, GAP=28, y=10, maxRectW=0, parts=[];
+  pieces.forEach(function(pc){
+    var L=num(pc.length), W=num(pc.width), rw=L*scale, rh=W*scale, x0=LM, y0=y+TM;
+    maxRectW=Math.max(maxRectW,rw);
+    parts.push('<line x1="'+x0+'" y1="'+(y0-12)+'" x2="'+(x0+rw)+'" y2="'+(y0-12)+'" stroke="#1A1D21" stroke-width="1"/>');
+    parts.push('<line x1="'+x0+'" y1="'+(y0-15)+'" x2="'+x0+'" y2="'+(y0-9)+'" stroke="#1A1D21" stroke-width="1"/>');
+    parts.push('<line x1="'+(x0+rw)+'" y1="'+(y0-15)+'" x2="'+(x0+rw)+'" y2="'+(y0-9)+'" stroke="#1A1D21" stroke-width="1"/>');
+    parts.push('<text x="'+(x0+rw/2)+'" y="'+(y0-16)+'" text-anchor="middle" font-size="11" font-family="Arial" fill="#1A1D21">'+L+' in</text>');
+    parts.push('<line x1="'+(x0-14)+'" y1="'+y0+'" x2="'+(x0-14)+'" y2="'+(y0+rh)+'" stroke="#1A1D21" stroke-width="1"/>');
+    parts.push('<line x1="'+(x0-17)+'" y1="'+y0+'" x2="'+(x0-11)+'" y2="'+y0+'" stroke="#1A1D21" stroke-width="1"/>');
+    parts.push('<line x1="'+(x0-17)+'" y1="'+(y0+rh)+'" x2="'+(x0-11)+'" y2="'+(y0+rh)+'" stroke="#1A1D21" stroke-width="1"/>');
+    parts.push('<text x="'+(x0-22)+'" y="'+(y0+rh/2)+'" text-anchor="middle" font-size="11" font-family="Arial" fill="#1A1D21" transform="rotate(-90 '+(x0-22)+' '+(y0+rh/2)+')">'+W+' in</text>');
+    parts.push('<rect x="'+x0+'" y="'+y0+'" width="'+rw+'" height="'+rh+'" fill="#F3F4F6" stroke="#1A1D21" stroke-width="1.5"/>');
+    var bs=pc.backsplash||'none';
+    function bsl(a,b,c,d){ parts.push('<line x1="'+a+'" y1="'+b+'" x2="'+c+'" y2="'+d+'" stroke="#6B21A8" stroke-width="4"/>'); }
+    if(bs==='back'||bs==='back+sides') bsl(x0,y0,x0+rw,y0);
+    if(bs==='left'||bs==='back+sides') bsl(x0,y0,x0,y0+rh);
+    if(bs==='right'||bs==='back+sides') bsl(x0+rw,y0,x0+rw,y0+rh);
+    var ns=parseInt(pc.sinks||0,10)||0;
+    for(var i=0;i<ns;i++){ var cx=x0+rw*((i+1)/(ns+1)), cy=y0+rh/2, sz=Math.min(rw/(ns+1),rh)*0.5;
+      parts.push('<rect x="'+(cx-sz/2)+'" y="'+(cy-sz/2)+'" width="'+sz+'" height="'+sz+'" rx="3" fill="#DBEAFE" stroke="#1B5FA8" stroke-width="1.5"/>');
+      parts.push('<circle cx="'+cx+'" cy="'+cy+'" r="2.5" fill="#1B5FA8"/>'); }
+    if(pc.drainAtBack) parts.push('<circle cx="'+(x0+rw/2)+'" cy="'+(y0+8)+'" r="3.5" fill="none" stroke="#C8102E" stroke-width="1.5"/>');
+    parts.push('<text x="'+(x0+rw/2)+'" y="'+(y0+rh+15)+'" text-anchor="middle" font-size="11" font-family="Arial" font-weight="bold" fill="#374151">'+esc(pc.label||'Piece')+'</text>');
+    y=y0+rh+GAP;
+  });
+  var cw=LM+maxRectW+RM, ch=y+4;
+  return '<svg viewBox="0 0 '+Math.ceil(cw)+' '+Math.ceil(ch)+'" width="100%" style="max-width:'+Math.ceil(cw)+'px;background:#fff;border:1px solid #E5E7EB;border-radius:8px">'+parts.join('')+'</svg>'+
+    '<div style="font-size:10px;color:#6B7280;margin-top:6px">Top-down view, not to exact scale. Purple = backsplash, blue = sink, red ring = drain. All dimensions in inches.</div>';
+}
+function layoutBlock(p){
+  if(!p.layout) p.layout={units:'in',pieces:[]};
+  var cols='grid-template-columns:1.4fr .7fr .7fr 1.1fr .6fr .7fr auto;gap:6px';
+  var rows=p.layout.pieces.map(function(pc,i){
+    return '<div class="lp-row" style="display:grid;'+cols+';align-items:center;margin-bottom:6px">'+
+      '<input value="'+esc(pc.label||'')+'" placeholder="Label" oninput="syncLayout()">'+
+      '<input type="number" value="'+esc(pc.length||'')+'" placeholder="L" oninput="syncLayout()">'+
+      '<input type="number" value="'+esc(pc.width||'')+'" placeholder="W" oninput="syncLayout()">'+
+      '<select onchange="syncLayout()"><option value="none"'+sel(pc.backsplash,'none')+'>No splash</option><option value="back"'+sel(pc.backsplash,'back')+'>Back</option><option value="left"'+sel(pc.backsplash,'left')+'>Left</option><option value="right"'+sel(pc.backsplash,'right')+'>Right</option><option value="back+sides"'+sel(pc.backsplash,'back+sides')+'>Back + sides</option></select>'+
+      '<input type="number" value="'+esc(pc.sinks||0)+'" min="0" max="4" oninput="syncLayout()">'+
+      '<label style="font-size:11px;display:flex;align-items:center;gap:4px;color:var(--soft)"><input type="checkbox" '+(pc.drainAtBack?'checked':'')+' onchange="syncLayout()">drain</label>'+
+      '<button class="btn btn-outline" onclick="delPiece('+i+')">×</button></div>';
+  }).join('');
+  return '<div class="spec-grp"><h4>Layout & Dimensions</h4>'+
+    '<div style="font-size:11px;color:var(--soft);margin-bottom:8px">Add each fabricated piece with its length and width in inches. The drawing updates live and prints on the client spec sheet as the shop drawing.</div>'+
+    (p.layout.pieces.length?'<div style="display:grid;'+cols+';font-size:10px;color:var(--soft);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px"><span>Piece</span><span>Length</span><span>Width</span><span>Backsplash</span><span>Sinks</span><span>Drain</span><span></span></div>':'')+
+    rows+
+    '<button class="btn btn-outline" onclick="addPiece()" style="margin-top:4px">+ Add Piece</button>'+
+    '<div id="layoutPreview" style="margin-top:14px">'+buildLayoutSVG(p)+'</div></div>';
+}
+function renderLayoutBlock(){ var el=document.getElementById('layoutBlock'); if(el) el.innerHTML=layoutBlock(find(_cur)); }
+function addPiece(){ var p=find(_cur); if(!p.layout) p.layout={units:'in',pieces:[]}; p.layout.pieces.push({label:'',length:'',width:'',backsplash:'none',sinks:0,drainAtBack:false}); save(p); renderLayoutBlock(); }
+function delPiece(i){ var p=find(_cur); p.layout.pieces.splice(i,1); save(p); renderLayoutBlock(); }
+function syncLayout(){
+  var p=find(_cur); if(!p) return; if(!p.layout) p.layout={units:'in',pieces:[]};
+  var pieces=[];
+  document.querySelectorAll('#layoutBlock .lp-row').forEach(function(r){
+    var ins=r.querySelectorAll('input'), s=r.querySelector('select');
+    pieces.push({ label:ins[0].value, length:ins[1].value, width:ins[2].value, backsplash:s?s.value:'none', sinks:ins[3].value, drainAtBack:ins[4]?ins[4].checked:false });
+  });
+  p.layout.pieces=pieces; save(p);
+  var prev=document.getElementById('layoutPreview'); if(prev) prev.innerHTML=buildLayoutSVG(p);
 }
 
 function photosBlock(p){
@@ -243,6 +316,7 @@ function printSpec(){
     '<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><h1>AllPro Stainless — Project Specification</h1><div>'+esc(p.client)+' &middot; '+esc(p.site)+'</div></div><div style="text-align:right;font-size:12px;color:#555">Termac Family of Companies<br>267-421-6336<br>tscholl@termac.com</div></div>'+
     '<h2>Material & Construction</h2><table>'+row('Steel Grade',s.grade)+row('Gauge',s.gauge)+row('Finish',s.finish)+row('Weld Type',s.weld)+row('Edges / Corners',s.edges)+row('Dimensions',s.dims)+'</table>'+
     '<h2>Features & Hardware</h2><table>'+row('Drains / Sinks',s.drains)+row('Backsplash',s.backsplash)+row('Hardware',s.hardware)+row('NSF / Compliance',s.nsf)+row('Notes',s.notes)+'</table>'+
+    ((p.layout&&p.layout.pieces&&p.layout.pieces.length)?'<h2>Dimensioned Layout</h2>'+buildLayoutSVG(p):'')+
     '<div class="sign"><strong>Client Approval</strong><br><br>This specification is approved as drawn for fabrication.<br><br>Signature: ____________________________   Print: ____________________   Date: ____________</div>'+
     '<script>window.onload=function(){window.print();}<\/script></body></html>';
   w.document.write(html); w.document.close();
