@@ -1,5 +1,10 @@
 
 
+/* Store helpers */
+function _notifStore_get(){try{return JSON.parse(localStorage.getItem('termac_hotlead_notifs')||'[]');}catch(e){return [];}}
+function _notifStore_set(arr){try{localStorage.setItem('termac_hotlead_notifs',JSON.stringify(arr.slice(0,100)));}catch(e){}}
+function _notifStore_badge(){var r=_notifStore_get();_notifStore_set(r);}
+
 /* In-app flashing alert banner + badge updater */
 function _fireInAppAlertBanner(opts){
   _notifStore_badge();
