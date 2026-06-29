@@ -72,7 +72,9 @@ body{background:var(--bg);color:var(--ink);font-family:Barlow,sans-serif;font-si
 <div class="toast" id="toast"></div>
 
 <script>
-var KEY='termac_stainless_projects', _cur=null;
+var KEY='termac_stainless_projects', ACCT_KEY='termac_crm_accounts', _cur=null;
+function days(ms){ return Math.floor((Date.now()-(ms||Date.now()))/86400000); }
+function ageClass(d){ return d>=30?'s-changes':d>=14?'s-fab':'s-approved'; }
 var GRADES=['304','316','316L','430','201'], GAUGES=['11 ga','12 ga','14 ga','16 ga','18 ga','20 ga'];
 var FINISHES=['#3 Brushed','#4 Brushed','#7 Polished','#8 Mirror','2B Mill','Bead Blast'];
 var WELDS=['TIG continuous','TIG stitch','Spot','Seam','Riveted / bolted'];
@@ -103,8 +105,8 @@ function renderList(){
   el.innerHTML=all.map(function(p){
     var s=p.spec||{};
     return '<div class="card"><div class="card-hdr"><div><div class="card-title">'+esc(p.client||'Untitled')+'</div>'+
-      '<div class="card-meta">'+esc(p.site||'')+(s.grade?' · '+esc(s.grade)+' / '+esc(s.gauge||''):'')+(p.pm?' · PM: '+esc(p.pm):'')+'</div></div>'+
-      '<span class="status '+(STATUS_CLS[p.status]||'s-draft')+'">'+(STATUS_LABEL[p.status]||'Draft')+'</span></div>'+
+      '<div class="card-meta">'+esc(p.site||'')+(s.grade?' · '+esc(s.grade)+' / '+esc(s.gauge||''):'')+(p.pm?' · PM: '+esc(p.pm):'')+' · '+days(p.createdAt)+'d old</div></div>'+
+      '<div style="text-align:right"><span class="status '+(STATUS_CLS[p.status]||'s-draft')+'">'+(STATUS_LABEL[p.status]||'Draft')+'</span>'+(p.status!=='done'&&p.status!=='approved'?'<div style="margin-top:4px"><span class="status '+ageClass(days(p.createdAt))+'">'+days(p.createdAt)+'d in stage</span></div>':'')+'</div></div>'+
       '<div style="margin-top:10px;display:flex;gap:8px"><button class="btn btn-purple" onclick="openProject(\''+p.id+'\')">Open</button>'+
       (p.status==='approved'?'<button class="btn btn-green" onclick="handoffPM(\''+p.id+'\')">Hand off to PM</button>':'')+'</div></div>';
   }).join('');
@@ -130,6 +132,7 @@ function openProject(id){
     '<span class="status '+(STATUS_CLS[p.status]||'s-draft')+'" style="align-self:center">'+(STATUS_LABEL[p.status]||'Draft')+'</span></div>'+
 
     '<div class="spec-grp"><h4>Project</h4>'+
+    '<div class="fld"><label>Linked account</label><select id="f_acct" onchange="linkAccount()">'+acctOptions(p.accountId)+'</select>'+(p.accountId?'<div style="font-size:11px;color:var(--green);margin-top:4px">Linked. Specs, drawings, and documents stay with this account.</div>':'<div style="font-size:11px;color:var(--soft);margin-top:4px">Link to a CRM account so everything stores with the customer record.</div>')+'</div>'+
     '<div class="grid2"><div class="fld"><label>Client</label><input id="f_client" value="'+esc(p.client)+'"></div>'+
     '<div class="fld"><label>Site address</label><input id="f_site" value="'+esc(p.site)+'"></div></div>'+
     '<div class="grid2"><div class="fld"><label>Client contact</label><input id="f_contact" value="'+esc(p.contact)+'"></div>'+
@@ -188,6 +191,17 @@ function revisionsBlock(p){
   }).join('')+'</div>';
 }
 
+function acctOptions(sel){
+  var accts=lsGet2(ACCT_KEY);
+  var opts='<option value="">Not linked</option>';
+  opts+=accts.map(function(a){ return '<option value="'+esc(a.id)+'"'+(a.id===sel?' selected':'')+'>'+esc(a.name)+(a.division?' ('+esc(a.division)+')':'')+'</option>'; }).join('');
+  return opts;
+}
+function lsGet2(k){ try{ return JSON.parse(localStorage.getItem(k)||'[]'); }catch(e){ return []; } }
+function linkAccount(){
+  var id=val('f_acct'); var a=lsGet2(ACCT_KEY).find(function(x){ return x.id===id; });
+  if(a){ if(document.getElementById('f_client')) document.getElementById('f_client').value=a.name||val('f_client'); if(document.getElementById('f_site')&&a.address) document.getElementById('f_site').value=a.address; toast('Linked to '+a.name+'.'); }
+}
 function collectSpec(){
   return { dims:val('f_dims'),grade:val('f_grade'),gauge:val('f_gauge'),finish:val('f_finish'),weld:val('f_weld'),
     edges:val('f_edges'),drains:val('f_drains'),backsplash:val('f_backsplash'),hardware:val('f_hardware'),nsf:val('f_nsf'),notes:val('f_notes') };
@@ -195,7 +209,7 @@ function collectSpec(){
 function val(id){ var e=document.getElementById(id); return e?e.value:''; }
 function saveSpec(silent){
   var p=find(_cur); if(!p) return;
-  p.client=val('f_client'); p.site=val('f_site'); p.contact=val('f_contact'); p.pm=val('f_pm'); p.spec=collectSpec();
+  p.client=val('f_client'); p.site=val('f_site'); p.contact=val('f_contact'); p.pm=val('f_pm'); p.accountId=val('f_acct'); p.spec=collectSpec();
   save(p); if(!silent){ toast('Spec saved.'); openProject(_cur); }
 }
 function saveRevision(){
