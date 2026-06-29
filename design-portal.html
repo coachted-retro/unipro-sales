@@ -33,7 +33,7 @@ body{background:var(--bg);color:var(--ink);font-family:Barlow,sans-serif;font-si
 .sec-hdr{font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--soft);margin:18px 0 8px}
 .muted{color:var(--soft);font-size:12px;padding:16px;text-align:center}
 .status{border-radius:4px;padding:2px 8px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap}
-.s-draft{background:#E5E7EB;color:#374151}.s-sent{background:#DBEAFE;color:#1E40AF}.s-approved{background:#D1FAE5;color:#065F46}.s-changes{background:#FEE2E2;color:#C8102E}.s-fab{background:#FEF3C7;color:#D8690B}.s-done{background:#D1FAE5;color:#065F46}
+.s-draft{background:#E5E7EB;color:#374151}.s-sent{background:#DBEAFE;color:#1E40AF}.s-approved{background:#D1FAE5;color:#065F46}.s-changes{background:#FEE2E2;color:#C8102E}.s-fab{background:#FEF3C7;color:#D8690B}.s-done{background:#D1FAE5;color:#065F46}.s-sold{background:#F3E8FF;color:#6B21A8}
 .fld{margin-bottom:12px}.fld label{display:block;font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}
 .fld input,.fld select,.fld textarea{width:100%;padding:9px 11px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;font-family:Barlow,sans-serif}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
@@ -78,8 +78,9 @@ function ageClass(d){ return d>=30?'s-changes':d>=14?'s-fab':'s-approved'; }
 var GRADES=['304','316','316L','430','201'], GAUGES=['11 ga','12 ga','14 ga','16 ga','18 ga','20 ga'];
 var FINISHES=['#3 Brushed','#4 Brushed','#7 Polished','#8 Mirror','2B Mill','Bead Blast'];
 var WELDS=['TIG continuous','TIG stitch','Spot','Seam','Riveted / bolted'];
-var STATUS_LABEL={draft:'Draft',sent:'Sent for Approval',approved:'Approved',changes:'Changes Requested',fab:'In Fabrication',done:'Complete'};
-var STATUS_CLS={draft:'s-draft',sent:'s-sent',approved:'s-approved',changes:'s-changes',fab:'s-fab',done:'s-done'};
+var STATUS_LABEL={sold:'New from Sales',draft:'Draft',sent:'Sent for Approval',approved:'Approved',changes:'Changes Requested',fab:'In Fabrication',done:'Complete'};
+var STATUS_CLS={sold:'s-sold',draft:'s-draft',sent:'s-sent',approved:'s-approved',changes:'s-changes',fab:'s-fab',done:'s-done'};
+function money(n){ return '$'+(Number(n)||0).toLocaleString('en-US'); }
 function lsGet(){ try{ return JSON.parse(localStorage.getItem(KEY)||'[]'); }catch(e){ return []; } }
 function lsSet(v){ try{ localStorage.setItem(KEY, JSON.stringify(v)); }catch(e){} }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
@@ -102,15 +103,32 @@ function renderList(){
   renderStats();
   var all=lsGet(), el=document.getElementById('projList');
   if(!all.length){ el.innerHTML='<div class="muted">No projects yet. Click New Project to start a stainless spec.</div>'; return; }
-  el.innerHTML=all.map(function(p){
+  var incoming=all.filter(function(p){ return p.status==='sold'; });
+  var rest=all.filter(function(p){ return p.status!=='sold'; });
+  function projCard(p){
     var s=p.spec||{};
     return '<div class="card"><div class="card-hdr"><div><div class="card-title">'+esc(p.client||'Untitled')+'</div>'+
       '<div class="card-meta">'+esc(p.site||'')+(s.grade?' · '+esc(s.grade)+' / '+esc(s.gauge||''):'')+(p.pm?' · PM: '+esc(p.pm):'')+' · '+days(p.createdAt)+'d old</div></div>'+
       '<div style="text-align:right"><span class="status '+(STATUS_CLS[p.status]||'s-draft')+'">'+(STATUS_LABEL[p.status]||'Draft')+'</span>'+(p.status!=='done'&&p.status!=='approved'?'<div style="margin-top:4px"><span class="status '+ageClass(days(p.createdAt))+'">'+days(p.createdAt)+'d in stage</span></div>':'')+'</div></div>'+
       '<div style="margin-top:10px;display:flex;gap:8px"><button class="btn btn-purple" onclick="openProject(\''+p.id+'\')">Open</button>'+
       (p.status==='approved'?'<button class="btn btn-green" onclick="handoffPM(\''+p.id+'\')">Hand off to PM</button>':'')+'</div></div>';
-  }).join('');
+  }
+  var html='';
+  if(incoming.length){
+    html+='<div class="sec-hdr" style="color:var(--purple)">New from Sales · needs review</div>';
+    html+=incoming.map(function(p){
+      var photoN=(p.photos||[]).length;
+      return '<div class="card" style="border-color:#D8B4FE;background:#FAF5FF"><div class="card-hdr"><div><div class="card-title">'+esc(p.client||'Untitled')+' <span class="status s-sold">New from Sales</span></div>'+
+        '<div class="card-meta">'+esc(p.jobType||'AllPro build')+' · est '+money(p.estimatedPrice)+(p.soldBy?' · sold by '+esc(p.soldBy):'')+(photoN?' · '+photoN+' scan'+(photoN>1?'s':''):'')+' · '+days(p.createdAt)+'d ago</div>'+
+        (p.spec&&p.spec.notes?'<div class="card-meta" style="margin-top:4px">'+esc(p.spec.notes)+'</div>':'')+'</div></div>'+
+        '<div style="margin-top:10px;display:flex;gap:8px"><button class="btn btn-purple" onclick="startReview(\''+p.id+'\')">Start Review</button><button class="btn btn-outline" onclick="openProject(\''+p.id+'\')">Open</button></div></div>';
+    }).join('');
+    if(rest.length) html+='<div class="sec-hdr">In Design</div>';
+  }
+  html+=rest.map(projCard).join('');
+  el.innerHTML=html;
 }
+function startReview(id){ var p=find(id); if(!p) return; p.status='draft'; save(p); openProject(id); }
 function newProject(){
   var p={ id:'sp'+Date.now(), client:'', site:'', contact:'', pm:'', division:'AllPro', status:'draft', createdAt:Date.now(),
     spec:{dims:'',grade:'304',gauge:'14 ga',finish:'#4 Brushed',weld:'TIG continuous',drains:'',backsplash:'',edges:'',hardware:'',nsf:'',notes:''},
@@ -131,6 +149,8 @@ function openProject(id){
     '<div><div class="page-title" style="font-size:24px">'+esc(p.client||'New Project')+'</div>'+
     '<div class="page-sub">'+esc(p.site||'')+'</div></div>'+
     '<span class="status '+(STATUS_CLS[p.status]||'s-draft')+'" style="align-self:center">'+(STATUS_LABEL[p.status]||'Draft')+'</span></div>'+
+
+    (p.source==='sales'?'<div class="card" style="border-color:#D8B4FE;background:#FAF5FF;margin-top:12px"><div class="card-hdr"><div><div class="card-title" style="color:var(--purple)">Sold by Sales</div><div class="card-meta">'+esc(p.jobType||'AllPro build')+' · estimated '+money(p.estimatedPrice)+(p.soldBy?' · '+esc(p.soldBy):'')+'</div></div></div>'+((p.scanUrls&&p.scanUrls.length)?'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'+p.scanUrls.map(function(u){ return '<img src="'+esc(u)+'" class="photo-thumb" onclick="window.open(\''+esc(u)+'\',\'_blank\')" style="cursor:pointer">'; }).join('')+'</div>':'')+'</div>':'')+
 
     '<div class="spec-grp"><h4>Project</h4>'+
     '<div class="fld"><label>Linked account</label><select id="f_acct" onchange="linkAccount()">'+acctOptions(p.accountId)+'</select>'+(p.accountId?'<div style="font-size:11px;color:var(--green);margin-top:4px">Linked. Specs, drawings, and documents stay with this account.</div>':'<div style="font-size:11px;color:var(--soft);margin-top:4px">Link to a CRM account so everything stores with the customer record.</div>')+'</div>'+
