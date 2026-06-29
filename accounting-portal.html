@@ -276,9 +276,49 @@ function setTab(t){ _tab=t; document.querySelectorAll('.tab-btn').forEach(functi
 function renderTab(){ ({overview:renderOverview,aging:renderAging,collections:renderCollections,payables:renderPayables,expenses:renderExpenses,cash:renderCash,margin:renderMargin,ai:renderAI}[_tab]||function(){})(); }
 
 /* ---------- overview ---------- */
+/* ---------- controller KPI strip ---------- */
+function kpiGM(start,end){
+  var rev=0; loadAR().forEach(function(i){ if(divMatch(i.division)&&i.date>=start&&i.date<=end) rev+=i.amount; });
+  var mat=window.TermacCOGS?TermacCOGS.materialByDivision(start,end):{};
+  var lab=window.TermacLabor?TermacLabor.byDivision(start,end):{};
+  var apc=apCOGSInPeriod(start,end)||{};
+  var cogs=0; DIVISIONS.forEach(function(d){ if(!divMatch(d))return; cogs+=(mat[d]||0)+(lab[d]||0)+(apc[d]||0); });
+  return rev>0?((rev-cogs)/rev*100):null;
+}
+function kpiStrip(){
+  var now=Date.now(), D=86400000, s90=now-90*D, s180=now-180*D;
+  var ar=loadAR().filter(function(i){ return divMatch(i.division); });
+  var openAR=0, curOpen=0;
+  ar.forEach(function(i){ if(fullyPaid(i)) return; var ob=openBal(i); openAR+=ob; if(ageStatus(i).tier==='current') curOpen+=ob; });
+  var billed90=0; ar.forEach(function(i){ if(i.date>=s90&&i.date<=now) billed90+=i.amount; });
+  var coll90=0; loadColls().forEach(function(c){ if(divMatch(normDiv(c.division)) && (Number(c.collectedAt)||0)>=s90) coll90+=Number(c.amount)||0; });
+
+  var dso=billed90>0?Math.round(openAR/(billed90/90)):null;
+  var pctCur=openAR>0?Math.round(curOpen/openAR*100):null;
+  var pctPast=pctCur==null?null:(100-pctCur);
+  var cer=billed90>0?Math.round(coll90/billed90*100):null;
+  var gmNow=kpiGM(s90,now), gmPrev=kpiGM(s180,s90);
+  var gmDelta=(gmNow!=null&&gmPrev!=null)?(gmNow-gmPrev):null;
+
+  function card(val,lbl,cls){ return '<div class="stat-card '+(cls||'')+'"><div class="stat-num">'+val+'</div><div class="stat-lbl">'+lbl+'</div></div>'; }
+  var dsoCls=dso==null?'':(dso<=35?'good':dso<=55?'warn':'alert');
+  var curCls=pctCur==null?'':(pctCur>=80?'good':pctCur>=60?'warn':'alert');
+  var cerCls=cer==null?'':(cer>=95?'good':cer>=80?'warn':'alert');
+  var gmCls=(gmNow==null||gmDelta==null)?'':(gmDelta>=0?'good':'warn');
+  var gmArrow=gmDelta==null?'':(gmDelta>=0?' \u25B2':' \u25BC');
+  var gmSub=gmDelta==null?'Gross Margin (90d)':'Gross Margin · '+(gmDelta>=0?'+':'')+gmDelta.toFixed(1)+' pts vs prior 90d';
+
+  return '<div class="sec-hdr">Controller KPIs</div><div class="stat-strip">'+
+    card(dso==null?'—':dso, 'DSO · days to collect (90d)', dsoCls)+
+    card(pctCur==null?'—':pctCur+'%', (pctPast==null?'AR current':'AR current · '+pctPast+'% past due'), curCls)+
+    card(cer==null?'—':cer+'%', 'Collected vs Billed (90d)', cerCls)+
+    card(gmNow==null?'—':gmNow.toFixed(1)+'%'+gmArrow, gmSub, gmCls)+
+    '</div><div class="muted" style="text-align:left;padding:6px 2px 12px">DSO is open AR divided by average daily billings over the last 90 days; lower is faster cash. Percent current is the share of open AR not yet past due. Collected vs billed compares the last 90 days of collections against what was billed. Gross margin is revenue minus material, labor, and cost-of-goods bills, with the change against the prior 90 days.</div>';
+}
 function renderOverview(){
   var R=rollup();
-  var h='<div class="sec-hdr">Division Rollup</div><table class="tbl"><thead><tr><th>Division</th><th class="num">Open AR</th><th class="num">Overdue</th><th class="num">Paid</th><th class="num">Collections</th><th class="num">AP Open</th><th class="num">Exp Pending</th></tr></thead><tbody>';
+  var h=kpiStrip();
+  h+='<div class="sec-hdr">Division Rollup</div><table class="tbl"><thead><tr><th>Division</th><th class="num">Open AR</th><th class="num">Overdue</th><th class="num">Paid</th><th class="num">Collections</th><th class="num">AP Open</th><th class="num">Exp Pending</th></tr></thead><tbody>';
   var tot={openAR:0,overdue:0,paid:0,coll:0,ap:0,exp:0};
   DIVISIONS.forEach(function(d){ if(!divMatch(d)) return; var r=R.rows[d];
     tot.openAR+=r.openAR;tot.overdue+=r.overdue;tot.paid+=r.paid;tot.coll+=r.coll;tot.ap+=r.ap;tot.exp+=r.exp;
