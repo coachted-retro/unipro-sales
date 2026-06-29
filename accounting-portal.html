@@ -340,12 +340,18 @@ function renderAging(){
     '<div class="stat-card warn"><div class="stat-num">'+money(buckets.watch)+'</div><div class="stat-lbl">30+ Days</div></div>'+
     '<div class="stat-card warn"><div class="stat-num">'+money(buckets.high)+'</div><div class="stat-lbl">60+ Days</div></div>'+
     '<div class="stat-card alert"><div class="stat-num">'+money(buckets.critical)+'</div><div class="stat-lbl">90+ Days</div></div></div>';
+  var _held=(window.TermacCredit?TermacCredit.list():[]);
+  if(_held.length){ h+='<div style="background:#FEF2F2;border:1px solid #FECACA;color:#991B1B;border-radius:8px;padding:8px 12px;margin:4px 0 10px;font-size:13px;font-weight:600">'+_held.length+' account'+(_held.length>1?'s':'')+' on credit hold: '+_held.map(function(r){return esc(r.name);}).join(', ')+'</div>'; }
   if(!ar.length){ h+='<div class="muted">No open invoices for this view. Everything is current or paid.</div>'; document.getElementById('tab-aging').innerHTML=h; return; }
   ar.forEach(function(i){ var st=ageStatus(i); var cls=st.tier==='critical'?'overdue':(st.tier==='high'||st.tier==='watch'?'warn':''); var partial=(i.paidApplied||0)>0;
-    h+='<div class="card '+cls+'"><div class="card-hdr"><div><div class="card-title">'+esc(i.account)+' <span class="divtag" style="background:'+DIV_COLOR[i.division]+'">'+esc(i.division)+'</span></div>'+
+    h+='<div class="card '+cls+'"><div class="card-hdr"><div><div class="card-title">'+esc(i.account)+(window.TermacCredit?TermacCredit.badgeHTML(i.account):'')+' <span class="divtag" style="background:'+DIV_COLOR[i.division]+'">'+esc(i.division)+'</span></div>'+
       '<div class="card-meta">'+esc(i.serviceType||'Service')+' · '+st.days+' days old'+(partial?' · '+money(i.paidApplied)+' of '+money(i.amount)+' collected':'')+(st.action?' · '+esc(st.action):'')+'</div></div>'+
       '<div style="text-align:right"><div class="card-amt">'+money(openBal(i))+'</div><span class="status '+st.cls+'">'+st.label+'</span></div></div>'+
-      '<div style="margin-top:10px;display:flex;gap:8px"><button class="btn btn-green" onclick="markPaid(\''+esc(i.id)+'\',\''+esc(i.source)+'\')">Mark Paid</button></div></div>';
+      '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-green" onclick="markPaid(\''+esc(i.id)+'\',\''+esc(i.source)+'\')">Mark Paid</button>'+
+      (window.TermacCredit?(TermacCredit.isHeld(i.account)
+        ? '<button class="btn" style="background:#64748b;color:#fff" onclick="acctHoldRelease(\''+esc(i.id)+'\')">Release Hold</button>'
+        : '<button class="btn" style="background:#B91C1C;color:#fff" onclick="acctHoldSet(\''+esc(i.id)+'\')">Credit Hold</button>'):'')+
+      '</div></div>';
   });
   document.getElementById('tab-aging').innerHTML=h;
 }
@@ -354,6 +360,8 @@ function markPaid(id, source){
   arr.forEach(function(r){ if((r.id||'')+''===id){ r.paymentStatus='paid'; r.invoicePaid=true; r.paid=true; hit=true; } });
   if(hit){ lsSet(source,arr); toast('Invoice marked paid.'); renderStats(); renderTab(); } else { toast('Could not locate that record.'); }
 }
+function acctHoldSet(invId){ var inv=loadAR().find(function(x){ return ((x.id||'')+'')===(invId+''); }); if(inv&&window.TermacCredit){ var st=ageStatus(inv); TermacCredit.setHold(inv.account, 'Past due, '+st.days+' days', 'Controller'); toast('Credit hold placed on '+inv.account+'.'); renderAging(); } }
+function acctHoldRelease(invId){ var inv=loadAR().find(function(x){ return ((x.id||'')+'')===(invId+''); }); if(inv&&window.TermacCredit){ TermacCredit.release(inv.account, 'Controller'); toast('Credit hold released for '+inv.account+'.'); renderAging(); } }
 
 /* ---------- collections + reconciliation ---------- */
 function normName(s){ return String(s==null?'':s).toLowerCase().replace(/[^a-z0-9]/g,''); }
@@ -705,6 +713,7 @@ renderDivBar(); renderStats(); renderTab();
 </script>
 <script src="termac-cogs.js"></script>
 <script src="termac-labor.js"></script>
+<script src="termac-credit.js"></script>
 <script src="termac-messaging.js"></script>
 </body>
 </html>
