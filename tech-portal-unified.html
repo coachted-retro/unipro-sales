@@ -1682,9 +1682,8 @@ function tfaClear(){TFA.history=[];var m=el('tfa-msgs');if(m)m.innerHTML='';var 
   if (window.__geoAssist) return; window.__geoAssist = true;
   var ROUTE_PROXY='https://ors-route-proxy.tedscholl.workers.dev';
   var RADIUS_MI=0.05;   // ~80m geofence
-  var ACC_OK_M=60;      // require a confirm tap if GPS is worse than this
-  var COUNTDOWN=15;     // seconds before auto-start when confident
-  var geo={}, watchId=null, armedId=null, prompted={}, cdTimer=null;
+  var ACC_OK_M=60;      // flag GPS as approximate above this (meters); tech always confirms address either way
+  var geo={}, watchId=null, armedId=null, _promptKey=null;
   try{ geo=JSON.parse(localStorage.getItem('termac_geocode_cache')||'{}'); }catch(e){ geo={}; }
   function saveGeo(){ try{ localStorage.setItem('termac_geocode_cache',JSON.stringify(geo)); }catch(e){} }
   function jobsKey(){ return (window.DIV&&DIV.jobsKey)||'unipro_jobs'; }
@@ -1703,37 +1702,48 @@ function tfaClear(){TFA.history=[];var m=el('tfa-msgs');if(m)m.innerHTML='';var 
   function nextJob(){ var js=openJobs(); js.sort(function(a,b){ return String(a.time||'').localeCompare(String(b.time||'')); }); return js[0]||null; }
   function ind(txt,on){ var el=document.getElementById('geoAssistInd'); if(el) el.innerHTML=(on?'🟢 ':'⚪ ')+txt; }
   function arm(){ var nj=nextJob(); armedId=nj?nj.id:null; if(nj){ geocode(nj.address); ind('Auto-arrival on · next: '+nameOf(nj),true); } else ind('No more stops today',false); }
-  function onPos(pos){
-    if(inProgress()) { ind('On job · timing in progress',true); return; }
-    if(!armedId) arm();
-    var nj=loadJobs().find(function(j){return j.id===armedId;}); if(!nj||!nj.address) return;
-    var coords=geo[nj.address]; if(!coords){ geocode(nj.address); return; }
-    var here=[pos.coords.latitude,pos.coords.longitude];
-    if(haversine(here,coords)>RADIUS_MI) return;
-    if(prompted[armedId]) return;
-    var poor=(pos.coords.accuracy||999)>ACC_OK_M;
-    var nearby=openJobs().filter(function(j){ var c=geo[j.address]; return c&&haversine(here,c)<=RADIUS_MI; }).length;
-    showPrompt(nj, poor||nearby>1);
+  function nearbyJobs(here){
+    return openJobs().map(function(j){ var c=geo[j.address]; return c?{job:j,d:haversine(here,c)}:null; })
+      .filter(function(x){ return x && x.d<=RADIUS_MI; })
+      .sort(function(a,b){ return a.d-b.d; });
   }
-  function showPrompt(job, requireTap){
-    if(document.getElementById('geoArrivePrompt')) return;
-    prompted[job.id]=true;
-    var nm=nameOf(job);
+  function onPos(pos){
+    if(inProgress()){ ind('On job · timing in progress',true); dismiss(); return; }
+    if(!armedId) arm();
+    var here=[pos.coords.latitude,pos.coords.longitude];
+    openJobs().forEach(function(j){ if(!geo[j.address]) geocode(j.address); }); // warm cache for nearby checks
+    var near=nearbyJobs(here);
+    if(!near.length){ if(_promptKey) dismiss(); return; }
+    var key=near.map(function(x){return x.job.id;}).join(',');
+    if(key===_promptKey) return;            // already showing this exact set
+    showPrompt(near, pos.coords.accuracy||999);
+  }
+  function showPrompt(near, accuracy){
+    _promptKey=near.map(function(x){return x.job.id;}).join(',');
+    var ex=document.getElementById('geoArrivePrompt'); if(ex) ex.remove();
+    var multi=near.length>1;
+    var head=multi
+      ? '📍 You\'re near '+near.length+' of your stops. Confirm which address you\'re actually at.'
+      : '📍 Confirm you\'re at this address to start the job.';
+    var acc=(accuracy>ACC_OK_M)?'<div style="font-size:11px;color:#FCA5A5;margin-top:4px">GPS here is approximate. Pick the exact address.</div>':'';
+    var rows=near.map(function(x){ var j=x.job;
+      return '<button class="geoPick" data-id="'+escH(j.id)+'" style="display:block;width:100%;text-align:left;background:#13351F;border:1.5px solid #2C5E3D;border-radius:9px;padding:11px 13px;margin-bottom:8px;color:#fff;cursor:pointer;font-family:Barlow,sans-serif">'+
+        '<div style="font-weight:800;font-size:14px;font-family:Barlow Condensed,sans-serif">'+escH(nameOf(j))+'</div>'+
+        '<div style="font-size:12px;color:#A7F3D0;margin-top:2px">'+escH(j.address||'')+'</div>'+
+        '</button>';
+    }).join('');
     var bar=document.createElement('div'); bar.id='geoArrivePrompt';
-    bar.style.cssText='position:fixed;left:0;right:0;bottom:0;z-index:99999;background:#0F2A1A;color:#fff;padding:14px 16px;box-shadow:0 -4px 20px rgba(0,0,0,.4);font-family:Barlow,sans-serif';
-    var msg=requireTap?('📍 Looks like you\'re at <b>'+nm+'</b>. Confirm to start the job.')
-                      :('📍 You\'re at <b>'+nm+'</b>. Starting in <span id="geoCd">'+COUNTDOWN+'</span>s.');
-    bar.innerHTML='<div style="max-width:560px;margin:0 auto;display:flex;align-items:center;gap:12px;flex-wrap:wrap">'+
-      '<div style="flex:1;font-size:14px;min-width:180px">'+msg+'</div>'+
-      '<button id="geoStartBtn" style="background:#22C55E;color:#0F2A1A;border:none;border-radius:8px;padding:10px 16px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;cursor:pointer">Start now</button>'+
-      '<button id="geoNotYet" style="background:transparent;color:#fff;border:1.5px solid rgba(255,255,255,.3);border-radius:8px;padding:10px 16px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;cursor:pointer">Not yet</button>'+
+    bar.style.cssText='position:fixed;left:0;right:0;bottom:0;z-index:99999;background:#0F2A1A;color:#fff;padding:14px 16px 16px;box-shadow:0 -4px 24px rgba(0,0,0,.45);font-family:Barlow,sans-serif;max-height:70vh;overflow-y:auto';
+    bar.innerHTML='<div style="max-width:560px;margin:0 auto">'+
+      '<div style="font-size:14px;margin-bottom:10px">'+head+acc+'</div>'+
+      rows+
+      '<button id="geoNotYet" style="width:100%;background:transparent;color:#fff;border:1.5px solid rgba(255,255,255,.3);border-radius:9px;padding:10px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;cursor:pointer;margin-top:2px">None of these / not yet</button>'+
       '</div>';
     document.body.appendChild(bar);
-    document.getElementById('geoStartBtn').onclick=function(){ doStart(job.id); };
+    Array.prototype.forEach.call(bar.querySelectorAll('.geoPick'),function(btn){ btn.onclick=function(){ doStart(btn.getAttribute('data-id')); }; });
     document.getElementById('geoNotYet').onclick=function(){ dismiss(); };
-    if(!requireTap){ var n=COUNTDOWN; cdTimer=setInterval(function(){ n--; var cd=document.getElementById('geoCd'); if(cd)cd.textContent=n; if(n<=0) doStart(job.id); },1000); }
   }
-  function dismiss(){ if(cdTimer){clearInterval(cdTimer);cdTimer=null;} var b=document.getElementById('geoArrivePrompt'); if(b)b.remove(); }
+  function dismiss(){ _promptKey=null; var b=document.getElementById('geoArrivePrompt'); if(b)b.remove(); }
   function doStart(id){
     dismiss(); if(inProgress()) return;
     if(typeof window.arriveJob==='function'){ window.arriveJob(id); }  // existing: rep notification + onSiteStart stamp
