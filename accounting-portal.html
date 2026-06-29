@@ -514,6 +514,7 @@ function apCOGSInPeriod(start,end){
 function renderMargin(){
   var rng=marginRange(_marginPeriod), start=rng[0], end=rng[1];
   var mat = (window.TermacCOGS ? window.TermacCOGS.materialByDivision(start,end) : {});
+  var lab = (window.TermacLabor ? window.TermacLabor.byDivision(start,end) : {});
   var apc = apCOGSInPeriod(start,end);
   var ar = loadAR();
   var rev={}; DIVISIONS.forEach(function(d){ rev[d]=0; });
@@ -523,24 +524,24 @@ function renderMargin(){
   var pbtns=periods.map(function(p){ var on=_marginPeriod===p[0]; return '<button onclick="setMarginPeriod(\''+p[0]+'\')" class="div-pill '+(on?'active':'')+'">'+p[1]+'</button>'; }).join('');
 
   var rows=DIVISIONS.filter(function(d){ return divMatch(d); });
-  var tot={rev:0,mat:0,ap:0};
+  var tot={rev:0,mat:0,lab:0,ap:0};
   var bodyRows = rows.map(function(d){
-    var r=rev[d]||0, mc=mat[d]||0, ac=apc[d]||0, cogs=mc+ac, gp=r-cogs, gm=r?gp/r*100:0;
-    tot.rev+=r; tot.mat+=mc; tot.ap+=ac;
-    return '<tr><td><span class="divtag" style="background:'+DIV_COLOR[d]+'">'+esc(d)+'</span></td><td class="num">'+money(r)+'</td><td class="num">'+money(mc)+'</td><td class="num">'+money(ac)+'</td><td class="num">'+money(cogs)+'</td><td class="num" style="color:'+(gp>=0?'var(--green)':'var(--red)')+';font-weight:700">'+money(gp)+'</td><td class="num">'+(r?gm.toFixed(1)+'%':'—')+'</td></tr>';
+    var r=rev[d]||0, mc=mat[d]||0, lc=lab[d]||0, ac=apc[d]||0, cogs=mc+lc+ac, gp=r-cogs, gm=r?gp/r*100:0;
+    tot.rev+=r; tot.mat+=mc; tot.lab+=lc; tot.ap+=ac;
+    return '<tr><td><span class="divtag" style="background:'+DIV_COLOR[d]+'">'+esc(d)+'</span></td><td class="num">'+money(r)+'</td><td class="num">'+money(mc)+'</td><td class="num">'+money(lc)+'</td><td class="num">'+money(ac)+'</td><td class="num">'+money(cogs)+'</td><td class="num" style="color:'+(gp>=0?'var(--green)':'var(--red)')+';font-weight:700">'+money(gp)+'</td><td class="num">'+(r?gm.toFixed(1)+'%':'—')+'</td></tr>';
   }).join('');
-  var tcogs=tot.mat+tot.ap, tgp=tot.rev-tcogs, tgm=tot.rev?tgp/tot.rev*100:0;
+  var tcogs=tot.mat+tot.lab+tot.ap, tgp=tot.rev-tcogs, tgm=tot.rev?tgp/tot.rev*100:0;
 
   var h='<div class="divbar">'+pbtns+'</div>'+
-    '<div class="muted" style="text-align:left;padding:2px 2px 12px">'+marginPeriodLabel(_marginPeriod)+' &middot; gross margin by division. Material COGS is real warehouse consumption (kitting and use/deduct) valued at unit cost. AP COGS is cost-of-goods vendor bills in the period.</div>'+
+    '<div class="muted" style="text-align:left;padding:2px 2px 12px">'+marginPeriodLabel(_marginPeriod)+' &middot; gross margin by division. Material COGS is real warehouse consumption (kitting and use/deduct) valued at unit cost. Labor COGS is on-site time valued at each tech\'s HR rate plus burden, or the general default when a rate is not set. AP COGS is cost-of-goods vendor bills in the period.</div>'+
     '<div class="stat-strip">'+
     '<div class="stat-card"><div class="stat-num">'+money(tot.rev)+'</div><div class="stat-lbl">Revenue (billed)</div></div>'+
     '<div class="stat-card"><div class="stat-num">'+money(tcogs)+'</div><div class="stat-lbl">Total COGS</div></div>'+
     '<div class="stat-card good"><div class="stat-num">'+money(tgp)+'</div><div class="stat-lbl">Gross Profit</div></div>'+
     '<div class="stat-card"><div class="stat-num">'+(tot.rev?tgm.toFixed(1)+'%':'—')+'</div><div class="stat-lbl">Gross Margin</div></div></div>'+
-    '<table class="tbl"><thead><tr><th>Division</th><th class="num">Revenue</th><th class="num">Material COGS</th><th class="num">AP COGS</th><th class="num">Total COGS</th><th class="num">Gross Profit</th><th class="num">GP %</th></tr></thead><tbody>'+
+    '<table class="tbl"><thead><tr><th>Division</th><th class="num">Revenue</th><th class="num">Material COGS</th><th class="num">Labor COGS</th><th class="num">AP COGS</th><th class="num">Total COGS</th><th class="num">Gross Profit</th><th class="num">GP %</th></tr></thead><tbody>'+
     bodyRows+
-    '<tr class="total"><td>'+(_div==='all'?'All Divisions':esc(_div))+'</td><td class="num">'+money(tot.rev)+'</td><td class="num">'+money(tot.mat)+'</td><td class="num">'+money(tot.ap)+'</td><td class="num">'+money(tcogs)+'</td><td class="num">'+money(tgp)+'</td><td class="num">'+(tot.rev?tgm.toFixed(1)+'%':'—')+'</td></tr>'+
+    '<tr class="total"><td>'+(_div==='all'?'All Divisions':esc(_div))+'</td><td class="num">'+money(tot.rev)+'</td><td class="num">'+money(tot.mat)+'</td><td class="num">'+money(tot.lab)+'</td><td class="num">'+money(tot.ap)+'</td><td class="num">'+money(tcogs)+'</td><td class="num">'+money(tgp)+'</td><td class="num">'+(tot.rev?tgm.toFixed(1)+'%':'—')+'</td></tr>'+
     '</tbody></table>';
 
   // top consumed material lines
@@ -553,7 +554,7 @@ function renderMargin(){
       h+='</tbody></table>';
     }
   }
-  h+='<div class="muted" style="text-align:left;padding:10px 2px">Gross margin here is revenue minus material and cost-of-goods bills. It does not subtract labor or overhead; the full income statement with operating expenses lives in the management dashboard P&L report. Quality III material books under the shared UniPro warehouse.</div>';
+  h+='<div class="muted" style="text-align:left;padding:10px 2px">Gross margin here is revenue minus material, direct labor, and cost-of-goods bills. It does not subtract overhead; the full income statement with operating expenses lives in the management dashboard P&L report. Labor cost reflects jobs where on-site time was captured, and gets more exact as HR fills in each tech\'s rate. Quality III material books under the shared UniPro warehouse.</div>';
   document.getElementById('tab-margin').innerHTML=h;
 }
 
@@ -598,6 +599,7 @@ function aiCash(){
 renderDivBar(); renderStats(); renderTab();
 </script>
 <script src="termac-cogs.js"></script>
+<script src="termac-labor.js"></script>
 <script src="termac-messaging.js"></script>
 </body>
 </html>

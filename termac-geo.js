@@ -107,7 +107,7 @@
     function finalizeStop(id){
       if(!id) return;
       var arr=cfg.list(), it=null; for(var i=0;i<arr.length;i++){ if(cfg.idOf(arr[i])===id){ it=arr[i]; break; } }
-      if(it && it.onSiteStart && !it.onSiteEnd){ it.onSiteEnd=(cfg.endStamp?cfg.endStamp(it):0)||Date.now(); it.onSiteMinutes=Math.max(0,Math.round((it.onSiteEnd-it.onSiteStart)/60000)); try{ cfg.save(arr); }catch(e){} }
+      if(it && it.onSiteStart && !it.onSiteEnd){ it.onSiteEnd=(cfg.endStamp?cfg.endStamp(it):0)||Date.now(); it.onSiteMinutes=Math.max(0,Math.round((it.onSiteEnd-it.onSiteStart)/60000)); try{ cfg.save(arr); }catch(e){} if(typeof cfg.onComplete==='function'){ try{ cfg.onComplete(it, it.onSiteMinutes); }catch(e){} } }
       arm();
     }
     function wrapComplete(){
