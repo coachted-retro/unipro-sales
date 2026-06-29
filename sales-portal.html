@@ -992,6 +992,7 @@ function spRecordCard(r, tab) {
       <span class="sp-stage-pill" style="background:${stage.bg};color:${stage.color}">${stage.label}</span>
       <div class="sp-actions" onclick="event.stopPropagation()">
         <button class="sp-rec-btn" onclick="spEditRecord('${r.id}','${tab}')">Edit</button>
+        <button class="sp-rec-btn" onclick="spOpenCollectModal('${r.id}','${tab}')" style="background:#1E7B3C;color:#fff;border-color:#1E7B3C">💵 Pay</button>
         <select class="sp-stage-sel" onchange="spSetStage('${r.id}','${tab}',this.value,this)" title="Change stage" style="padding:4px 8px;border:1.5px solid var(--line);border-radius:5px;font-size:11px;font-family:'Barlow Condensed',sans-serif;font-weight:700;background:#fff;color:var(--ink);cursor:pointer">
           ${spStageOptions(r, tab)}
         </select>
@@ -1075,6 +1076,72 @@ function spShowDayAppts(d, yr, mo) {
     ${a.time ? ' · ' + escH(a.time) : ''}${a.address ? '<br>📍 '+escH(a.address) : ''}
     ${a.notes ? '<br><span style="color:var(--soft)">'+escH(a.notes)+'</span>' : ''}
   </div>`).join('');
+}
+
+function spCloseCollectModal(){ var m=document.getElementById('spCollectModal'); if(m) m.remove(); }
+function spCollectMethodToggle(){ var m=document.getElementById('colMethodField'), w=document.getElementById('colCheckWrap'); if(m&&w) w.style.display=(m.value==='check')?'block':'none'; }
+function spOpenCollectModal(accountId, tab){
+  var existing=null;
+  if(accountId){ var data=crmLoad('leads'); existing=data.find(function(x){ return x.id===accountId; }); }
+  var bizName = existing ? (existing.business||existing.name||'') : '';
+  var old=document.getElementById('spCollectModal'); if(old) old.remove();
+  var modal=document.createElement('div');
+  modal.id='spCollectModal';
+  modal.dataset.accountId=accountId||'';
+  modal.dataset.tab=tab||'contacts';
+  modal.dataset.division=(existing&&existing.division)||'';
+  modal.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:5000;display:flex;align-items:center;justify-content:center;padding:20px';
+  var L='font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#5A616B;display:block;margin-bottom:5px';
+  var F='width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 12px;font-family:Barlow,sans-serif;font-size:13px;outline:none;box-sizing:border-box';
+  modal.innerHTML='<div style="background:#fff;border-radius:14px;width:min(440px,96vw);box-shadow:0 16px 48px rgba(0,0,0,.3);overflow:hidden">'
+    +'<div style="background:#1A1D21;padding:16px 20px;display:flex;align-items:center;justify-content:space-between">'
+      +'<div><div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:16px;color:#fff;letter-spacing:.08em;text-transform:uppercase">\uD83D\uDCB5 Log Payment</div>'
+      +(bizName?'<div style="font-size:12px;color:#9CA3AF;margin-top:2px">'+escH(bizName)+'</div>':'')+'</div>'
+      +'<button onclick="spCloseCollectModal()" style="background:none;border:1.5px solid #3A3E43;border-radius:6px;color:#9CA3AF;padding:4px 10px;font-size:12px;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:700">\u2715</button>'
+    +'</div>'
+    +'<div style="padding:20px;display:flex;flex-direction:column;gap:14px">'
+      +'<div><label style="'+L+'">Account / Business</label><input id="colBizField" value="'+escH(bizName)+'" placeholder="Business name..." style="'+F+'"></div>'
+      +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'
+        +'<div><label style="'+L+'">Amount *</label><input type="number" step="0.01" min="0" id="colAmtField" placeholder="0.00" style="'+F+'"></div>'
+        +'<div><label style="'+L+'">Method</label><select id="colMethodField" onchange="spCollectMethodToggle()" style="'+F+'"><option value="cash">Cash</option><option value="check">Check</option></select></div>'
+      +'</div>'
+      +'<div id="colCheckWrap" style="display:none"><label style="'+L+'">Check Number</label><input id="colCheckField" placeholder="e.g. 1042" style="'+F+'"></div>'
+      +'<div><label style="'+L+'">Invoice # (optional)</label><input id="colInvField" placeholder="If known" style="'+F+'"></div>'
+      +'<div><label style="'+L+'">Notes (optional)</label><textarea id="colNotesField" rows="2" placeholder="Anything to note for the office..." style="'+F+';resize:none"></textarea></div>'
+      +'<div style="display:flex;gap:10px;justify-content:flex-end">'
+        +'<button onclick="spCloseCollectModal()" style="background:#F3F4F6;color:#6B7280;border:none;border-radius:8px;padding:9px 18px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;cursor:pointer;letter-spacing:.06em;text-transform:uppercase">Cancel</button>'
+        +'<button onclick="spSaveCollection()" style="background:#1E7B3C;color:#fff;border:none;border-radius:8px;padding:9px 18px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;cursor:pointer;letter-spacing:.06em;text-transform:uppercase">\uD83D\uDCB5 Save Payment</button>'
+      +'</div>'
+    +'</div>'
+  +'</div>';
+  document.body.appendChild(modal);
+  setTimeout(function(){ try{ document.getElementById('colAmtField').focus(); }catch(e){} },60);
+}
+function spSaveCollection(){
+  var modal=document.getElementById('spCollectModal'); if(!modal) return;
+  var biz=(document.getElementById('colBizField')?.value||'').trim();
+  var amt=parseFloat(document.getElementById('colAmtField')?.value||0)||0;
+  var method=document.getElementById('colMethodField')?.value||'cash';
+  var checkNum=(document.getElementById('colCheckField')?.value||'').trim();
+  var invNum=(document.getElementById('colInvField')?.value||'').trim();
+  var notes=(document.getElementById('colNotesField')?.value||'').trim();
+  if(!biz){ alert('Enter the account or business name.'); return; }
+  if(!(amt>0)){ alert('Enter the amount collected.'); return; }
+  if(method==='check' && !checkNum){ alert('Enter the check number.'); return; }
+  var rep=(typeof _spRep!=='undefined' && _spRep && _spRep.name) ? _spRep.name : 'Rep';
+  var colls=[]; try{ colls=JSON.parse(localStorage.getItem('termac_collections')||'[]'); }catch(e){}
+  colls.unshift({
+    id:'col_'+Date.now(), collectedBy:rep,
+    accountName:biz, division:(modal.dataset.division||''), amount:amt, method:method,
+    checkNum:checkNum, payableTo:'Termac', invoiceNum:invNum,
+    notes:notes||'Collected by sales rep', photoData:null,
+    status:'collected', collectedAt:Date.now(),
+    collectedDate:new Date().toLocaleDateString('en-US'),
+    history:[{ts:Date.now(),action:'Logged from sales portal',by:rep}]
+  });
+  try{ localStorage.setItem('termac_collections', JSON.stringify(colls)); }catch(e){}
+  spCloseCollectModal();
+  if(typeof spToast==='function') spToast('\uD83D\uDCB5 Payment logged \u2014 turn in to the office within 48h');
 }
 
 function spOpenApptModal(accountId, tab) {
