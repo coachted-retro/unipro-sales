@@ -206,7 +206,7 @@ function loadAR(){
         var d=normDiv(r.division)||div;
         out.push({
           id:id, division:d, account:acctOf(r), amount:amt,
-          date:dateMs(r), paid:isPaid(r),
+          date:dateMs(r), paid:isPaid(r), paidApplied:Number(r.paidApplied||0),
           serviceType:r.serviceType||r.service||'', source:key
         });
       });
@@ -228,13 +228,17 @@ function loadAP(){ return lsGet(AP_KEY); }
 function loadColls(){ return lsGet(COLL_KEY); }
 function loadExpenses(){ return lsGet(EXP_KEY); }
 
+/* open balance after any partial collections already applied */
+function openBal(i){ if(i.paid) return 0; return Math.max(0, i.amount-(i.paidApplied||0)); }
+function fullyPaid(i){ return i.paid || (i.paidApplied||0) >= i.amount-0.01; }
+
 function divMatch(d){ return _div==='all' || d===_div; }
 
 /* ---------- rollup ---------- */
 function rollup(){
   var ar=loadAR(), coll=loadColls(), ap=loadAP(), exp=loadExpenses();
   var rows={}; DIVISIONS.forEach(function(d){ rows[d]={div:d,openAR:0,overdue:0,paid:0,coll:0,ap:0,exp:0}; });
-  ar.forEach(function(i){ var r=rows[i.division]; if(!r) return; if(i.paid){ r.paid+=i.amount; } else { r.openAR+=i.amount; var st=ageStatus(i); if(st.tier!=='current') r.overdue+=i.amount; } });
+  ar.forEach(function(i){ var r=rows[i.division]; if(!r) return; if(fullyPaid(i)){ r.paid+=i.amount; } else { var ob=openBal(i); r.openAR+=ob; var st=ageStatus(i); if(st.tier!=='current') r.overdue+=ob; } });
   coll.forEach(function(c){ var d=normDiv(c.division); if(d&&rows[d]) rows[d].coll+=Number(c.amount)||0; });
   ap.forEach(function(b){ var d=normDiv(b.division); if(d&&rows[d]&&b.status!=='paid') rows[d].ap+=Number(b.amount)||0; });
   exp.forEach(function(e){ var d=normDiv(e.division); if(d&&rows[d]&&e.status!=='approved') rows[d].exp+=Number(e.total||e.amount)||0; });
@@ -253,7 +257,7 @@ function renderStats(){
     card(money(collTot),'Collections Logged','good') +
     card(money(net), net>=0?'Net Position':'Net Shortfall', net>=0?'good':'alert');
   function card(num,lbl,cls){ return '<div class="stat-card '+cls+'"><div class="stat-num">'+num+'</div><div class="stat-lbl">'+lbl+'</div></div>'; }
-  var ag=R.ar.filter(function(i){ return !i.paid && ageStatus(i).tier!=='current' && divMatch(i.division); }).length;
+  var ag=R.ar.filter(function(i){ return !fullyPaid(i) && ageStatus(i).tier!=='current' && divMatch(i.division); }).length;
   var b=document.getElementById('bAging'); if(ag>0){ b.textContent=ag; b.style.display=''; } else b.style.display='none';
 }
 
@@ -285,20 +289,20 @@ function renderOverview(){
 
 /* ---------- AR aging ---------- */
 function renderAging(){
-  var ar=loadAR().filter(function(i){ return !i.paid && divMatch(i.division); });
+  var ar=loadAR().filter(function(i){ return !fullyPaid(i) && divMatch(i.division); });
   ar.sort(function(a,b){ return a.date-b.date; });
   var buckets={current:0,watch:0,high:0,critical:0};
-  ar.forEach(function(i){ buckets[ageStatus(i).tier]+=i.amount; });
+  ar.forEach(function(i){ buckets[ageStatus(i).tier]+=openBal(i); });
   var h='<div class="stat-strip">'+
     '<div class="stat-card good"><div class="stat-num">'+money(buckets.current)+'</div><div class="stat-lbl">Current</div></div>'+
     '<div class="stat-card warn"><div class="stat-num">'+money(buckets.watch)+'</div><div class="stat-lbl">30+ Days</div></div>'+
     '<div class="stat-card warn"><div class="stat-num">'+money(buckets.high)+'</div><div class="stat-lbl">60+ Days</div></div>'+
     '<div class="stat-card alert"><div class="stat-num">'+money(buckets.critical)+'</div><div class="stat-lbl">90+ Days</div></div></div>';
-  if(!ar.length){ h+='<div class="muted">No open invoices for this view. Everything current is paid.</div>'; document.getElementById('tab-aging').innerHTML=h; return; }
-  ar.forEach(function(i){ var st=ageStatus(i); var cls=st.tier==='critical'?'overdue':(st.tier==='high'||st.tier==='watch'?'warn':'');
+  if(!ar.length){ h+='<div class="muted">No open invoices for this view. Everything is current or paid.</div>'; document.getElementById('tab-aging').innerHTML=h; return; }
+  ar.forEach(function(i){ var st=ageStatus(i); var cls=st.tier==='critical'?'overdue':(st.tier==='high'||st.tier==='watch'?'warn':''); var partial=(i.paidApplied||0)>0;
     h+='<div class="card '+cls+'"><div class="card-hdr"><div><div class="card-title">'+esc(i.account)+' <span class="divtag" style="background:'+DIV_COLOR[i.division]+'">'+esc(i.division)+'</span></div>'+
-      '<div class="card-meta">'+esc(i.serviceType||'Service')+' · '+st.days+' days old'+(st.action?' · '+esc(st.action):'')+'</div></div>'+
-      '<div style="text-align:right"><div class="card-amt">'+money(i.amount)+'</div><span class="status '+st.cls+'">'+st.label+'</span></div></div>'+
+      '<div class="card-meta">'+esc(i.serviceType||'Service')+' · '+st.days+' days old'+(partial?' · '+money(i.paidApplied)+' of '+money(i.amount)+' collected':'')+(st.action?' · '+esc(st.action):'')+'</div></div>'+
+      '<div style="text-align:right"><div class="card-amt">'+money(openBal(i))+'</div><span class="status '+st.cls+'">'+st.label+'</span></div></div>'+
       '<div style="margin-top:10px;display:flex;gap:8px"><button class="btn btn-green" onclick="markPaid(\''+esc(i.id)+'\',\''+esc(i.source)+'\')">Mark Paid</button></div></div>';
   });
   document.getElementById('tab-aging').innerHTML=h;
@@ -309,18 +313,99 @@ function markPaid(id, source){
   if(hit){ lsSet(source,arr); toast('Invoice marked paid.'); renderStats(); renderTab(); } else { toast('Could not locate that record.'); }
 }
 
-/* ---------- collections ---------- */
+/* ---------- collections + reconciliation ---------- */
+function normName(s){ return String(s==null?'':s).toLowerCase().replace(/[^a-z0-9]/g,''); }
+
+/* find the best open invoice a collection clears */
+function findMatch(coll){
+  var cd=normDiv(coll.division);
+  var cands=loadAR().filter(function(i){ return !fullyPaid(i) && (!cd || i.division===cd); });
+  var cn=normName(coll.accountName), inv=normName(coll.invoiceNum), best=null, bestScore=0;
+  cands.forEach(function(i){
+    var score=0, ob=openBal(i), iname=normName(i.account), iid=normName(i.id);
+    if(inv && iid && (iid===inv || iid.indexOf(inv)>-1 || inv.indexOf(iid)>-1)) score+=100;
+    if(cn && iname){ if(cn===iname) score+=50; else if(iname.indexOf(cn)>-1||cn.indexOf(iname)>-1) score+=25; }
+    if(Math.abs((coll.amount||0)-ob)<0.5) score+=30; else if((coll.amount||0)<ob) score+=8;
+    if(score>bestScore){ bestScore=score; best=i; }
+  });
+  if(!best||bestScore<25) return null;
+  var ob=openBal(best);
+  var mode = Math.abs((coll.amount||0)-ob)<0.5 ? 'full' : ((coll.amount||0)<ob ? 'partial' : 'full');
+  return {inv:best, score:bestScore, mode:mode, openBal:ob};
+}
+
+function reconcileBest(collId, forceMode){
+  var colls=loadColls(), coll=null; colls.forEach(function(c){ if(c.id===collId) coll=c; });
+  if(!coll){ toast('Collection not found.'); return; }
+  var m=findMatch(coll); if(!m){ toast('No open invoice matched.'); return; }
+  applyReconcile(coll, m.inv.id, m.inv.source, coll.amount||0, (forceMode||m.mode)==='full');
+}
+
+function applyReconcile(coll, invId, source, applied, full){
+  var arr=lsGet(source), rec=null; arr.forEach(function(r){ if((r.id||'')+''===(invId+'')) rec=r; });
+  if(!rec){ toast('Invoice record not found.'); return; }
+  var amt=amtOf(rec), cur=Number(rec.paidApplied||0), next=cur+applied;
+  if(full || next>=amt-0.01){ rec.paymentStatus='paid'; rec.invoicePaid=true; rec.paid=true; rec.paidApplied=amt; }
+  else { rec.paidApplied=next; }
+  lsSet(source,arr);
+  var colls=loadColls(); colls.forEach(function(c){ if(c.id===coll.id){ c.reconciledInvoiceId=invId; c.reconciledSource=source; c.reconciledApplied=applied; c.reconciledAt=Date.now(); c.status='posted'; } });
+  lsSet(COLL_KEY,colls);
+  toast(full?'Invoice cleared and marked paid.':'Partial '+money(applied)+' applied.');
+  renderStats(); renderTab();
+}
+
+function unlinkColl(collId){
+  var colls=loadColls(), coll=null; colls.forEach(function(c){ if(c.id===collId) coll=c; });
+  if(!coll||!coll.reconciledInvoiceId||coll.reconciledInvoiceId==='none') { clearReview(collId); return; }
+  var arr=lsGet(coll.reconciledSource), rec=null; arr.forEach(function(r){ if((r.id||'')+''===(coll.reconciledInvoiceId+'')) rec=r; });
+  if(rec){ var amt=amtOf(rec); var back=Math.max(0,(Number(rec.paidApplied||0))-(coll.reconciledApplied||amt)); rec.paidApplied=back; if(back<amt-0.01){ rec.paymentStatus='unpaid'; rec.invoicePaid=false; rec.paid=false; } lsSet(coll.reconciledSource,arr); }
+  coll.reconciledInvoiceId=null; coll.reconciledSource=null; coll.reconciledApplied=null; coll.reconciledAt=null; coll.status='collected';
+  lsSet(COLL_KEY,colls); toast('Reconciliation reversed.'); renderStats(); renderTab();
+}
+function dismissColl(collId){ var colls=loadColls(); colls.forEach(function(c){ if(c.id===collId){ c.reconciledInvoiceId='none'; c.reconciledAt=Date.now(); } }); lsSet(COLL_KEY,colls); renderStats(); renderTab(); }
+function clearReview(collId){ var colls=loadColls(); colls.forEach(function(c){ if(c.id===collId){ c.reconciledInvoiceId=null; c.reconciledAt=null; } }); lsSet(COLL_KEY,colls); renderStats(); renderTab(); }
+
 function renderCollections(){
   var c=loadColls().filter(function(x){ return divMatch(normDiv(x.division)); });
   c.sort(function(a,b){ return (b.collectedAt||0)-(a.collectedAt||0); });
-  var h='<div class="sec-hdr">Cash & Check Turn-ins</div>';
-  if(!c.length){ h+='<div class="muted">No collections logged for this view. Reps and techs log turn-ins from the Collections Queue.</div>'; }
-  c.forEach(function(x){ var d=normDiv(x.division);
-    h+='<div class="card"><div class="card-hdr"><div><div class="card-title">'+esc(x.accountName||'Account')+(d?' <span class="divtag" style="background:'+DIV_COLOR[d]+'">'+esc(d)+'</span>':'')+'</div>'+
+  var unrec=c.filter(function(x){ return !x.reconciledInvoiceId; });
+  var done=c.filter(function(x){ return x.reconciledInvoiceId; });
+  var unrecTot=unrec.reduce(function(s,x){return s+(Number(x.amount)||0);},0);
+  var doneTot=done.filter(function(x){return x.reconciledInvoiceId!=='none';}).reduce(function(s,x){return s+(Number(x.reconciledApplied||x.amount)||0);},0);
+  var h='<div class="stat-strip">'+
+    '<div class="stat-card '+(unrec.length?'alert':'')+'"><div class="stat-num">'+money(unrecTot)+'</div><div class="stat-lbl">Unreconciled ('+unrec.length+')</div></div>'+
+    '<div class="stat-card good"><div class="stat-num">'+money(doneTot)+'</div><div class="stat-lbl">Reconciled to AR</div></div></div>';
+  h+='<div class="muted" style="text-align:left;padding:6px 2px 14px">Cash and check turn-ins from techs and reps. Match each one to its open invoice to clear it from AR. Card payments will auto-reconcile at go-live through Square and Power Automate; until then this is cash and check.</div>';
+
+  h+='<div class="sec-hdr">Needs Reconciling</div>';
+  if(!unrec.length){ h+='<div class="muted">Nothing waiting. Every turn-in for this view is matched.</div>'; }
+  unrec.forEach(function(x){ var d=normDiv(x.division); var m=findMatch(x);
+    h+='<div class="card '+(m?'':'warn')+'"><div class="card-hdr"><div><div class="card-title">'+esc(x.accountName||'Account')+(d?' <span class="divtag" style="background:'+DIV_COLOR[d]+'">'+esc(d)+'</span>':'')+'</div>'+
       '<div class="card-meta">'+esc((x.method||'').toUpperCase())+(x.checkNum?' #'+esc(x.checkNum):'')+' · by '+esc(x.collectedBy||'?')+' · '+esc(x.collectedDate||'')+(x.invoiceNum?' · inv '+esc(x.invoiceNum):'')+'</div></div>'+
-      '<div style="text-align:right"><div class="card-amt" style="color:var(--green)">'+money(x.amount)+'</div><span class="status s-open">'+esc((x.status||'collected').toUpperCase())+'</span></div></div></div>';
+      '<div style="text-align:right"><div class="card-amt" style="color:var(--green)">'+money(x.amount)+'</div></div></div>';
+    if(m){ var full=m.mode==='full';
+      h+='<div style="margin-top:8px;font-size:12px;background:#F1F5F9;border-radius:7px;padding:8px 10px">Suggested match: <strong>'+esc(m.inv.account)+'</strong> · open '+money(m.openBal)+(full?' · amounts match':' · partial payment toward balance')+'</div>'+
+        '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">'+
+        (full?'<button class="btn btn-green" onclick="reconcileBest(\''+esc(x.id)+'\')">Clear invoice (mark paid)</button>'
+             :'<button class="btn btn-blue" onclick="reconcileBest(\''+esc(x.id)+'\',\'partial\')">Apply '+money(x.amount)+' partial</button><button class="btn btn-green" onclick="reconcileBest(\''+esc(x.id)+'\',\'full\')">Settle full</button>')+
+        '<button class="btn btn-outline" onclick="dismissColl(\''+esc(x.id)+'\')">No match</button></div>';
+    } else {
+      h+='<div style="margin-top:8px;font-size:12px;color:var(--soft)">No open invoice matched by name or amount. Review in the Collections Queue, or dismiss.</div>'+
+        '<div style="margin-top:8px"><button class="btn btn-outline" onclick="dismissColl(\''+esc(x.id)+'\')">Dismiss</button></div>';
+    }
+    h+='</div>';
   });
-  h+='<a class="btn btn-blue" href="collections-portal.html" style="display:inline-block;text-decoration:none;margin-top:6px">Open Collections Queue</a>';
+
+  h+='<div class="sec-hdr">Reconciled</div>';
+  if(!done.length){ h+='<div class="muted">Nothing reconciled yet.</div>'; }
+  done.forEach(function(x){ var d=normDiv(x.division); var none=x.reconciledInvoiceId==='none';
+    h+='<div class="card"><div class="card-hdr"><div><div class="card-title">'+esc(x.accountName||'Account')+(d?' <span class="divtag" style="background:'+DIV_COLOR[d]+'">'+esc(d)+'</span>':'')+'</div>'+
+      '<div class="card-meta">'+esc((x.method||'').toUpperCase())+' · '+(none?'marked no match':'applied to invoice '+esc(x.reconciledInvoiceId))+'</div></div>'+
+      '<div style="text-align:right"><div class="card-amt" style="color:var(--green)">'+money(x.reconciledApplied||x.amount)+'</div><span class="status s-paid">'+(none?'REVIEWED':'POSTED')+'</span></div></div>'+
+      '<div style="margin-top:8px"><button class="btn btn-outline" onclick="unlinkColl(\''+esc(x.id)+'\')">'+(none?'Undo':'Unlink')+'</button></div></div>';
+  });
+
+  h+='<a class="btn btn-blue" href="collections-portal.html" style="display:inline-block;text-decoration:none;margin-top:12px">Open Collections Queue</a>';
   document.getElementById('tab-collections').innerHTML=h;
 }
 
@@ -373,16 +458,16 @@ function renderExpenses(){
 
 /* ---------- cash position ---------- */
 function renderCash(){
-  var ar=loadAR().filter(function(i){ return !i.paid && divMatch(i.division); });
+  var ar=loadAR().filter(function(i){ return !fullyPaid(i) && divMatch(i.division); });
   var ap=loadAP().filter(function(b){ return b.status!=='paid' && divMatch(normDiv(b.division)); });
   // AR inflow buckets by age (older = less likely / at risk)
   var inflow={d30:0,d60:0,d90:0,risk:0};
-  ar.forEach(function(i){ var st=ageStatus(i); if(st.tier==='current')inflow.d30+=i.amount; else if(st.tier==='watch')inflow.d30+=i.amount; else if(st.tier==='high')inflow.d60+=i.amount; else inflow.risk+=i.amount; });
+  ar.forEach(function(i){ var st=ageStatus(i), ob=openBal(i); if(st.tier==='current')inflow.d30+=ob; else if(st.tier==='watch')inflow.d30+=ob; else if(st.tier==='high')inflow.d60+=ob; else inflow.risk+=ob; });
   // AP outflow by due window
   var out={d30:0,d60:0,d90:0,overdue:0}, now=Date.now();
   ap.forEach(function(b){ var due=Date.parse(b.dueDate)||now, dd=Math.floor((due-now)/86400000), a=Number(b.amount)||0; if(dd<0)out.overdue+=a; else if(dd<=30)out.d30+=a; else if(dd<=60)out.d60+=a; else out.d90+=a; });
   var net30=(inflow.d30)-(out.overdue+out.d30);
-  var openAR=ar.reduce(function(s,i){return s+i.amount;},0);
+  var openAR=ar.reduce(function(s,i){return s+openBal(i);},0);
   var openAP=ap.reduce(function(s,b){return s+(Number(b.amount)||0);},0);
   var h='<div class="stat-strip">'+
     '<div class="stat-card"><div class="stat-num">'+money(openAR)+'</div><div class="stat-lbl">Total Open AR</div></div>'+
@@ -409,10 +494,10 @@ function renderAI(){
 }
 function arSummaryForAI(){
   var ar=loadAR().filter(function(i){ return divMatch(i.division); });
-  var open=ar.filter(function(i){return !i.paid;});
-  var lines=open.map(function(i){ var st=ageStatus(i); return i.account+' ('+i.division+'): '+money(i.amount)+', '+st.days+'d, '+st.label; });
+  var open=ar.filter(function(i){return !fullyPaid(i);});
+  var lines=open.map(function(i){ var st=ageStatus(i); return i.account+' ('+i.division+'): '+money(openBal(i))+', '+st.days+'d, '+st.label; });
   var apOpen=loadAP().filter(function(b){return b.status!=='paid'&&divMatch(normDiv(b.division));}).reduce(function(s,b){return s+(Number(b.amount)||0);},0);
-  return { count:open.length, total:open.reduce(function(s,i){return s+i.amount;},0), apOpen:apOpen, lines:lines.slice(0,40) };
+  return { count:open.length, total:open.reduce(function(s,i){return s+openBal(i);},0), apOpen:apOpen, lines:lines.slice(0,40) };
 }
 async function callAI(prompt){
   var out=document.getElementById('aiOut'); out.textContent='Thinking...';
