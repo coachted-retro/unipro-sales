@@ -889,6 +889,30 @@ function completeDelivery() {
 
   saveOrders(all);
 
+  // Field-cash loop: cash taken on delivery posts to collections so the
+  // Accounting Office reconciles it to the invoice and the driver is on the
+  // hook to turn it in. Mirrors the tech-portal collection record shape.
+  if (all[idx].payMethod === 'cash') {
+    try {
+      var _camt = Number(all[idx].total || all[idx].revenue || 0);
+      if (!(_camt > 0)) _camt = parseFloat(document.getElementById('cashReceived')?.value || 0) || 0;
+      if (_camt > 0) {
+        var _colls = JSON.parse(localStorage.getItem('termac_collections') || '[]');
+        _colls.unshift({
+          id:'col_'+Date.now(), collectedBy:_driver||'Driver',
+          accountName: all[idx].accountName || 'Account',
+          division: all[idx].division || 'Termac', amount:_camt, method:'cash',
+          checkNum:'', payableTo:'Termac', invoiceNum: all[idx].invoiceNum || '',
+          notes:'Cash collected on delivery', photoData:null,
+          status:'collected', collectedAt:Date.now(),
+          collectedDate:new Date().toLocaleDateString('en-US'),
+          history:[{ts:Date.now(),action:'Collected on delivery',by:_driver||'Driver'}]
+        });
+        localStorage.setItem('termac_collections', JSON.stringify(_colls));
+      }
+    } catch(e){}
+  }
+
   // Refresh today's orders
   _todayOrders = all.filter(o =>
     o.deliveryDate === todayStr() &&
