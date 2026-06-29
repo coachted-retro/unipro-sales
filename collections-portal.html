@@ -90,15 +90,15 @@ input:focus,select:focus{border-color:var(--red)}
 <nav class="nav">
   <div class="nav-logo">TERMAC ONE</div>
   <div class="nav-sep"></div>
-  <div class="nav-title">💵 Collections Queue</div>
+  <div class="nav-title">💵 Collections — Turn-Ins &amp; Custody</div>
   <a href="office-portal.html" class="nav-back">← Office Portal</a>
 </nav>
 
 <div class="wrap">
   <div class="page-hdr">
     <div>
-      <div class="page-title">💵 Collections Queue</div>
-      <div class="page-sub">Cash &amp; check collections from reps and techs — Catherine Sullivan, Controller</div>
+      <div class="page-title">💵 Collections — Turn-Ins &amp; Custody</div>
+      <div class="page-sub">Cash and check turn-ins from reps, techs, and drivers. Track receipt, post to accounts, and flag late turn-ins. Reconciling collections to AR happens in the Accounting Office.</div>
     </div>
     <button class="btn btn-green" onclick="openLogModal()">+ Log Collection</button>
   </div>
@@ -122,6 +122,8 @@ input:focus,select:focus{border-color:var(--red)}
       <div class="stat-lbl">Posted This Month</div>
     </div>
   </div>
+
+  <div id="byRepStrip" style="margin:0 0 14px"></div>
 
   <div class="tabs">
     <button class="tab-btn active" onclick="switchTab('pending')">Pending <span class="badge" id="badgePending">0</span></button>
@@ -206,6 +208,33 @@ function divLabel(key) {
 }
 
 // ── STATS ────────────────────────────────────────────────────────────────────
+function renderByRep(){
+  var el=document.getElementById('byRepStrip'); if(!el) return;
+  var map={};
+  loadColls().forEach(function(c){
+    var who=c.collectedBy||'Unknown';
+    if(!map[who]) map[who]={total:0,pending:0,posted:0,count:0};
+    var amt=Number(c.amount)||0;
+    map[who].total+=amt; map[who].count++;
+    if(c.status==='posted') map[who].posted+=amt; else map[who].pending+=amt;
+  });
+  var rows=Object.keys(map).map(function(k){ return {name:k, v:map[k]}; }).sort(function(a,b){ return b.v.total-a.v.total; });
+  if(!rows.length){ el.innerHTML=''; return; }
+  var h='<div style="background:#fff;border:1px solid #E5E7EB;border-radius:12px;padding:14px 16px">'+
+    '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:#374151;margin-bottom:4px">Collected by Field Staff</div>'+
+    '<div style="font-size:11px;color:#6B7280;margin-bottom:10px">What each rep, tech, and driver has collected. This is money collected from the field, not sales. Rep sales numbers are tracked separately and are not affected by collections.</div>'+
+    '<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="text-align:left;color:#6B7280;font-size:11px;text-transform:uppercase;letter-spacing:.05em"><th style="padding:4px 0">Collector</th><th style="text-align:right">Collected</th><th style="text-align:right">Pending</th><th style="text-align:right">Posted</th><th style="text-align:right">Items</th></tr></thead><tbody>';
+  rows.forEach(function(r){
+    h+='<tr style="border-top:1px solid #F3F4F6"><td style="padding:6px 0;font-weight:600">'+escH(r.name)+'</td>'+
+       '<td style="text-align:right;font-weight:700;color:#1E7B3C">'+fmtAmt(r.v.total)+'</td>'+
+       '<td style="text-align:right;color:#B45309">'+fmtAmt(r.v.pending)+'</td>'+
+       '<td style="text-align:right;color:#6B7280">'+fmtAmt(r.v.posted)+'</td>'+
+       '<td style="text-align:right;color:#6B7280">'+r.v.count+'</td></tr>';
+  });
+  h+='</tbody></table></div>';
+  el.innerHTML=h;
+}
+
 function refreshStats() {
   var all = loadColls();
   var now = Date.now();
@@ -221,6 +250,7 @@ function refreshStats() {
   document.getElementById('statOverdue').textContent = overdue.length;
   document.getElementById('statPostedMonth').textContent = fmtAmt(postedAmt);
   document.getElementById('badgePending').textContent = pending.length;
+  renderByRep();
 
   if (overdue.length > 0) {
     var banner = document.querySelector('.overdue-banner');
