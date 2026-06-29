@@ -1666,124 +1666,29 @@ function tfaClear(){TFA.history=[];var m=el('tfa-msgs');if(m)m.innerHTML='';var 
 </script>
 
 <script src="termac-messaging.js"></script>
+<script src="termac-geo.js"></script>
 <script>
-/* ============================================================
-   GEO-ASSIST — foreground arrival auto-start + on-site timing
-   Detects the tech is at the next stop and starts the job by
-   calling the EXISTING arriveJob() (which fires the rep arrival
-   notification) and wraps the EXISTING submitJobClose() to stamp
-   stop time. It adds only onSite timestamps. It never writes a
-   status that dispatch or scheduling read, so their behavior and
-   the tech-rep transparency are unchanged. Foreground only:
-   browsers cannot watch location with the app closed, so manual
-   "I'm Here" always stays available as the fallback.
-   ============================================================ */
+/* Tech portal geo-assist — config for the shared TermacGeo module.
+   onArrive routes through the existing arriveJob (rep notification fires
+   identically); completion wraps submitJobClose. No status dispatch or
+   scheduling reads is written; only onSite* timing fields are added. */
 (function(){
-  if (window.__geoAssist) return; window.__geoAssist = true;
-  var ROUTE_PROXY='https://ors-route-proxy.tedscholl.workers.dev';
-  var RADIUS_MI=0.075;  // ~120m geofence — err toward showing one extra nearby stop since the tech confirms the address anyway
-  var RADIUS_LEAVE=0.11;// ~177m — once the tech is this far from a deferred stop, treat it as "left", so returning later re-prompts
-  var ACC_OK_M=60;      // flag GPS as approximate above this (meters); tech always confirms address either way
-  var geo={}, watchId=null, armedId=null, _promptKey=null, snoozed={};
-  try{ geo=JSON.parse(localStorage.getItem('termac_geocode_cache')||'{}'); }catch(e){ geo={}; }
-  function saveGeo(){ try{ localStorage.setItem('termac_geocode_cache',JSON.stringify(geo)); }catch(e){} }
+  if(!window.TermacGeo) return;
   function jobsKey(){ return (window.DIV&&DIV.jobsKey)||'unipro_jobs'; }
   function loadJobs(){ try{ return JSON.parse(localStorage.getItem(jobsKey())||'[]'); }catch(e){ return []; } }
-  function openJobs(){ return loadJobs().filter(function(j){ return j.address&&j.status!=='complete'&&j.status!=='closed'&&j.status!=='cancelled'; }); }
-  function nameOf(j){ return (j&&(j.accountName||j.business||j.account))||'this stop'; }
-  function inProgress(){ return loadJobs().some(function(j){ return j.onSiteStart&&!j.onSiteEnd&&j.status!=='complete'; }); }
-  function haversine(a,b){ var R=3958.8,dLat=(b[0]-a[0])*Math.PI/180,dLng=(b[1]-a[1])*Math.PI/180,l1=a[0]*Math.PI/180,l2=b[0]*Math.PI/180;var h=Math.sin(dLat/2)*Math.sin(dLat/2)+Math.cos(l1)*Math.cos(l2)*Math.sin(dLng/2)*Math.sin(dLng/2);return 2*R*Math.asin(Math.sqrt(h)); }
-  async function geocode(addr){
-    if(!addr) return null; if(geo[addr]) return geo[addr];
-    try{ var r=await fetch(ROUTE_PROXY+'/geocode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({address:addr})});
-      if(r.ok){ var d=await r.json(); if(typeof d.lat==='number'){ geo[addr]=[d.lat,d.lng]; saveGeo(); return geo[addr]; } } }catch(e){}
-    return null;
-  }
-  async function pregeocode(){ var js=openJobs(); for(var i=0;i<js.length;i++){ if(!geo[js[i].address]) await geocode(js[i].address); } }
-  function nextJob(){ var js=openJobs(); js.sort(function(a,b){ return String(a.time||'').localeCompare(String(b.time||'')); }); return js[0]||null; }
-  function ind(txt,on){ var el=document.getElementById('geoAssistInd'); if(el) el.innerHTML=(on?'🟢 ':'⚪ ')+txt; }
-  function arm(){ var nj=nextJob(); armedId=nj?nj.id:null; if(nj){ geocode(nj.address); ind('Auto-arrival on · next: '+nameOf(nj),true); } else ind('No more stops today',false); }
-  function nearbyJobs(here){
-    return openJobs().map(function(j){ var c=geo[j.address]; return c?{job:j,d:haversine(here,c)}:null; })
-      .filter(function(x){ return x && x.d<=RADIUS_MI; })
-      .sort(function(a,b){ return a.d-b.d; });
-  }
-  function onPos(pos){
-    if(inProgress()){ ind('On job · timing in progress',true); dismiss(); return; }
-    if(!armedId) arm();
-    var here=[pos.coords.latitude,pos.coords.longitude];
-    openJobs().forEach(function(j){ if(!geo[j.address]) geocode(j.address); }); // warm cache for nearby checks
-    // Clear a deferred stop once the tech has driven away from it, so returning later prompts again
-    Object.keys(snoozed).forEach(function(jid){
-      var jb=loadJobs().find(function(j){return j.id===jid;}); var c=jb&&geo[jb.address];
-      if(!c || haversine(here,c)>RADIUS_LEAVE) delete snoozed[jid];
-    });
-    var near=nearbyJobs(here).filter(function(x){ return !snoozed[x.job.id]; });
-    if(!near.length){ if(_promptKey) dismiss(); var def=Object.keys(snoozed).length; if(def) ind('Deferred '+def+' stop'+(def>1?'s':'')+' · will re-prompt on return',true); return; }
-    var key=near.map(function(x){return x.job.id;}).join(',');
-    if(key===_promptKey) return;            // already showing this exact set
-    showPrompt(near, pos.coords.accuracy||999);
-  }
-  function showPrompt(near, accuracy){
-    _promptKey=near.map(function(x){return x.job.id;}).join(',');
-    var ex=document.getElementById('geoArrivePrompt'); if(ex) ex.remove();
-    var multi=near.length>1;
-    var head=multi
-      ? '📍 You\'re near '+near.length+' of your stops. Confirm which address you\'re actually at.'
-      : '📍 Confirm you\'re at this address to start the job.';
-    var acc=(accuracy>ACC_OK_M)?'<div style="font-size:11px;color:#FCA5A5;margin-top:4px">GPS here is approximate. Pick the exact address.</div>':'';
-    var rows=near.map(function(x){ var j=x.job;
-      return '<button class="geoPick" data-id="'+escH(j.id)+'" style="display:block;width:100%;text-align:left;background:#13351F;border:1.5px solid #2C5E3D;border-radius:9px;padding:11px 13px;margin-bottom:8px;color:#fff;cursor:pointer;font-family:Barlow,sans-serif">'+
-        '<div style="font-weight:800;font-size:14px;font-family:Barlow Condensed,sans-serif">'+escH(nameOf(j))+'</div>'+
-        '<div style="font-size:12px;color:#A7F3D0;margin-top:2px">'+escH(j.address||'')+'</div>'+
-        '</button>';
-    }).join('');
-    var bar=document.createElement('div'); bar.id='geoArrivePrompt';
-    bar.style.cssText='position:fixed;left:0;right:0;bottom:0;z-index:99999;background:#0F2A1A;color:#fff;padding:14px 16px 16px;box-shadow:0 -4px 24px rgba(0,0,0,.45);font-family:Barlow,sans-serif;max-height:70vh;overflow-y:auto';
-    bar.innerHTML='<div style="max-width:560px;margin:0 auto">'+
-      '<div style="font-size:14px;margin-bottom:10px">'+head+acc+'</div>'+
-      rows+
-      '<button id="geoNotYet" style="width:100%;background:transparent;color:#fff;border:1.5px solid rgba(255,255,255,.3);border-radius:9px;padding:10px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;cursor:pointer;margin-top:2px">Not yet — leaving, I\'ll be back</button>'+
-      '<div style="font-size:11px;color:#94A3B8;text-align:center;margin-top:7px">Leaving without starting is fine. This clears when you drive away and asks again when you return.</div>'+
-      '</div>';
-    document.body.appendChild(bar);
-    Array.prototype.forEach.call(bar.querySelectorAll('.geoPick'),function(btn){ btn.onclick=function(){ doStart(btn.getAttribute('data-id')); }; });
-    document.getElementById('geoNotYet').onclick=function(){ near.forEach(function(x){ snoozed[x.job.id]=true; }); dismiss(); ind('Deferred this stop · will re-prompt when you return',true); };
-  }
-  function dismiss(){ _promptKey=null; var b=document.getElementById('geoArrivePrompt'); if(b)b.remove(); }
-  function doStart(id){
-    dismiss(); if(inProgress()) return;
-    if(typeof window.arriveJob==='function'){ window.arriveJob(id); }  // existing: rep notification + onSiteStart stamp
-    ind('On job: '+nameOf(loadJobs().find(function(j){return j.id===id;})),true);
-  }
-  function finalizeStop(id){
-    if(!id) return;
-    var jobs=loadJobs(), j=jobs.find(function(x){return x.id===id;});
-    if(j&&j.onSiteStart&&!j.onSiteEnd){ j.onSiteEnd=j.closedAt||Date.now(); j.onSiteMinutes=Math.max(0,Math.round((j.onSiteEnd-j.onSiteStart)/60000)); try{localStorage.setItem(jobsKey(),JSON.stringify(jobs));}catch(e){} }
-    armedId=null; arm();
-  }
-  function wrapClose(){
-    if(typeof window.submitJobClose!=='function'){ setTimeout(wrapClose,500); return; }
-    if(window.submitJobClose.__geoWrapped) return;
-    var orig=window.submitJobClose;
-    window.submitJobClose=function(){ var closing=window._activeJobId; var r=orig.apply(this,arguments); try{ finalizeStop(closing); }catch(e){} return r; };
-    window.submitJobClose.__geoWrapped=true;
-  }
-  function boot(){
-    if(!document.getElementById('geoAssistInd')){
-      var chip=document.createElement('div'); chip.id='geoAssistInd';
-      chip.style.cssText='position:fixed;left:12px;bottom:12px;z-index:9000;background:#fff;border:1.5px solid #D7DBE0;border-radius:99px;padding:6px 12px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;color:#475569;box-shadow:0 2px 8px rgba(0,0,0,.12);max-width:62vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
-      chip.textContent='⚪ Auto-arrival starting…';
-      document.body.appendChild(chip);
-    }
-    wrapClose();
-    if(!('geolocation' in navigator)){ ind('Auto-arrival off (no GPS) · use I\'m Here',false); return; }
-    pregeocode().then(arm);
-    try{ watchId=navigator.geolocation.watchPosition(onPos,function(){ ind('Auto-arrival paused · use I\'m Here',false); },{enableHighAccuracy:true,maximumAge:8000,timeout:20000}); }
-    catch(e){ ind('Auto-arrival off · use I\'m Here',false); }
-  }
-  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',function(){ setTimeout(boot,1200); });
-  else setTimeout(boot,1200);
+  TermacGeo.init({
+    label:'tech',
+    list: loadJobs,
+    save: function(arr){ try{ localStorage.setItem(jobsKey(), JSON.stringify(arr)); }catch(e){} },
+    done: function(j){ return j.status==='complete'||j.status==='closed'||j.status==='cancelled'; },
+    idOf: function(j){ return j.id; },
+    addressOf: function(j){ return j.address; },
+    nameOf: function(j){ return j.accountName||j.business||j.account||'this stop'; },
+    onArrive: function(id){ if(typeof window.arriveJob==='function') window.arriveJob(id); },
+    activeId: function(){ return window._activeJobId||null; },
+    endStamp: function(j){ return j.closedAt||Date.now(); },
+    wrapName:'submitJobClose'
+  });
 })();
 </script>
 </body>
