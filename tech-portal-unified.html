@@ -1681,9 +1681,10 @@ function tfaClear(){TFA.history=[];var m=el('tfa-msgs');if(m)m.innerHTML='';var 
 (function(){
   if (window.__geoAssist) return; window.__geoAssist = true;
   var ROUTE_PROXY='https://ors-route-proxy.tedscholl.workers.dev';
-  var RADIUS_MI=0.05;   // ~80m geofence
+  var RADIUS_MI=0.075;  // ~120m geofence — err toward showing one extra nearby stop since the tech confirms the address anyway
+  var RADIUS_LEAVE=0.11;// ~177m — once the tech is this far from a deferred stop, treat it as "left", so returning later re-prompts
   var ACC_OK_M=60;      // flag GPS as approximate above this (meters); tech always confirms address either way
-  var geo={}, watchId=null, armedId=null, _promptKey=null;
+  var geo={}, watchId=null, armedId=null, _promptKey=null, snoozed={};
   try{ geo=JSON.parse(localStorage.getItem('termac_geocode_cache')||'{}'); }catch(e){ geo={}; }
   function saveGeo(){ try{ localStorage.setItem('termac_geocode_cache',JSON.stringify(geo)); }catch(e){} }
   function jobsKey(){ return (window.DIV&&DIV.jobsKey)||'unipro_jobs'; }
@@ -1712,8 +1713,13 @@ function tfaClear(){TFA.history=[];var m=el('tfa-msgs');if(m)m.innerHTML='';var 
     if(!armedId) arm();
     var here=[pos.coords.latitude,pos.coords.longitude];
     openJobs().forEach(function(j){ if(!geo[j.address]) geocode(j.address); }); // warm cache for nearby checks
-    var near=nearbyJobs(here);
-    if(!near.length){ if(_promptKey) dismiss(); return; }
+    // Clear a deferred stop once the tech has driven away from it, so returning later prompts again
+    Object.keys(snoozed).forEach(function(jid){
+      var jb=loadJobs().find(function(j){return j.id===jid;}); var c=jb&&geo[jb.address];
+      if(!c || haversine(here,c)>RADIUS_LEAVE) delete snoozed[jid];
+    });
+    var near=nearbyJobs(here).filter(function(x){ return !snoozed[x.job.id]; });
+    if(!near.length){ if(_promptKey) dismiss(); var def=Object.keys(snoozed).length; if(def) ind('Deferred '+def+' stop'+(def>1?'s':'')+' · will re-prompt on return',true); return; }
     var key=near.map(function(x){return x.job.id;}).join(',');
     if(key===_promptKey) return;            // already showing this exact set
     showPrompt(near, pos.coords.accuracy||999);
@@ -1737,11 +1743,12 @@ function tfaClear(){TFA.history=[];var m=el('tfa-msgs');if(m)m.innerHTML='';var 
     bar.innerHTML='<div style="max-width:560px;margin:0 auto">'+
       '<div style="font-size:14px;margin-bottom:10px">'+head+acc+'</div>'+
       rows+
-      '<button id="geoNotYet" style="width:100%;background:transparent;color:#fff;border:1.5px solid rgba(255,255,255,.3);border-radius:9px;padding:10px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;cursor:pointer;margin-top:2px">None of these / not yet</button>'+
+      '<button id="geoNotYet" style="width:100%;background:transparent;color:#fff;border:1.5px solid rgba(255,255,255,.3);border-radius:9px;padding:10px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;cursor:pointer;margin-top:2px">Not yet — leaving, I\'ll be back</button>'+
+      '<div style="font-size:11px;color:#94A3B8;text-align:center;margin-top:7px">Leaving without starting is fine. This clears when you drive away and asks again when you return.</div>'+
       '</div>';
     document.body.appendChild(bar);
     Array.prototype.forEach.call(bar.querySelectorAll('.geoPick'),function(btn){ btn.onclick=function(){ doStart(btn.getAttribute('data-id')); }; });
-    document.getElementById('geoNotYet').onclick=function(){ dismiss(); };
+    document.getElementById('geoNotYet').onclick=function(){ near.forEach(function(x){ snoozed[x.job.id]=true; }); dismiss(); ind('Deferred this stop · will re-prompt when you return',true); };
   }
   function dismiss(){ _promptKey=null; var b=document.getElementById('geoArrivePrompt'); if(b)b.remove(); }
   function doStart(id){
