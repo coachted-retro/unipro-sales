@@ -459,29 +459,94 @@ function renderExpenses(){
 }
 
 /* ---------- cash position ---------- */
+/* ---------- cash forecast config ---------- */
+var CASH_CFG='termac_cash_cfg';
+function cashCfg(){ try{ return JSON.parse(localStorage.getItem(CASH_CFG)||'{}')||{}; }catch(e){ return {}; } }
+function saveCashCfg(){
+  var c={ onHand:Number(document.getElementById('cashOnHand').value)||0,
+          payAmt:Number(document.getElementById('cashPayAmt').value)||0,
+          payCycle:document.getElementById('cashPayCycle').value||'',
+          payNext:document.getElementById('cashPayNext').value||'' };
+  try{ localStorage.setItem(CASH_CFG, JSON.stringify(c)); }catch(e){}
+  toast('Cash settings saved.'); renderCash();
+}
+function cashFmtMD(ms){ return new Date(ms).toLocaleDateString('en-US',{month:'short',day:'numeric'}); }
+function cashPayDates(cfg,startMs,endMs){
+  var out=[]; if(!(Number(cfg.payAmt)>0)||!cfg.payCycle||!cfg.payNext) return out;
+  var step={weekly:7,biweekly:14,semi:15,monthly:30}[cfg.payCycle]||0; if(!step) return out;
+  var d=Date.parse(cfg.payNext); if(!d) return out;
+  var g=0; while(d<startMs && g<500){ d+=step*86400000; g++; }
+  while(d<=endMs && g<500){ out.push(d); d+=step*86400000; g++; }
+  return out;
+}
+
 function renderCash(){
   var ar=loadAR().filter(function(i){ return !fullyPaid(i) && divMatch(i.division); });
   var ap=loadAP().filter(function(b){ return b.status!=='paid' && divMatch(normDiv(b.division)); });
-  // AR inflow buckets by age (older = less likely / at risk)
-  var inflow={d30:0,d60:0,d90:0,risk:0};
-  ar.forEach(function(i){ var st=ageStatus(i), ob=openBal(i); if(st.tier==='current')inflow.d30+=ob; else if(st.tier==='watch')inflow.d30+=ob; else if(st.tier==='high')inflow.d60+=ob; else inflow.risk+=ob; });
-  // AP outflow by due window
-  var out={d30:0,d60:0,d90:0,overdue:0}, now=Date.now();
-  ap.forEach(function(b){ var due=Date.parse(b.dueDate)||now, dd=Math.floor((due-now)/86400000), a=Number(b.amount)||0; if(dd<0)out.overdue+=a; else if(dd<=30)out.d30+=a; else if(dd<=60)out.d60+=a; else out.d90+=a; });
-  var net30=(inflow.d30)-(out.overdue+out.d30);
+  var cfg=cashCfg();
   var openAR=ar.reduce(function(s,i){return s+openBal(i);},0);
   var openAP=ap.reduce(function(s,b){return s+(Number(b.amount)||0);},0);
+
+  // 8-week horizon, weekly windows from today
+  var WEEKS=8, NET=30;
+  var t0=new Date(); t0.setHours(0,0,0,0); var startMs=t0.getTime();
+  var wkMs=7*86400000, horizonEnd=startMs+WEEKS*wkMs-1;
+  function wkIndex(ms){ return Math.floor((ms-startMs)/wkMs); }
+
+  var inWk=[],outWk=[],payWk=[],i2; for(i2=0;i2<WEEKS;i2++){ inWk.push(0); outWk.push(0); payWk.push(0); }
+  var beyondIn=0,beyondOut=0,atRisk=0;
+
+  ar.forEach(function(i){
+    var ob=openBal(i); if(ob<=0) return;
+    var st=ageStatus(i);
+    if(st.tier==='critical'){ atRisk+=ob; return; }
+    var exp=i.date+NET*86400000;
+    if(exp<startMs){ var slip=(st.tier==='high')?10:(st.tier==='watch')?3:0; exp=startMs+slip*86400000; }
+    var weight=(st.tier==='high')?0.85:1.0, amt=ob*weight, wi=wkIndex(exp); if(wi<0)wi=0;
+    if(wi>=WEEKS) beyondIn+=amt; else inWk[wi]+=amt;
+  });
+  ap.forEach(function(b){
+    var a=Number(b.amount)||0; if(a<=0) return;
+    var due=Date.parse(b.dueDate)||startMs, wi=wkIndex(due); if(wi<0)wi=0;
+    if(wi>=WEEKS) beyondOut+=a; else outWk[wi]+=a;
+  });
+  cashPayDates(cfg,startMs,horizonEnd).forEach(function(pd){ var wi=wkIndex(pd); if(wi>=0&&wi<WEEKS) payWk[wi]+=Number(cfg.payAmt)||0; });
+
+  var startBal=Number(cfg.onHand)||0, bal=startBal, minBal=startBal, minWk=-1;
+  var trail=[]; for(i2=0;i2<WEEKS;i2++){ var net=inWk[i2]-outWk[i2]-payWk[i2]; bal+=net; if(bal<minBal){ minBal=bal; minWk=i2; } trail.push(bal); }
+  var endBal=bal;
+
   var h='<div class="stat-strip">'+
     '<div class="stat-card"><div class="stat-num">'+money(openAR)+'</div><div class="stat-lbl">Total Open AR</div></div>'+
     '<div class="stat-card warn"><div class="stat-num">'+money(openAP)+'</div><div class="stat-lbl">Total Open AP</div></div>'+
-    '<div class="stat-card '+(net30>=0?'good':'alert')+'"><div class="stat-num">'+money(net30)+'</div><div class="stat-lbl">Projected Net (30d)</div></div></div>';
-  h+='<div class="sec-hdr">Expected Inflow vs Outflow</div><table class="tbl"><thead><tr><th>Window</th><th class="num">AR Inflow</th><th class="num">AP Due</th><th class="num">Net</th></tr></thead><tbody>';
-  function row(lbl,inf,o){ return '<tr><td>'+lbl+'</td><td class="num" style="color:var(--green)">'+money(inf)+'</td><td class="num" style="color:var(--orange)">'+money(o)+'</td><td class="num" style="font-weight:800;color:'+((inf-o)>=0?'var(--green)':'var(--red)')+'">'+money(inf-o)+'</td></tr>'; }
-  h+=row('Now / 0-30 days', inflow.d30, out.overdue+out.d30);
-  h+=row('31-60 days', inflow.d60, out.d60);
-  h+=row('61-90 days', inflow.d90, out.d90);
-  h+='<tr class="total"><td>At-risk AR (90+)</td><td class="num" style="color:var(--red)">'+money(inflow.risk)+'</td><td class="num">—</td><td class="num">collections priority</td></tr>';
-  h+='</tbody></table><div class="muted" style="text-align:left;padding:10px 2px">Inflow assumes current and 30-day invoices land inside 30 days; 90+ is parked as at-risk and routed to collections rather than counted as cash. AP is bucketed by due date. This is a working estimate, not a bank balance.</div>';
+    '<div class="stat-card '+(endBal>=0?'good':'alert')+'"><div class="stat-num">'+money(endBal)+'</div><div class="stat-lbl">Projected Balance, 8 wks</div></div>'+
+    '<div class="stat-card '+(minBal>=0?'good':'alert')+'"><div class="stat-num">'+money(minBal)+'</div><div class="stat-lbl">Lowest Projected'+(minWk>=0?' (wk '+(minWk+1)+')':'')+'</div></div></div>';
+
+  // controls
+  h+='<div class="sec-hdr">8-Week Cash Forecast</div>'+
+    '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;padding:4px 2px 12px">'+
+    '<div><label style="display:block;font-size:11px;color:var(--muted,#64748b);margin-bottom:3px">Cash on hand today</label><input id="cashOnHand" type="number" step="100" value="'+(Number(cfg.onHand)||0)+'" style="padding:7px 9px;border:1px solid #cbd5e1;border-radius:6px;width:140px"></div>'+
+    '<div><label style="display:block;font-size:11px;color:var(--muted,#64748b);margin-bottom:3px">Payroll per run</label><input id="cashPayAmt" type="number" step="100" value="'+(Number(cfg.payAmt)||0)+'" style="padding:7px 9px;border:1px solid #cbd5e1;border-radius:6px;width:130px"></div>'+
+    '<div><label style="display:block;font-size:11px;color:var(--muted,#64748b);margin-bottom:3px">Cycle</label><select id="cashPayCycle" style="padding:7px 9px;border:1px solid #cbd5e1;border-radius:6px">'+
+      ['','weekly','biweekly','semi','monthly'].map(function(v){ var lbl={'':'None',weekly:'Weekly',biweekly:'Every 2 weeks',semi:'Twice a month',monthly:'Monthly'}[v]; return '<option value="'+v+'"'+(cfg.payCycle===v?' selected':'')+'>'+lbl+'</option>'; }).join('')+
+      '</select></div>'+
+    '<div><label style="display:block;font-size:11px;color:var(--muted,#64748b);margin-bottom:3px">Next pay date</label><input id="cashPayNext" type="date" value="'+esc(cfg.payNext||'')+'" style="padding:7px 9px;border:1px solid #cbd5e1;border-radius:6px"></div>'+
+    '<button class="btn btn-green" onclick="saveCashCfg()">Save</button></div>';
+
+  h+='<table class="tbl"><thead><tr><th>Week</th><th class="num">Expected In</th><th class="num">AP Out</th><th class="num">Payroll</th><th class="num">Net</th><th class="num">Projected Balance</th></tr></thead><tbody>';
+  for(i2=0;i2<WEEKS;i2++){
+    var ws=startMs+i2*wkMs, we=ws+6*86400000, net=inWk[i2]-outWk[i2]-payWk[i2];
+    h+='<tr><td>'+cashFmtMD(ws)+' - '+cashFmtMD(we)+'</td>'+
+      '<td class="num" style="color:var(--green)">'+money(inWk[i2])+'</td>'+
+      '<td class="num" style="color:var(--orange)">'+money(outWk[i2])+'</td>'+
+      '<td class="num" style="color:var(--orange)">'+(payWk[i2]?money(payWk[i2]):'—')+'</td>'+
+      '<td class="num" style="font-weight:700;color:'+(net>=0?'var(--green)':'var(--red)')+'">'+money(net)+'</td>'+
+      '<td class="num" style="font-weight:800;color:'+(trail[i2]>=0?'var(--ink,#0f172a)':'var(--red)')+'">'+money(trail[i2])+(trail[i2]<0?' ⚠':'')+'</td></tr>';
+  }
+  h+='</tbody></table>';
+
+  h+='<div class="muted" style="text-align:left;padding:8px 2px;line-height:1.5">Starting balance is the cash on hand you enter above. Expected In assumes invoices pay around Net 30; overdue invoices are pulled forward a few days, 60-plus day invoices are counted at 85 percent, and 90-plus is excluded as at-risk and routed to collections. AP Out is bucketed by due date, with anything overdue landing this week. Payroll comes from your settings above. Beyond 8 weeks: '+money(beyondIn)+' AR in, '+money(beyondOut)+' AP out. At-risk AR (90+): '+money(atRisk)+' not counted here. Cash on hand and payroll are company-wide; use All Divisions for the true cash picture. This is a working estimate, not a bank balance.</div>';
+
   document.getElementById('tab-cash').innerHTML=h;
 }
 
