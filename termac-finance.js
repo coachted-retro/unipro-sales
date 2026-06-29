@@ -57,8 +57,9 @@
           var amt=amtOf(r); if(amt<=0) return;
           var id=(r.id||key+'_'+JSON.stringify(r).length)+'';
           if(seen[id]) return; seen[id]=1;
-          out.push({ division:normDiv(r.division)||div, account:acctOf(r), amount:amt,
-            date:dateMs(r), paid:isPaid(r), paidApplied:Number(r.paidApplied||0) });
+          out.push({ id:id, division:normDiv(r.division)||div, account:acctOf(r), amount:amt,
+            date:dateMs(r), paid:isPaid(r), paidApplied:Number(r.paidApplied||0),
+            serviceType:r.serviceType||r.service||'', source:key });
         });
       });
     });
@@ -100,5 +101,18 @@
   }
   function cashOnHand(){ var c=cashCfg(); var v=Number(c.onHand); return isNaN(v)?null:v; }
 
-  window.TermacFinance={ dso:dso, cashOnHand:cashOnHand, jobMarginPct:jobMarginPct, openAR:openAR };
+  function ageStatus(inv){
+    var ageDays=Math.floor((Date.now()-inv.date)/86400000);
+    if(inv.paid) return {days:ageDays,tier:'paid',label:'Paid'};
+    if(ageDays>=90) return {days:ageDays,tier:'critical',label:'90+ Overdue',action:'Write-off risk, escalate'};
+    if(ageDays>=60) return {days:ageDays,tier:'high',label:'60+ Overdue',action:'Call required'};
+    if(ageDays>=30) return {days:ageDays,tier:'watch',label:'30+ Overdue',action:'Follow up'};
+    return {days:ageDays,tier:'current',label:'Current'};
+  }
+  function moneyFmt(n){ n=Number(n)||0; return '$'+n.toLocaleString('en-US',{maximumFractionDigits:0}); }
+
+  window.TermacFinance={ dso:dso, cashOnHand:cashOnHand, jobMarginPct:jobMarginPct, openAR:openAR,
+    loadAR:loadAR, loadAP:loadAP, loadColls:function(){ return lsGet('termac_collections'); },
+    openBal:openBal, fullyPaid:fullyPaid, ageStatus:ageStatus, normDiv:normDiv, money:moneyFmt,
+    apCOGSInPeriod:apCOGSInPeriod };
 })();
