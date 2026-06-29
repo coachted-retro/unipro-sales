@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <script src="termac-intelligence.js"></script>
+<script src="termac-cogs.js"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="author" content="George E. Scholl (Ted) — Termac Corporation">
 <title>Termac One — Home</title>
@@ -11074,6 +11075,12 @@ function rptBuildPnL(filters){
   pnlLS('termac_payables').forEach(function(b){ var d=pnlNormDiv(b.division); if(!d||!pl[d]) return; if(divFilter&&d!==divFilter) return; var t=Number(b.loggedAt||(b.dueDate?Date.parse(b.dueDate):0))||0; if(!inP(t)) return; var a=Number(b.amount)||0; if(pnlIsCOGS(b.category)) pl[d].cogs+=a; else pl[d].opex+=a; });
   pnlLS('termac_expense_reports').forEach(function(e){ var d=pnlNormDiv(e.division); if(!d||!pl[d]) return; if(divFilter&&d!==divFilter) return; var t=Number(e.submittedAt||(e.submittedDate?Date.parse(e.submittedDate):0))||0; if(inP(t)) pl[d].opex+=Number(e.total||e.amount)||0; });
 
+  // Real material cost consumed from warehouse inventory (kitting + use/deduct txns), valued at unit cost
+  if (window.TermacCOGS) {
+    var mat = window.TermacCOGS.materialByDivision(start, end);
+    DIVS.forEach(function(d){ if (pl[d] && mat[d]) pl[d].cogs += mat[d]; });
+  }
+
   var rows=DIVS.filter(function(d){ return !divFilter||d===divFilter; }).map(function(d){ return pl[d]; });
   var tot={rev:0,collected:0,cogs:0,opex:0}; rows.forEach(function(r){ tot.rev+=r.rev; tot.collected+=r.collected; tot.cogs+=r.cogs; tot.opex+=r.opex; });
   var gp=tot.rev-tot.cogs, ni=gp-tot.opex, gm=tot.rev?gp/tot.rev*100:0, nm=tot.rev?ni/tot.rev*100:0;
@@ -11113,7 +11120,7 @@ function rptBuildPnL(filters){
     '<tr style="font-weight:800;border-top:2px solid var(--ink)"><td>Net Income</td><td style="text-align:right;color:'+(ni>=0?'var(--green)':'var(--red)')+'">'+rptFmt$(ni)+'</td></tr>'+
     '</tbody></table></div>';
 
-  html+='<div style="font-size:11px;color:var(--soft);padding:10px 2px;line-height:1.5">Revenue is billed work dated in the period (accrual basis). COGS and operating expenses come from vendor bills (Accounts Payable) and expense reports dated in the period, split by category. Direct material cost consumed from warehouse inventory folds into COGS once job-level costing is wired. Collected is cash and check receipts posted in the period. Use the period buttons for week, month, quarter, and year, and the company filter above for a single division. Export to CSV for audit.</div>';
+  html+='<div style="font-size:11px;color:var(--soft);padding:10px 2px;line-height:1.5">Revenue is billed work dated in the period (accrual basis). COGS combines real material consumed from warehouse inventory (kitting and use/deduct, valued at unit cost) with cost-of-goods vendor bills; operating expenses come from the remaining vendor bills and expense reports dated in the period. Quality III material books under the shared UniPro warehouse. Collected is cash and check receipts posted in the period. Use the period buttons for week, month, quarter, and year, and the company filter above for a single division. Export to CSV for audit.</div>';
 
   return html;
 }

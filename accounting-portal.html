@@ -100,6 +100,7 @@ body{background:var(--bg);color:var(--ink);font-family:Barlow,sans-serif;font-si
     <button class="tab-btn" data-tab="payables" onclick="setTab('payables')">Accounts Payable</button>
     <button class="tab-btn" data-tab="expenses" onclick="setTab('expenses')">Expenses</button>
     <button class="tab-btn" data-tab="cash" onclick="setTab('cash')">Cash Position</button>
+    <button class="tab-btn" data-tab="margin" onclick="setTab('margin')">Margin</button>
     <button class="tab-btn" data-tab="ai" onclick="setTab('ai')">AI Advisor</button>
   </div>
 
@@ -109,6 +110,7 @@ body{background:var(--bg);color:var(--ink);font-family:Barlow,sans-serif;font-si
   <div class="tab-panel" id="tab-payables"></div>
   <div class="tab-panel" id="tab-expenses"></div>
   <div class="tab-panel" id="tab-cash"></div>
+  <div class="tab-panel" id="tab-margin"></div>
   <div class="tab-panel" id="tab-ai"></div>
 </div>
 
@@ -271,7 +273,7 @@ function setDiv(d){ _div=d; renderDivBar(); renderStats(); renderTab(); }
 
 /* ---------- tabs ---------- */
 function setTab(t){ _tab=t; document.querySelectorAll('.tab-btn').forEach(function(b){ b.classList.toggle('active', b.dataset.tab===t); }); document.querySelectorAll('.tab-panel').forEach(function(p){ p.classList.toggle('active', p.id==='tab-'+t); }); renderTab(); }
-function renderTab(){ ({overview:renderOverview,aging:renderAging,collections:renderCollections,payables:renderPayables,expenses:renderExpenses,cash:renderCash,ai:renderAI}[_tab]||function(){})(); }
+function renderTab(){ ({overview:renderOverview,aging:renderAging,collections:renderCollections,payables:renderPayables,expenses:renderExpenses,cash:renderCash,margin:renderMargin,ai:renderAI}[_tab]||function(){})(); }
 
 /* ---------- overview ---------- */
 function renderOverview(){
@@ -483,6 +485,78 @@ function renderCash(){
   document.getElementById('tab-cash').innerHTML=h;
 }
 
+/* ---------- margin by division (real material COGS) ---------- */
+var _marginPeriod = 'ytd';
+function setMarginPeriod(p){ _marginPeriod = p; renderMargin(); }
+function marginRange(p){
+  var now=new Date(), y=now.getFullYear(), m=now.getMonth();
+  function sow(){ var x=new Date(now); x.setDate(x.getDate()-x.getDay()); x.setHours(0,0,0,0); return x.getTime(); }
+  switch(p){
+    case 'wtd': return [sow(), Date.now()];
+    case 'mtd': return [new Date(y,m,1).getTime(), Date.now()];
+    case 'qtd': return [new Date(y,Math.floor(m/3)*3,1).getTime(), Date.now()];
+    case 'ytd': return [new Date(y,0,1).getTime(), Date.now()];
+    case 'all': return [0, Date.now()];
+    default: return [new Date(y,0,1).getTime(), Date.now()];
+  }
+}
+function marginPeriodLabel(p){ return {wtd:'This Week',mtd:'This Month',qtd:'This Quarter',ytd:'Year to Date',all:'All Time'}[p]||'Year to Date'; }
+function apCOGSInPeriod(start,end){
+  var out={}; DIVISIONS.forEach(function(d){ out[d]=0; });
+  loadAP().forEach(function(b){
+    var d=normDiv(b.division); if(!d||!(d in out)) return;
+    var t=Number(b.loggedAt||(b.dueDate?Date.parse(b.dueDate):0))||0; if(t<start||t>end) return;
+    var s=String(b.category||'').toLowerCase();
+    if(/chemical|part|material|filter|fuel|gas|propane|subcontract|equipment|hardware|consumable|inventory|product|cylinder|nozzle|extinguisher/.test(s)) out[d]+=Number(b.amount)||0;
+  });
+  return out;
+}
+function renderMargin(){
+  var rng=marginRange(_marginPeriod), start=rng[0], end=rng[1];
+  var mat = (window.TermacCOGS ? window.TermacCOGS.materialByDivision(start,end) : {});
+  var apc = apCOGSInPeriod(start,end);
+  var ar = loadAR();
+  var rev={}; DIVISIONS.forEach(function(d){ rev[d]=0; });
+  ar.forEach(function(i){ if(rev[i.division]==null) return; if(i.date>=start && i.date<=end) rev[i.division]+=i.amount; });
+
+  var periods=[['wtd','Week'],['mtd','Month'],['qtd','Quarter'],['ytd','YTD'],['all','All']];
+  var pbtns=periods.map(function(p){ var on=_marginPeriod===p[0]; return '<button onclick="setMarginPeriod(\''+p[0]+'\')" class="div-pill '+(on?'active':'')+'">'+p[1]+'</button>'; }).join('');
+
+  var rows=DIVISIONS.filter(function(d){ return divMatch(d); });
+  var tot={rev:0,mat:0,ap:0};
+  var bodyRows = rows.map(function(d){
+    var r=rev[d]||0, mc=mat[d]||0, ac=apc[d]||0, cogs=mc+ac, gp=r-cogs, gm=r?gp/r*100:0;
+    tot.rev+=r; tot.mat+=mc; tot.ap+=ac;
+    return '<tr><td><span class="divtag" style="background:'+DIV_COLOR[d]+'">'+esc(d)+'</span></td><td class="num">'+money(r)+'</td><td class="num">'+money(mc)+'</td><td class="num">'+money(ac)+'</td><td class="num">'+money(cogs)+'</td><td class="num" style="color:'+(gp>=0?'var(--green)':'var(--red)')+';font-weight:700">'+money(gp)+'</td><td class="num">'+(r?gm.toFixed(1)+'%':'—')+'</td></tr>';
+  }).join('');
+  var tcogs=tot.mat+tot.ap, tgp=tot.rev-tcogs, tgm=tot.rev?tgp/tot.rev*100:0;
+
+  var h='<div class="divbar">'+pbtns+'</div>'+
+    '<div class="muted" style="text-align:left;padding:2px 2px 12px">'+marginPeriodLabel(_marginPeriod)+' &middot; gross margin by division. Material COGS is real warehouse consumption (kitting and use/deduct) valued at unit cost. AP COGS is cost-of-goods vendor bills in the period.</div>'+
+    '<div class="stat-strip">'+
+    '<div class="stat-card"><div class="stat-num">'+money(tot.rev)+'</div><div class="stat-lbl">Revenue (billed)</div></div>'+
+    '<div class="stat-card"><div class="stat-num">'+money(tcogs)+'</div><div class="stat-lbl">Total COGS</div></div>'+
+    '<div class="stat-card good"><div class="stat-num">'+money(tgp)+'</div><div class="stat-lbl">Gross Profit</div></div>'+
+    '<div class="stat-card"><div class="stat-num">'+(tot.rev?tgm.toFixed(1)+'%':'—')+'</div><div class="stat-lbl">Gross Margin</div></div></div>'+
+    '<table class="tbl"><thead><tr><th>Division</th><th class="num">Revenue</th><th class="num">Material COGS</th><th class="num">AP COGS</th><th class="num">Total COGS</th><th class="num">Gross Profit</th><th class="num">GP %</th></tr></thead><tbody>'+
+    bodyRows+
+    '<tr class="total"><td>'+(_div==='all'?'All Divisions':esc(_div))+'</td><td class="num">'+money(tot.rev)+'</td><td class="num">'+money(tot.mat)+'</td><td class="num">'+money(tot.ap)+'</td><td class="num">'+money(tcogs)+'</td><td class="num">'+money(tgp)+'</td><td class="num">'+(tot.rev?tgm.toFixed(1)+'%':'—')+'</td></tr>'+
+    '</tbody></table>';
+
+  // top consumed material lines
+  if(window.TermacCOGS){
+    var det=window.TermacCOGS.detail(start,end);
+    var lines=det.lines.filter(function(l){ return divMatch(l.division); }).sort(function(a,b){ return b.cost-a.cost; }).slice(0,12);
+    if(lines.length){
+      h+='<div class="sec-hdr">Top Material Consumed</div><table class="tbl"><thead><tr><th>Item</th><th>Division</th><th class="num">Qty</th><th class="num">Unit Cost</th><th class="num">Cost</th></tr></thead><tbody>';
+      lines.forEach(function(l){ h+='<tr><td>'+esc(l.name)+'</td><td><span class="divtag" style="background:'+DIV_COLOR[l.division]+'">'+esc(l.division)+'</span></td><td class="num">'+l.qty+'</td><td class="num">'+money(l.unitCost)+'</td><td class="num">'+money(l.cost)+'</td></tr>'; });
+      h+='</tbody></table>';
+    }
+  }
+  h+='<div class="muted" style="text-align:left;padding:10px 2px">Gross margin here is revenue minus material and cost-of-goods bills. It does not subtract labor or overhead; the full income statement with operating expenses lives in the management dashboard P&L report. Quality III material books under the shared UniPro warehouse.</div>';
+  document.getElementById('tab-margin').innerHTML=h;
+}
+
 /* ---------- AI advisor ---------- */
 function renderAI(){
   document.getElementById('tab-ai').innerHTML=
@@ -523,6 +597,7 @@ function aiCash(){
 /* ---------- boot ---------- */
 renderDivBar(); renderStats(); renderTab();
 </script>
+<script src="termac-cogs.js"></script>
 <script src="termac-messaging.js"></script>
 </body>
 </html>
