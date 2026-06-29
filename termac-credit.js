@@ -9,6 +9,7 @@
      TermacCredit.setHold(acct, reason, by)
      TermacCredit.release(acct, by)
      TermacCredit.list()            -> [held records]
+     TermacCredit.overrides()       -> [override log records, newest first]
      TermacCredit.badgeHTML(acct)   -> red CREDIT HOLD span or ''
      TermacCredit.guard(acct, onProceed)
          not held -> onProceed() immediately
@@ -33,6 +34,7 @@
   function list(){ var h=loadH(), out=[]; Object.keys(h).forEach(function(k){ if(h[k]&&h[k].held) out.push(h[k]); }); return out; }
   function badgeHTML(a){ return isHeld(a) ? '<span style="display:inline-block;background:#B91C1C;color:#fff;font-weight:800;font-size:10px;letter-spacing:.04em;padding:2px 7px;border-radius:4px;margin-left:6px;vertical-align:middle">CREDIT HOLD</span>' : ''; }
   function logOverride(rec){ try{ var l=JSON.parse(localStorage.getItem(LOG)||'[]'); l.push(rec); localStorage.setItem(LOG, JSON.stringify(l)); }catch(e){} }
+  function overrides(){ try{ var l=JSON.parse(localStorage.getItem(LOG)||'[]'); return (l||[]).slice().sort(function(a,b){ return (b.at||0)-(a.at||0); }); }catch(e){ return []; } }
 
   function ensureModal(){
     if(document.getElementById('tcreditModal')) return;
@@ -66,5 +68,5 @@
     pin.onkeydown=function(e){ if(e.key==='Enter') attempt(); };
   }
 
-  window.TermacCredit={ isHeld:isHeld, setHold:setHold, release:release, list:list, badgeHTML:badgeHTML, guard:guard, keyOf:keyOf };
+  window.TermacCredit={ isHeld:isHeld, setHold:setHold, release:release, list:list, overrides:overrides, badgeHTML:badgeHTML, guard:guard, keyOf:keyOf };
 })();
