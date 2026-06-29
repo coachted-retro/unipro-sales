@@ -101,6 +101,7 @@ body{background:var(--bg);color:var(--ink);font-family:Barlow,sans-serif;font-si
     <button class="tab-btn" data-tab="expenses" onclick="setTab('expenses')">Expenses</button>
     <button class="tab-btn" data-tab="cash" onclick="setTab('cash')">Cash Position</button>
     <button class="tab-btn" data-tab="margin" onclick="setTab('margin')">Margin</button>
+    <button class="tab-btn" data-tab="adagio" onclick="setTab('adagio')">Post to Adagio</button>
     <button class="tab-btn" data-tab="ai" onclick="setTab('ai')">AI Advisor</button>
   </div>
 
@@ -111,6 +112,7 @@ body{background:var(--bg);color:var(--ink);font-family:Barlow,sans-serif;font-si
   <div class="tab-panel" id="tab-expenses"></div>
   <div class="tab-panel" id="tab-cash"></div>
   <div class="tab-panel" id="tab-margin"></div>
+  <div class="tab-panel" id="tab-adagio"></div>
   <div class="tab-panel" id="tab-ai"></div>
 </div>
 
@@ -273,7 +275,7 @@ function setDiv(d){ _div=d; renderDivBar(); renderStats(); renderTab(); }
 
 /* ---------- tabs ---------- */
 function setTab(t){ _tab=t; document.querySelectorAll('.tab-btn').forEach(function(b){ b.classList.toggle('active', b.dataset.tab===t); }); document.querySelectorAll('.tab-panel').forEach(function(p){ p.classList.toggle('active', p.id==='tab-'+t); }); renderTab(); }
-function renderTab(){ ({overview:renderOverview,aging:renderAging,collections:renderCollections,payables:renderPayables,expenses:renderExpenses,cash:renderCash,margin:renderMargin,ai:renderAI}[_tab]||function(){})(); }
+function renderTab(){ ({overview:renderOverview,aging:renderAging,collections:renderCollections,payables:renderPayables,expenses:renderExpenses,cash:renderCash,margin:renderMargin,adagio:renderAdagio,ai:renderAI}[_tab]||function(){})(); }
 
 /* ---------- overview ---------- */
 /* ---------- controller KPI strip ---------- */
@@ -687,6 +689,127 @@ function renderMargin(){
   }
   h+='<div class="muted" style="text-align:left;padding:10px 2px">Gross margin here is revenue minus material, direct labor, and cost-of-goods bills. It does not subtract overhead; the full income statement with operating expenses lives in the management dashboard P&L report. Labor cost reflects jobs where on-site time was captured, and gets more exact as HR fills in each tech\'s rate. Quality III material books under the shared UniPro warehouse.</div>';
   document.getElementById('tab-margin').innerHTML=h;
+}
+
+/* ---------- Post to Adagio (interim GL bridge) ----------
+   Generates clean CSV batches the bookkeeper imports into Adagio, so
+   nobody retypes invoices, receipts, or bills by hand. Tracks what has
+   already been posted so the same record never goes over twice. Columns
+   are generic and readable now; they map to Adagio's exact import layout
+   once we have the spec. Read-only against the source stores: posting
+   status lives in its own ledger and never edits jobs/invoices/AP. */
+var ADAGIO_POSTED='termac_adagio_posted', ADAGIO_BATCHES='termac_adagio_batches';
+function adagioPosted(){ try{ var o=JSON.parse(localStorage.getItem(ADAGIO_POSTED)||'{}')||{}; o.ar=o.ar||{}; o.coll=o.coll||{}; o.ap=o.ap||{}; return o; }catch(e){ return {ar:{},coll:{},ap:{}}; } }
+function adagioSavePosted(o){ try{ localStorage.setItem(ADAGIO_POSTED, JSON.stringify(o)); }catch(e){} }
+function adagioBatches(){ try{ return JSON.parse(localStorage.getItem(ADAGIO_BATCHES)||'[]')||[]; }catch(e){ return []; } }
+function adagioSaveBatches(b){ try{ localStorage.setItem(ADAGIO_BATCHES, JSON.stringify(b)); }catch(e){} }
+function adagioCollId(c){ return (c.id||(String(c.accountName||'')+'|'+(c.collectedAt||c.collectedDate||'')+'|'+(c.amount||0)))+''; }
+
+function adagioRows(kind){
+  var posted=adagioPosted();
+  if(kind==='ar'){
+    return loadAR().filter(function(i){ return !posted.ar[i.id]; }).map(function(i){
+      var d=new Date(i.date);
+      return { id:i.id, date:isNaN(d)?'':d.toLocaleDateString('en-US'), customer:i.account, division:i.division, amount:i.amount, ref:i.serviceType||'Service' };
+    });
+  }
+  if(kind==='coll'){
+    return loadColls().filter(function(c){ return !posted.coll[adagioCollId(c)]; }).map(function(c){
+      return { id:adagioCollId(c), date:c.collectedDate||(c.collectedAt?new Date(Number(c.collectedAt)).toLocaleDateString('en-US'):''),
+        customer:c.accountName||'', division:normDiv(c.division)||'', amount:Number(c.amount)||0, method:c.method||'', checkNum:c.checkNum||'', invoice:c.invoiceNum||'' };
+    });
+  }
+  if(kind==='ap'){
+    return loadAP().filter(function(b){ return !posted.ap[b.id]; }).map(function(b){
+      var t=Number(b.loggedAt||(b.dueDate?Date.parse(b.dueDate):0))||0;
+      return { id:b.id, date:t?new Date(t).toLocaleDateString('en-US'):'', vendor:b.vendor||'', division:normDiv(b.division)||'', amount:Number(b.amount)||0, category:b.category||'', due:b.dueDate||'' };
+    });
+  }
+  return [];
+}
+function adagioCols(kind){
+  if(kind==='ar')   return [['date','Invoice Date'],['customer','Customer'],['division','Division'],['ref','Service'],['amount','Amount']];
+  if(kind==='coll') return [['date','Receipt Date'],['customer','Customer'],['division','Division'],['method','Method'],['checkNum','Check #'],['invoice','Applies to Invoice'],['amount','Amount']];
+  return [['date','Bill Date'],['vendor','Vendor'],['division','Division'],['category','Category'],['due','Due Date'],['amount','Amount']];
+}
+function adagioTitle(kind){ return kind==='ar'?'AR Invoices':kind==='coll'?'Cash Receipts':'AP Vouchers'; }
+function csvEsc(v){ v=String(v==null?'':v); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; }
+
+function adagioDownload(kind){
+  var rows=adagioRows(kind), cols=adagioCols(kind);
+  if(!rows.length){ toast('Nothing new to post for '+adagioTitle(kind)+'.'); return; }
+  var head=cols.map(function(c){ return csvEsc(c[1]); }).join(',');
+  var body=rows.map(function(r){ return cols.map(function(c){ var v=r[c[0]]; if(c[0]==='amount') v=Number(v||0).toFixed(2); return csvEsc(v); }).join(','); }).join('\n');
+  var csv=head+'\n'+body+'\n';
+  var stamp=new Date().toISOString().slice(0,10);
+  var fname='Adagio_'+adagioTitle(kind).replace(/ /g,'')+'_'+stamp+'.csv';
+  var blob=new Blob([csv],{type:'text/csv'}); var url=URL.createObjectURL(blob);
+  var a=document.createElement('a'); a.href=url; a.download=fname; document.body.appendChild(a); a.click(); document.body.removeChild(a); setTimeout(function(){ URL.revokeObjectURL(url); },1000);
+  // mark posted + log batch
+  var posted=adagioPosted(), bid='b'+Date.now(), total=0;
+  rows.forEach(function(r){ posted[kind][r.id]=bid; total+=Number(r.amount)||0; });
+  adagioSavePosted(posted);
+  var b=adagioBatches(); b.unshift({ id:bid, ts:Date.now(), kind:kind, title:adagioTitle(kind), count:rows.length, total:total, file:fname }); adagioSaveBatches(b);
+  toast(rows.length+' '+adagioTitle(kind)+' exported and marked posted.');
+  renderAdagio();
+}
+function adagioReopen(bid){
+  if(!confirm('Re-open this batch? The records will show as not yet posted so you can export them again. Use this only if the Adagio import failed.')) return;
+  var posted=adagioPosted();
+  ['ar','coll','ap'].forEach(function(k){ Object.keys(posted[k]).forEach(function(id){ if(posted[k][id]===bid) delete posted[k][id]; }); });
+  adagioSavePosted(posted);
+  var b=adagioBatches().filter(function(x){ return x.id!==bid; }); adagioSaveBatches(b);
+  toast('Batch re-opened. Those records are ready to export again.'); renderAdagio();
+}
+
+function renderAdagio(){
+  var kinds=['ar','coll','ap'];
+  var counts={}; kinds.forEach(function(k){ counts[k]=adagioRows(k); });
+  var pending=counts.ar.length+counts.coll.length+counts.ap.length;
+
+  var h='<div class="sec-hdr">Post to Adagio</div>'+
+    '<div class="muted" style="text-align:left;padding:2px 2px 14px;line-height:1.6">This builds ready-to-import files from everything the platform has captured, so the books get updated without anyone retyping. Three steps: pick a batch below, click Download, then import that one file into Adagio. Each record is marked as posted the moment you download it, so nothing ever goes in twice.</div>';
+
+  if(!pending){
+    h+='<div style="background:#ECFDF5;border:1px solid #A7F3D0;color:#065F46;border-radius:8px;padding:12px 14px;font-size:14px;font-weight:600;margin-bottom:14px">Everything is posted. There is nothing new waiting to go into Adagio.</div>';
+  }
+
+  kinds.forEach(function(k){
+    var rows=counts[k], cols=adagioCols(k), total=rows.reduce(function(s,r){ return s+(Number(r.amount)||0); },0);
+    h+='<div class="card" style="margin-bottom:12px">'+
+      '<div class="card-hdr"><div><div class="card-title">'+adagioTitle(k)+'</div>'+
+      '<div class="card-meta">'+rows.length+' new record'+(rows.length===1?'':'s')+' waiting · '+money(total)+'</div></div>'+
+      '<div><button class="btn btn-green" '+(rows.length?'':'disabled style="opacity:.45;cursor:default"')+' onclick="adagioDownload(\''+k+'\')">Download '+(rows.length?'('+rows.length+')':'')+'</button></div></div>';
+    if(rows.length){
+      h+='<div style="overflow-x:auto;margin-top:10px"><table style="width:100%;border-collapse:collapse;font-size:12px">'+
+        '<thead><tr style="background:#F1F5F9;text-align:left">'+cols.map(function(c){ return '<th style="padding:6px 8px;font-weight:700;color:#475569">'+esc(c[1])+'</th>'; }).join('')+'</tr></thead><tbody>';
+      rows.slice(0,8).forEach(function(r){
+        h+='<tr style="border-top:1px solid #E2E8F0">'+cols.map(function(c){ var v=r[c[0]]; if(c[0]==='amount') v=money(v); return '<td style="padding:5px 8px">'+esc(v)+'</td>'; }).join('')+'</tr>';
+      });
+      h+='</tbody></table></div>';
+      if(rows.length>8) h+='<div class="muted" style="padding:6px 2px">Showing 8 of '+rows.length+'. The full set is in the download.</div>';
+    }
+    h+='</div>';
+  });
+
+  var batches=adagioBatches();
+  if(batches.length){
+    h+='<div class="sec-hdr" style="margin-top:18px">Posting History</div><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">'+
+      '<thead><tr style="background:#F1F5F9;text-align:left"><th style="padding:6px 8px;font-weight:700;color:#475569">Posted</th><th style="padding:6px 8px;font-weight:700;color:#475569">Batch</th><th style="padding:6px 8px;font-weight:700;color:#475569">Records</th><th style="padding:6px 8px;font-weight:700;color:#475569">Total</th><th style="padding:6px 8px;font-weight:700;color:#475569"></th></tr></thead><tbody>';
+    batches.slice(0,40).forEach(function(b){
+      var d=new Date(b.ts); var when=d.toLocaleDateString('en-US',{month:'short',day:'numeric'})+' '+d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+      h+='<tr style="border-top:1px solid #E2E8F0"><td style="padding:5px 8px;color:#64748b;white-space:nowrap">'+esc(when)+'</td>'+
+        '<td style="padding:5px 8px;font-weight:600">'+esc(b.title)+'</td>'+
+        '<td style="padding:5px 8px">'+b.count+'</td>'+
+        '<td style="padding:5px 8px">'+money(b.total)+'</td>'+
+        '<td style="padding:5px 8px"><button class="btn btn-outline" style="font-size:11px;padding:3px 8px" onclick="adagioReopen(\''+b.id+'\')">Re-open</button></td></tr>';
+    });
+    h+='</tbody></table></div>';
+  }
+
+  h+='<div class="muted" style="text-align:left;padding:14px 2px;line-height:1.6">Note for setup: the column layout here is generic and readable. Once we have the Adagio import specification and the chart of accounts, the files will match Adagio\'s exact import format with the right account and department codes filled in, so the import is one click with no cleanup.</div>';
+
+  document.getElementById('tab-adagio').innerHTML=h;
 }
 
 /* ---------- AI advisor ---------- */
