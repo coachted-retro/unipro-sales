@@ -6,7 +6,7 @@ function _fireInAppAlertBanner(opts){
   if(!document.getElementById('_hotleadBannerStyle')){
     var st=document.createElement('style');st.id='_hotleadBannerStyle';
     st.textContent='@keyframes _hlPulse{0%,100%{opacity:1}50%{opacity:.7}}'
-      +'#_hotleadBanner{position:fixed;top:0;left:0;right:0;z-index:999999;background:#C8102E;'
+      +'#_hotleadBanner{position:sticky;top:56px;left:0;right:0;z-index:9999;background:#C8102E;'
       +'color:#fff;font-family:-apple-system,Barlow Condensed,sans-serif;padding:0;'
       +'box-shadow:0 4px 20px rgba(0,0,0,.4);animation:_hlPulse 1.2s ease-in-out 6}'
       +'#_hotleadBanner .hl-inner{display:flex;align-items:center;gap:12px;padding:12px 18px}'
@@ -36,7 +36,12 @@ function _fireInAppAlertBanner(opts){
     +'</div>'
     +'<button class="hl-dismiss" id="_hlDismissBtn">× Dismiss</button>'
     +'</div>';
-  document.body.insertBefore(b,document.body.firstChild);
+  var _nav=document.querySelector('nav,.trn,.mgr-nav') || document.body.firstElementChild;
+  if(_nav&&_nav.parentNode){
+    _nav.parentNode.insertBefore(b,_nav.nextSibling);
+  } else {
+    document.body.insertBefore(b,document.body.firstChild);
+  }
   document.getElementById('_hlDismissBtn').onclick=function(){
     var el=document.getElementById('_hotleadBanner'); if(el) el.remove();
   };
