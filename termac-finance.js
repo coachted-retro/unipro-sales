@@ -111,8 +111,42 @@
   }
   function moneyFmt(n){ n=Number(n)||0; return '$'+n.toLocaleString('en-US',{maximumFractionDigits:0}); }
 
+  function scorecard(){
+    var ar=loadAR(), open=[], total=0, current=0, d30=0, d60=0, d90=0;
+    ar.forEach(function(i){ if(fullyPaid(i)) return; var ob=openBal(i); var t=ageStatus(i).tier; total+=ob; open.push(i);
+      if(t==='current') current+=ob; else if(t==='watch') d30+=ob; else if(t==='high') d60+=ob; else d90+=ob; });
+    var ap=loadAP().filter(function(b){ return b.status!=='paid'; });
+    var openAP=ap.reduce(function(s,b){ return s+(Number(b.amount)||0); },0);
+    // collection effectiveness, last 90 days
+    var since=Date.now()-90*86400000, billed=0, collected=0;
+    loadAR().forEach(function(i){ if(i.date>=since) billed+=i.amount; });
+    lsGet('termac_collections').forEach(function(c){ var t=Number(c.collectedAt)||0; if(t>=since) collected+=Number(c.amount)||0; });
+    // promise-to-pay kept rate
+    var proms=lsGet('termac_ar_promises'), kept=0, resolved=0, today=new Date().toISOString().slice(0,10);
+    proms.forEach(function(p){ if(p.status==='kept'){ kept++; resolved++; } else if(p.by && p.by<today){ resolved++; } });
+    // avg days to pay vendors (bills with a paidAt stamp)
+    var paid=loadAP().filter(function(b){ return b.status==='paid' && b.paidAt && b.loggedAt; });
+    var avgPay=paid.length?Math.round(paid.reduce(function(s,b){ return s+Math.max(0,(b.paidAt-b.loggedAt)/86400000); },0)/paid.length):null;
+    // duplicate bills caught
+    var dup=lsGet('termac_ap_dupes_caught'), dupAmt=dup.reduce(function(s,d){ return s+(Number(d.amount)||0); },0);
+    // aging concentration: top 5 accounts share of overdue
+    var byAcct={}, overdue=total-current;
+    open.forEach(function(i){ if(ageStatus(i).tier!=='current'){ byAcct[i.account]=(byAcct[i.account]||0)+openBal(i); } });
+    var top5=Object.keys(byAcct).map(function(k){ return byAcct[k]; }).sort(function(a,b){ return b-a; }).slice(0,5).reduce(function(s,v){ return s+v; },0);
+    return {
+      dso:dso(), openAR:total, openAP:openAP, netAR:total-openAP,
+      buckets:{current:current,d30:d30,d60:d60,d90:d90},
+      currentPct: total?Math.round(current/total*100):null,
+      pastDuePct: total?Math.round((total-current)/total*100):null,
+      collEff: billed?Math.round(collected/billed*100):null, billed:billed, collected:collected,
+      promiseKept: resolved?Math.round(kept/resolved*100):null, promiseResolved:resolved,
+      avgDaysToPay: avgPay, dupesCaught:{count:dup.length, amount:dupAmt},
+      top5Share: overdue?Math.round(top5/overdue*100):null, overdue:overdue, exposure90:d90
+    };
+  }
+
   window.TermacFinance={ dso:dso, cashOnHand:cashOnHand, jobMarginPct:jobMarginPct, openAR:openAR,
     loadAR:loadAR, loadAP:loadAP, loadColls:function(){ return lsGet('termac_collections'); },
     openBal:openBal, fullyPaid:fullyPaid, ageStatus:ageStatus, normDiv:normDiv, money:moneyFmt,
-    apCOGSInPeriod:apCOGSInPeriod };
+    apCOGSInPeriod:apCOGSInPeriod, scorecard:scorecard };
 })();

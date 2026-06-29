@@ -99,6 +99,7 @@ body{background:var(--bg);color:var(--ink);font-family:Barlow,sans-serif;font-si
 
   <div class="tabs">
     <button class="tab-btn active" data-tab="overview" onclick="setTab('overview')">Overview</button>
+    <button class="tab-btn" data-tab="scorecard" onclick="setTab('scorecard')">Scorecard</button>
     <button class="tab-btn" data-tab="aging" onclick="setTab('aging')">AR Aging <span class="badge" id="bAging" style="display:none"></span></button>
     <button class="tab-btn" data-tab="collections" onclick="setTab('collections')">Reconcile to AR</button>
     <button class="tab-btn" data-tab="payables" onclick="setTab('payables')">Accounts Payable</button>
@@ -110,6 +111,7 @@ body{background:var(--bg);color:var(--ink);font-family:Barlow,sans-serif;font-si
   </div>
 
   <div class="tab-panel active" id="tab-overview"></div>
+  <div class="tab-panel" id="tab-scorecard"></div>
   <div class="tab-panel" id="tab-aging"></div>
   <div class="tab-panel" id="tab-collections"></div>
   <div class="tab-panel" id="tab-payables"></div>
@@ -279,7 +281,31 @@ function setDiv(d){ _div=d; renderDivBar(); renderStats(); renderTab(); }
 
 /* ---------- tabs ---------- */
 function setTab(t){ _tab=t; document.querySelectorAll('.tab-btn').forEach(function(b){ b.classList.toggle('active', b.dataset.tab===t); }); document.querySelectorAll('.tab-panel').forEach(function(p){ p.classList.toggle('active', p.id==='tab-'+t); }); renderTab(); }
-function renderTab(){ ({overview:renderOverview,aging:renderAging,collections:renderCollections,payables:renderPayables,expenses:renderExpenses,cash:renderCash,margin:renderMargin,adagio:renderAdagio,ai:renderAI}[_tab]||function(){})(); }
+function renderTab(){ ({overview:renderOverview,scorecard:renderScorecard,aging:renderAging,collections:renderCollections,payables:renderPayables,expenses:renderExpenses,cash:renderCash,margin:renderMargin,adagio:renderAdagio,ai:renderAI}[_tab]||function(){})(); }
+function scTile(num,lbl,sub,cls){ return '<div class="card" style="flex:1;min-width:160px;margin-bottom:0"><div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:26px;color:'+(cls||'var(--ink)')+'">'+num+'</div><div class="stat-lbl">'+lbl+'</div>'+(sub?'<div style="font-size:11px;color:var(--soft);margin-top:4px">'+sub+'</div>':'')+'</div>'; }
+function renderScorecard(){
+  var s=window.TermacFinance.scorecard(), money=window.TermacFinance.money;
+  function pct(v){ return v==null?'—':v+'%'; }
+  var dsoColor=s.dso==null?'var(--soft)':(s.dso<=35?'var(--green)':s.dso<=55?'var(--orange)':'var(--red)');
+  var h='<div class="sec-hdr" style="margin-top:0">Controller Scorecard</div>'+
+    '<div style="display:flex;gap:10px;flex-wrap:wrap">'+
+    scTile(s.dso==null?'—':s.dso+'d','Days to Collect (DSO)', s.dso==null?'No invoices yet':(s.dso<=35?'Healthy':s.dso<=55?'Watch':'Too slow'), dsoColor)+
+    scTile(pct(s.currentPct),'AR Current', 'Of '+money(s.openAR)+' open', s.currentPct!=null&&s.currentPct>=70?'var(--green)':'var(--orange)')+
+    scTile(pct(s.collEff),'Collection Effectiveness', 'Collected vs billed, 90 days', s.collEff!=null&&s.collEff>=80?'var(--green)':'var(--orange)')+
+    scTile(pct(s.promiseKept),'Promise-to-Pay Kept', s.promiseResolved+' resolved', s.promiseKept!=null&&s.promiseKept>=70?'var(--green)':'var(--orange)')+
+    scTile(s.avgDaysToPay==null?'—':s.avgDaysToPay+'d','Avg Days to Pay Vendors', s.avgDaysToPay==null?'Builds as bills are paid':'Lower holds cash longer')+
+    scTile(s.dupesCaught.count,'Duplicate Bills Caught', money(s.dupesCaught.amount)+' not double-paid', s.dupesCaught.count?'var(--green)':'var(--ink)')+
+    '</div>'+
+    '<div class="sec-hdr">Leadership Snapshot</div>'+
+    '<div style="display:flex;gap:10px;flex-wrap:wrap">'+
+    scTile(money(s.netAR),'Net AR Position', money(s.openAR)+' AR · '+money(s.openAP)+' AP', s.netAR>=0?'var(--green)':'var(--red)')+
+    scTile(pct(s.top5Share),'Overdue Concentration', 'Top 5 of '+money(s.overdue)+' overdue', s.top5Share!=null&&s.top5Share>=60?'var(--red)':'var(--ink)')+
+    scTile(money(s.exposure90),'90+ Write-off Exposure', 'Oldest, highest risk', s.exposure90>0?'var(--red)':'var(--green)')+
+    scTile(s.dso==null?'—':s.dso+'d','Days to Collect', 'The cash-cycle driver', dsoColor)+
+    '</div>'+
+    '<div style="font-size:11px;color:var(--soft);margin-top:14px">Company-wide across all divisions. Days-to-pay and duplicate savings build as bills are paid and entered in Accounts Payable.</div>';
+  document.getElementById('tab-scorecard').innerHTML=h;
+}
 
 /* ---------- overview ---------- */
 /* ---------- controller KPI strip ---------- */
