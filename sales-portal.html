@@ -2733,7 +2733,27 @@ function spDupeCheck(val, field) {
 // ══════════════════════════════════════════════════════
 //  ADVANCE STAGE
 // ══════════════════════════════════════════════════════
-const STAGE_SEQUENCE = ['lead','contact','opportunity','site_visit','close','onboarding','first_service','active'];
+// ── AUTO-GENERATED ACCOUNT NUMBERS ──
+// New accounts get an account number automatically the moment they're created, no manual
+// entry needed in the office onboarding step anymore. Starts high (90001+) per division so
+// auto-generated numbers never collide with real legacy ServiceTrade numbers (which run
+// under 1000, e.g. UFP-00412, GTO-00087, QT3-00044).
+const ACCOUNT_NUMBER_SEQ_KEY = 'termac_account_number_seq';
+const ACCOUNT_NUMBER_START = 90001;
+const DIVISION_PREFIX_MAP = {
+  'UniPro': 'UFP', 'Quality III': 'QT3', 'GTO': 'GTO',
+  'Filter Man': 'FLM', 'AllPro': 'ALP', 'Termac': 'TRM'
+};
+function generateAccountNumber(division){
+  const prefix = DIVISION_PREFIX_MAP[division] || 'TRM';
+  let seq = {};
+  try { seq = JSON.parse(localStorage.getItem(ACCOUNT_NUMBER_SEQ_KEY) || '{}'); } catch(e) {}
+  const next = (seq[prefix] || ACCOUNT_NUMBER_START - 1) + 1;
+  seq[prefix] = next;
+  localStorage.setItem(ACCOUNT_NUMBER_SEQ_KEY, JSON.stringify(seq));
+  return prefix + '-' + String(next).padStart(5, '0');
+}
+  const STAGE_SEQUENCE = ['lead','contact','opportunity','site_visit','close','onboarding','first_service','active'];
 function spStageOptions(r, tab) {
   const cur = r.lifecycleStage || 'lead';
   const opts = SP_TAB_STAGE_OPTIONS[tab] || [{key:cur, label:cur}];
@@ -2807,6 +2827,7 @@ function spSetStage(id, tab, newStage, selectEl) {
       accts.push({
         ...r,
         name: accountName,
+        accountNumber: generateAccountNumber(r.division),
         lifecycleStage: 'onboarding',
         status: 'active',
         locations: [newLocation]
