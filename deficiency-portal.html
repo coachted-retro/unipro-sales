@@ -904,15 +904,13 @@ async function aiSuggestQuote(){
     }
   }
 
-  resultEl.textContent = 'Pulling reference quotes and reasoning through this one...';
-
-  const refQuotes = rqLoad();
-  const adjustments = adjLoad();
-
-  // Build a compact reference list, real seed data first, then learned adjustments, capped to keep the prompt small
+  // Build a compact reference list: committed price-book quote history first (always available),
+  // then real seed data Lexi has added manually, then learned adjustments, capped to keep the prompt small
+  const historyLines = (window._uniProQuoteHistory || [])
+    .slice(-29).map(h => `${(h.deficiencies||[]).join(', ')} | ${h.customer||''} | $${h.total} | ${h.type||''}`);
   const refLines = refQuotes.slice(-40).map(q => `${q.equipment} | ${q.description||''} | $${q.price} | ${q.resolution}`);
   const adjLines = adjustments.slice(-40).map(a => `${a.equipment} | ${a.description||''} | $${a.price} | ${a.resolution} (Lexi-adjusted)`);
-  const allRef = [...refLines, ...adjLines];
+  const allRef = [...historyLines, ...refLines, ...adjLines];
 
   if (!allRef.length) {
     resultEl.innerHTML = 'No reference quotes loaded yet. Add a few real quotes under <a href="#" onclick="document.getElementById(\'refQuotesModal\').classList.add(\'open\');return false;" style="color:#92400E;font-weight:700">Reference Quotes</a> in the top bar, even five or six, and suggestions get dramatically better.';
@@ -981,7 +979,10 @@ document.getElementById('approvalModal').addEventListener('click', e => { if (e.
   let _quoteEngine = null;
   fetch('data/unipro_deficiency_quote_reference.json')
     .then(r => r.json())
-    .then(refData => { _quoteEngine = window.UniProQuoteEngine.createQuoteEngine(refData); })
+    .then(refData => {
+      _quoteEngine = window.UniProQuoteEngine.createQuoteEngine(refData);
+      window._uniProQuoteHistory = refData.real_quote_index || [];
+    })
     .catch(() => { /* deterministic engine unavailable, AI fallback still works */ });
 </script>
 </body>
