@@ -881,6 +881,29 @@ async function aiSuggestQuote(){
   const resultEl = document.getElementById('aiSuggestResult');
   btn.disabled = true; btn.textContent = 'Thinking...';
   resultEl.style.display = 'block';
+
+  // Try the deterministic price-book matcher first - instant, no AI call, fully auditable
+  if (_quoteEngine) {
+    const draft = _quoteEngine.draftQuote({
+      freeTextDeficiency: _activeDef.description,
+      serviceAddress: { city: _activeDef.city, state: _activeDef.state, zip: _activeDef.zip },
+      preparedBy: 'Lexi',
+      customer: { name: _activeDef.account }
+    });
+    const matched = draft.flags.find(f => f.type === 'CATEGORY_MATCHED');
+    if (matched && matched.confidence >= 0.5 && draft.lineItems.length) {
+      document.getElementById('qDesc').value = matched.category;
+      document.getElementById('qPrice').value = draft.grandTotal;
+      document.getElementById('qQty').value = '1';
+      defCalcTotal();
+      resultEl.textContent = 'Matched category: ' + matched.category +
+        ' (price book match, confidence ' + Math.round(matched.confidence * 100) + '%). ' +
+        'Review and adjust before sending, nothing sends automatically.';
+      btn.disabled = false; btn.textContent = 'Suggest Quote';
+      return;
+    }
+  }
+
   resultEl.textContent = 'Pulling reference quotes and reasoning through this one...';
 
   const refQuotes = rqLoad();
@@ -936,7 +959,6 @@ async function aiSuggestQuote(){
   }
   btn.disabled = false; btn.textContent = 'Suggest Quote';
 }
-
 function fullRender(){
   _defData = loadDeficiencies();
   renderStats();
@@ -953,6 +975,14 @@ setInterval(fullRender, 8000);
 
 document.getElementById('cardModal').addEventListener('click', e => { if (e.target.id === 'cardModal') closeCardModal(); });
 document.getElementById('approvalModal').addEventListener('click', e => { if (e.target.id === 'approvalModal') document.getElementById('approvalModal').classList.remove('open'); });
+</script>
+<script src="data/unipro_quote_engine.js"></script>
+<script>
+  let _quoteEngine = null;
+  fetch('data/unipro_deficiency_quote_reference.json')
+    .then(r => r.json())
+    .then(refData => { _quoteEngine = window.UniProQuoteEngine.createQuoteEngine(refData); })
+    .catch(() => { /* deterministic engine unavailable, AI fallback still works */ });
 </script>
 </body>
 </html>
