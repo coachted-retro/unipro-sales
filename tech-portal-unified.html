@@ -1555,11 +1555,12 @@ function tfaChips(ctx){
   chips.push({l:'My day',m:'Quick summary of all my stops today, anything flagged, and what order makes sense.'});
   chips.push({l:'Chemical check',m:'What chemicals and program does my next stop need?'});
   chips.push({l:'Log outcome',m:'I just finished a stop. Help me log the outcome quickly.'});
-  chips.push({l:'Report deficiency',m:'I found a deficiency. Help me log it.'});
+  chips.push({l:'Report deficiency',m:'',action:'openDeficiencyModal'});
   chips.push({l:'Cross-sell',m:'Any cross-sell opportunities at my current stop across all Termac divisions?'});
   var actEl=el('tfa-actions');
   if(!actEl)return;
   actEl.innerHTML=chips.map(function(c){
+    if(c.action) return '<button class="tfa-chip" onclick="'+c.action+'()">'+(c.l)+'</button>';
     return '<button class="tfa-chip" onclick="tfaChip('+JSON.stringify(c.m)+')">'+(c.l)+'</button>';
   }).join('');
 }
@@ -1693,5 +1694,110 @@ function tfaClear(){TFA.history=[];var m=el('tfa-msgs');if(m)m.innerHTML='';var 
   });
 })();
 </script>
+
+<!-- ══ DEFICIENCY FLAG MODAL ══ -->
+<div id="defModal" style="display:none;position:fixed;inset:0;background:rgba(26,29,33,.6);z-index:9500;align-items:center;justify-content:center;padding:18px">
+  <div style="background:#fff;border-radius:14px;width:100%;max-width:440px;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.3)">
+    <div style="background:#1A1D21;padding:16px 20px;border-radius:14px 14px 0 0;display:flex;align-items:center;justify-content:space-between">
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:17px;color:#fff">⚠️ Report Deficiency</div>
+      <button onclick="closeDeficiencyModal()" style="background:rgba(255,255,255,.1);border:none;color:#fff;width:26px;height:26px;border-radius:6px;cursor:pointer;font-size:14px">✕</button>
+    </div>
+    <div style="padding:18px 20px">
+      <div style="font-size:11px;color:#9CA3AF;margin-bottom:14px" id="defModalAcct"></div>
+      <div style="margin-bottom:12px">
+        <label style="display:block;font-size:10.5px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Equipment / Location</label>
+        <input type="text" id="defEquip" placeholder="e.g. Extinguisher #3, kitchen entrance" style="width:100%;padding:9px 11px;border:1.5px solid #D7DBE0;border-radius:8px;font-size:13px;font-family:inherit">
+      </div>
+      <div style="margin-bottom:12px">
+        <label style="display:block;font-size:10.5px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">What's wrong</label>
+        <textarea id="defDesc" placeholder="e.g. Pressure gauge sitting in the red during the drill" style="width:100%;min-height:70px;padding:9px 11px;border:1.5px solid #D7DBE0;border-radius:8px;font-size:13px;font-family:inherit;resize:vertical"></textarea>
+      </div>
+      <div style="margin-bottom:16px">
+        <label style="display:block;font-size:10.5px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Severity</label>
+        <div style="display:flex;gap:8px">
+          <button type="button" class="defSevPill sel" data-sev="minor" onclick="defSelectSev('minor')" style="flex:1;background:#F3F4F6;border:1.5px solid #D7DBE0;border-radius:8px;padding:8px;font-size:12px;font-weight:700;cursor:pointer">Minor</button>
+          <button type="button" class="defSevPill" data-sev="moderate" onclick="defSelectSev('moderate')" style="flex:1;background:#F3F4F6;border:1.5px solid #D7DBE0;border-radius:8px;padding:8px;font-size:12px;font-weight:700;cursor:pointer">Moderate</button>
+          <button type="button" class="defSevPill" data-sev="critical" onclick="defSelectSev('critical')" style="flex:1;background:#F3F4F6;border:1.5px solid #D7DBE0;border-radius:8px;padding:8px;font-size:12px;font-weight:700;cursor:pointer">Critical</button>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <button onclick="closeDeficiencyModal()" style="background:#EEF0F2;color:#1A1D21;border:1.5px solid #D7DBE0;border-radius:8px;padding:10px 18px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12.5px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">Cancel</button>
+        <button onclick="saveDeficiencyReport()" style="background:#C8102E;color:#fff;border:none;border-radius:8px;padding:10px 18px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12.5px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">Flag It</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+var _defSelectedSev = 'minor';
+function defSelectSev(s){
+  _defSelectedSev = s;
+  document.querySelectorAll('.defSevPill').forEach(function(p){
+    var on = p.dataset.sev === s;
+    p.classList.toggle('sel', on);
+    p.style.background = on ? '#C8102E' : '#F3F4F6';
+    p.style.color = on ? '#fff' : '#1A1D21';
+    p.style.borderColor = on ? '#C8102E' : '#D7DBE0';
+  });
+}
+
+function openDeficiencyModal(){
+  var ctx = typeof tfaCtx==="function" ? tfaCtx() : {};
+  var active = ctx.activeJob;
+  var acctLabel = active ? (active.account || 'Current job') : 'No active job selected — will log against your day generally.';
+  var acctEl = document.getElementById('defModalAcct');
+  if (acctEl) acctEl.textContent = acctLabel;
+  document.getElementById('defEquip').value = '';
+  document.getElementById('defDesc').value = '';
+  defSelectSev('minor');
+  document.getElementById('defModal').style.display = 'flex';
+}
+
+function closeDeficiencyModal(){
+  document.getElementById('defModal').style.display = 'none';
+}
+
+function saveDeficiencyReport(){
+  var equip = document.getElementById('defEquip').value.trim();
+  var desc  = document.getElementById('defDesc').value.trim();
+  var sev   = _defSelectedSev;
+  if (!equip || !desc) { alert('Please fill in equipment and description.'); return; }
+
+  var ctx = typeof tfaCtx==="function" ? tfaCtx() : {};
+  var active = ctx.activeJob;
+  var acctName = active ? (active.account || 'Unknown') : 'Unknown';
+  var address  = active ? (active.address || '') : '';
+  var jobId    = active ? active.id : '';
+  var techName = (window._currentTech && _currentTech.name) || (window.currentTech && currentTech.name) || 'Tech';
+  var sevLabel = { critical:'CRITICAL', moderate:'Moderate', minor:'Minor' }[sev] || sev;
+
+  // Log to CRM account record (same shape the Deficiency Command Center reads)
+  try {
+    var accounts = JSON.parse(localStorage.getItem('termac_crm_accounts') || '[]');
+    var acct = accounts.find(function(a){ return a.name === acctName; });
+    if (acct) {
+      if (!acct.activityLog) acct.activityLog = [];
+      acct.activityLog.unshift({ ts: Date.now(), type:'tech', icon:'⚠️',
+        title:'Deficiency Flagged [' + sevLabel + ']', note: equip+': '+desc, who: techName });
+      acct.openDeficiencies = (acct.openDeficiencies || 0) + 1;
+      localStorage.setItem('termac_crm_accounts', JSON.stringify(accounts));
+    }
+  } catch(e) {}
+
+  // Write to office queue, this is what the Deficiency Command Center polls
+  try {
+    var queue = JSON.parse(localStorage.getItem('officeQueue') || '[]');
+    queue.unshift({ type:'deficiency', ts:Date.now(), account:acctName,
+      address:address, equipment:equip, description:desc, severity:sev,
+      techName:techName, jobId:jobId, needsQuote:sev!=='minor', status:'pending', lexiAction:null });
+    localStorage.setItem('officeQueue', JSON.stringify(queue.slice(0,200)));
+  } catch(e) {}
+
+  closeDeficiencyModal();
+  if (typeof toast === 'function') toast('Deficiency flagged. Lexi has been notified.');
+  else alert('Deficiency flagged. Lexi has been notified.');
+}
+</script>
+
 </body>
 </html>
