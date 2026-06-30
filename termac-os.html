@@ -6680,7 +6680,22 @@ document.addEventListener('keydown', e=>{
                 <div class="fs-card-hdr steel"><div class="fs-card-icon">👤</div><div class="fs-card-hdr-title">Contact Information</div></div>
                 <div class="fs-card-body">
                   <div class="fs-field"><label>Primary Contact Name *</label><input type="text" id="fs_contactName" placeholder="Owner, GM, or manager name"></div>
-                  <div class="fs-field"><label>Title / Role</label><input type="text" id="fs_contactTitle" placeholder="Owner, GM, Facilities Manager..."></div>
+                  <div class="fs-field"><label>Title / Role</label>
+                    <select id="fs_contactTitle">
+                      <option value="">-- Select role --</option>
+                      <option>Owner</option>
+                      <option>General Manager</option>
+                      <option>Manager</option>
+                      <option>Chef / Head Chef</option>
+                      <option>Kitchen Manager</option>
+                      <option>Facilities Manager</option>
+                      <option>Purchasing Manager</option>
+                      <option>Landlord</option>
+                      <option>Property Manager</option>
+                      <option>Office Manager</option>
+                      <option>Other</option>
+                    </select>
+                  </div>
                   <div class="fs-grid-2">
                     <div class="fs-field"><label>Phone *</label><input type="tel" id="fs_contactPhone" placeholder="(215) 000-0000"></div>
                     <div class="fs-field"><label>Mobile</label><input type="tel" id="fs_contactMobile" placeholder="(215) 000-0000"></div>
@@ -7212,7 +7227,7 @@ document.addEventListener('keydown', e=>{
                   <div style="font-size:11px;color:#AEB6BF;margin-top:4px;font-style:italic">Your address (tscholl@termac.com) is always CC'd automatically.</div>
                 </div>
                 <div style="display:flex;align-items:flex-end;gap:10px;padding-bottom:16px">
-                  <button class="fs-btn fs-btn-secondary" style="flex:1" onclick="fsSendAccountSetupEmail()">✉ Send to Office via Outlook</button>
+                  <button class="fs-btn fs-btn-secondary" style="flex:1" onclick="var n=fsSendDivisionScopeEmails();if(n){document.getElementById('ob_chk6').checked=true;showToast('Sending '+n+' division email'+(n>1?'s':'')+'...')}">✉ Send to Office via Outlook</button>
                 </div>
               </div>
             </div>
@@ -8627,6 +8642,13 @@ function fsPrefillClientInfo() {
       if (parts.length >= 3) city = parts[parts.length-2].trim().split(/\s+[A-Z]{2}\s/)[0];
       address = parts[0].trim();
     }
+    // Secondary fallback: if we still have no city, try to pull it from the raw
+    // address string using a simple regex. Handles formats like
+    // "1264 W Main St, Morrisville, PA 19067" or "1264 W Main St Morrisville PA 19067"
+    if (!city && address) {
+      const cityMatch = address.match(/,\s*([A-Za-z\s]+?)\s*,?\s*[A-Z]{2}\s+\d{5}/);
+      if (cityMatch) city = cityMatch[1].trim();
+    }
   }
 
   setIfEmpty('fs_bizName',    r.business || r.name || '');
@@ -9672,6 +9694,104 @@ function fsSetDecision(val) {
 function fsProceedFromDecision() {
   if (fsState.decision === 'accepted') { fsGo(5,6); }
   else { alert('Visit outcome recorded. Complete the CRM entry above and use the back button to review the estimate if needed.'); }
+}
+
+// ── DIVISION EMAIL ROUTING ──────────────────────────────────────────────────
+// One acceptance fires one email per division that was contracted.
+// Each goes to the right internal recipient with only their scope of work.
+// Placeholders (Ted) fill in until the org chart is loaded for each division.
+const DIVISION_EMAIL_MAP = {
+  unipro:    { to: 'pbrahan@termac.com',       name: 'Paul Brahan',   label: 'UniPro Fire Protection' },
+  quality3:  { to: 'tscholl@termac.com',        name: 'Ted Scholl',    label: 'Quality III' },
+  filterman: { to: 'tscholl@termac.com',        name: 'Ted Scholl',    label: 'Filter Man' },
+  gto:       { to: 'tscholl@termac.com',        name: 'Ted Scholl',    label: 'GTO Grease Trap' },
+  allpro:    { to: 'dsoleau@termac.com',        name: 'Dan Soleau',    label: 'AllPro Stainless' },
+  termac:    { to: 'tscholl@termac.com',        name: 'Ted Scholl',    label: 'Termac' },
+};
+
+function fsBuildDivisionScopeText(svc, surveyData, acct, estimate) {
+  const d = surveyData[svc] || {};
+  const div = DIVISION_EMAIL_MAP[svc] || { label: svc };
+  const lines = (typeof estBuildLines === 'function') ? estBuildLines(svc, d) : [];
+  const lineText = lines.map(l =>
+    `  - ${l.desc}${l.detail ? ' (' + l.detail + ')' : ''}: $${(l.unitPrice||0).toLocaleString()}`
+  ).join('\n') || '  (No line items captured — rep to confirm scope)';
+
+  const scopeNotes = d.scopeNotes || d.fs_summary || '';
+  const pricingMode = acct.pricingMode || 'per_visit';
+  const pricingTerm = acct.pricingTerm || 'no_contract';
+  const termLabel = pricingTerm === '1yr' ? '1-Year Contract' : pricingTerm === '3yr' ? '3-Year Contract' : 'Per-Visit (No Contract)';
+
+  return [
+    `NEW ACCOUNT SCOPE OF WORK — ${div.label.toUpperCase()}`,
+    ``,
+    `Account: ${acct.business || acct.name || ''}`,
+    `Address: ${acct.address || ''}${acct.city ? ', ' + acct.city : ''}${acct.state ? ' ' + acct.state : ''}${acct.zip ? ' ' + acct.zip : ''}`,
+    `Contact: ${acct.contact || acct.name || ''} | ${acct.role || ''} | ${acct.phone || ''} | ${acct.email || ''}`,
+    ``,
+    `PRICING TIER: ${termLabel}`,
+    `PAYMENT: ${estimate.paymentMethod || 'Square / Card on File'}`,
+    `ESTIMATE TOTAL (this division): $${lines.reduce((s,l)=>s+(l.unitPrice*l.qty||0),0).toLocaleString()}`,
+    ``,
+    `SCOPE OF WORK:`,
+    lineText,
+    ``,
+    scopeNotes ? `NOTES FROM REP:\n${scopeNotes}` : '',
+    ``,
+    `ACCESS / SITE NOTES: ${acct.siteNotes || acct.accessNotes || acct.notes || 'None on file'}`,
+    ``,
+    `CLIENT SIGNATURE: ${acct.surveySignerName || 'See account record'} (${acct.surveySignerTitle || ''}) — ${acct.surveySignerDate || ''} · Initials: ${acct.surveyDisclaimerInitials || '—'} · Full signature stored on account record`,
+    ``,
+    `Sent by: ${(typeof _currentUser !== 'undefined' && _currentUser?.name) || 'Ted Scholl'} (tscholl@termac.com)`,
+    ``,
+    `Action required: Set up ${div.label} services for this account and confirm service start date with the rep.`,
+  ].filter(l => l !== '').join('\n');
+}
+
+function fsSendDivisionScopeEmails() {
+  // Fires one email per contracted division, each to the right internal recipient
+  const acctId = svState?.accountId || estState?.accountId;
+  const accts = crmLoad('accounts');
+  const acct = accts.find(x => x.id === acctId) || {};
+  const surveyData = svState?.surveyData || acct.surveyData || {};
+  const estimate = { paymentMethod: acct.paymentMethod || '' };
+
+  const contractedDivisions = Object.keys(surveyData).filter(svc =>
+    surveyData[svc] && Object.keys(surveyData[svc]).length > 0 && DIVISION_EMAIL_MAP[svc]
+  );
+
+  if (!contractedDivisions.length) {
+    alert('No division survey data found. Make sure at least one service survey was completed.');
+    return;
+  }
+
+  let emailsOpened = 0;
+  contractedDivisions.forEach(function(svc, idx) {
+    const div = DIVISION_EMAIL_MAP[svc];
+    const bodyText = fsBuildDivisionScopeText(svc, surveyData, acct, estimate);
+    const subject = encodeURIComponent('New Account Setup — ' + (acct.business || acct.name || 'New Account') + ' [' + div.label + ']');
+    const body = encodeURIComponent(bodyText);
+    // Stagger each mailto open slightly so the browser doesn't block them
+    setTimeout(function() {
+      window.open('mailto:' + div.to + '?cc=tscholl@termac.com&subject=' + subject + '&body=' + body);
+    }, idx * 800);
+    emailsOpened++;
+  });
+
+  // Also save the full account packet to the account record so it's always findable
+  if (acct && acctId) {
+    acct.accountPacket = {
+      generatedAt: Date.now(),
+      generatedBy: (typeof _currentUser !== 'undefined' && _currentUser?.name) || 'Rep',
+      divisions: contractedDivisions,
+      scopeByDivision: Object.fromEntries(
+        contractedDivisions.map(svc => [svc, fsBuildDivisionScopeText(svc, surveyData, acct, estimate)])
+      ),
+    };
+    crmSave('accounts', accts);
+  }
+
+  return emailsOpened;
 }
 
 function fsSendAccountSetupEmail() {
@@ -19866,8 +19986,26 @@ async function svObjSubmit(){
       <!-- Square sub-panel -->
       <div id="pmPanel_square" style="display:block">
         <a id="estSquareLink" href="https://squareup.com/dashboard" target="_blank" class="est-action-btn green" style="text-decoration:none;display:inline-block;margin-bottom:8px">💳 Open Square →</a>
-        <div style="font-size:11px;color:var(--soft)">Collect card or tap to pay in Square, then confirm below.</div>
-        <button onclick="estPaymentDone('square')" class="est-action-btn secondary" style="margin-top:10px">✓ Payment Collected via Square</button>
+        <div style="font-size:11px;color:var(--soft)">Collect payment or save card on file in Square, then enter the confirmation below.</div>
+        <div style="margin-top:10px">
+          <label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--soft);display:block;margin-bottom:4px">Square Confirmation / Reference # <span style="color:#C8102E">*</span></label>
+          <input type="text" id="pmSquareRef" placeholder="e.g. transaction ID or last 4 of card" style="width:100%;border:1.5px solid var(--line);border-radius:6px;padding:8px 10px;font-size:13px;box-sizing:border-box">
+          <div style="margin-top:6px;display:flex;align-items:flex-start;gap:8px">
+            <input type="checkbox" id="pmCardOnFile" style="margin-top:3px;flex-shrink:0">
+            <label for="pmCardOnFile" style="font-size:12px;color:var(--ink)">Card saved on file in Square <span style="color:#1E7B3C;font-weight:700">(required for annual/corporate accounts and for dispatch on all accounts)</span></label>
+          </div>
+          <div id="pmBillingCadenceWrap" style="display:none;margin-top:12px;background:#EFF6FF;border:1.5px solid #3B82F6;border-radius:8px;padding:12px 14px">
+            <label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#1E40AF;display:block;margin-bottom:8px">Billing Cadence (Annual / Corporate Accounts)</label>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button type="button" id="pmCad_monthly" onclick="pmSelectCadence('monthly')" style="border:2px solid #3B82F6;border-radius:8px;padding:8px 14px;background:#EFF6FF;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#1E40AF">Monthly</button>
+              <button type="button" id="pmCad_quarterly" onclick="pmSelectCadence('quarterly')" style="border:2px solid var(--line);border-radius:8px;padding:8px 14px;background:#fff;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--soft)">Quarterly</button>
+              <button type="button" id="pmCad_annually" onclick="pmSelectCadence('annually')" style="border:2px solid var(--line);border-radius:8px;padding:8px 14px;background:#fff;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--soft)">Annually (Prepay)</button>
+            </div>
+            <input type="hidden" id="pmBillingCadence" value="monthly">
+            <div style="font-size:11px;color:#3B82F6;margin-top:6px">Card on file is used for autopay on the selected schedule. Customer signs the service agreement before first invoice.</div>
+          </div>
+        </div>
+        <button onclick="estPaymentDone('square')" class="est-action-btn secondary" style="margin-top:10px">✓ Confirm Square Payment / Card</button>
       </div>
 
       <!-- Cash sub-panel -->
@@ -19941,7 +20079,7 @@ async function svObjSubmit(){
           <li><input type="checkbox" id="ob_chk3"> <label for="ob_chk3">Customer emailed PDF copy of estimate</label></li>
           <li><input type="checkbox" id="ob_chk4"> <label for="ob_chk4">Account info entered above (contact, phone, email)</label></li>
           <li><input type="checkbox" id="ob_chk5"> <label for="ob_chk5">Service preferences noted (day/window)</label></li>
-          <li><input type="checkbox" id="ob_chk6"> <label for="ob_chk6">Office notified — service start dates to be set by office</label></li>
+          <li><input type="checkbox" id="ob_chk6"> <label for="ob_chk6">Division scope emails sent — service start dates to be set by each division</label></li>
         </ul>
       </div>
       <div style="margin-top:18px;display:flex;gap:10px;flex-wrap:wrap">
@@ -21542,7 +21680,64 @@ function estDeclineFull(){
   document.getElementById('estNotInterestedPanel').scrollIntoView({ behavior:'smooth' });
 }
 
+function pmSelectCadence(cad) {
+  document.getElementById('pmBillingCadence').value = cad;
+  ['monthly','quarterly','annually'].forEach(function(c) {
+    var btn = document.getElementById('pmCad_' + c);
+    if (!btn) return;
+    var active = c === cad;
+    btn.style.borderColor = active ? '#3B82F6' : 'var(--line)';
+    btn.style.background  = active ? '#EFF6FF' : '#fff';
+    btn.style.color       = active ? '#1E40AF' : 'var(--soft)';
+  });
+}
+
+function pmUpdatePaymentPanelForTier() {
+  var acctId = (typeof estState !== 'undefined' && estState && estState.accountId) || (typeof svState !== 'undefined' && svState && svState.accountId);
+  var accts = crmLoad('accounts');
+  var acct = (accts.find(function(x){ return x.id === acctId; })) || {};
+  var isAnnual = (acct.pricingMode || 'per_visit') === 'annual';
+  var wrap = document.getElementById('pmBillingCadenceWrap');
+  if (wrap) wrap.style.display = isAnnual ? 'block' : 'none';
+  if (isAnnual) pmSelectCadence('monthly');
+}
+
 function estPaymentDone(method){
+  // ── PAYMENT SAFEGUARD ──
+  // Per-visit accounts: must have paid in full OR card on file before dispatch.
+  // Annual/corporate accounts: card on file is always required, no exceptions.
+  const acctId = estState?.accountId || svState?.accountId;
+  const accts = crmLoad('accounts');
+  const acct = accts.find(x => x.id === acctId) || {};
+  const pricingMode = acct.pricingMode || 'per_visit';
+  const isAnnual = pricingMode === 'annual';
+
+  if (method === 'square') {
+    const ref = (document.getElementById('pmSquareRef')?.value || '').trim();
+    const cardOnFile = document.getElementById('pmCardOnFile')?.checked;
+    if (!ref) {
+      alert('Please enter the Square confirmation or reference number before continuing.');
+      return;
+    }
+    const billingCadence = document.getElementById('pmBillingCadence')?.value || 'monthly';
+    if (isAnnual && !cardOnFile) {
+      alert('Annual and corporate accounts require a card on file in Square before dispatch.\n\nThe card is used for autopay on the ' + billingCadence + ' billing schedule. Please save the card in Square and check the box above.');
+      return;
+    }
+    if (!isAnnual && !cardOnFile) {
+      const proceed = confirm('No card saved on file. This account will require payment at each visit. Proceed without a card on file?\n\nTip: Saving a card now protects against missed payments and speeds up future visits.');
+      if (!proceed) return;
+    }
+    if (acct && acctId) {
+      acct.paymentMethod = 'square';
+      acct.squareRef = ref;
+      acct.cardOnFile = cardOnFile;
+      acct.billingCadence = isAnnual ? billingCadence : 'per_visit';
+      acct.paymentCollectedAt = Date.now();
+      crmSave('accounts', accts);
+    }
+  }
+
   document.getElementById('estSquarePanel').style.display = 'none';
   document.getElementById('estOnboard').classList.add('open');
   document.getElementById('estOnboard').scrollIntoView({ behavior:'smooth' });

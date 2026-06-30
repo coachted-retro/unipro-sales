@@ -2247,6 +2247,8 @@ function spOpenAllProForm(r) {
   document.getElementById('spModalTitle').textContent = r ? 'Edit AllPro / Hood Record' : '🏗️ New AllPro / Hood Contact';
   document.getElementById('spModalBody').innerHTML = spBuildAllProForm(r || null);
   document.getElementById('spModalBg').classList.add('open');
+
+  setTimeout(() => attachAddressAutocomplete('spf_address'), 0);
 }
 
 function spOpenAdd(tab) {
@@ -2255,6 +2257,8 @@ function spOpenAdd(tab) {
   document.getElementById('spModalTitle').textContent = 'Add ' + tabName;
   document.getElementById('spModalBody').innerHTML = spBuildForm(tab, null);
   document.getElementById('spModalBg').classList.add('open');
+
+  setTimeout(() => attachAddressAutocomplete('spf_address'), 0);
 }
 
 function spEditRecord(id, tab) {
@@ -2266,6 +2270,8 @@ function spEditRecord(id, tab) {
   document.getElementById('spModalTitle').textContent = 'Edit ' + escH(r.business || r.name || 'Record');
   document.getElementById('spModalBody').innerHTML = spBuildForm(tab, r);
   document.getElementById('spModalBg').classList.add('open');
+
+  setTimeout(() => attachAddressAutocomplete('spf_address'), 0);
 }
 
 // ── BUSINESS TYPE → PRICING MODE MAP ──────────────────────────────────────
@@ -2450,9 +2456,9 @@ function spBuildRepForm(r) {
       '<div id="spf_dupe_biz" style="display:none;margin-top:4px"></div>' +
     '</div>' +
 
-    // Business type — this drives survey pricing
+    // Pricing Tier — drives per-visit vs annual contract in the survey
     '<div class="sp-form-full">' +
-      '<label style="display:flex;align-items:center;gap:6px">Business Type ' +
+      '<label style="display:flex;align-items:center;gap:6px">Pricing Tier ' +
         '<span style="font-size:10px;font-weight:400;text-transform:none;letter-spacing:0;color:#1E7B3C">→ sets per-visit or annual pricing in the survey</span></label>' +
       '<select id="spf_biz_type" onchange="spBizTypeChanged(this.value)" style="border-color:#1E7B3C">' +
         bizTypeOpts +
@@ -2564,8 +2570,13 @@ function spSaveRecord() {
   if (!business && !name) { spToast('Please enter a business name or contact name'); return; }
 
   const now = Date.now();
-  const address = document.getElementById('spf_address')?.value.trim() || '';
-  const zip = (address.match(/\b\d{5}\b/) || [''])[0];
+  const addressInput = document.getElementById('spf_address');
+  const address = addressInput?.value.trim() || '';
+  // Prefer structured city/state/zip captured via address autocomplete selection;
+  // fall back to a regex zip-only guess for addresses typed freehand without using a suggestion.
+  const city  = addressInput?.dataset.acCity  || '';
+  const state = addressInput?.dataset.acState || '';
+  const zip   = addressInput?.dataset.acZip   || (address.match(/\b\d{5}\b/) || [''])[0];
 
   var rec;
 
@@ -2576,7 +2587,7 @@ function spSaveRecord() {
       id: _spEditId || ('AP' + String(now).slice(-6)),
       name: business,
       business,
-      address, zip,
+      address, zip, city, state,
       parentCompany:   document.getElementById('spf_parent')?.value.trim() || '',
       billingAddress:  document.getElementById('spf_billing_addr')?.value.trim() || '',
       projectType:     document.getElementById('spf_project_type')?.value || '',
@@ -2629,7 +2640,7 @@ function spSaveRecord() {
       business,
       phone:          document.getElementById('spf_phone')?.value.trim() || '',
       email:          document.getElementById('spf_email')?.value.trim() || '',
-      address, zip,
+      address, zip, city, state,
       parentCompany:  document.getElementById('spf_parent')?.value.trim() || '',
       billingAddress: document.getElementById('spf_billing_addr')?.value.trim() || '',
       ownerName:      document.getElementById('spf_owner_name')?.value.trim() || '',
@@ -2753,6 +2764,64 @@ function generateAccountNumber(division){
   localStorage.setItem(ACCOUNT_NUMBER_SEQ_KEY, JSON.stringify(seq));
   return prefix + '-' + String(next).padStart(5, '0');
 }
+
+// ── ADDRESS AUTOCOMPLETE (reuses the existing ors-route-proxy Worker / ORS account,
+// same key already used for route optimization, no new signup needed) ──
+const ADDR_AUTOCOMPLETE_PROXY = 'https://ors-route-proxy.tedscholl.workers.dev';
+let _addrAcTimer = null;
+function attachAddressAutocomplete(inputId){
+  const input = document.getElementById(inputId);
+  if (!input || input.dataset.acAttached) return;
+  input.dataset.acAttached = '1';
+
+  const box = document.createElement('div');
+  box.style.cssText = 'position:relative;width:100%';
+  input.parentNode.insertBefore(box, input);
+  box.appendChild(input);
+  const dropdown = document.createElement('div');
+  dropdown.style.cssText = 'position:absolute;top:100%;left:0;right:0;background:#fff;border:1.5px solid var(--line,#D7DBE0);border-radius:8px;margin-top:2px;box-shadow:0 4px 14px rgba(0,0,0,.12);z-index:50;display:none;max-height:220px;overflow-y:auto';
+  box.appendChild(dropdown);
+
+  input.addEventListener('input', () => {
+    delete input.dataset.acCity; delete input.dataset.acState; delete input.dataset.acZip;
+    const text = input.value.trim();
+    clearTimeout(_addrAcTimer);
+    if (text.length < 3) { dropdown.style.display = 'none'; return; }
+    _addrAcTimer = setTimeout(() => fetchAddressSuggestions(text, dropdown, input), 300);
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!box.contains(e.target)) dropdown.style.display = 'none';
+  });
+}
+async function fetchAddressSuggestions(text, dropdown, input){
+  try {
+    const res = await fetch(ADDR_AUTOCOMPLETE_PROXY + '/autocomplete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text })
+    });
+    const data = await res.json();
+    const suggestions = data.suggestions || [];
+    if (!suggestions.length) { dropdown.style.display = 'none'; return; }
+    dropdown.innerHTML = suggestions.map((s, i) =>
+      '<div data-i="' + i + '" style="padding:9px 12px;font-size:13px;cursor:pointer;border-bottom:1px solid #F1F2F4" '
+      + 'onmouseover="this.style.background=\'#F5F6F8\'" onmouseout="this.style.background=\'#fff\'">'
+      + escH(s.label) + '</div>'
+    ).join('');
+    dropdown.style.display = 'block';
+    Array.from(dropdown.children).forEach((el, i) => {
+      el.onclick = () => {
+        const s = suggestions[i];
+        input.value = s.label;
+        input.dataset.acCity = s.city || '';
+        input.dataset.acState = s.state || '';
+        input.dataset.acZip = s.zip || '';
+        dropdown.style.display = 'none';
+      };
+    });
+  } catch(e) { dropdown.style.display = 'none'; }
+}
+
 
 // ── PROMOTE LEAD TO ACCOUNT ON THE SPOT (used when a survey starts from an opportunity
 // that hasn't formally closed yet, e.g. a rep starting a site survey straight from the
