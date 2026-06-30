@@ -1771,15 +1771,35 @@ function saveDeficiencyReport(){
   var techName = (window._currentTech && _currentTech.name) || (window.currentTech && currentTech.name) || 'Tech';
   var sevLabel = { critical:'CRITICAL', moderate:'Moderate', minor:'Minor' }[sev] || sev;
 
-  // Log to CRM account record (same shape the Deficiency Command Center reads)
+  // Log to CRM account record (same shape the Deficiency Command Center reads).
+  // Location-aware: if the account has a locations[] array (Company/Location split), find the
+  // specific location this job belongs to and log there. Falls back to the flat account-level
+  // activityLog for older accounts that predate the split, so nothing breaks.
   try {
     var accounts = JSON.parse(localStorage.getItem('termac_crm_accounts') || '[]');
-    var acct = accounts.find(function(a){ return a.name === acctName; });
+    // Match by parent account name first, since acctName on the job context may be either
+    // the parent company name or a location's business name depending on how it was set.
+    var acct = accounts.find(function(a){ return a.name === acctName || a.business === acctName; });
+    if (!acct && accounts.length) {
+      // Fallback: search inside every account's locations[] for a name match
+      acct = accounts.find(function(a){
+        return (a.locations || []).some(function(l){ return l.name === acctName; });
+      });
+    }
     if (acct) {
-      if (!acct.activityLog) acct.activityLog = [];
-      acct.activityLog.unshift({ ts: Date.now(), type:'tech', icon:'⚠️',
-        title:'Deficiency Flagged [' + sevLabel + ']', note: equip+': '+desc, who: techName });
-      acct.openDeficiencies = (acct.openDeficiencies || 0) + 1;
+      var logEntry = { ts: Date.now(), type:'tech', icon:'⚠️',
+        title:'Deficiency Flagged [' + sevLabel + ']', note: equip+': '+desc, who: techName };
+
+      if (acct.locations && acct.locations.length) {
+        var loc = acct.locations.find(function(l){ return l.name === acctName; }) || acct.locations[0];
+        if (!loc.activityLog) loc.activityLog = [];
+        loc.activityLog.unshift(logEntry);
+        loc.openDeficiencies = (loc.openDeficiencies || 0) + 1;
+      } else {
+        if (!acct.activityLog) acct.activityLog = [];
+        acct.activityLog.unshift(logEntry);
+        acct.openDeficiencies = (acct.openDeficiencies || 0) + 1;
+      }
       localStorage.setItem('termac_crm_accounts', JSON.stringify(accounts));
     }
   } catch(e) {}
@@ -1797,7 +1817,6 @@ function saveDeficiencyReport(){
   if (typeof toast === 'function') toast('Deficiency flagged. Lexi has been notified.');
   else alert('Deficiency flagged. Lexi has been notified.');
 }
-</script>
 
 </body>
 </html>
