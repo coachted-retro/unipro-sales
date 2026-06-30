@@ -2753,6 +2753,49 @@ function generateAccountNumber(division){
   localStorage.setItem(ACCOUNT_NUMBER_SEQ_KEY, JSON.stringify(seq));
   return prefix + '-' + String(next).padStart(5, '0');
 }
+
+// ── PROMOTE LEAD TO ACCOUNT ON THE SPOT (used when a survey starts from an opportunity
+// that hasn't formally closed yet, e.g. a rep starting a site survey straight from the
+// Opportunities tab without walking through every stage first) ──
+function promoteLeadToAccountIfNeeded(leadOrAcctId){
+  let accts = crmLoad('accounts');
+  let acct = accts.find(a => a.id === leadOrAcctId);
+  if (acct) return acct; // already a real account, nothing to do
+
+  const leads = crmLoad('leads');
+  const r = leads.find(l => l.id === leadOrAcctId);
+  if (!r) return null; // not found anywhere, genuinely doesn't exist
+
+  // Same Company/Location split + auto account number logic as the normal close flow
+  const bizName = r.business || r.name || '';
+  const parentName = (r.parentCompany || '').trim();
+  const accountName = parentName || bizName;
+  const newLocation = {
+    id: 'loc_' + Date.now(),
+    name: bizName || accountName,
+    address: r.address || '',
+    city: r.city || '',
+    state: r.state || '',
+    zip: r.zip || '',
+    phone: r.phone || '',
+    status: 'active',
+    tags: [],
+    createdAt: Date.now(),
+    createdFrom: 'survey_started_before_close'
+  };
+  acct = {
+    ...r,
+    name: accountName,
+    accountNumber: generateAccountNumber(r.division),
+    lifecycleStage: 'onboarding',
+    status: 'active',
+    locations: [newLocation]
+  };
+  accts.push(acct);
+  crmSave('accounts', accts);
+  return acct;
+}
+
   const STAGE_SEQUENCE = ['lead','contact','opportunity','site_visit','close','onboarding','first_service','active'];
 function spStageOptions(r, tab) {
   const cur = r.lifecycleStage || 'lead';
@@ -6645,15 +6688,23 @@ function svStep5Submit() {
 /* ── SUBMIT & STEP 6 ── */
 function svSubmitVisit() {
   const now = Date.now();
-  const accounts = svGetAccounts();
-  const acct = accounts.find(a => a.id === _svAcctId);
+
+  // If this survey was started straight from an Opportunity card (not yet a real account),
+  // promote it to a full account right now so nothing silently fails to save.
+  const acct = promoteLeadToAccountIfNeeded(_svAcctId);
+  if (!acct) {
+    alert('Could not find the account or opportunity this survey is for. Nothing was saved. Please start the survey again from the account or opportunity card.');
+    return;
+  }
+  _svAcctId = acct.id; // keeps everything consistent if it was just newly created
+
   const validLines = _svOrderLines.filter(l => l.productId);
   const total = validLines.reduce((s,l)=>s+(l.lineTotal||0),0);
   const rep = document.getElementById('svRep')?.value?.trim() ||
     (typeof _currentUser !== 'undefined' ? _currentUser?.name : '') || 'Rep';
 
   // Create order in warehouse queue
-  if (validLines.length && acct) {
+  if (validLines.length) {
     const orders = JSON.parse(localStorage.getItem('termac_orders')||'[]');
     orders.unshift({
       id: 'ORD' + String(now).slice(-6),
@@ -6678,8 +6729,7 @@ function svSubmitVisit() {
   }
 
   // Log activity on account
-  const storageKey = localStorage.getItem('termac_crm_accounts') ? 'termac_crm_accounts' : 'termac_crm_accounts';
-  const allAccts = JSON.parse(localStorage.getItem(storageKey)||'[]');
+  const allAccts = JSON.parse(localStorage.getItem('termac_crm_accounts')||'[]');
   const acctRecord = allAccts.find(a => a.id === _svAcctId);
   if (acctRecord) {
     acctRecord.lastCheckin = now;
@@ -6691,7 +6741,7 @@ function svSubmitVisit() {
       who: rep,
       order: validLines.length ? { lines: validLines, total, paymentMethod: _svPayMethod, ref: _svPayRef } : null,
     });
-    localStorage.setItem(storageKey, JSON.stringify(allAccts));
+    localStorage.setItem('termac_crm_accounts', JSON.stringify(allAccts));
   }
 
   _svStep = 6;
