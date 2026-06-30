@@ -2785,7 +2785,32 @@ function spSetStage(id, tab, newStage, selectEl) {
     r.status = 'active';
     const accts = crmLoad('accounts');
     if (!accts.find(a => a.id === id)) {
-      accts.push({...r, lifecycleStage:'onboarding', status:'active'});
+      // Company/Location split: parent company becomes the Account name (e.g. "XYZ Hospitality"),
+      // business name becomes the Location name (e.g. "Jones Burger"). If there's no parent
+      // company, Account and Location collapse to the same business name, matching ServiceTrade.
+      const bizName = r.business || r.name || '';
+      const parentName = (r.parentCompany || '').trim();
+      const accountName = parentName || bizName;
+      const newLocation = {
+        id: 'loc_' + Date.now(),
+        name: bizName || accountName,
+        address: r.address || '',
+        city: r.city || '',
+        state: r.state || '',
+        zip: r.zip || '',
+        phone: r.phone || '',
+        status: 'active',
+        tags: [], // Lexi assigns tags downstream, not set at sales intake
+        createdAt: Date.now(),
+        createdFrom: 'opportunity_close'
+      };
+      accts.push({
+        ...r,
+        name: accountName,
+        lifecycleStage: 'onboarding',
+        status: 'active',
+        locations: [newLocation]
+      });
       crmSave('accounts', accts);
     }
     const schedQ = JSON.parse(localStorage.getItem('termac_scheduler_queue') || '[]');
