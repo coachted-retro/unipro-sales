@@ -7951,8 +7951,27 @@ function getAccountContext(accountId) {
   };
 }
 
+// ── AUTO-GENERATED ACCOUNT NUMBERS (mirrors sales-portal.html's scheme so numbers
+// never collide regardless of which entry point creates the account) ──
+const ACCOUNT_NUMBER_SEQ_KEY = 'termac_account_number_seq';
+const ACCOUNT_NUMBER_START = 90001;
+const DIVISION_PREFIX_MAP = {
+  'UniPro': 'UFP', 'Quality III': 'QT3', 'GTO': 'GTO',
+  'Filter Man': 'FLM', 'AllPro': 'ALP', 'Termac': 'TRM'
+};
+function generateAccountNumber(division){
+  const prefix = DIVISION_PREFIX_MAP[division] || 'TRM';
+  let seq = {};
+  try { seq = JSON.parse(localStorage.getItem(ACCOUNT_NUMBER_SEQ_KEY) || '{}'); } catch(e) {}
+  const next = (seq[prefix] || ACCOUNT_NUMBER_START - 1) + 1;
+  seq[prefix] = next;
+  localStorage.setItem(ACCOUNT_NUMBER_SEQ_KEY, JSON.stringify(seq));
+  return prefix + '-' + String(next).padStart(5, '0');
+}
+
 function openSiteSurveyFromLead(id) {
-  // Bridge: finds record in leads pool and opens survey overlay
+  // Bridge: finds record in leads pool (lead/contact/opportunity are the same record,
+  // distinguished only by lifecycleStage) and opens survey overlay
   const leadsData = crmLoad('leads');
   let r = leadsData.find(x=>x.id===id);
   if (!r) {
@@ -7960,10 +7979,36 @@ function openSiteSurveyFromLead(id) {
     r = acctData.find(x=>x.id===id);
   }
   if (!r) { showToast('Record not found'); return; }
-  // Temporarily mirror into accounts pool so openSiteSurvey can find it
+
+  // Mirror into accounts pool so openSiteSurvey can find it, and so every save point
+  // during the survey (photos, summary, signature) actually persists instead of
+  // silently failing against a record that only exists in memory. Uses the same
+  // Company/Location split + auto account number as the normal opportunity-close flow,
+  // so a survey-created account is structurally identical to one created through Sales.
   const accts = crmLoad('accounts');
   if (!accts.find(x=>x.id===id)) {
-    accts.push({...r});
+    const bizName = r.business || r.name || '';
+    const parentName = (r.parentCompany || '').trim();
+    const accountName = parentName || bizName;
+    const newLocation = {
+      id: 'loc_' + Date.now(),
+      name: bizName || accountName,
+      address: r.address || '',
+      city: r.city || '',
+      state: r.state || '',
+      zip: r.zip || '',
+      phone: r.phone || '',
+      status: 'active',
+      tags: [],
+      createdAt: Date.now(),
+      createdFrom: 'site_survey_started'
+    };
+    accts.push({
+      ...r,
+      name: accountName,
+      accountNumber: r.accountNumber || generateAccountNumber(r.division),
+      locations: r.locations && r.locations.length ? r.locations : [newLocation]
+    });
     crmSave('accounts', accts);
   }
   openSiteSurvey(id);
@@ -23755,8 +23800,8 @@ document.addEventListener('DOMContentLoaded', () => {
       window._surveyLaunch = null;
       setTimeout(function() {
         try {
-          if (_sl.aid && typeof openSiteSurvey === 'function') {
-            openSiteSurvey(_sl.aid);
+          if (_sl.aid && typeof openSiteSurveyFromLead === 'function') {
+            openSiteSurveyFromLead(_sl.aid);
           } else if (typeof svState !== 'undefined') {
             svState.accountId  = null;
             svState.bizName    = _sl.biz || '';
