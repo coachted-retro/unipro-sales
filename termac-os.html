@@ -20020,7 +20020,26 @@ async function svObjSubmit(){
     </div>
 
     <!-- Payment Collection Panel -->
-    <div id="estSquarePanel" style="display:none;background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:22px 24px;margin-bottom:16px">
+    <!-- ── MSA PANEL (annual accounts only — injected before payment) ── -->
+    <div id="estMSAPanel" style="display:none;background:#EFF6FF;border:2px solid #1B5FA8;border-radius:10px;padding:22px 24px;margin-bottom:16px">
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:14px;letter-spacing:.06em;text-transform:uppercase;color:#1E40AF;margin-bottom:4px">📄 Master Service Agreement</div>
+      <p style="font-size:13px;color:#1E3A8A;margin:0 0 14px;line-height:1.5">This is an annual service agreement. A signed Master Service Agreement is required before payment is collected and services are dispatched. Review the agreement with the customer, then confirm below.</p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+        <button onclick="estDownloadMSA()" style="background:#1B5FA8;color:#fff;border:none;border-radius:7px;padding:10px 18px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">📥 Download MSA (Word)</button>
+        <button onclick="estPrintMSA()" style="background:#fff;color:#1B5FA8;border:2px solid #1B5FA8;border-radius:7px;padding:10px 18px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">🖨️ Print MSA</button>
+      </div>
+      <div style="background:#fff;border-radius:8px;padding:14px;margin-bottom:14px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#1E40AF;margin-bottom:8px">Agreement Details</div>
+        <div id="estMSADetails" style="font-size:13px;color:var(--ink);line-height:1.6"></div>
+      </div>
+      <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:14px">
+        <input type="checkbox" id="estMSAConfirm" style="margin-top:3px;flex-shrink:0">
+        <label for="estMSAConfirm" style="font-size:13px;color:var(--ink);line-height:1.4">Customer has reviewed and verbally agreed to the Master Service Agreement terms. A signed copy will be emailed to the customer and stored on the account record.</label>
+      </div>
+      <button onclick="estConfirmMSA()" style="background:#1E7B3C;color:#fff;border:none;border-radius:7px;padding:11px 22px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;width:100%">✅ MSA Confirmed — Proceed to Payment →</button>
+    </div>
+
+        <div id="estSquarePanel" style="display:none;background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:22px 24px;margin-bottom:16px">
       <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--soft);margin-bottom:4px">💰 Collect Payment</div>
       <div style="font-size:13px;color:var(--soft);margin-bottom:16px">Amount due: <strong id="estSquareAmount" style="color:var(--ink);font-size:16px">$0</strong></div>
 
@@ -21475,6 +21494,79 @@ function estAccept(){
   }
 }
 
+function estConfirmMSA() {
+  const checkbox = document.getElementById('estMSAConfirm');
+  if (!checkbox || !checkbox.checked) {
+    alert('Please confirm that the customer has reviewed and agreed to the Master Service Agreement before proceeding.');
+    return;
+  }
+  // Record MSA confirmation on account
+  const data = crmLoad('accounts');
+  const r = data.find(x => x.id === estState.accountId);
+  if (r) {
+    r.msaSigned = true;
+    r.msaSignedAt = Date.now();
+    r.msaSignedBy = (typeof _currentUser !== 'undefined' && _currentUser?.name) || 'Rep';
+    crmSave('accounts', data);
+  }
+  // Hide MSA panel, show payment panel
+  const msaPanel = document.getElementById('estMSAPanel');
+  if (msaPanel) msaPanel.style.display = 'none';
+  document.getElementById('estSquarePanel').style.display = 'block';
+  document.getElementById('estSquarePanel').scrollIntoView({ behavior:'smooth' });
+  if (typeof showToast === 'function') showToast('MSA confirmed. Proceed to collect payment.');
+}
+
+function estDownloadMSA() {
+  // Opens the MSA template from the repo for download/printing
+  // In production this will generate a pre-filled version from account data
+  const link = document.createElement('a');
+  link.href = 'data/Termac-MSA-Final.docx';
+  link.download = 'Termac-Master-Service-Agreement.docx';
+  link.click();
+  if (typeof showToast === 'function') showToast('MSA downloading — have customer review before signing.');
+}
+
+function estPrintMSA() {
+  // Opens a print-friendly summary in a new tab
+  const r = crmLoad('accounts').find(x => x.id === estState.accountId) || {};
+  const pricingTerm = r.pricingTerm || '1yr';
+  const billingCadence = r.billingCadence || 'monthly';
+  const termLabel = pricingTerm === '3yr' ? '3-Year Service Agreement' : '1-Year Service Agreement';
+  const cadenceLabel = billingCadence === 'quarterly' ? 'Quarterly'
+    : billingCadence === 'annually' ? 'Annual Prepay' : 'Monthly';
+  const win = window.open('', '_blank');
+  win.document.write('<html><head><title>Termac MSA Summary</title>'
+    + '<style>body{font-family:Calibri,sans-serif;padding:40px;max-width:700px;margin:0 auto}'
+    + 'h1{color:#1A5276;font-size:22px}h2{color:#1A5276;font-size:16px;margin-top:24px}'
+    + 'table{width:100%;border-collapse:collapse;margin-top:8px}'
+    + 'td{padding:8px 10px;border:1px solid #D7DBE0;font-size:13px}'
+    + 'td:first-child{font-weight:700;background:#EBF5FB;width:35%}'
+    + '.footer{margin-top:40px;font-size:11px;color:#5A616B;border-top:1px solid #D7DBE0;padding-top:12px}'
+    + '</style></head><body>'
+    + '<h1>Termac Family of Companies — Master Service Agreement</h1>'
+    + '<h2>Account & Agreement Details</h2>'
+    + '<table>'
+    + '<tr><td>Account Name</td><td>' + (r.business||r.name||'') + '</td></tr>'
+    + '<tr><td>Account Number</td><td>' + (r.accountNumber||'Pending') + '</td></tr>'
+    + '<tr><td>Service Address</td><td>' + (r.address||'') + (r.city?', '+r.city:'') + (r.state?' '+r.state:'') + (r.zip?' '+r.zip:'') + '</td></tr>'
+    + '<tr><td>Primary Contact</td><td>' + (r.contact||r.name||'') + ' | ' + (r.phone||'') + ' | ' + (r.email||'') + '</td></tr>'
+    + '<tr><td>Agreement Type</td><td>' + termLabel + '</td></tr>'
+    + '<tr><td>Billing Cadence</td><td>' + cadenceLabel + '</td></tr>'
+    + '<tr><td>Card on File</td><td>Required — used for autopay</td></tr>'
+    + '<tr><td>Effective Date</td><td>' + new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}) + '</td></tr>'
+    + '</table>'
+    + '<h2>Customer Acknowledgment</h2>'
+    + '<p style="font-size:13px">By proceeding, customer acknowledges agreement to the Termac Master Service Agreement terms including scope of services, billing cadence, cancellation policy, and automatic renewal provisions.</p>'
+    + '<table><tr><td>Customer Signature / Date</td><td style="height:50px"></td></tr>'
+    + '<tr><td>Print Name / Title</td><td></td></tr>'
+    + '<tr><td>Termac Representative</td><td>' + ((typeof _currentUser !== 'undefined' && _currentUser?.name)||'') + '</td></tr></table>'
+    + '<div class="footer">Termac Corporation — Est. 1963 — A System of Services | contracts@termac.com | Serving PA, NJ, DE, MD, VA & DC</div>'
+    + '</body></html>');
+  win.document.close();
+  win.print();
+}
+
 function estSelectPayMethod(method) {
   ['square','cash','check'].forEach(function(m) {
     var btn = document.getElementById('pmBtn_'+m);
@@ -21569,6 +21661,39 @@ function estShowSquarePanel(){
     r.estimateDate=new Date().toISOString().split('T')[0];
     crmSave('accounts',data);
   }
+
+  // Annual / corporate accounts: show MSA panel first before payment
+  // Per-visit / mom & pop / small chain: skip MSA, go straight to payment
+  const isAnnual = (r && r.pricingMode === 'annual') || (svState && svState.pricingMode === 'annual');
+  if (isAnnual) {
+    const msaPanel = document.getElementById('estMSAPanel');
+    const msaDetails = document.getElementById('estMSADetails');
+    if (msaPanel) {
+      // Populate agreement details summary
+      const pricingTerm = (r && r.pricingTerm) || (svState && svState.pricingTerm) || '1yr';
+      const billingCadence = (r && r.billingCadence) || 'monthly';
+      const termLabel = pricingTerm === '3yr' ? '3-Year Service Agreement' : '1-Year Service Agreement';
+      const cadenceLabel = billingCadence === 'quarterly' ? 'Quarterly billing'
+        : billingCadence === 'annually' ? 'Annual prepay'
+        : 'Monthly billing';
+      const acctName = (r && (r.business || r.name)) || '';
+      const acctNum = (r && r.accountNumber) || '(pending)';
+      if (msaDetails) {
+        msaDetails.innerHTML =
+          '<strong>Account:</strong> ' + acctName + '<br>' +
+          '<strong>Account #:</strong> ' + acctNum + '<br>' +
+          '<strong>Agreement Type:</strong> ' + termLabel + '<br>' +
+          '<strong>Billing Cadence:</strong> ' + cadenceLabel + '<br>' +
+          '<strong>Card on File Required:</strong> Yes (autopay)<br>' +
+          '<strong>States Covered:</strong> PA, NJ, DE, MD, VA/DC as applicable<br>' +
+          '<strong>MSA Effective:</strong> ' + new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});
+      }
+      msaPanel.style.display = 'block';
+      msaPanel.scrollIntoView({ behavior:'smooth', block:'start' });
+    }
+    return; // payment panel shown after MSA confirmation
+  }
+
   document.getElementById('estSquarePanel').style.display = 'block';
   document.getElementById('estSquarePanel').scrollIntoView({ behavior:'smooth' });
   // 🏆 LIFECYCLE: trigger won-lead for existing accounts (no sig panel path)
