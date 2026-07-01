@@ -1012,6 +1012,7 @@ function spRecordCard(r, tab) {
         <button class="sp-rec-btn" onclick="spEditRecord('${r.id}','${tab}')">Edit</button>
         <button class="sp-rec-btn" onclick="spOpenCollectModal('${r.id}','${tab}')" style="background:#1E7B3C;color:#fff;border-color:#1E7B3C">💵 Pay</button>
         ${tab==='accounts' ? `<button class="sp-rec-btn" onclick="spOpenVisitModal('${r.id}')" style="background:#059669;color:#fff;border-color:#059669">📍 Visit</button>` : ''}
+        ${(tab==='leads'||tab==='contacts') ? `<a class="sp-rec-btn" href="termac-pitch-tool.html?lead=${r.id}" onclick="event.stopPropagation()" style="background:#C8102E;color:#fff;border-color:#C8102E;text-decoration:none;display:inline-flex;align-items:center">📄 Start Pitch</a>` : ''}
         <select class="sp-stage-sel" onchange="spSetStage('${r.id}','${tab}',this.value,this)" title="Change stage" style="padding:4px 8px;border:1.5px solid var(--line);border-radius:5px;font-size:11px;font-family:'Barlow Condensed',sans-serif;font-weight:700;background:#fff;color:var(--ink);cursor:pointer">
           ${spStageOptions(r, tab)}
         </select>
@@ -2277,7 +2278,7 @@ function spOpenAdd(tab) {
   document.getElementById('spModalBody').innerHTML = spBuildForm(tab, null);
   document.getElementById('spModalBg').classList.add('open');
 
-  setTimeout(() => attachAddressAutocomplete('spf_address'), 0);
+  setTimeout(() => attachAddressAutocompleteSplit('spf_address', 'spf_city', 'spf_state', 'spf_zip'), 0);
 }
 
 function spEditRecord(id, tab) {
@@ -2290,7 +2291,7 @@ function spEditRecord(id, tab) {
   document.getElementById('spModalBody').innerHTML = spBuildForm(tab, r);
   document.getElementById('spModalBg').classList.add('open');
 
-  setTimeout(() => attachAddressAutocomplete('spf_address'), 0);
+  setTimeout(() => attachAddressAutocompleteSplit('spf_address', 'spf_city', 'spf_state', 'spf_zip'), 0);
 }
 
 // ── BUSINESS TYPE → PRICING MODE MAP ──────────────────────────────────────
@@ -2486,33 +2487,43 @@ function spBuildRepForm(r) {
     '</div>' +
 
     // Addresses
-    '<div class="sp-form-full"><label>Business Address</label><input id="spf_address" value="' + v('address') + '" placeholder="Street, City, State ZIP"></div>' +
+    '<div class="sp-form-full"><label>Business Address</label><input id="spf_address" value="' + v('address') + '" placeholder="Street address" autocomplete="off"></div>' +
+    '<div class="sp-form-full" style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:10px">' +
+      '<div><label>City</label><input id="spf_city" value="' + v('city') + '" placeholder="City"></div>' +
+      '<div><label>State</label><select id="spf_state">' +
+        '<option value="">Select</option>' +
+        ['PA','NJ','DE','MD','DC','NY','VA','CT','MA','OH','AL','AK','AZ','AR','CA','CO','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MI','MN','MS','MO','MT','NE','NV','NH','NM','NC','ND','OK','OR','RI','SC','SD','TN','TX','UT','VT','WA','WV','WI','WY'].map(function(s){ return '<option ' + (v('state')===s?'selected':'') + '>' + s + '</option>'; }).join('') +
+      '</select></div>' +
+      '<div><label>Zip</label><input id="spf_zip" value="' + v('zip') + '" placeholder="19030" inputmode="numeric" maxlength="10"></div>' +
+    '</div>' +
     '<div class="sp-form-full"><label>Billing Address <span style="font-weight:400;text-transform:none">if different</span></label>' +
       '<input id="spf_billing_addr" value="' + v('billingAddress') + '" placeholder="Leave blank if same"></div>' +
-
-    // Ownership
-    '<div><label>Owner Name</label><input id="spf_owner_name" value="' + v('ownerName') + '" placeholder="Business owner name"></div>' +
-    '<div><label>Entity Type</label><select id="spf_entity_type">' +
-      ['Sole Proprietor','LLC','S-Corp','C-Corp','Franchise','Partnership','Other'].map(function(t){ return '<option ' + (v('entityType')===t?'selected':'') + '>' + t + '</option>'; }).join('') +
-    '</select></div>' +
 
     // Contacts — expanded with phone + email for all roles
     '<div class="sp-form-full" style="background:#F8F9FA;border-radius:8px;padding:12px;margin:4px 0">' +
       '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#5A616B;margin-bottom:10px">Contacts</div>' +
 
-      '<div style="font-size:10px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:.06em;padding-bottom:4px;border-bottom:1px solid #E5E7EB;margin-bottom:7px">Site Contact</div>' +
+      '<div style="font-size:10px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:.06em;padding-bottom:4px;border-bottom:1px solid #E5E7EB;margin-bottom:7px">Owner</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:7px;margin-bottom:12px">' +
+        '<div><label style="font-size:10px">Name</label><input id="spf_owner_name" value="' + v('ownerName') + '" placeholder="Owner name" oninput="spSyncSiteContactFromOwner()"></div>' +
+        '<div><label style="font-size:10px">Phone</label><input id="spf_owner_phone" value="' + v('ownerPhone') + '" placeholder="Owner phone" oninput="spSyncSiteContactFromOwner()"></div>' +
+        '<div><label style="font-size:10px">Email</label><input id="spf_owner_email" value="' + v('ownerEmail') + '" placeholder="owner@business.com" oninput="spSyncSiteContactFromOwner()"></div>' +
+        '<div><label style="font-size:10px">Entity Type</label><select id="spf_entity_type">' +
+          ['Sole Proprietor','LLC','S-Corp','C-Corp','Franchise','Partnership','Other'].map(function(t){ return '<option ' + (v('entityType')===t?'selected':'') + '>' + t + '</option>'; }).join('') +
+        '</select></div>' +
+      '</div>' +
+
+      '<div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:4px;border-bottom:1px solid #E5E7EB;margin-bottom:7px">' +
+        '<span style="font-size:10px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:.06em">Site Contact</span>' +
+        '<label style="display:flex;align-items:center;gap:5px;font-size:10px;font-weight:600;cursor:pointer">' +
+          '<input type="checkbox" id="spf_same_as_owner" onchange="spSyncSiteContactFromOwner()" style="width:13px;height:13px;cursor:pointer"> Same as owner' +
+        '</label>' +
+      '</div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px;margin-bottom:12px">' +
         '<div><label style="font-size:10px">Name</label><input id="spf_name" value="' + v('name') + '" placeholder="Day-to-day contact"></div>' +
         '<div><label style="font-size:10px">Role / Title</label><select id="spf_role">' + roleOpts + '</select></div>' +
         '<div><label style="font-size:10px">Phone</label><input id="spf_phone" value="' + v('phone') + '" oninput="spDupeCheck(this.value,\'phone\')" autocomplete="off"><div id="spf_dupe_phone" style="display:none;margin-top:4px"></div></div>' +
         '<div class="sp-form-full"><label style="font-size:10px">Email</label><input id="spf_email" value="' + v('email') + '" placeholder="site@business.com"></div>' +
-      '</div>' +
-
-      '<div style="font-size:10px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:.06em;padding-bottom:4px;border-bottom:1px solid #E5E7EB;margin-bottom:7px">Owner</div>' +
-      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px;margin-bottom:12px">' +
-        '<div><label style="font-size:10px">Name</label><input id="spf_owner_name" value="' + v('ownerName') + '" placeholder="Owner name"></div>' +
-        '<div><label style="font-size:10px">Phone</label><input id="spf_owner_phone" value="' + v('ownerPhone') + '" placeholder="Owner phone"></div>' +
-        '<div><label style="font-size:10px">Email</label><input id="spf_owner_email" value="' + v('ownerEmail') + '" placeholder="owner@business.com"></div>' +
       '</div>' +
 
       '<div style="font-size:10px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:.06em;padding-bottom:4px;border-bottom:1px solid #E5E7EB;margin-bottom:7px">Decision Maker <span style="font-weight:400;text-transform:none">(if different)</span></div>' +
@@ -2591,11 +2602,12 @@ function spSaveRecord() {
   const now = Date.now();
   const addressInput = document.getElementById('spf_address');
   const address = addressInput?.value.trim() || '';
-  // Prefer structured city/state/zip captured via address autocomplete selection;
-  // fall back to a regex zip-only guess for addresses typed freehand without using a suggestion.
-  const city  = addressInput?.dataset.acCity  || '';
-  const state = addressInput?.dataset.acState || '';
-  const zip   = addressInput?.dataset.acZip   || (address.match(/\b\d{5}\b/) || [''])[0];
+  // Rep form has separate visible City/State/Zip fields; AllPro form still
+  // uses one combined address field with autocomplete-parsed data attributes.
+  const cityField = document.getElementById('spf_city');
+  const city  = cityField ? cityField.value.trim() : (addressInput?.dataset.acCity  || '');
+  const state = cityField ? (document.getElementById('spf_state')?.value || '') : (addressInput?.dataset.acState || '');
+  const zip   = cityField ? (document.getElementById('spf_zip')?.value.trim() || '') : (addressInput?.dataset.acZip || (address.match(/\b\d{5}\b/) || [''])[0]);
 
   var rec;
 
@@ -2839,6 +2851,81 @@ async function fetchAddressSuggestions(text, dropdown, input){
       };
     });
   } catch(e) { dropdown.style.display = 'none'; }
+}
+
+// Same underlying Worker, but for forms with separate visible City/State/Zip
+// fields (the standard rep Add/Edit form) — populates them directly on
+// selection instead of hiding the parsed values in data attributes, so the
+// rep can see and correct them. This is what fixed the "didn't line up
+// downstream" address problem the pitch tool had.
+function attachAddressAutocompleteSplit(inputId, cityId, stateId, zipId){
+  const input = document.getElementById(inputId);
+  if (!input || input.dataset.acAttached) return;
+  input.dataset.acAttached = '1';
+
+  const box = document.createElement('div');
+  box.style.cssText = 'position:relative;width:100%';
+  input.parentNode.insertBefore(box, input);
+  box.appendChild(input);
+  const dropdown = document.createElement('div');
+  dropdown.style.cssText = 'position:absolute;top:100%;left:0;right:0;background:#fff;border:1.5px solid var(--line,#D7DBE0);border-radius:8px;margin-top:2px;box-shadow:0 4px 14px rgba(0,0,0,.12);z-index:50;display:none;max-height:220px;overflow-y:auto';
+  box.appendChild(dropdown);
+
+  input.addEventListener('input', () => {
+    const text = input.value.trim();
+    clearTimeout(_addrAcTimer);
+    if (text.length < 3) { dropdown.style.display = 'none'; return; }
+    _addrAcTimer = setTimeout(() => fetchAddressSuggestionsSplit(text, dropdown, input, cityId, stateId, zipId), 300);
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!box.contains(e.target)) dropdown.style.display = 'none';
+  });
+}
+async function fetchAddressSuggestionsSplit(text, dropdown, input, cityId, stateId, zipId){
+  try {
+    const res = await fetch(ADDR_AUTOCOMPLETE_PROXY + '/autocomplete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text })
+    });
+    const data = await res.json();
+    const suggestions = data.suggestions || [];
+    if (!suggestions.length) { dropdown.style.display = 'none'; return; }
+    dropdown.innerHTML = suggestions.map((s, i) =>
+      '<div data-i="' + i + '" style="padding:9px 12px;font-size:13px;cursor:pointer;border-bottom:1px solid #F1F2F4" '
+      + 'onmouseover="this.style.background=\'#F5F6F8\'" onmouseout="this.style.background=\'#fff\'">'
+      + escH(s.label) + '</div>'
+    ).join('');
+    dropdown.style.display = 'block';
+    Array.from(dropdown.children).forEach((el, i) => {
+      el.onclick = () => {
+        const s = suggestions[i];
+        input.value = (s.street || s.label.split(',')[0] || s.label);
+        const cityEl = document.getElementById(cityId);
+        const stateEl = document.getElementById(stateId);
+        const zipEl = document.getElementById(zipId);
+        if (cityEl)  cityEl.value = s.city || '';
+        if (stateEl) stateEl.value = s.state || '';
+        if (zipEl)   zipEl.value = s.zip || '';
+        dropdown.style.display = 'none';
+      };
+    });
+  } catch(e) { dropdown.style.display = 'none'; }
+}
+
+// When "Same as owner" is checked on the Add/Edit form, Site Contact
+// mirrors Owner live; unchecking just stops the mirroring.
+function spSyncSiteContactFromOwner(){
+  const same = document.getElementById('spf_same_as_owner')?.checked;
+  if (!same) return;
+  const nameEl = document.getElementById('spf_name');
+  const phoneEl = document.getElementById('spf_phone');
+  const emailEl = document.getElementById('spf_email');
+  const roleEl = document.getElementById('spf_role');
+  if (nameEl)  nameEl.value  = document.getElementById('spf_owner_name')?.value  || '';
+  if (phoneEl) phoneEl.value = document.getElementById('spf_owner_phone')?.value || '';
+  if (emailEl) emailEl.value = document.getElementById('spf_owner_email')?.value || '';
+  if (roleEl && !roleEl.value) roleEl.value = 'Owner';
 }
 
 
