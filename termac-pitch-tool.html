@@ -120,6 +120,10 @@ a{text-decoration:none;color:inherit}
   display:flex;align-items:center;gap:8px;
 }
 .pitch-cta:active{background:#A30D25;transform:scale(.98)}
+.pitch-cta:disabled{
+  background:#6B7280;color:rgba(255,255,255,.75);
+  box-shadow:none;cursor:not-allowed;opacity:.75;
+}
 
 /* Geo badge */
 .geo-badge{
@@ -634,6 +638,7 @@ textarea.cf-input{height:auto}
   <div class="rep-bar" id="repBar">
     <div class="rep-bar-logo">Termac One</div>
     <div class="rep-bar-right">
+      <a href="sales-portal.html" class="rep-btn" style="text-decoration:none;display:inline-flex;align-items:center">&#8592; Dashboard</a>
       <div class="geo-badge" id="geoBadge">
         <div class="geo-dot warn" id="geoDot"></div>
         <span id="geoLabel">Detecting location...</span>
@@ -785,6 +790,10 @@ textarea.cf-input{height:auto}
     <!-- Quick contact capture -->
     <div class="sp-view active" id="spView-contact">
       <div class="sp-field">
+        <label class="sp-label">Business Name</label>
+        <input class="sp-input" id="sp-qc-business" placeholder="e.g. Mario's Kitchen &amp; Bar">
+      </div>
+      <div class="sp-field">
         <label class="sp-label">Name</label>
         <input class="sp-input" id="sp-qc-name" placeholder="Who you're speaking with">
       </div>
@@ -805,7 +814,7 @@ textarea.cf-input{height:auto}
         <input class="sp-input" id="sp-qc-askfor" placeholder="e.g. Manager on duty, GM Sarah">
       </div>
       <button class="sp-save-btn" onclick="spSaveQuickCapture()">Save Notes</button>
-      <div class="sp-saved-note" id="spSavedNote">Saved — carries into contact form</div>
+      <div class="sp-saved-note" id="spSavedNote">Saved as a hot contact in your pipeline</div>
     </div>
 
     <!-- Product catalog -->
@@ -1219,9 +1228,26 @@ var TERMAC_PRODUCTS = [
   { sku:'TRM-GLS-BX', name:'Disposable Gloves',      category:'Paper', unit:'box' },
 ];
 
-// Quick contact capture — jotted mid-conversation, folded into the
-// contact form the moment the rep advances off the flyer.
+// Quick contact capture — jotted mid-conversation. Saving it immediately
+// creates a real Contact record (not a raw Lead, since the rep has
+// already spoken to them live) marked hot, assigned to whoever's
+// logged in. Re-saving updates that same record instead of duplicating
+// it, and completing the full flyer flow later fills in the rest.
 var _quickCapture = {};
+var _quickCaptureLeadId = null;
+
+// Best-effort current-rep lookup — mirrors the identity chain used
+// across the rest of the platform (Sales Portal session first, then
+// the shared platform-wide value, ignoring the 'Team Member' default).
+function currentRepName() {
+  try {
+    if (typeof _spRep !== 'undefined' && _spRep && _spRep.name) return _spRep.name;
+  } catch(e) {}
+  try {
+    var n = localStorage.getItem('termac_current_user') || '';
+    return n === 'Team Member' ? '' : n;
+  } catch(e) { return ''; }
+}
 
 // Pricing tier config — identical to BIZ_TYPE_PRICING in sales-portal.html
 var BIZ_TYPE_PRICING = {
@@ -1401,6 +1427,7 @@ function buildContactStrip() {
 // rep has already typed directly into the form.
 function spApplyQuickCaptureToForm() {
   var map = {
+    'sp-qc-business': 'cf-biz',
     'sp-qc-name':    'cf-name',
     'sp-qc-phone':   'cf-phone',
     'sp-qc-address': 'cf-address',
@@ -1475,9 +1502,10 @@ function saveLead() {
 
     var bizTypeKey = document.getElementById('cf-biz-type')?.value || 'independent';
     var bizTypeCfg = BIZ_TYPE_PRICING[bizTypeKey] || BIZ_TYPE_PRICING.independent;
+    var rep = currentRepName();
 
     var rec = {
-      id: 'PT' + String(now).slice(-6),
+      id: _quickCaptureLeadId || ('PT' + String(now).slice(-6)),
       name: name,
       business: business,
       phone:          v('cf-phone'),
@@ -1510,22 +1538,28 @@ function saveLead() {
       pricingMode:    bizTypeCfg.mode,
       pricingTerm:    bizTypeCfg.term,
       company:        'UniPro',
-      status:         document.getElementById('cf-status')?.value || 'new',
+      status:         _quickCaptureLeadId ? 'hot' : (document.getElementById('cf-status')?.value || 'new'),
       services:       _selectedSvcs.slice(),
       notes:          v('cf-notes'),
       siteNotes:      v('cf-site-notes'),
       formType:       'rep',
       source:         'pitch_tool',
-      lifecycleStage: 'lead',
-      assignedRep:    '',
-      ownedBy:        '',
-      createdBy:      '',
+      lifecycleStage: _quickCaptureLeadId ? 'contact' : 'lead',
+      assignedRep:    rep,
+      ownedBy:        rep,
+      createdBy:      rep,
       created:         now,
       updated:         now,
     };
 
     var leads = JSON.parse(localStorage.getItem('termac_crm_leads') || '[]');
-    leads.unshift(rec);
+    var existingIdx = _quickCaptureLeadId ? leads.findIndex(function(r){ return r.id === _quickCaptureLeadId; }) : -1;
+    if (existingIdx !== -1) {
+      rec.created = leads[existingIdx].created || rec.created; // preserve original created time
+      leads[existingIdx] = rec;
+    } else {
+      leads.unshift(rec);
+    }
     localStorage.setItem('termac_crm_leads', JSON.stringify(leads));
 
     // Store context for the site survey handoff — same key/shape as the
@@ -1612,12 +1646,67 @@ function spSwitchTab(tab) {
 }
 function spSaveQuickCapture() {
   _quickCapture = {
+    business: document.getElementById('sp-qc-business').value.trim(),
     name:    document.getElementById('sp-qc-name').value.trim(),
     phone:   document.getElementById('sp-qc-phone').value.trim(),
     address: document.getElementById('sp-qc-address').value.trim(),
     revisit: document.getElementById('sp-qc-revisit').value.trim(),
     askfor:  document.getElementById('sp-qc-askfor').value.trim(),
   };
+
+  if (!_quickCapture.business) {
+    showToast('Enter a business name to save this contact.');
+    return;
+  }
+
+  var notesParts = [];
+  if (_quickCapture.revisit) notesParts.push('Best revisit: ' + _quickCapture.revisit);
+  if (_quickCapture.askfor)  notesParts.push('Ask for: ' + _quickCapture.askfor);
+
+  try {
+    var leads = JSON.parse(localStorage.getItem('termac_crm_leads') || '[]');
+    var now = Date.now();
+    var rep = currentRepName();
+
+    if (_quickCaptureLeadId) {
+      // Already saved once this visit — update the same record instead
+      // of creating a duplicate.
+      var idx = leads.findIndex(function(r) { return r.id === _quickCaptureLeadId; });
+      if (idx !== -1) {
+        leads[idx].business   = _quickCapture.business;
+        leads[idx].name       = _quickCapture.name || _quickCapture.business;
+        leads[idx].phone      = _quickCapture.phone;
+        leads[idx].address    = _quickCapture.address;
+        leads[idx].siteNotes  = notesParts.join(' \u00b7 ');
+        leads[idx].updated    = now;
+        localStorage.setItem('termac_crm_leads', JSON.stringify(leads));
+      }
+    } else {
+      var rec = {
+        id: 'PT' + String(now).slice(-6),
+        name: _quickCapture.name || _quickCapture.business,
+        business: _quickCapture.business,
+        phone: _quickCapture.phone,
+        address: _quickCapture.address,
+        siteNotes: notesParts.join(' \u00b7 '),
+        company: 'UniPro',
+        status: 'hot',
+        lifecycleStage: 'contact',
+        formType: 'rep',
+        source: 'pitch_tool_quick_capture',
+        assignedRep: rep,
+        ownedBy: rep,
+        createdBy: rep,
+        services: [],
+        created: now,
+        updated: now,
+      };
+      leads.unshift(rec);
+      localStorage.setItem('termac_crm_leads', JSON.stringify(leads));
+      _quickCaptureLeadId = rec.id;
+    }
+  } catch(e) {}
+
   var note = document.getElementById('spSavedNote');
   note.classList.add('show');
   setTimeout(function(){ note.classList.remove('show'); }, 2500);
