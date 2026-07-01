@@ -63,6 +63,10 @@ button{cursor:pointer}
 
 /* ── CARDS ── */
 .rcp-card{background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px;margin-bottom:14px}
+.rcp-crm-row{border-bottom:1px solid var(--line);cursor:pointer;transition:background .1s}
+.rcp-crm-row:hover{background:#F5F6F8}
+.rcp-detail-backdrop{position:fixed;inset:0;background:rgba(26,29,33,.55);z-index:400}
+.rcp-detail-modal{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;border-radius:var(--radius);box-shadow:0 12px 48px rgba(0,0,0,.3);padding:22px 24px;width:90%;max-width:440px;max-height:82vh;overflow-y:auto;z-index:401}
 .rcp-card-title{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin-bottom:14px}
 
 /* ── CALL LOG FORM ── */
@@ -723,14 +727,31 @@ function rcpLogCall(){
     window.open(`mailto:jkennedy@termac.com,tpittakas@termac.com?subject=${subj}&body=${body}`,'_blank');
   }
 
-  if (typeof notifyOnCallLogged === 'function') {
-    notifyOnCallLogged({
-      name: name, company: company, phone: phone,
-      type: type, routeTo: routeTo, urgency: urgency, notes: notes,
+  // Notify whoever this call was routed to — a routed call with no
+  // notification is a silent drop, so this fires for every logged call,
+  // not just ones that also create a new lead.
+  if (routeTo && typeof _notifStore_get === 'function' && typeof _notifStore_set === 'function') {
+    var notifs = _notifStore_get();
+    notifs.unshift({
+      id: 'HL' + Date.now(),
+      recipientName: routeTo,
+      caller: name || company,
+      company: company,
+      phone: phone,
+      notes: notes,
+      source: 'Reception',
       loggedBy: (_rcpUser && _rcpUser.name) || 'Reception',
-      date: new Date().toLocaleDateString('en-US'),
-      time: new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}),
+      ts: Date.now(),
+      read: false
     });
+    _notifStore_set(notifs);
+    if (typeof _fireInAppAlertBanner === 'function') {
+      _fireInAppAlertBanner({
+        recipientName: routeTo, caller: name || company, company: company,
+        phone: phone, notes: notes, source: 'Reception',
+        loggedBy: (_rcpUser && _rcpUser.name) || 'Reception'
+      });
+    }
   }
   rcpToast('Call logged ✓');
   rcpClearForm();
@@ -746,17 +767,6 @@ function rcpLogAndCreateLead(){
   const type    = document.getElementById('rcpCallType').value;
   if(!company&&!name){rcpToast('Enter at least a name or company to create a lead');return;}
   rcpLogCall();
-  if (typeof notifyOnCallLogged === 'function') {
-    notifyOnCallLogged({
-      name: name, company: company, phone: phone,
-      type: (document.getElementById('rcpCallType') && document.getElementById('rcpCallType').value) || 'New Lead',
-      routeTo: (document.getElementById('rcpRouteTo') && document.getElementById('rcpRouteTo').value) || 'Ted Scholl (Direct)',
-      urgency: 'Hot Lead', notes: notes, isNewLead: true,
-      loggedBy: (_rcpUser && _rcpUser.name) || 'Reception',
-      date: new Date().toLocaleDateString('en-US'),
-      time: new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}),
-    });
-  }
   const lead = {
     id:'RCP'+String(Date.now()).slice(-6),
     name:name||company, business:company||name,
@@ -1500,12 +1510,12 @@ function rcpCRMSection(title, records, type){
         <th style="padding:7px 12px;font-size:10px;font-weight:700;color:var(--soft);text-align:left;border-bottom:1px solid var(--line)">Status</th>
         <th style="padding:7px 12px;font-size:10px;font-weight:700;color:var(--soft);text-align:left;border-bottom:1px solid var(--line)">Notes</th>
       </tr></thead>
-      <tbody>${records.slice(0,20).map(r=>`<tr style="border-bottom:1px solid var(--line)">
+      <tbody>${records.slice(0,20).map(r=>`<tr class="rcp-crm-row" onclick="rcpOpenRecordDetail('${escH(r.id||'')}','${type}')">
         <td style="padding:9px 12px">
           <div style="font-weight:700;font-size:13px">${escH(r.bizName||r.businessName||r.name||r.business||'—')}</div>
           <div style="font-size:11px;color:var(--soft)">${escH(r.contactName||r.contact||'')}</div>
         </td>
-        <td style="padding:9px 12px"><a href="tel:${escH(r.phone||'')}" style="color:var(--blue);font-size:12px;font-weight:600">${escH(r.phone||'—')}</a></td>
+        <td style="padding:9px 12px"><a href="tel:${escH(r.phone||'')}" onclick="event.stopPropagation()" style="color:var(--blue);font-size:12px;font-weight:600">${escH(r.phone||'—')}</a></td>
         <td style="padding:9px 12px"><span style="background:${colors[type]||'#E5E7EB'};color:#fff;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:700">${escH(r.status||type)}</span></td>
         <td style="padding:9px 12px;font-size:12px;color:var(--soft);max-width:200px">${escH((r.notes||r.dmsNotes||'').slice(0,80))}${(r.notes||r.dmsNotes||'').length>80?'…':''}</td>
       </tr>`).join('')}</tbody>
@@ -1514,8 +1524,6 @@ function rcpCRMSection(title, records, type){
 }
 
 /* ══ LEFT RAIL ══════════════════════════════════════════════════ */
-var _rcpUser = null;
-
 function rcpUpdateRail(){
   const callLog = crmLoad('rcp_calls');
   const today = new Date().toISOString().slice(0,10);
@@ -1601,6 +1609,66 @@ function rcpFillFromSearch(id, type){
   document.getElementById('rcpRailSearch').value = '';
   document.getElementById('rcpRailResults').innerHTML = '<div style="font-size:10px;color:#4B5563;text-align:center;padding:8px">✓ Form filled from record</div>';
   rcpToast('Record loaded into call form ✓');
+}
+
+// ── RECORD DETAIL MODAL (Leads & Accounts tab) ──────────────────────────
+// Read-only view so reception can actually look something up when a
+// caller mentions an account, instead of the list being a dead end.
+function rcpOpenRecordDetail(id, type){
+  const data = crmLoad(type==='lead'?'dms_coldcall':type==='contact'?'contacts':'accounts');
+  const r = data.find(x=>x.id===id);
+  if(!r){ rcpToast('Record not found'); return; }
+
+  const biz = r.bizName||r.businessName||r.name||r.business||'—';
+  const contact = r.contactName||r.contact||r.name||'';
+  const phone = r.phone||'';
+  const email = r.email||r.contactEmail||'';
+  // Accounts carry address on a locations[] array (Company/Location split);
+  // leads/contacts carry it flat.
+  const loc = (r.locations && r.locations[0]) || r;
+  const address = [loc.address, loc.city, loc.state, loc.zip].filter(Boolean).join(', ');
+  const notes = r.notes||r.dmsNotes||r.siteNotes||'';
+  const status = r.status||type;
+  const owner = r.ownerName||'';
+  const assignedRep = r.assignedRep||r.ownedBy||'';
+
+  const rows = [
+    ['Business', r.business||r.bizName||r.businessName||'—'],
+    ['Contact', contact || '—'],
+    ['Phone', phone ? `<a href="tel:${escH(phone)}" style="color:var(--blue);font-weight:600">${escH(phone)}</a>` : '—'],
+    ['Email', email ? `<a href="mailto:${escH(email)}" style="color:var(--blue);font-weight:600">${escH(email)}</a>` : '—'],
+    ['Address', address || '—'],
+    ['Owner', owner || '—'],
+    ['Assigned Rep', assignedRep || '—'],
+    ['Status', status],
+  ].map(([label,val]) => `<div style="display:flex;padding:8px 0;border-bottom:1px solid var(--line)">
+      <div style="width:120px;flex-shrink:0;font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em">${escH(label)}</div>
+      <div style="font-size:13px">${typeof val==='string'&&val.startsWith('<')?val:escH(val)}</div>
+    </div>`).join('');
+
+  const html = `
+    <div class="rcp-detail-backdrop" onclick="rcpCloseRecordDetail()"></div>
+    <div class="rcp-detail-modal">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:16px;text-transform:uppercase;letter-spacing:.04em">${escH(biz)}</div>
+        <button onclick="rcpCloseRecordDetail()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--soft)">✕</button>
+      </div>
+      ${rows}
+      ${notes ? `<div style="margin-top:14px"><div style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px">Notes</div><div style="font-size:13px;background:#F8F9FA;border-radius:8px;padding:10px 12px">${escH(notes)}</div></div>` : ''}
+      <button onclick="rcpCloseRecordDetail()" style="margin-top:16px;width:100%;background:var(--purple);color:#fff;border:none;border-radius:8px;padding:11px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">Close</button>
+    </div>`;
+
+  let container = document.getElementById('rcpDetailContainer');
+  if(!container){
+    container = document.createElement('div');
+    container.id = 'rcpDetailContainer';
+    document.body.appendChild(container);
+  }
+  container.innerHTML = html;
+}
+function rcpCloseRecordDetail(){
+  const container = document.getElementById('rcpDetailContainer');
+  if(container) container.innerHTML = '';
 }
 
 // Auto-refresh rail every 30s
