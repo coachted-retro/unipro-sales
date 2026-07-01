@@ -7806,9 +7806,13 @@ function setAccountType(typeValue) {
 }
 
 // Step definitions — dynamic based on selected services
+// Visit Type and Pitch were dropped from the standard flow entirely
+// (2026-07): asking which kind of visit this is, or walking through the
+// elevator pitch as a mandatory step, is redundant busywork any time the
+// rep is standing there doing a live survey — whether that came from a
+// completed flyer walkthrough or a rep just deciding to survey a cold
+// call on the spot. Account Info is now always the first step.
 const SV_STEPS_FIXED = [
-  { id: 'visit_type',   label: 'Visit Type',   panel: 0 },
-  { id: 'pitch',        label: 'Pitch',         panel: 1 },
   { id: 'account_info', label: 'Account Info',  panel: 11 },
   { id: 'services',     label: 'Services',      panel: 2 },
 ];
@@ -7838,7 +7842,10 @@ function svGetSteps(){
     label: SVC_LABEL[svc]||svc,
     panel: SVC_PANEL[svc]
   }));
-  return [...SV_STEPS_FIXED, ...surveySteps, SV_STEP_SCOPE];
+  const fixedSteps = svState.skipRedundantSteps
+    ? SV_STEPS_FIXED.filter(s => s.id === 'account_info')
+    : SV_STEPS_FIXED;
+  return [...fixedSteps, ...surveySteps, SV_STEP_SCOPE];
 }
 
 /* ── OPEN / CLOSE ── */
@@ -8046,16 +8053,23 @@ function openSiteSurvey(id){
   // Reset state
   // Use universal context builder for complete pre-fill data
   const ctx = getAccountContext(id) || r;
+  // Arrived here from a completed flyer pitch — visit type, the elevator
+  // pitch, and services are all already known live (the rep just did the
+  // pitch and checked services on the flyer), so skip straight to Account
+  // Info (Facility Details is the one genuinely new thing) and on into
+  // the actual division survey. svGetSteps() below does the filtering.
+  var skipRedundant = (r.source === 'pitch_tool' || r.source === 'pitch_tool_quick_capture');
   svState = {
     accountId: id,
     bizName: ctx.name || ctx.business || 'Account',
-    visitType: null,
+    visitType: 'blind',
     selectedServices: (ctx.services||[]).map(s=>s.toLowerCase().replace(/[^a-z0-9]/g,'')).filter(s=>SVC_PANEL[s]),
     surveyOrder: [],
     currentStep: 0,
     surveyData: {},
     _objContext: '',
-    _prefillData: ctx
+    _prefillData: ctx,
+    skipRedundantSteps: skipRedundant
   };
 
   // Pre-check services from account record
