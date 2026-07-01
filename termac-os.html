@@ -9720,31 +9720,88 @@ function fsBuildDivisionScopeText(svc, surveyData, acct, estimate) {
   const scopeNotes = d.scopeNotes || d.fs_summary || '';
   const pricingMode = acct.pricingMode || 'per_visit';
   const pricingTerm = acct.pricingTerm || 'no_contract';
-  const termLabel = pricingTerm === '1yr' ? '1-Year Contract' : pricingTerm === '3yr' ? '3-Year Contract' : 'Per-Visit (No Contract)';
+  const billingCadence = acct.billingCadence || (pricingMode === 'annual' ? 'monthly' : 'per_visit');
+
+  // Contract term label
+  const termLabel = pricingTerm === '1yr' ? '1-Year Service Agreement'
+    : pricingTerm === '3yr' ? '3-Year Service Agreement'
+    : 'Per-Visit (No Annual Contract)';
+
+  // Billing cadence label
+  const cadenceLabel = billingCadence === 'monthly'   ? 'Monthly billing (card on file / autopay)'
+    : billingCadence === 'quarterly'  ? 'Quarterly billing (card on file / autopay)'
+    : billingCadence === 'annually'   ? 'Annual prepay (full payment on execution)'
+    : 'Per-visit — payment due on completion';
+
+  // Division-specific account ID prefix (standardized codes)
+  const DIVISION_ID_PREFIXES = {
+    unipro:'UNI-', quality3:'Q3-', allpro:'ALP-',
+    filterman:'FLM-', gto:'GTO-', termac:'TRM-'
+  };
+  const divPrefix = DIVISION_ID_PREFIXES[svc] || '';
+  const divAccountId = (acct.divisionIds && acct.divisionIds[svc])
+    ? acct.divisionIds[svc]
+    : divPrefix + '(to be assigned by division manager)';
+
+  // Square / payment confirmation
+  const cardOnFile = acct.cardOnFile ? 'YES — card on file in Square' : 'No card on file — per-visit payment';
+  const squareRef = acct.squareRef ? `Square ref: ${acct.squareRef}` : '';
+
+  const divisionTotal = lines.reduce((s,l) => s + (l.unitPrice * (l.qty||1) || 0), 0);
 
   return [
-    `NEW ACCOUNT SCOPE OF WORK — ${div.label.toUpperCase()}`,
+    `================================================================`,
+    `NEW ACCOUNT SCOPE OF WORK`,
+    `${div.label.toUpperCase()}`,
+    `================================================================`,
     ``,
-    `Account: ${acct.business || acct.name || ''}`,
-    `Address: ${acct.address || ''}${acct.city ? ', ' + acct.city : ''}${acct.state ? ' ' + acct.state : ''}${acct.zip ? ' ' + acct.zip : ''}`,
-    `Contact: ${acct.contact || acct.name || ''} | ${acct.role || ''} | ${acct.phone || ''} | ${acct.email || ''}`,
+    `ACCOUNT DETAILS`,
+    `---------------`,
+    `Account Name:     ${acct.business || acct.name || ''}`,
+    `Account Number:   ${acct.accountNumber || '(pending — auto-assigned at close)'}`,
+    `${div.label} ID: ${divAccountId}`,
+    `Service Address:  ${acct.address || ''}${acct.city ? ', ' + acct.city : ''}${acct.state ? ' ' + acct.state : ''}${acct.zip ? ' ' + acct.zip : ''}`,
+    `Primary Contact:  ${acct.contact || acct.name || ''} | ${acct.role || ''} | ${acct.phone || ''} | ${acct.email || ''}`,
     ``,
-    `PRICING TIER: ${termLabel}`,
-    `PAYMENT: ${estimate.paymentMethod || 'Square / Card on File'}`,
-    `ESTIMATE TOTAL (this division): $${lines.reduce((s,l)=>s+(l.unitPrice*l.qty||0),0).toLocaleString()}`,
+    `AGREEMENT & BILLING`,
+    `-------------------`,
+    `Contract Term:    ${termLabel}`,
+    `Billing Cadence:  ${cadenceLabel}`,
+    `Payment Method:   ${estimate.paymentMethod || acct.paymentMethod || 'Square'}`,
+    `Card on File:     ${cardOnFile}`,
+    squareRef ? `Square Ref:       ${squareRef}` : '',
+    `MSA Status:       SIGNED — Master Service Agreement on file, signed ${new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}`,
     ``,
-    `SCOPE OF WORK:`,
+    `SCOPE OF WORK — ${div.label}`,
+    `-`.repeat(40),
     lineText,
     ``,
-    scopeNotes ? `NOTES FROM REP:\n${scopeNotes}` : '',
+    `Division Subtotal: $${divisionTotal.toLocaleString()}`,
     ``,
-    `ACCESS / SITE NOTES: ${acct.siteNotes || acct.accessNotes || acct.notes || 'None on file'}`,
+    scopeNotes ? `REP NOTES:\n${scopeNotes}` : '',
     ``,
-    `CLIENT SIGNATURE: ${acct.surveySignerName || 'See account record'} (${acct.surveySignerTitle || ''}) — ${acct.surveySignerDate || ''} · Initials: ${acct.surveyDisclaimerInitials || '—'} · Full signature stored on account record`,
+    `SITE ACCESS NOTES`,
+    `-----------------`,
+    `${acct.siteNotes || acct.accessNotes || acct.notes || 'None on file'}`,
     ``,
+    `CLIENT SIGNATURE`,
+    `----------------`,
+    `Signed by:  ${acct.surveySignerName || 'See account record'} (${acct.surveySignerTitle || ''})`,
+    `Date:       ${acct.surveySignerDate || new Date().toLocaleDateString('en-US')}`,
+    `Initials:   ${acct.surveyDisclaimerInitials || 'On file'}`,
+    `Full signature stored on account record in Termac One.`,
+    ``,
+    `================================================================`,
     `Sent by: ${(typeof _currentUser !== 'undefined' && _currentUser?.name) || 'Ted Scholl'} (tscholl@termac.com)`,
+    `Sent:    ${new Date().toLocaleString('en-US')}`,
     ``,
-    `Action required: Set up ${div.label} services for this account and confirm service start date with the rep.`,
+    `ACTION REQUIRED`,
+    `---------------`,
+    `1. Assign ${div.label} account ID (${divPrefix}XXXXX) and confirm with the controller`,
+    `2. Schedule first service appointment and notify the customer`,
+    `3. Issue compliance certificate / work order upon first completed service`,
+    pricingMode === 'annual' ? `4. Set up ${cadenceLabel} autopay in Square using card on file` : `4. Confirm per-visit payment process with customer`,
+    `================================================================`,
   ].filter(l => l !== '').join('\n');
 }
 
@@ -34925,7 +34982,30 @@ function mgrRenderScorecard(){
     tile(money(s.exposure90),'90+ Exposure', s.exposure90>0?'var(--red)':'var(--green)','Highest write-off risk')+
     tile(pct(s.collEff),'Collection Effectiveness', s.collEff!=null&&s.collEff>=80?'var(--green)':'var(--orange)','Collected vs billed 90d')+
     tile(pct(s.promiseKept),'Promise-to-Pay Kept', s.promiseKept!=null&&s.promiseKept>=70?'var(--green)':'var(--orange)', s.promiseResolved+' resolved')+
-    '</div>';
+    '</div>'+
+    // Collections on-the-road summary — links directly to collections-portal.html
+    (function(){
+      var colls = [];
+      try { colls = JSON.parse(localStorage.getItem('termac_collections')||'[]'); } catch(e) {}
+      var pending = colls.filter(function(c){ return c.status === 'collected' || c.status === 'pending'; });
+      var totalOut = pending.reduce(function(s,c){ return s + (c.amount||0); }, 0);
+      var overdue48 = pending.filter(function(c){ return (Date.now() - (c.collectedAt||0)) > 48*3600000; });
+      var cashCount = pending.filter(function(c){ return c.method === 'cash'; }).length;
+      var checkCount = pending.filter(function(c){ return c.method === 'check'; }).length;
+      if (!pending.length) return '';
+      return '<div style="margin-top:12px;background:#FFF9E6;border:1.5px solid '+(overdue48.length>0?'#C8102E':'#F2B705')+';border-radius:8px;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">'+
+        '<div>'+
+          '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:'+(overdue48.length>0?'#C8102E':'#92400E')+';margin-bottom:4px">'+
+            (overdue48.length>0?'⚠️ ':'💵 ')+'Cash & Checks in the Field'+
+          '</div>'+
+          '<div style="font-size:13px;font-weight:800;color:var(--ink)">$'+totalOut.toLocaleString()+' outstanding</div>'+
+          '<div style="font-size:11px;color:var(--soft);margin-top:2px">'+
+            pending.length+' item'+(pending.length>1?'s':'')+' pending · '+cashCount+' cash · '+checkCount+' check'+(overdue48.length>0?' · <span style="color:#C8102E;font-weight:700">'+overdue48.length+' overdue >48h</span>':'')+
+          '</div>'+
+        '</div>'+
+        '<a href="collections-portal.html" style="background:#F2B705;color:#1A1D21;border:none;border-radius:6px;padding:8px 14px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;text-transform:uppercase;letter-spacing:.06em;text-decoration:none;white-space:nowrap">Open Collections →</a>'+
+      '</div>';
+    })();
 }
 window.addEventListener('load', tcFinanceBanners);
 </script>
