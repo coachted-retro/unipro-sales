@@ -423,7 +423,21 @@ body{background:var(--dark);color:var(--ink);font-family:'Barlow',sans-serif;fon
         </div>
       </div>
 
-      <!-- MULTI-DIVISION COORDINATION -->
+      <!-- NEW ACCOUNT INBOX (reads termac_scheduler_queue written by Sales on close) -->
+      <div id="newAccountInboxPanel" style="background:var(--panel);border-radius:var(--radius);border:2px solid #1E7B3C;margin:12px 0;overflow:hidden">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:#F0FDF4;border-bottom:1px solid #BBF7D0;cursor:pointer" onclick="toggleNewAccountInbox()">
+          <div style="font-family:Barlow,sans-serif;font-weight:800;font-size:11px;letter-spacing:.10em;text-transform:uppercase;color:#166534">
+            🎉 New Account Inbox — Needs First Service Scheduled
+            <span id="newAccountBadge" style="display:none;background:#1E7B3C;color:#fff;border-radius:99px;padding:0 7px;font-size:9px;font-weight:800;margin-left:6px">0</span>
+          </div>
+          <span id="newAccountChevron" style="color:var(--soft);font-size:13px">▾</span>
+        </div>
+        <div id="newAccountInboxBody" style="padding:14px 16px;max-height:400px;overflow-y:auto">
+          <div id="newAccountInboxList" style="font-size:13px;color:var(--soft)">Loading…</div>
+        </div>
+      </div>
+
+            <!-- MULTI-DIVISION COORDINATION -->
       <div id="multiDivPanel" style="background:var(--panel);border-radius:var(--radius);border:1px solid var(--line);margin:12px 0;overflow:hidden">
         <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:#F8F9FA;border-bottom:1px solid var(--line);cursor:pointer" onclick="toggleMultiDiv()">
           <div style="font-family:Barlow,sans-serif;font-weight:800;font-size:11px;letter-spacing:.10em;text-transform:uppercase;color:var(--navy)">
@@ -906,6 +920,7 @@ document.addEventListener('DOMContentLoaded', function(){
 
   // Render queues on load
   setTimeout(function() {
+    renderNewAccountInbox();
     renderUnassignedQueue();
     renderCoordInboxList();
     renderMultiDivCoord();
@@ -2731,6 +2746,107 @@ function toggleUnassignedQueue() {
   var chev = document.getElementById('unassignedChevron');
   if (body) body.style.display = _unassignedOpen ? 'block' : 'none';
   if (chev) chev.textContent = _unassignedOpen ? '▾' : '▸';
+}
+
+function toggleNewAccountInbox() {
+  var body = document.getElementById('newAccountInboxBody');
+  var chev = document.getElementById('newAccountChevron');
+  if (!body) return;
+  var open = body.style.display !== 'none';
+  body.style.display = open ? 'none' : 'block';
+  if (chev) chev.textContent = open ? '▸' : '▾';
+}
+
+function renderNewAccountInbox() {
+  var el    = document.getElementById('newAccountInboxList');
+  var badge = document.getElementById('newAccountBadge');
+  if (!el) return;
+
+  var queue = [];
+  try { queue = JSON.parse(localStorage.getItem('termac_scheduler_queue') || '[]'); } catch(e) {}
+
+  // Only show accounts that still need first-service scheduling
+  var pending = queue.filter(function(a) {
+    return a.status === 'needs_scheduling' || !a.firstServiceScheduled;
+  });
+  pending.sort(function(a,b){ return (b.acceptedAt||b.createdAt||0)-(a.acceptedAt||a.createdAt||0); });
+
+  if (badge) {
+    badge.textContent = pending.length;
+    badge.style.display = pending.length > 0 ? 'inline' : 'none';
+  }
+
+  if (!pending.length) {
+    el.innerHTML = '<div style="color:var(--green);font-size:12px;font-weight:600;padding:4px 0">\u2705 No new accounts waiting \u2014 all first-service appointments scheduled!</div>';
+    return;
+  }
+
+  el.innerHTML = pending.map(function(a) {
+    var name     = a.business || a.name || 'New Account';
+    var address  = a.address || '';
+    var phone    = a.phone || '';
+    var contact  = a.contact || '';
+    var services = (a.services || []).join(', ') || 'See scope';
+    var rep      = a.rep || a.acceptedBy || '';
+    var cadence  = a.billingCadence || 'per_visit';
+    var acctNum  = a.accountNumber || '—';
+    var acceptedDate = a.acceptedAt ? new Date(a.acceptedAt).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—';
+    var cadenceLabel = cadence === 'monthly' ? 'Monthly billing' : cadence === 'quarterly' ? 'Quarterly billing' : cadence === 'annually' ? 'Annual prepay' : 'Per-visit';
+
+    return '<div style="background:#F0FDF4;border:1.5px solid #86EFAC;border-radius:8px;padding:12px 14px;margin-bottom:10px">'
+      +'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">'
+        +'<div>'
+          +'<span style="background:#1E7B3C;color:#fff;border-radius:4px;padding:1px 7px;font-size:9px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;margin-right:6px">NEW ACCOUNT</span>'
+          +'<span style="background:#EFF6FF;color:#1E40AF;border-radius:4px;padding:1px 7px;font-size:9px;font-weight:700">'+acctNum+'</span>'
+        +'</div>'
+        +'<span style="font-size:11px;color:#6B7280">Sold '+acceptedDate+'</span>'
+      +'</div>'
+      +'<div style="font-weight:800;font-size:14px;color:#1A1D21;margin-bottom:2px">'+name+'</div>'
+      +(address?'<div style="font-size:11.5px;color:#6B7280;margin-bottom:2px">📍 '+address+'</div>':'')
+      +(contact?'<div style="font-size:11.5px;color:#6B7280;margin-bottom:2px">👤 '+contact+(phone?' · '+phone:'')+'</div>':'')
+      +'<div style="font-size:11px;color:#1E7B3C;font-weight:600;margin-bottom:8px">Services: '+services+' · '+cadenceLabel+(rep?' · Rep: '+rep:'')+'</div>'
+      +'<div style="display:flex;gap:8px;flex-wrap:wrap">'
+        +'<button data-aid="'+a.id+'" onclick="scheduleFirstService(this.dataset.aid)" style="background:#1E7B3C;color:#fff;border:none;border-radius:6px;padding:7px 14px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;cursor:pointer;text-transform:uppercase;letter-spacing:.04em">📅 Schedule First Service</button>'
+        +'<button data-aid="'+a.id+'" onclick="markNewAccountScheduled(this.dataset.aid)" style="background:#fff;color:#1E7B3C;border:1.5px solid #1E7B3C;border-radius:6px;padding:7px 14px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;cursor:pointer;text-transform:uppercase;letter-spacing:.04em">✓ Mark Scheduled</button>'
+      +'</div>'
+      +'</div>';
+  }).join('');
+}
+
+function scheduleFirstService(accountId) {
+  // Opens the scheduler pre-filled with this account's details
+  var queue = [];
+  try { queue = JSON.parse(localStorage.getItem('termac_scheduler_queue') || '[]'); } catch(e) {}
+  var acct = queue.find(function(a){ return a.id === accountId; });
+  if (!acct) { alert('Account not found.'); return; }
+  // Store as pending prefill so the scheduler job modal picks it up
+  localStorage.setItem('termac_scheduler_prefill', JSON.stringify({
+    accountId: acct.id,
+    accountName: acct.business || acct.name,
+    address: acct.address || '',
+    phone: acct.phone || '',
+    contact: acct.contact || '',
+    services: acct.services || [],
+    source: 'new_account_inbox',
+    firstService: true
+  }));
+  // Scroll to the scheduler calendar and trigger a new job modal
+  if (typeof openNewJobModal === 'function') openNewJobModal(acct);
+  else alert('Open the calendar above and create a new job for: ' + (acct.business || acct.name));
+}
+
+function markNewAccountScheduled(accountId) {
+  var queue = [];
+  try { queue = JSON.parse(localStorage.getItem('termac_scheduler_queue') || '[]'); } catch(e) {}
+  var acct = queue.find(function(a){ return a.id === accountId; });
+  if (!acct) return;
+  acct.firstServiceScheduled = true;
+  acct.firstServiceScheduledAt = Date.now();
+  acct.firstServiceScheduledBy = (typeof _currentUser !== 'undefined' && _currentUser && _currentUser.name) || 'Scheduler';
+  acct.status = 'scheduled';
+  localStorage.setItem('termac_scheduler_queue', JSON.stringify(queue));
+  renderNewAccountInbox();
+  if (typeof showToast === 'function') showToast('Marked as scheduled.');
 }
 
 function renderUnassignedQueue() {
