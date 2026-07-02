@@ -744,50 +744,70 @@ function lcFlagDeficiency(defData) {
 // ── 7. AUTO-SCHEDULING CADENCE ────────────────────────────────────────────
 // Generates the recurring job schedule for an account based on its service intervals.
 function lcAutoScheduleRecurring(account) {
+  // SCHEDULING POLICY: This function does NOT auto-create jobs.
+  // Each Termac service line is independently scheduled by Aine, Jasmine,
+  // or Samuel who assign the right tech, check for route conflicts, and
+  // manage customer-specific preferences manually. Auto-scheduling creates
+  // overlap, miscommunication, and tech assignment errors.
+  //
+  // Instead this function creates a SCHEDULING PROMPT in the Service
+  // Scheduling Queue — a structured card with everything the scheduler
+  // needs to make the decision themselves. The human schedules; the
+  // system does the legwork of knowing it's due and gathering context.
   if (!account || !account.serviceIntervals || !account.serviceIntervals.length) return;
-  const now     = Date.now();
-  const existingJobs = JSON.parse(localStorage.getItem('unipro_jobs') || '[]');
+  const now = Date.now();
 
   let added = 0;
   account.serviceIntervals.forEach(function(intervalKey) {
     const def = SERVICE_INTERVALS[intervalKey];
     if (!def) return;
 
-    // Generate next 4 occurrences
-    let nextDate = lcIntervalNextDue(intervalKey, new Date());
-    for (let i = 0; i < 4; i++) {
-      const jobId = 'recur_' + account.id + '_' + intervalKey + '_' + i + '_' + now;
-      // Check if already scheduled
-      if (existingJobs.some(function(j){ return j.accountId===account.id && j.date===nextDate && j.serviceType===def.label; })) {
-        nextDate = lcIntervalNextDue(intervalKey, nextDate);
-        continue;
-      }
-      existingJobs.push({
-        id:          jobId,
-        accountId:   account.id,
-        accountName: account.name,
-        address:     account.address,
-        zip:         account.zip,
-        division:    _lcDivisionFromInterval(intervalKey),
-        serviceType: def.label,
-        nfpaCode:    def.nfpa || null,
-        status:      'pending_schedule',
-        date:        nextDate,
-        time:        null,
-        techId:      null,
-        priority:    'normal',
-        revenue:     0,
-        isRecurring: true,
-        intervalKey: intervalKey,
-        notes:       def.nfpa ? def.nfpa + ' required' : 'Recurring per site survey agreement.',
-        created:     now,
-      });
-      nextDate = lcIntervalNextDue(intervalKey, nextDate);
-      added++;
-    }
-  });
+    const nextDate = lcIntervalNextDue(intervalKey, account.lastService || new Date());
+    const daysUntilDue = nextDate ? Math.ceil((new Date(nextDate) - now) / 86400000) : null;
 
-  localStorage.setItem('unipro_jobs', JSON.stringify(existingJobs));
+    // Only create a prompt if due within 45 days or already overdue
+    if (daysUntilDue !== null && daysUntilDue > 45) return;
+
+    // Check if a scheduling prompt already exists for this account+service
+    try {
+      var queue = JSON.parse(localStorage.getItem('termac_scheduler_queue') || '[]');
+      var exists = queue.some(function(q) {
+        return q.accountId === account.id && q.intervalKey === intervalKey && q.status === 'needs_scheduling';
+      });
+      if (exists) return;
+
+      // Create the scheduling prompt — everything the scheduler needs to book it
+      queue.unshift({
+        id:             'prompt_' + account.id + '_' + intervalKey + '_' + now,
+        type:           'scheduling_prompt',
+        accountId:      account.id,
+        business:       account.name || account.business,
+        address:        account.address,
+        city:           account.city,
+        state:          account.state,
+        zip:            account.zip,
+        phone:          account.phone,
+        contact:        account.contact,
+        division:       _lcDivisionFromInterval(intervalKey),
+        intervalKey:    intervalKey,
+        serviceType:    def.label,
+        nfpaCode:       def.nfpa || null,
+        lastService:    account.lastService || null,
+        nextDueDate:    nextDate,
+        daysUntilDue:   daysUntilDue,
+        urgency:        daysUntilDue !== null && daysUntilDue <= 0 ? 'overdue' : daysUntilDue <= 14 ? 'urgent' : 'due_soon',
+        assignedRep:    account.assignedRep || null,
+        techRequired:   def.techSkill || null,
+        status:         'needs_scheduling',
+        createdAt:      now,
+        note:           (daysUntilDue !== null && daysUntilDue <= 0
+          ? 'OVERDUE — ' + Math.abs(daysUntilDue) + ' days past due date'
+          : 'Due in ' + daysUntilDue + ' days — ' + def.label + (def.nfpa ? ' (' + def.nfpa + ')' : ''))
+      });
+      localStorage.setItem('termac_scheduler_queue', JSON.stringify(queue));
+      added++;
+    } catch(e) {}
+  });
 
   // Alert scheduler of new recurring jobs
   if (added > 0) {
