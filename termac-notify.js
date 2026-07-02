@@ -5,6 +5,82 @@ function _notifStore_get(){try{return JSON.parse(localStorage.getItem('termac_ho
 function _notifStore_set(arr){try{localStorage.setItem('termac_hotlead_notifs',JSON.stringify(arr.slice(0,100)));}catch(e){}}
 function _notifStore_badge(){var r=_notifStore_get();_notifStore_set(r);}
 
+/* ── CROSS-DEVICE BRIDGE ─────────────────────────────────────────────
+   localStorage only lives on one device — a call routed on the
+   reception desk's computer would never reach a rep's tablet without
+   this. Senders call notifySendCrossDevice(); every portal that loads
+   this file polls the Worker for its logged-in user every 30s, merges
+   anything new into the local store, and fires the banner. If the
+   Worker isn't deployed or is unreachable, everything degrades to the
+   original same-device behavior — no errors, nothing breaks. */
+var NOTIFY_WORKER_URL = 'https://termac-notify.tedscholl.workers.dev';
+var _notifWorkerOk = null; // null = unknown, probed on first use
+
+function _notifNormName(s){
+  return String(s||'').toLowerCase().replace(/\(.*?\)/g,'').replace(/[^a-z ]/g,'').trim();
+}
+
+function _notifCurrentUserName(){
+  try { if (typeof _spRep !== 'undefined' && _spRep && _spRep.name) return _spRep.name; } catch(e){}
+  try { if (typeof _rcpUser !== 'undefined' && _rcpUser && _rcpUser.name) return _rcpUser.name; } catch(e){}
+  try { if (typeof _currentUser !== 'undefined' && _currentUser && _currentUser.name) return _currentUser.name; } catch(e){}
+  try {
+    var n = localStorage.getItem('termac_current_user') || '';
+    return n === 'Team Member' ? '' : n;
+  } catch(e){ return ''; }
+}
+
+/* Fire-and-forget send to the bridge. Call this alongside the local
+   _notifStore_set so the same notification reaches other devices. */
+function notifySendCrossDevice(notif){
+  if (_notifWorkerOk === false) return;
+  try {
+    fetch(NOTIFY_WORKER_URL + '/notify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(notif)
+    }).then(function(r){ _notifWorkerOk = r.ok; }).catch(function(){ _notifWorkerOk = false; });
+  } catch(e) { _notifWorkerOk = false; }
+}
+
+/* Poll the bridge for the logged-in user, merge new items into the
+   local store, fire the banner for anything unseen. */
+function _notifPollCrossDevice(){
+  if (_notifWorkerOk === false) return;
+  var me = _notifCurrentUserName();
+  if (!me) return;
+  var since = 0;
+  try { since = parseInt(localStorage.getItem('termac_notif_last_poll')||'0',10)||0; } catch(e){}
+  try {
+    fetch(NOTIFY_WORKER_URL + '/notify?recipient=' + encodeURIComponent(me) + '&since=' + since)
+      .then(function(r){ _notifWorkerOk = r.ok; return r.json(); })
+      .then(function(data){
+        var incoming = (data && data.notifications) || [];
+        if (!incoming.length) {
+          try { localStorage.setItem('termac_notif_last_poll', String(Date.now())); } catch(e){}
+          return;
+        }
+        var local = _notifStore_get();
+        var known = {};
+        local.forEach(function(n){ known[n.id] = true; });
+        var fresh = incoming.filter(function(n){ return !known[n.id]; });
+        if (fresh.length) {
+          _notifStore_set(fresh.concat(local));
+          _updateNotifBadges();
+          // Banner for the newest one only — a stack of six banners helps no one
+          var newest = fresh[0];
+          _fireInAppAlertBanner({
+            recipientName: newest.recipientName, caller: newest.caller,
+            company: newest.company, phone: newest.phone, notes: newest.notes,
+            source: newest.source, loggedBy: newest.loggedBy
+          });
+        }
+        try { localStorage.setItem('termac_notif_last_poll', String(Date.now())); } catch(e){}
+      })
+      .catch(function(){ _notifWorkerOk = false; });
+  } catch(e) { _notifWorkerOk = false; }
+}
+
 /* In-app flashing alert banner + badge updater */
 function _fireInAppAlertBanner(opts){
   _notifStore_badge();
@@ -68,6 +144,9 @@ if(typeof window!=='undefined'){
   document.addEventListener('DOMContentLoaded',function(){
     _updateNotifBadges();
     setInterval(_updateNotifBadges,30000);
+    // Cross-device poll: first check shortly after load, then every 30s
+    setTimeout(_notifPollCrossDevice, 4000);
+    setInterval(_notifPollCrossDevice, 30000);
   });
 }
 
