@@ -1809,12 +1809,68 @@ async function d1Fetch(method, path, body) {
   } catch(e) { return { ok: false, error: e.message }; }
 }
 
+function d1NormalizeRecord(table, record) {
+  var r = {};
+  // Only copy columns that match D1 schema (lowercase, underscores only)
+  // Map common localStorage field name aliases to D1 column names
+  var FIELD_MAP = {
+    leads: {
+      business: 'business_name', name: 'contact_name', score: 'ai_score',
+      status: 'lifecycle_stage', company: 'division', assignedRep: 'assigned_rep',
+      created: 'created_at', followupDate: 'follow_up_date'
+    },
+    accounts: {
+      name: 'business_name', assignedRep: 'assigned_rep', created: 'created_at'
+    },
+    contacts: {
+      assignedRep: 'assigned_rep', created: 'created_at'
+    }
+  };
+  var map = FIELD_MAP[table] || {};
+  // D1 schema columns (only these are allowed)
+  var VALID = {
+    leads: ['id','business_name','address','city','state','zip','phone','email',
+            'contact_name','contact_title','pricing_tier','facility_type','division',
+            'lifecycle_stage','ai_score','assigned_rep','source','notes',
+            'follow_up_date','last_activity','converted_at','account_id',
+            'created_at','updated_at'],
+    accounts: ['id','location_id','company_id','uni_acct_id','q3_acct_id',
+               'alp_acct_id','flm_acct_id','gto_acct_id','trm_acct_id',
+               'billing_cadence','card_on_file','square_ref','msa_signed',
+               'msa_signed_at','status','assigned_rep','created_at','updated_at'],
+    contacts: ['id','location_id','company_id','first_name','last_name',
+               'title','email','phone','is_primary','created_at','updated_at'],
+    jobs: ['id','account_id','location_id','division','service_type','tech_id',
+           'scheduled_date','scheduled_time','status','notes','report_url',
+           'square_ref','completed_at','created_at','updated_at'],
+    deficiencies: ['id','account_id','location_id','job_id','division','description',
+                   'equipment_type','severity','status','quoted_amount','quote_ref',
+                   'assigned_to','due_date','resolved_at','notes','created_at','updated_at'],
+    collections: ['id','account_id','invoice_ref','amount_due','amount_paid',
+                  'due_date','status','last_contact','notes','created_at','updated_at']
+  };
+  var valid = new Set(VALID[table] || []);
+  var now = Date.now();
+  Object.keys(record).forEach(function(k) {
+    var col = map[k] || k;
+    if (valid.size === 0 || valid.has(col)) {
+      var v = record[k];
+      // Skip arrays and objects (not storable as D1 columns)
+      if (Array.isArray(v) || (v !== null && typeof v === 'object')) return;
+      r[col] = v;
+    }
+  });
+  if (!r.created_at) r.created_at = now;
+  r.updated_at = now;
+  return r;
+}
+
 async function d1Push(table, record) {
   if (!D1_SYNC_TABLES.includes(table)) return;
-  const r = { ...record };
-  if (!r.id) return;
-  // Try update first, fall back to insert
-  const upd = await d1Fetch('PUT', '/api/' + table + '/' + r.id, r);
+  if (!record || !record.id) return;
+  var r = d1NormalizeRecord(table, record);
+  if (Object.keys(r).length < 2) return; // nothing useful to push
+  var upd = await d1Fetch('PUT', '/api/' + table + '/' + r.id, r);
   if (!upd.ok) {
     await d1Fetch('POST', '/api/' + table, r);
   }
