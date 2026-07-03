@@ -17,7 +17,7 @@
   if (window.__termacMessaging) return;
   window.__termacMessaging = true;
 
-  var WORKER = 'https://cms-cors-proxy.tedscholl.workers.dev';
+  var WORKER = 'https://cms-cors-proxy.termac-one.workers.dev';
   var _workerOk = false; // proven healthy before use
   // Probe the Worker on load. If it doesn't respond correctly, go localStorage-only.
   // This eliminates the 400 console flood without breaking messaging functionality.

@@ -1,6 +1,6 @@
 /**
  * Termac One — Cross-Device Notification Bridge Worker
- * Deploy to: Cloudflare Workers  (suggested name: termac-notify → termac-notify.tedscholl.workers.dev)
+ * Deploy to: Cloudflare Workers  (suggested name: termac-notify → termac-notify.termac-one.workers.dev)
  *
  * Purpose: when reception (or anyone) routes a call or lead to a person,
  * the notification needs to reach that person's device — not just the

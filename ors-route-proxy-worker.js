@@ -1,6 +1,6 @@
 /**
  * Termac One — Route Intelligence Proxy Worker
- * Deploy to: Cloudflare Workers  (suggested name: ors-route-proxy.tedscholl.workers.dev)
+ * Deploy to: Cloudflare Workers  (suggested name: ors-route-proxy.termac-one.workers.dev)
  *
  * Shared road-routing intelligence for BOTH the Dispatch board and the Scheduler.
  * Each page calls this worker on its own; the pages and their logins stay separate.

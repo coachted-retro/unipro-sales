@@ -36,7 +36,7 @@
   function haversine(a,b){ var R=3958.8,dLat=(b[0]-a[0])*Math.PI/180,dLng=(b[1]-a[1])*Math.PI/180,l1=a[0]*Math.PI/180,l2=b[0]*Math.PI/180;var h=Math.sin(dLat/2)*Math.sin(dLat/2)+Math.cos(l1)*Math.cos(l2)*Math.sin(dLng/2)*Math.sin(dLng/2);return 2*R*Math.asin(Math.sqrt(h)); }
 
   function init(cfg){
-    var ROUTE_PROXY='https://ors-route-proxy.tedscholl.workers.dev';
+    var ROUTE_PROXY='https://ors-route-proxy.termac-one.workers.dev';
     var geo={}, watchId=null, _promptKey=null, snoozed={};
     try{ geo=JSON.parse(localStorage.getItem('termac_geocode_cache')||'{}'); }catch(e){ geo={}; }
     function saveGeo(){ try{ localStorage.setItem('termac_geocode_cache',JSON.stringify(geo)); }catch(e){} }

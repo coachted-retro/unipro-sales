@@ -13,7 +13,7 @@ function _notifStore_badge(){var r=_notifStore_get();_notifStore_set(r);}
    anything new into the local store, and fires the banner. If the
    Worker isn't deployed or is unreachable, everything degrades to the
    original same-device behavior — no errors, nothing breaks. */
-var NOTIFY_WORKER_URL = 'https://termac-notify.tedscholl.workers.dev';
+var NOTIFY_WORKER_URL = 'https://termac-notify.termac-one.workers.dev';
 var _notifWorkerOk = null; // null = unknown, probed on first use
 
 function _notifNormName(s){

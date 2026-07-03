@@ -8,7 +8,7 @@
  * URL already set in termac-os.html as HARVEST_CMS_PROXY_URL.
  *
  * HOW IT WORKS:
- *   Browser calls:  https://cms-cors-proxy.tedscholl.workers.dev?url=<encoded-url>
+ *   Browser calls:  https://cms-cors-proxy.termac-one.workers.dev?url=<encoded-url>
  *   Worker fetches: <decoded-url>  (server-to-server, no CORS block)
  *   Worker returns: the API response + Access-Control-Allow-Origin: *
  *
