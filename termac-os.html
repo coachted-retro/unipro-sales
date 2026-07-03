@@ -4277,6 +4277,7 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
           <button onclick="harvestRunLiveCMSFireSafety()" style="background:#DC2626;color:#fff;border:none;border-radius:8px;padding:10px 6px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">🚨 Fire</button>
           <button onclick="openGoogleMapsHarvest()" style="background:#0F9D58;color:#fff;border:none;border-radius:8px;padding:10px 6px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">🌎 Maps</button>
           <button onclick="openBidHarvestModal()" style="background:#1B5FA8;color:#fff;border:none;border-radius:8px;padding:10px 6px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer;position:relative" title="Harvest open bids from all government and private procurement sources">📋 BIDS</button>
+          <button onclick="openOrdersQueue()" style="background:#059669;color:#fff;border:none;border-radius:8px;padding:10px 6px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer;position:relative" title="New orders submitted from customer visits">📦 ORDERS<span id="ordersQueueBadge" style="display:none;position:absolute;top:-6px;right:-6px;background:#C8102E;color:#fff;border-radius:10px;font-size:10px;font-weight:900;padding:1px 6px;min-width:16px;text-align:center"></span></button>
         </div>
         <div id="mgrHarvestStatus2" style="display:none;background:#FFF8E6;border-radius:8px;padding:8px 12px;font-size:12px;color:#5A4A00"></div>
       </div>
@@ -15665,6 +15666,88 @@ function bidsSeedIfEmpty(){
 const BID_SCRAPER_URL = 'https://bid-scraper.tedscholl.workers.dev/';
 
 // ── BID HARVEST MODAL ────────────────────────────────────────────────────────
+// ── NEW ORDERS QUEUE ──────────────────────────────────────────────────────
+// Every order a rep submits from the Visit wizard lands in termac_orders.
+// This is the scaffolding that makes that queue visible and actionable
+// office-side — a real destination (warehouse pick screen, scheduler
+// hand-off, etc.) can extend or replace this once that process is defined;
+// for now it gives the order somewhere to go and someone a way to see it.
+function openOrdersQueue() {
+  var m = document.getElementById('ordersQueueModal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'ordersQueueModal';
+    m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99000;display:flex;align-items:flex-start;justify-content:center;padding:30px 20px;overflow:auto';
+    m.onclick = function(e){ if (e.target === m) m.style.display = 'none'; };
+    document.body.appendChild(m);
+  }
+  m.style.display = 'flex';
+  renderOrdersQueue();
+}
+function closeOrdersQueue() { var m = document.getElementById('ordersQueueModal'); if (m) m.style.display = 'none'; }
+
+function ordersQueueLoad() { try { return JSON.parse(localStorage.getItem('termac_orders')||'[]'); } catch(e) { return []; } }
+function ordersQueueSave(o) { localStorage.setItem('termac_orders', JSON.stringify(o)); }
+
+function updateOrdersQueueBadge() {
+  var pending = ordersQueueLoad().filter(function(o){ return o.status === 'Pending — Warehouse Pick'; }).length;
+  var b = document.getElementById('ordersQueueBadge');
+  if (b) { b.textContent = pending; b.style.display = pending ? '' : 'none'; }
+}
+
+const ORDER_STATUS_FLOW = ['Pending — Warehouse Pick', 'Picking', 'Ready for Delivery', 'Delivered'];
+const ORDER_STATUS_COLOR = { 'Pending — Warehouse Pick':'#C8102E', 'Picking':'#D97706', 'Ready for Delivery':'#1B5FA8', 'Delivered':'#059669' };
+
+function renderOrdersQueue() {
+  var m = document.getElementById('ordersQueueModal');
+  if (!m) return;
+  var orders = ordersQueueLoad();
+  var esc = (typeof escH === 'function') ? escH : function(s){ return String(s||''); };
+
+  var rows = orders.slice(0, 60).map(function(o) {
+    var color = ORDER_STATUS_COLOR[o.status] || '#6B7280';
+    var nextIdx = ORDER_STATUS_FLOW.indexOf(o.status) + 1;
+    var nextLabel = nextIdx < ORDER_STATUS_FLOW.length ? ORDER_STATUS_FLOW[nextIdx] : null;
+    var items = (o.lines||[]).map(function(l){ return (l.name||'Item') + ' \u00d7' + (l.qty||1); }).join(', ');
+    return '<div style="background:#fff;border-radius:10px;padding:14px 16px;margin-bottom:10px;border-left:4px solid ' + color + '">'
+      + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">'
+      + '<div><div style="font-weight:800;font-size:14px;color:#1A1D21">' + esc(o.accountName||'Account') + '</div>'
+      + '<div style="font-size:11px;color:#5A616B">' + o.id + ' \u00b7 ' + new Date(o.createdTs).toLocaleString('en-US') + ' \u00b7 placed by ' + esc(o.rep||'Rep') + '</div></div>'
+      + '<div style="text-align:right"><div style="font-weight:900;font-size:16px;color:#1A1D21">$' + Number(o.total||0).toFixed(2) + '</div>'
+      + '<span style="background:' + color + ';color:#fff;font-size:10px;font-weight:800;padding:3px 9px;border-radius:20px;text-transform:uppercase;letter-spacing:.04em">' + esc(o.status) + '</span></div>'
+      + '</div>'
+      + '<div style="font-size:12px;color:#374151;margin-top:8px;padding-top:8px;border-top:1px solid #F1F2F4">' + esc(items || 'No line items') + '</div>'
+      + (o.address ? '<div style="font-size:11px;color:#5A616B;margin-top:4px">\ud83d\udccd ' + esc(o.address) + '</div>' : '')
+      + '<div style="display:flex;gap:8px;margin-top:10px">'
+      + (nextLabel ? '<button onclick="advanceOrderStatus(\'' + o.id + '\')" style="background:#1A1D21;color:#fff;border:none;border-radius:7px;padding:7px 14px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">\u2192 ' + esc(nextLabel) + '</button>' : '<span style="font-size:11px;color:#059669;font-weight:700;padding:7px 0">\u2713 Complete</span>')
+      + '</div></div>';
+  }).join('');
+
+  m.innerHTML = '<div onclick="event.stopPropagation()" style="background:#F8F9FA;border-radius:14px;width:min(640px,96vw);max-height:88vh;overflow:hidden;display:flex;flex-direction:column">'
+    + '<div style="background:#1A1D21;color:#fff;padding:16px 20px;display:flex;align-items:center;justify-content:space-between">'
+    + '<div><div style="font-weight:900;font-size:17px">\ud83d\udce6 New Orders Queue</div>'
+    + '<div style="font-size:11px;color:#9CA3AF;margin-top:2px">Submitted from the field via the Visit wizard \u2014 status is scaffolding until the real fulfillment process is wired in</div></div>'
+    + '<button onclick="closeOrdersQueue()" style="background:none;border:none;color:#fff;font-size:22px;cursor:pointer">\u2715</button>'
+    + '</div>'
+    + '<div style="padding:16px 20px;overflow-y:auto">'
+    + (rows || '<div style="text-align:center;color:#9CA3AF;padding:30px">No orders yet.</div>')
+    + '</div></div>';
+
+  updateOrdersQueueBadge();
+}
+
+function advanceOrderStatus(orderId) {
+  var orders = ordersQueueLoad();
+  var o = orders.find(function(x){ return x.id === orderId; });
+  if (!o) return;
+  var idx = ORDER_STATUS_FLOW.indexOf(o.status);
+  if (idx > -1 && idx < ORDER_STATUS_FLOW.length - 1) o.status = ORDER_STATUS_FLOW[idx + 1];
+  ordersQueueSave(orders);
+  renderOrdersQueue();
+}
+
+document.addEventListener('DOMContentLoaded', function(){ setTimeout(updateOrdersQueueBadge, 1500); });
+
 function openBidHarvestModal() {
   if (_currentUser?.email !== 'tscholl@termac.com') { alert('🔒 Bid harvesting is restricted to Ted Scholl (Bid Manager).'); return; }
   var modal = document.getElementById('bidHarvestModal');
