@@ -2279,6 +2279,7 @@ function spOpenAdd(tab) {
   document.getElementById('spModalBg').classList.add('open');
 
   setTimeout(() => attachAddressAutocompleteSplit('spf_address', 'spf_city', 'spf_state', 'spf_zip'), 0);
+  setTimeout(() => attachBusinessNameAutocomplete('spf_business', 'spf_address', 'spf_city', 'spf_state', 'spf_zip'), 0);
 }
 
 function spEditRecord(id, tab) {
@@ -2292,6 +2293,7 @@ function spEditRecord(id, tab) {
   document.getElementById('spModalBg').classList.add('open');
 
   setTimeout(() => attachAddressAutocompleteSplit('spf_address', 'spf_city', 'spf_state', 'spf_zip'), 0);
+  setTimeout(() => attachBusinessNameAutocomplete('spf_business', 'spf_address', 'spf_city', 'spf_state', 'spf_zip'), 0);
 }
 
 // ── BUSINESS TYPE → PRICING MODE MAP ──────────────────────────────────────
@@ -2858,6 +2860,68 @@ async function fetchAddressSuggestions(text, dropdown, input){
 // selection instead of hiding the parsed values in data attributes, so the
 // rep can see and correct them. This is what fixed the "didn't line up
 // downstream" address problem the pitch tool had.
+// Business name autocomplete: same Worker's venue layer. Rep types the
+// business name, picks the location, and name + street/city/state/zip all
+// fill in one tap. dispatchEvent keeps spDupeCheck working on the set.
+let _bnAcTimer = null;
+function attachBusinessNameAutocomplete(inputId, addrId, cityId, stateId, zipId){
+  const input = document.getElementById(inputId);
+  if (!input || input.dataset.bnAcAttached) return;
+  input.dataset.bnAcAttached = '1';
+
+  const box = document.createElement('div');
+  box.style.cssText = 'position:relative;width:100%';
+  input.parentNode.insertBefore(box, input);
+  box.appendChild(input);
+  const dropdown = document.createElement('div');
+  dropdown.style.cssText = 'position:absolute;top:100%;left:0;right:0;background:#fff;border:1.5px solid var(--line,#D7DBE0);border-radius:8px;margin-top:2px;box-shadow:0 4px 14px rgba(0,0,0,.12);z-index:50;display:none;max-height:220px;overflow-y:auto';
+  box.appendChild(dropdown);
+
+  input.addEventListener('input', () => {
+    const text = input.value.trim();
+    clearTimeout(_bnAcTimer);
+    if (text.length < 3) { dropdown.style.display = 'none'; return; }
+    _bnAcTimer = setTimeout(() => fetchBusinessSuggestions(text, dropdown, input, addrId, cityId, stateId, zipId), 300);
+  });
+  document.addEventListener('click', (e) => {
+    if (!box.contains(e.target)) dropdown.style.display = 'none';
+  });
+}
+async function fetchBusinessSuggestions(text, dropdown, input, addrId, cityId, stateId, zipId){
+  try {
+    const res = await fetch(ADDR_AUTOCOMPLETE_PROXY + '/autocomplete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text })
+    });
+    const data = await res.json();
+    const suggestions = data.suggestions || [];
+    if (!suggestions.length) { dropdown.style.display = 'none'; return; }
+    dropdown.innerHTML = suggestions.map((s, i) =>
+      '<div data-i="' + i + '" style="padding:9px 12px;font-size:13px;cursor:pointer;border-bottom:1px solid #F1F2F4" '
+      + 'onmouseover="this.style.background=\'#F5F6F8\'" onmouseout="this.style.background=\'#fff\'">'
+      + escH(s.label) + '</div>'
+    ).join('');
+    dropdown.style.display = 'block';
+    Array.from(dropdown.children).forEach((el, i) => {
+      el.onclick = () => {
+        const s = suggestions[i];
+        const name = (s.label || '').split(',')[0].trim();
+        input.value = name;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        const addrEl = document.getElementById(addrId);
+        if (addrEl && s.street && s.street !== name) addrEl.value = s.street;
+        const cityEl = document.getElementById(cityId);
+        const stateEl = document.getElementById(stateId);
+        const zipEl = document.getElementById(zipId);
+        if (cityEl && s.city)   cityEl.value = s.city;
+        if (stateEl && s.state) stateEl.value = s.state;
+        if (zipEl && s.zip)     zipEl.value = s.zip;
+        dropdown.style.display = 'none';
+      };
+    });
+  } catch(e) { dropdown.style.display = 'none'; }
+}
+
 function attachAddressAutocompleteSplit(inputId, cityId, stateId, zipId){
   const input = document.getElementById(inputId);
   if (!input || input.dataset.acAttached) return;
