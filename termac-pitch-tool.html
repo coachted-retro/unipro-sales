@@ -2010,6 +2010,70 @@ async function fetchAddressSuggestions(text, dropdown, input) {
 // ── INIT ──
 detectGeo();
 attachAddressAutocomplete('cf-address');
+
+// ── BUSINESS NAME AUTOCOMPLETE (venue layer on the same Worker) ──
+// Rep types the business name, picks the right location, and the name
+// PLUS street/city/state/zip all fill in one tap.
+let _bnAcTimer = null;
+function attachBusinessNameAutocomplete(inputId) {
+  var input = document.getElementById(inputId);
+  if (!input || input.dataset.bnAcAttached) return;
+  input.dataset.bnAcAttached = '1';
+  var box = document.createElement('div');
+  box.style.cssText = 'position:relative;width:100%';
+  input.parentNode.insertBefore(box, input);
+  box.appendChild(input);
+  var dropdown = document.createElement('div');
+  dropdown.style.cssText = 'position:absolute;top:100%;left:0;right:0;background:#fff;border:1.5px solid #D7DBE0;border-radius:8px;margin-top:2px;box-shadow:0 4px 14px rgba(0,0,0,.18);z-index:60;display:none;max-height:220px;overflow-y:auto';
+  box.appendChild(dropdown);
+
+  input.addEventListener('input', function() {
+    var text = input.value.trim();
+    clearTimeout(_bnAcTimer);
+    if (text.length < 3) { dropdown.style.display = 'none'; return; }
+    _bnAcTimer = setTimeout(function() { fetchBusinessSuggestions(text, dropdown, input); }, 300);
+  });
+  document.addEventListener('click', function(e) {
+    if (!box.contains(e.target)) dropdown.style.display = 'none';
+  });
+}
+async function fetchBusinessSuggestions(text, dropdown, input) {
+  try {
+    var res = await fetch(ADDR_AUTOCOMPLETE_PROXY + '/autocomplete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: text })
+    });
+    var data = await res.json();
+    var suggestions = data.suggestions || [];
+    if (!suggestions.length) { dropdown.style.display = 'none'; return; }
+    dropdown.innerHTML = '';
+    suggestions.forEach(function(s) {
+      var item = document.createElement('div');
+      item.style.cssText = 'padding:9px 12px;font-size:13px;color:#1A1D21;cursor:pointer;border-bottom:1px solid #F1F2F4';
+      item.textContent = s.label;
+      item.onmouseover = function() { item.style.background = '#F5F6F8'; };
+      item.onmouseout  = function() { item.style.background = '#fff'; };
+      item.onclick = function() {
+        var name = (s.label || '').split(',')[0].trim();
+        input.value = name;
+        // Fire input so the form's validation/listeners see the change
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        var addrEl = document.getElementById('cf-address');
+        var cityEl = document.getElementById('cf-city');
+        var stateEl = document.getElementById('cf-state');
+        var zipEl = document.getElementById('cf-zip');
+        if (addrEl && s.street && s.street !== name) addrEl.value = s.street;
+        if (cityEl && s.city)   cityEl.value = s.city;
+        if (stateEl && s.state) stateEl.value = s.state;
+        if (zipEl && s.zip)     zipEl.value = s.zip;
+        dropdown.style.display = 'none';
+      };
+      dropdown.appendChild(item);
+    });
+    dropdown.style.display = 'block';
+  } catch(e) { dropdown.style.display = 'none'; }
+}
+attachBusinessNameAutocomplete('cf-biz');
 loadLeadFromUrl();
 </script>
 </body>
