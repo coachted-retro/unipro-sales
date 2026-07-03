@@ -1788,6 +1788,70 @@ async function crmHydrateBackup(){
 }
 crmHydrateBackup();
 
+// ── D1 SYNC LAYER ────────────────────────────────────────────────────────
+// Extends the existing localStorage-primary architecture with D1 persistence.
+// localStorage remains the synchronous source of truth for all reads.
+// D1 is written on every save and hydrated on page load if localStorage is empty.
+// Tables covered: accounts, leads, contacts, opportunities, bids, jobs, deficiencies, collections
+const D1_API_URL = 'https://termac-d1-api.termac-one.workers.dev';
+const D1_API_SECRET = 'Termac2026CRM';
+const D1_SYNC_TABLES = ['accounts','leads','contacts','opportunities','bids','jobs','deficiencies','collections'];
+
+async function d1Fetch(method, path, body) {
+  try {
+    const opts = {
+      method,
+      headers: { 'Content-Type': 'application/json', 'X-API-Secret': D1_API_SECRET }
+    };
+    if (body) opts.body = JSON.stringify(body);
+    const res = await fetch(D1_API_URL + path, opts);
+    return await res.json();
+  } catch(e) { return { ok: false, error: e.message }; }
+}
+
+async function d1Push(table, record) {
+  if (!D1_SYNC_TABLES.includes(table)) return;
+  const r = { ...record };
+  if (!r.id) return;
+  // Try update first, fall back to insert
+  const upd = await d1Fetch('PUT', '/api/' + table + '/' + r.id, r);
+  if (!upd.ok) {
+    await d1Fetch('POST', '/api/' + table, r);
+  }
+}
+
+async function d1PushBatch(table, records) {
+  if (!D1_SYNC_TABLES.includes(table) || !Array.isArray(records)) return;
+  for (const r of records) { await d1Push(table, r); }
+}
+
+async function d1Hydrate(table) {
+  if (!D1_SYNC_TABLES.includes(table)) return;
+  const local = crmLoad(table);
+  if (local.length > 0) return; // local data wins
+  try {
+    const res = await d1Fetch('GET', '/api/' + table + '?limit=500');
+    if (res.ok && Array.isArray(res.results) && res.results.length > 0) {
+      crmSave(table, res.results);
+      if (typeof renderCRMView === 'function') renderCRMView();
+    }
+  } catch(e) {}
+}
+
+// Patch crmSave to also push to D1
+const _crmSaveOrig = crmSave;
+function crmSave(key, val) {
+  _crmSaveOrig(key, val);
+  if (D1_SYNC_TABLES.includes(key)) {
+    d1PushBatch(key, val).catch(()=>{});
+  }
+}
+
+// Hydrate all D1 tables on load (fills empty localStorage from D1)
+(async function d1HydrateAll() {
+  for (const t of D1_SYNC_TABLES) { await d1Hydrate(t); }
+})();
+
 // Seed demo data if empty
 (function seedCRM(){
   // SAFE SEED: stamps demo records with _seeded:true, merges with real data
