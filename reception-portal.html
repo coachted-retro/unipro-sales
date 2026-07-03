@@ -349,12 +349,15 @@ button{cursor:pointer}
         <button class="rcp-tab active" id="rcpTab-incoming" onclick="rcpSwitchTab('incoming')">📞 Incoming Calls</button>
         <button class="rcp-tab" id="rcpTab-coldcalls" onclick="rcpSwitchTab('coldcalls')">📋 Cold Calls <span class="rcp-tab-badge" id="rcpCCBadge">20</span></button>
         <button class="rcp-tab" id="rcpTab-crm" onclick="rcpSwitchTab('crm')">👥 Leads & Accounts</button>
+        <button class="rcp-tab" id="rcpTab-callbacks" onclick="rcpSwitchTab('callbacks')">📲 Callbacks <span class="rcp-tab-badge" id="rcpCBBadge" style="display:none">0</span></button>
+        <button id="rcpEmergencyBtn" onclick="rcpOpenEmergency()" style="margin-left:auto;background:#C8102E;color:#fff;border:none;border-radius:8px;padding:9px 18px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px;letter-spacing:.08em;cursor:pointer;box-shadow:0 2px 8px rgba(200,16,46,.4)">🚨 EMERGENCY</button>
       </div>
 
       <!-- Tab panels -->
       <div id="rcpPanel-incoming" class="rcp-content"></div>
       <div id="rcpPanel-coldcalls" style="display:none"></div>
       <div id="rcpPanel-crm" style="display:none"></div>
+      <div id="rcpPanel-callbacks" style="display:none"></div>
       <div id="rcpPanel-deficiency" style="display:none"></div>
 
     </div><!-- /right main -->
@@ -428,7 +431,8 @@ function rcpEnterPortal(){
     if (cn) cn.textContent = name;
   })();
   // ── END USER CHIP ───────────────────────────────────────────────────────
-  setTimeout(function(){ rcpSwitchTab('incoming'); rcpUpdateRail(); }, 50);
+  setTimeout(function(){ rcpSwitchTab('incoming'); rcpUpdateRail(); rcpUpdateCBBadge(); rcpCheckCallbackEscalations(); }, 50);
+  setInterval(function(){ rcpCheckCallbackEscalations(); }, 300000);
 }
 
 // ── NAV ──
@@ -450,7 +454,7 @@ function rcpSwitchTab(tab){
   document.querySelectorAll('.rcp-tab').forEach(t=>t.classList.remove('active'));
   const activeTab = document.getElementById('rcpTab-'+tab);
   if(activeTab) activeTab.classList.add('active');
-  ['incoming','coldcalls','crm','deficiency'].forEach(p=>{
+  ['incoming','coldcalls','crm','deficiency','callbacks'].forEach(p=>{
     const panel=document.getElementById('rcpPanel-'+p);
     if(panel) panel.style.display=(p===tab?'block':'none');
   });
@@ -458,6 +462,7 @@ function rcpSwitchTab(tab){
   else if(tab==='coldcalls') rcpRenderColdCalls();
   else if(tab==='crm') rcpRenderAllCRM();
   else if(tab==='deficiency') rcpRenderDeficiencyQueue();
+  else if(tab==='callbacks') rcpRenderCallbacks();
 }
 
 function rcpUpdateDefBadge() {
@@ -746,6 +751,19 @@ function rcpLogCall(){
     };
     notifs.unshift(_routedNotif);
     _notifStore_set(notifs);
+    // Callback queue: every routed call becomes a waiting-on-callback entry
+    // that ages visibly and escalates to management if nobody responds.
+    try {
+      var cbq = JSON.parse(localStorage.getItem('termac_callback_queue')||'[]');
+      cbq.unshift({
+        id: _routedNotif.id, ts: Date.now(),
+        caller: name || company, company: company, phone: phone,
+        routedTo: routeTo, notes: notes,
+        status: 'waiting', escalated: false, escalated2: false
+      });
+      localStorage.setItem('termac_callback_queue', JSON.stringify(cbq.slice(0,200)));
+      rcpUpdateCBBadge();
+    } catch(e) {}
     // Cross-device: also push to the notification bridge so it reaches
     // the recipient's own device, not just this one.
     if (typeof notifySendCrossDevice === 'function') notifySendCrossDevice(_routedNotif);
@@ -869,6 +887,201 @@ function rcpRenderEmployee(el){
 }
 
 // ── TOAST ──
+// ═══════════════ CALLBACK QUEUE ═══════════════
+// Every routed call waits here until the customer is confirmed reached.
+// Ages visibly (green <2h, amber 2-4h, red >4h) and auto-escalates to
+// management through the notification bridge — no email dependency.
+function rcpCBLoad(){ try { return JSON.parse(localStorage.getItem('termac_callback_queue')||'[]'); } catch(e){ return []; } }
+function rcpCBSave(q){ try { localStorage.setItem('termac_callback_queue', JSON.stringify(q.slice(0,200))); } catch(e){} }
+
+function rcpUpdateCBBadge(){
+  var waiting = rcpCBLoad().filter(function(c){ return c.status==='waiting'; }).length;
+  var b = document.getElementById('rcpCBBadge');
+  if(b){ b.textContent = waiting; b.style.display = waiting ? '' : 'none'; }
+}
+
+function rcpCBAgeInfo(ts){
+  var mins = Math.floor((Date.now()-ts)/60000);
+  var label = mins < 60 ? mins+'m' : Math.floor(mins/60)+'h '+(mins%60)+'m';
+  var color = mins < 120 ? '#16A34A' : mins < 240 ? '#D97706' : '#DC2626';
+  return { mins: mins, label: label, color: color };
+}
+
+function rcpRenderCallbacks(){
+  rcpCheckCallbackEscalations();
+  var panel = document.getElementById('rcpPanel-callbacks');
+  if(!panel) return;
+  var q = rcpCBLoad();
+  var waiting = q.filter(function(c){ return c.status==='waiting'; });
+  var resolved = q.filter(function(c){ return c.status!=='waiting'; }).slice(0,10);
+
+  function row(c){
+    var age = rcpCBAgeInfo(c.ts);
+    var esc = c.escalated2 ? ' \u00b7 escalated \u00d72' : c.escalated ? ' \u00b7 escalated to mgmt' : '';
+    return '<tr>'
+      + '<td style="padding:10px 12px"><div style="font-weight:700;font-size:13px">'+escH(c.caller||c.company||'\u2014')+'</div>'
+      + '<div style="font-size:11px;color:var(--soft)">'+escH(c.company||'')+'</div></td>'
+      + '<td style="padding:10px 12px;font-size:12px"><a href="tel:'+escH(c.phone||'')+'" style="color:#1B5FA8">'+escH(c.phone||'\u2014')+'</a></td>'
+      + '<td style="padding:10px 12px;font-size:12px">'+escH(c.routedTo||'\u2014')+'</td>'
+      + '<td style="padding:10px 12px"><span style="font-weight:800;font-size:12px;color:'+age.color+'">'+age.label+' waiting</span>'
+      + '<span style="font-size:10px;color:var(--soft)">'+esc+'</span></td>'
+      + '<td style="padding:10px 12px;white-space:nowrap">'
+      + '<button onclick="rcpMarkReached(\''+c.id+'\')" style="background:#16A34A;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer;margin-right:6px">\u2713 Reached</button>'
+      + '<button onclick="rcpRenotifyRep(\''+c.id+'\')" style="background:#fff;color:#1B5FA8;border:1.5px solid #1B5FA8;border-radius:6px;padding:5px 10px;font-size:11px;font-weight:700;cursor:pointer">\u21bb Re-notify</button>'
+      + '</td></tr>';
+  }
+
+  panel.innerHTML =
+    '<div class="rcp-card" style="padding:0;overflow:hidden;margin-bottom:14px">'
+    + '<div style="padding:12px 16px;border-bottom:1px solid var(--line);background:#F8F9FA;display:flex;align-items:center;justify-content:space-between">'
+    + '<span style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--soft)">Waiting on Callback \u2014 '+waiting.length+'</span>'
+    + '<span style="font-size:11px;color:var(--soft)">Auto-escalates to management at 2h and 4h</span></div>'
+    + (waiting.length
+      ? '<table style="width:100%;border-collapse:collapse"><thead><tr style="background:#F8F9FA">'
+        + ['Caller','Phone','Routed To','Waiting','Actions'].map(function(h){return '<th style="padding:7px 12px;font-size:10px;font-weight:700;color:var(--soft);text-align:left;border-bottom:1px solid var(--line)">'+h+'</th>';}).join('')
+        + '</tr></thead><tbody>'+waiting.map(row).join('')+'</tbody></table>'
+      : '<div style="padding:24px;text-align:center;color:var(--soft);font-size:13px">No callbacks waiting \u2014 every customer has been reached \ud83c\udf89</div>')
+    + '</div>'
+    + (resolved.length
+      ? '<div class="rcp-card" style="padding:12px 16px"><div style="font-size:11px;font-weight:700;color:var(--soft);letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px">Recently Resolved</div>'
+        + resolved.map(function(c){ return '<div style="font-size:12px;padding:4px 0;color:var(--soft)">\u2713 '+escH(c.caller||c.company||'')+' \u2014 reached '+new Date(c.resolvedAt||c.ts).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})+' (was routed to '+escH(c.routedTo||'')+')</div>'; }).join('')
+        + '</div>'
+      : '');
+  rcpUpdateCBBadge();
+}
+
+function rcpMarkReached(id){
+  var q = rcpCBLoad();
+  var c = q.find(function(x){ return x.id===id; });
+  if(c){ c.status='resolved'; c.resolvedAt=Date.now(); c.resolvedBy=(_rcpUser&&_rcpUser.name)||'Reception'; }
+  rcpCBSave(q); rcpRenderCallbacks(); rcpToast('Marked as reached \u2713');
+}
+
+function rcpRenotifyRep(id){
+  var c = rcpCBLoad().find(function(x){ return x.id===id; });
+  if(!c) return;
+  if (typeof notifySendCrossDevice === 'function') notifySendCrossDevice({
+    id: 'CBR'+Date.now(), recipientName: c.routedTo, ts: Date.now(),
+    caller: c.caller, company: c.company, phone: c.phone,
+    notes: 'REMINDER: customer still waiting on callback ('+rcpCBAgeInfo(c.ts).label+'). '+(c.notes||''),
+    source: 'Callback Queue', loggedBy: (_rcpUser&&_rcpUser.name)||'Reception'
+  });
+  rcpToast('Reminder sent to '+c.routedTo);
+}
+
+function rcpCheckCallbackEscalations(){
+  var q = rcpCBLoad(); var changed = false;
+  q.forEach(function(c){
+    if(c.status!=='waiting') return;
+    var mins = Math.floor((Date.now()-c.ts)/60000);
+    if(mins >= 120 && !c.escalated){
+      c.escalated = true; changed = true;
+      if (typeof notifySendCrossDevice === 'function') ['Manager','Jim Kennedy'].forEach(function(who){
+        notifySendCrossDevice({ id:'CBE'+Date.now()+who.slice(0,2), recipientName: who, ts: Date.now(),
+          caller: c.caller, company: c.company, phone: c.phone,
+          notes: '\u26a0 Callback overdue 2h+: routed to '+c.routedTo+', customer not yet reached.',
+          source: 'Callback Escalation', loggedBy: 'Reception' });
+      });
+    }
+    if(mins >= 240 && !c.escalated2){
+      c.escalated2 = true; changed = true;
+      if (typeof notifySendCrossDevice === 'function') ['Manager','Jim Kennedy'].forEach(function(who){
+        notifySendCrossDevice({ id:'CBF'+Date.now()+who.slice(0,2), recipientName: who, ts: Date.now(),
+          caller: c.caller, company: c.company, phone: c.phone,
+          notes: '\ud83d\udea8 Callback overdue 4h+: routed to '+c.routedTo+'. Customer still waiting \u2014 needs immediate attention.',
+          source: 'Callback Escalation', loggedBy: 'Reception' });
+      });
+    }
+  });
+  if(changed) rcpCBSave(q);
+  rcpUpdateCBBadge();
+}
+
+// ═══════════════ EMERGENCY FAST PATH ═══════════════
+// Fire protection emergencies (system discharge, failed inspection, kitchen
+// down) skip the normal form: three fields, one button, instant alert to
+// management through the notification bridge.
+function rcpOpenEmergency(){
+  var old = document.getElementById('rcpEmergencyModal');
+  if(old) old.remove();
+  var wrap = document.createElement('div');
+  wrap.id = 'rcpEmergencyModal';
+  wrap.setAttribute('style','position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99998;display:flex;align-items:center;justify-content:center;padding:20px');
+  wrap.innerHTML =
+    '<div style="background:#fff;border-radius:14px;max-width:440px;width:100%;padding:22px;border-top:6px solid #C8102E">'
+    + '<div style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:18px;letter-spacing:.06em;color:#C8102E;margin-bottom:4px">\ud83d\udea8 EMERGENCY CALL</div>'
+    + '<div style="font-size:12px;color:var(--soft);margin-bottom:14px">System discharge, failed inspection, kitchen down \u2014 this alerts management instantly.</div>'
+    + '<label style="font-size:11px;font-weight:700">Caller / Business</label>'
+    + '<input id="rcpEmBiz" type="text" placeholder="Who is calling" style="width:100%;margin:4px 0 10px;padding:10px;border:1.5px solid var(--line);border-radius:8px;font-size:14px">'
+    + '<label style="font-size:11px;font-weight:700">Callback Phone</label>'
+    + '<input id="rcpEmPhone" type="tel" placeholder="(215) 555-0100" style="width:100%;margin:4px 0 10px;padding:10px;border:1.5px solid var(--line);border-radius:8px;font-size:14px">'
+    + '<label style="font-size:11px;font-weight:700">Division</label>'
+    + '<select id="rcpEmDiv" style="width:100%;margin:4px 0 10px;padding:10px;border:1.5px solid var(--line);border-radius:8px;font-size:14px">'
+    + ['UniPro Fire Protection','Quality III Fire Protection','GTO Grease Trap','Filter Man','AllPro Fabrication','Termac Dish Machines'].map(function(d){return '<option>'+d+'</option>';}).join('')
+    + '</select>'
+    + '<label style="font-size:11px;font-weight:700">What happened</label>'
+    + '<textarea id="rcpEmWhat" rows="2" placeholder="Suppression system discharged, AHJ on site, kitchen shut down..." style="width:100%;margin:4px 0 14px;padding:10px;border:1.5px solid var(--line);border-radius:8px;font-size:14px;resize:vertical"></textarea>'
+    + '<div style="display:flex;gap:10px">'
+    + '<button onclick="rcpSubmitEmergency()" style="flex:1;background:#C8102E;color:#fff;border:none;border-radius:8px;padding:12px;font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:14px;letter-spacing:.06em;cursor:pointer">\ud83d\udea8 ALERT MANAGEMENT NOW</button>'
+    + '<button onclick="document.getElementById(\'rcpEmergencyModal\').remove()" style="background:#fff;border:1.5px solid var(--line);border-radius:8px;padding:12px 16px;font-size:13px;cursor:pointer">Cancel</button>'
+    + '</div></div>';
+  document.body.appendChild(wrap);
+  setTimeout(function(){ var el=document.getElementById('rcpEmBiz'); if(el) el.focus(); }, 60);
+}
+
+function rcpSubmitEmergency(){
+  var biz = document.getElementById('rcpEmBiz')?.value.trim() || '';
+  var phone = document.getElementById('rcpEmPhone')?.value.trim() || '';
+  var div = document.getElementById('rcpEmDiv')?.value || '';
+  var what = document.getElementById('rcpEmWhat')?.value.trim() || '';
+  if(!biz && !phone){ rcpToast('Enter at least the caller and phone'); return; }
+
+  var entry = { id:'EM'+Date.now(), ts:Date.now(), business:biz, phone:phone, division:div, details:what,
+    loggedBy:(_rcpUser&&_rcpUser.name)||'Reception' };
+  try {
+    var log = JSON.parse(localStorage.getItem('termac_emergency_log')||'[]');
+    log.unshift(entry);
+    localStorage.setItem('termac_emergency_log', JSON.stringify(log.slice(0,100)));
+  } catch(e){}
+
+  // Alert management on their own devices via the notification bridge
+  if (typeof notifySendCrossDevice === 'function') ['Manager','Jim Kennedy'].forEach(function(who){
+    notifySendCrossDevice({ id: entry.id+who.slice(0,2), recipientName: who, ts: entry.ts,
+      caller: biz, company: biz, phone: phone,
+      notes: '\ud83d\udea8 EMERGENCY \u2014 '+div+': '+(what||'details with reception')+' \u2014 CALL BACK: '+phone,
+      source: '\ud83d\udea8 EMERGENCY', loggedBy: entry.loggedBy });
+  });
+  if (typeof _fireInAppAlertBanner === 'function') _fireInAppAlertBanner({
+    recipientName:'Management', caller: biz, company: biz, phone: phone,
+    notes: '\ud83d\udea8 EMERGENCY \u2014 '+div+': '+what, source:'EMERGENCY', loggedBy: entry.loggedBy });
+
+  var m = document.getElementById('rcpEmergencyModal'); if(m) m.remove();
+  rcpToast('\ud83d\udea8 Management alerted \u2014 emergency logged', 4000);
+}
+
+// ═══════════════ NEXT SERVICE LOOKUP ═══════════════
+// Answers "when is my next inspection?" at a glance, right on the account
+// row — scans every division's job pool plus appointments for the earliest
+// upcoming visit for that account.
+function rcpNextService(acct){
+  var pools = ['unipro_jobs','gto_invoices','filterman_invoices','termac_scheduled_jobs','termac_appointments'];
+  var today = new Date().toISOString().slice(0,10);
+  var bizNorm = String(acct.business||acct.bizName||acct.businessName||acct.name||'').toLowerCase().trim();
+  var best = null;
+  pools.forEach(function(key){
+    var jobs = [];
+    try { jobs = JSON.parse(localStorage.getItem(key)||'[]'); } catch(e){ return; }
+    jobs.forEach(function(j){
+      var d = j.date || j.scheduledDate || j.apptDate || '';
+      if(!d || d < today) return;
+      var matches = (j.accountId && j.accountId === acct.id)
+        || (bizNorm && String(j.accountName||j.account||j.business||j.bizName||'').toLowerCase().trim() === bizNorm);
+      if(matches && (!best || d < best)) best = d;
+    });
+  });
+  return best;
+}
+
 function rcpToast(msg,dur=2800){
   const el=document.getElementById('rcpToast');
   el.textContent=msg;el.style.opacity='1';
@@ -1512,6 +1725,7 @@ function rcpCRMSection(title, records, type){
         <th style="padding:7px 12px;font-size:10px;font-weight:700;color:var(--soft);text-align:left;border-bottom:1px solid var(--line)">Name / Business</th>
         <th style="padding:7px 12px;font-size:10px;font-weight:700;color:var(--soft);text-align:left;border-bottom:1px solid var(--line)">Phone</th>
         <th style="padding:7px 12px;font-size:10px;font-weight:700;color:var(--soft);text-align:left;border-bottom:1px solid var(--line)">Status</th>
+        ${type==='account'?'<th style="padding:7px 12px;font-size:10px;font-weight:700;color:var(--soft);text-align:left;border-bottom:1px solid var(--line)">Next Service</th>':''}
         <th style="padding:7px 12px;font-size:10px;font-weight:700;color:var(--soft);text-align:left;border-bottom:1px solid var(--line)">Notes</th>
       </tr></thead>
       <tbody>${records.slice(0,20).map(r=>`<tr class="rcp-crm-row" onclick="rcpOpenRecordDetail('${escH(r.id||'')}','${type}')">
@@ -1521,6 +1735,7 @@ function rcpCRMSection(title, records, type){
         </td>
         <td style="padding:9px 12px"><a href="tel:${escH(r.phone||'')}" onclick="event.stopPropagation()" style="color:var(--blue);font-size:12px;font-weight:600">${escH(r.phone||'—')}</a></td>
         <td style="padding:9px 12px"><span style="background:${colors[type]||'#E5E7EB'};color:#fff;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:700">${escH(r.status||type)}</span></td>
+        ${type==='account'?(function(){var ns=rcpNextService(r);return '<td style="padding:9px 12px;font-size:12px;font-weight:700;color:'+(ns?'#16A34A':'#9CA3AF')+'">'+(ns?new Date(ns+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}):'None scheduled')+'</td>';})():''}
         <td style="padding:9px 12px;font-size:12px;color:var(--soft);max-width:200px">${escH((r.notes||r.dmsNotes||'').slice(0,80))}${(r.notes||r.dmsNotes||'').length>80?'…':''}</td>
       </tr>`).join('')}</tbody>
     </table>
