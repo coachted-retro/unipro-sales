@@ -1619,6 +1619,33 @@ function rcpFillFromSearch(id, type){
 // Read-only view so reception can actually look something up when a
 // caller mentions an account, instead of the list being a dead end.
 function rcpOpenRecordDetail(id, type){
+  // Reception needs the FULL record — next inspection due, open invoices,
+  // complete history — so clicking a name goes straight to the record page
+  // in the OS instead of an info card.
+  if (type === 'account') { window.location.href = 'termac-os.html?open=accounts&id=' + encodeURIComponent(id) + '&from=reception'; return; }
+  if (type === 'contact') { window.location.href = 'termac-os.html?open=contacts&id=' + encodeURIComponent(id) + '&from=reception'; return; }
+  if (type === 'lead') {
+    // Reception's lead list comes from the DMS cold-call pool. If the lead
+    // was promoted into the CRM, jump to that record; match by id first,
+    // then by phone or business name. Otherwise fall back to the info card
+    // (a cold-call entry has no account page yet).
+    const dms = crmLoad('dms_coldcall').find(x => x.id === id);
+    const crmLeads = crmLoad('leads');
+    let match = crmLeads.find(x => x.id === id);
+    if (!match && dms) {
+      const norm = s => String(s||'').replace(/\D/g, '');
+      const biz = String(dms.bizName || dms.businessName || dms.business || '').toLowerCase().trim();
+      match = crmLeads.find(x =>
+        (dms.phone && norm(x.phone) && norm(x.phone) === norm(dms.phone)) ||
+        (biz && String(x.business || x.bizName || x.businessName || '').toLowerCase().trim() === biz)
+      );
+    }
+    if (match) { window.location.href = 'termac-os.html?open=leads&id=' + encodeURIComponent(match.id) + '&from=reception'; return; }
+  }
+  _rcpShowRecordCard(id, type);
+}
+
+function _rcpShowRecordCard(id, type){
   const data = crmLoad(type==='lead'?'dms_coldcall':type==='contact'?'contacts':'accounts');
   const r = data.find(x=>x.id===id);
   if(!r){ rcpToast('Record not found'); return; }
