@@ -25168,13 +25168,19 @@ function checkCollectionsOverdue() {
     });
     if (!overdue.length) return;
     var notifs = JSON.parse(localStorage.getItem('termac_hotlead_notifs')||'[]');
-    var alreadyNotified = notifs.some(function(n){ return n.type==='coll_overdue_mgr' && (Date.now()-n.ts)<3600000; });
+    var newBody = overdue.map(function(c){ return c.collectedBy+': $'+Number(c.amount).toFixed(2)+' ('+c.accountName+')'; }).join(' · ');
+    // Don't stack duplicates: skip while an identical alert is still unread,
+    // or any copy fired within the last hour. Re-fires only after the manager
+    // has read the last one AND the situation persists or changed.
+    var alreadyNotified = notifs.some(function(n){
+      return n.type==='coll_overdue_mgr' && ((!n.read && n.body === newBody) || (Date.now()-n.ts)<3600000);
+    });
     if (alreadyNotified) return;
     notifs.unshift({
       id:'n_'+Date.now(), ts:Date.now(), type:'coll_overdue_mgr', icon:'💵',
       urgent:true,
       title:'⚠️ ' + overdue.length + ' Collection' + (overdue.length>1?'s':'')+' Overdue >48h',
-      body: overdue.map(function(c){ return c.collectedBy+': $'+Number(c.amount).toFixed(2)+' ('+c.accountName+')'; }).join(' · '),
+      body: newBody,
       recipient:'Manager', read:false,
       date:new Date().toLocaleDateString('en-US'), time:new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}),
     });
