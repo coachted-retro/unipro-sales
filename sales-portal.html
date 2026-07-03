@@ -134,6 +134,10 @@ body.rail-collapsed{--rail-w:64px}
 /* ── CARDS & PANELS ── */
 .sp-card{background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;margin-bottom:14px}
 .sp-card-title{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin-bottom:12px}
+.sp-tp-type,.sp-tp-outcome{background:#fff;border:1.5px solid var(--line);border-radius:20px;padding:6px 14px;font-size:12px;font-weight:700;color:var(--soft);cursor:pointer;transition:all .12s}
+.sp-tp-type.sel{background:var(--red);border-color:var(--red);color:#fff}
+.sp-tp-outcome.sel{background:#059669;border-color:#059669;color:#fff}
+.sp-tp-type:hover:not(.sel),.sp-tp-outcome:hover:not(.sel){border-color:var(--ink)}
 
 /* ── CRM FILTERS BAR ── */
 .sp-filter-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px}
@@ -606,27 +610,11 @@ body.rail-open .rail-overlay{display:block}
         </div>
       </div>
 
-      <!-- 6. STRUCTURED CALL LOGGER -->
+      <!-- 6. Call logging moved to the center Activity & Touch Points card
+           (single source of truth — this panel used to have its own
+           logger that silently failed for non-lead records). -->
       <div class="si-section" style="border-top:1px solid #2A2E33">
-        <div class="si-hdr soft">📞 Log This Call</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin-bottom:8px">
-          <button class="si-log-btn si-log-reached" onclick="siLogCall('reached')">✅ Reached</button>
-          <button class="si-log-btn si-log-vm" onclick="siLogCall('voicemail')">📱 VM Left</button>
-          <button class="si-log-btn si-log-noanswer" onclick="siLogCall('no_answer')">🔇 No Answer</button>
-        </div>
-        <div id="siLogNext" style="display:none;margin-top:4px">
-          <select id="siLogNextStep" style="width:100%;background:#1F2937;border:1px solid #374151;border-radius:5px;color:#D1D5DB;font-size:11px;padding:5px 7px;font-family:Barlow,sans-serif;margin-bottom:4px">
-            <option value="">Next step…</option>
-            <option>Schedule site survey</option>
-            <option>Send proposal</option>
-            <option>Follow up in 1 week</option>
-            <option>Follow up in 2 weeks</option>
-            <option>Follow up next month</option>
-            <option>Escalate to manager</option>
-            <option>Mark disqualified</option>
-          </select>
-          <button onclick="siConfirmLog()" style="width:100%;padding:6px;background:#C8102E;color:#fff;border:none;border-radius:5px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">Save Call Log</button>
-        </div>
+        <div style="font-size:11px;color:#6B7280;text-align:center;padding:6px 0">📞 Log calls, emails, and notes in the Activity &amp; Touch Points card on the record</div>
       </div>
     </div>
   </div>
@@ -899,16 +887,23 @@ function spRenderCRM(tab) {
     return stageKeys.includes(s);
   });
 
-  // Also include legacy per-tab pool for accounts
+  // Also include legacy per-tab pool — but only records that actually
+  // belong on THIS tab. Previously this merged in every legacy record
+  // unconditionally, so a lead still sitting in lifecycleStage:'lead'
+  // (like Charcoal BYOB) would leak into the Accounts tab just because it
+  // existed in the old accounts storage array, regardless of its real stage.
   if (tab === 'accounts') {
     const legacy = crmLoad('accounts').filter(r => {
-      const id = r.id;
-      return !data.find(x => x.id === id);
+      const s = r.lifecycleStage || 'active';
+      return !data.find(x => x.id === r.id) && stageKeys.includes(s);
     });
     data = [...data, ...legacy];
   }
   if (tab === 'contacts') {
-    const legacyC = crmLoad('contacts').filter(r => !data.find(x => x.id === r.id));
+    const legacyC = crmLoad('contacts').filter(r => {
+      const s = r.lifecycleStage || 'contact';
+      return !data.find(x => x.id === r.id) && stageKeys.includes(s);
+    });
     data = [...data, ...legacyC];
   }
 
@@ -2179,6 +2174,11 @@ function spViewRecord(id, tab) {
   sessionStorage.setItem('sp_recently_viewed', JSON.stringify(newRv));
   // Open detail
   spOpenDetail(r, foundTab);
+  // Keep the left Site Intel panel in lockstep with whatever record is
+  // open in the center — previously only a direct list-row click did this,
+  // so navigating via search, alerts, or Recently Viewed left the left
+  // panel showing a stale record while the center showed the real one.
+  if (typeof spLoadIntelPanel === 'function') spLoadIntelPanel(id, foundTab);
   // Auto-close list drawer on mobile when a record is tapped
   spAutoCloseDrawer();
 }
@@ -2193,66 +2193,248 @@ function spOpenDetail(r, tab) {
     ${c.email ? `<a href="mailto:${escH(c.email)}" style="font-size:12px;color:var(--blue);display:block">${escH(c.email)}</a>` : ''}
   </div>`).join('');
 
+  // Everything a rep needs to know about this account/contact lives on
+  // ONE card now — business info, full contact details, rep assignment,
+  // and the action buttons that used to be scattered in a separate side
+  // rail. No hunting across panels for what you're standing there to do.
+  const isAccount = tab === 'accounts';
+  const apptDefaultMode = isAccount ? 'site_visit' : 'appointment';
+
   const el = document.getElementById('spContent');
   el.innerHTML = `
   <button class="sp-btn sp-btn-ghost" style="margin-bottom:14px" onclick="spNav('${tab}')">← Back to ${SP_TITLES[tab]||tab}</button>
-  <div style="display:grid;grid-template-columns:1fr 300px;gap:14px;align-items:start">
-    <div>
-      <div class="sp-card">
-        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px">
-          <div>
-            <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:22px;color:var(--ink)">${escH(r.business||r.name||'—')}</div>
-            <div style="font-size:13px;color:var(--soft);margin-top:2px">${escH(r.name||r.contact||'')}${r.role?' · '+escH(r.role):''}</div>
-          </div>
-          <span class="sp-stage-pill" style="background:${stage.bg};color:${stage.color};font-size:12px;padding:4px 12px">${stage.label}</span>
-        </div>
-        ${r.siteNotes ? `<div class="sp-site-notes"><div class="sp-site-notes-lbl">🔶 Site Notes — Read Before Visit</div>${escH(r.siteNotes)}</div>` : ''}
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">${svcs}</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <select onchange="spSetStage('${r.id}','${tab}',this.value,this)" style="padding:6px 10px;border:1.5px solid #059669;border-radius:7px;font-size:12px;font-family:'Barlow Condensed',sans-serif;font-weight:700;background:#059669;color:#fff;cursor:pointer;height:32px">
-            ${spStageOptions(r, tab)}
-          </select>
-        </div>
-      </div>
 
-      <!-- Activity / Notes -->
-      <div class="sp-card">
-        <div class="sp-card-title">Activity Timeline</div>
-        ${(r.activityLog||[]).length === 0 ? '<div style="color:var(--soft);font-size:13px">No activity yet. Log a call or visit to get started.</div>' :
-          [...(r.activityLog||[])].reverse().slice(0,10).map(a => `<div style="display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)">
-            <div style="font-size:16px;flex-shrink:0">${a.icon||'📌'}</div>
-            <div>
-              <div style="font-size:13px;font-weight:600;color:var(--ink)">${escH(a.title||a.note||'Activity')}</div>
-              <div style="font-size:11px;color:var(--soft)">${a.ts ? new Date(a.ts).toLocaleString() : '—'}${a.who?' · '+escH(a.who):''}</div>
-              ${a.note && a.title ? `<div style="font-size:12px;color:var(--soft);margin-top:2px">${escH(a.note)}</div>` : ''}
-            </div>
-          </div>`).join('')}
+  <div class="sp-card">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px">
+      <div>
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:22px;color:var(--ink)">${escH(r.business||r.name||'—')}</div>
+        <div style="font-size:13px;color:var(--soft);margin-top:2px">${escH(r.name||r.contact||'')}${r.role?' · '+escH(r.role):''}</div>
       </div>
+      <span class="sp-stage-pill" style="background:${stage.bg};color:${stage.color};font-size:12px;padding:4px 12px;flex-shrink:0">${stage.label}</span>
     </div>
+    ${r.siteNotes ? `<div class="sp-site-notes"><div class="sp-site-notes-lbl">🔶 Site Notes — Read Before Visit</div>${escH(r.siteNotes)}</div>` : ''}
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">${svcs}</div>
 
-    <!-- Sidebar -->
-    <div>
-      <div class="sp-card">
-        <div class="sp-card-title">Contact Info</div>
-        <div style="font-size:13px;line-height:1.8">
-          ${r.phone ? `📞 <a href="tel:${escH(r.phone)}" style="color:var(--blue)">${escH(r.phone)}</a><br>` : ''}
-          ${r.email ? `✉️ <a href="mailto:${escH(r.email)}" style="color:var(--blue)">${escH(r.email)}</a><br>` : ''}
-          ${r.address ? `📍 ${escH(r.address)}<br>` : ''}
-          ${r.notes ? `<div style="margin-top:8px;padding:8px;background:var(--bg);border-radius:6px;font-size:12px;color:var(--soft)">${escH(r.notes)}</div>` : ''}
-        </div>
+    <!-- Contact & rep info -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:12px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);margin-bottom:12px">
+      <div style="font-size:13px;line-height:1.9">
+        ${r.phone ? `📞 <a href="tel:${escH(r.phone)}" style="color:var(--blue)">${escH(r.phone)}</a><br>` : ''}
+        ${r.email ? `✉️ <a href="mailto:${escH(r.email)}" style="color:var(--blue)">${escH(r.email)}</a><br>` : ''}
+        ${r.address ? `📍 ${escH(r.address)}${r.city?', '+escH(r.city):''}${r.state?', '+escH(r.state):''}${r.zip?' '+escH(r.zip):''}<br>` : ''}
+        ${r.parentCompany ? `🏢 ${escH(r.parentCompany)}<br>` : ''}
         ${extraContacts}
       </div>
-      <div class="sp-card">
-        <div class="sp-card-title">Rep Info</div>
-        <div style="font-size:12px;color:var(--soft);line-height:1.8">
-          <div>Assigned: <strong style="color:var(--ink)">${escH(r.ownedBy||r.assignedRep||'Unassigned')}</strong></div>
-          ${r.createdBy && r.createdBy !== (r.ownedBy||r.assignedRep) ? `<div>Created by: ${escH(r.createdBy)}</div>` : ''}
-          <div>Source: ${escH(r.source||'—')}</div>
-          <div>Created: ${r.created ? new Date(r.created).toLocaleDateString() : '—'}</div>
-        </div>
+      <div style="font-size:12px;color:var(--soft);line-height:1.9">
+        <div>Assigned: <strong style="color:var(--ink)">${escH(r.ownedBy||r.assignedRep||'Unassigned')}</strong></div>
+        ${r.createdBy && r.createdBy !== (r.ownedBy||r.assignedRep) ? `<div>Created by: ${escH(r.createdBy)}</div>` : ''}
+        <div>Source: ${escH(r.source||'—')}</div>
+        <div>Created: ${r.created ? new Date(r.created).toLocaleDateString() : '—'}</div>
+        ${r.notes ? `<div style="margin-top:8px;padding:8px;background:var(--bg);border-radius:6px;font-size:12px;color:var(--soft)">${escH(r.notes)}</div>` : ''}
       </div>
     </div>
+
+    <!-- Stage + action buttons, right on the card -->
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <select onchange="spSetStage('${r.id}','${tab}',this.value,this)" style="padding:8px 12px;border:1.5px solid #059669;border-radius:7px;font-size:12px;font-family:'Barlow Condensed',sans-serif;font-weight:700;background:#059669;color:#fff;cursor:pointer;height:34px">
+        ${spStageOptions(r, tab)}
+      </select>
+      ${isAccount ? `<button onclick="spVisitStartNow('${r.id}','${tab}')" style="padding:8px 14px;background:#059669;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">🚀 Start Visit</button>
+      <button onclick="spCheckInAndStartVisit('${r.id}','${tab}')" style="padding:8px 14px;background:#D8690B;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">📍 I'm Here</button>` : ''}
+      <button onclick="spOpenApptModal('${r.id}','${tab}','${apptDefaultMode}')" style="padding:8px 14px;background:#1B5FA8;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">📅 Set Appointment</button>
+      <button onclick="spEditRecord('${r.id}','${tab}')" style="padding:8px 14px;background:#fff;color:var(--ink);border:1.5px solid var(--line);border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">Edit Record</button>
+    </div>
+  </div>
+
+  <!-- Activity / Touch Points -->
+  <div class="sp-card" id="spTpCard">
+    <div class="sp-card-title">Activity &amp; Touch Points</div>
+    <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap" id="spTpTypeRow">
+      <button class="sp-tp-type sel" data-type="call"  onclick="spTpSetType(this,'call')">📞 Call</button>
+      <button class="sp-tp-type"     data-type="email" onclick="spTpSetType(this,'email')">📧 Email</button>
+      <button class="sp-tp-type"     data-type="text"  onclick="spTpSetType(this,'text')">💬 Text</button>
+      <button class="sp-tp-type"     data-type="visit" onclick="spTpSetType(this,'visit')">🏢 Visit</button>
+      <button class="sp-tp-type"     data-type="note"  onclick="spTpSetType(this,'note')">📝 Note</button>
+    </div>
+    <div id="spTpOutcomeRow" style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
+      <button class="sp-tp-outcome sel" data-outcome="reached"    onclick="spTpSetOutcome(this,'reached')">✅ Connected</button>
+      <button class="sp-tp-outcome"     data-outcome="no_answer"  onclick="spTpSetOutcome(this,'no_answer')">🔇 No Answer</button>
+      <button class="sp-tp-outcome"     data-outcome="voicemail"  onclick="spTpSetOutcome(this,'voicemail')">📱 Voicemail</button>
+    </div>
+    <div style="position:relative">
+      <textarea id="spTpNote" rows="2" placeholder="What was discussed? Who did you talk to, what's the context..." style="width:100%;border:1.5px solid var(--line);border-radius:8px;padding:9px 34px 9px 11px;font-size:13px;font-family:inherit;resize:vertical"></textarea>
+      <button type="button" id="spTpMicBtn" onclick="spToggleDictation('spTpNote','spTpMicBtn')" title="Dictate" style="position:absolute;top:8px;right:8px;background:none;border:none;font-size:16px;cursor:pointer;color:var(--soft)">🎙️</button>
+    </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-top:9px;flex-wrap:wrap;gap:8px">
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--soft);cursor:pointer">
+        <input type="checkbox" id="spTpPin" style="width:15px;height:15px"> 📌 Pin to top
+      </label>
+      <button id="spTpSubmitBtn" onclick="spTpSubmit('${r.id}','${tab}')" style="background:var(--red);color:#fff;border:none;border-radius:8px;padding:9px 20px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12px;letter-spacing:.05em;text-transform:uppercase;cursor:pointer">Log Touch Point</button>
+    </div>
+    <div id="spTpTimeline" style="margin-top:14px;border-top:1px solid var(--line);padding-top:10px">
+      ${spRenderTimeline(r)}
+    </div>
   </div>`;
+  window._spTpType = 'call';
+  window._spTpOutcome = 'reached';
+}
+
+// ── ACTIVITY TIMELINE: rendering, sort (pinned first), pin toggle ──
+function spRenderTimeline(r) {
+  const log = r.activityLog || [];
+  if (!log.length) return '<div style="color:var(--soft);font-size:13px">No activity yet. Log a touch point above to get started.</div>';
+  const sorted = [...log].sort((a, b) => {
+    if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1;
+    return (b.ts||0) - (a.ts||0);
+  });
+  return sorted.slice(0, 25).map(a => `
+    <div style="display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);${a.pinned?'background:#FFFBEB':''}">
+      <div style="font-size:16px;flex-shrink:0">${a.pinned?'📌':(a.icon||'📌')}</div>
+      <div style="flex:1">
+        <div style="font-size:13px;font-weight:600;color:var(--ink)">${escH(a.title||a.note||'Activity')}</div>
+        <div style="font-size:11px;color:var(--soft)">${a.ts ? new Date(a.ts).toLocaleString() : '—'}${a.who?' · '+escH(a.who):''}</div>
+        ${a.note && a.title ? `<div style="font-size:12px;color:var(--soft);margin-top:2px;white-space:pre-wrap">${escH(a.note)}</div>` : ''}
+      </div>
+      <button onclick="spTpTogglePin('${r.id}','${a.id}')" title="${a.pinned?'Unpin':'Pin to top'}" style="background:none;border:none;cursor:pointer;font-size:14px;opacity:${a.pinned?'1':'.35'};flex-shrink:0;align-self:flex-start">📌</button>
+    </div>`).join('');
+}
+
+function spTpSetType(btn, type) {
+  window._spTpType = type;
+  document.querySelectorAll('#spTpTypeRow .sp-tp-type').forEach(b => b.classList.remove('sel'));
+  btn.classList.add('sel');
+  const outcomeRow = document.getElementById('spTpOutcomeRow');
+  if (outcomeRow) outcomeRow.style.display = (type === 'call') ? 'flex' : 'none';
+  const submitBtn = document.getElementById('spTpSubmitBtn');
+  if (submitBtn) submitBtn.textContent = type === 'email' ? 'Compose & Send Email' : 'Log Touch Point';
+}
+function spTpSetOutcome(btn, outcome) {
+  window._spTpOutcome = outcome;
+  document.querySelectorAll('#spTpOutcomeRow .sp-tp-outcome').forEach(b => b.classList.remove('sel'));
+  btn.classList.add('sel');
+}
+
+// Generic touch-point logger — looks up the record in the CORRECT pool for
+// its tab (the old AI-panel logger always wrote to 'leads' and silently did
+// nothing for contacts/accounts/opportunities). Works for call/text/visit/note;
+// email routes through spOpenEmailCompose instead since it needs subject/body.
+function spLogTouchpoint(id, tab, opts) {
+  const pool = crmLoad(tab);
+  const idx = pool.findIndex(x => x.id === id);
+  if (idx < 0) { spToast('Record not found — could not log activity'); return null; }
+  const r = pool[idx];
+  const icons = { call:'📞', email:'📧', text:'💬', visit:'🏢', note:'📝' };
+  const outcomeLabels = { reached:'Connected', no_answer:'No Answer', voicemail:'Voicemail' };
+  let title;
+  if (opts.type === 'call') title = '📞 Call — ' + (outcomeLabels[opts.outcome] || 'Logged');
+  else if (opts.type === 'email') title = '📧 Email — ' + (opts.subject || 'Sent');
+  else if (opts.type === 'text') title = '💬 Text sent';
+  else if (opts.type === 'visit') title = '🏢 In-person visit';
+  else title = '📝 Note';
+
+  const activity = {
+    id: 'act_' + Date.now() + Math.random().toString(36).slice(2,6),
+    ts: Date.now(), type: opts.type, icon: icons[opts.type] || '📌',
+    title, note: opts.note || '', outcome: opts.outcome || null,
+    pinned: !!opts.pin, who: (window._spRep && _spRep.name) || 'Rep',
+  };
+  r.activityLog = r.activityLog || [];
+  r.activityLog.push(activity);
+  r.lastContactDate = new Date().toISOString().slice(0,10);
+  r.updated = Date.now();
+  pool[idx] = r;
+  crmSave(tab, pool);
+  return r;
+}
+
+function spTpSubmit(id, tab) {
+  const type = window._spTpType || 'call';
+  const note = document.getElementById('spTpNote').value.trim();
+  const pin  = document.getElementById('spTpPin').checked;
+
+  if (type === 'email') { spOpenEmailCompose(id, tab); return; }
+
+  const outcome = type === 'call' ? (window._spTpOutcome || 'reached') : null;
+  if (type !== 'note' && !note && type !== 'call') { spToast('Add a quick note on what happened'); return; }
+
+  const r = spLogTouchpoint(id, tab, { type, note, outcome, pin });
+  if (!r) return;
+  document.getElementById('spTpNote').value = '';
+  document.getElementById('spTpPin').checked = false;
+  document.getElementById('spTpTimeline').innerHTML = spRenderTimeline(r);
+  spToast('✓ Touch point logged');
+}
+
+function spTpTogglePin(id, activityId) {
+  // Find which pool this record actually lives in
+  const pools = ['leads','contacts','accounts','opportunities'];
+  for (const tab of pools) {
+    const data = crmLoad(tab);
+    const idx = data.findIndex(x => x.id === id);
+    if (idx < 0) continue;
+    const r = data[idx];
+    const a = (r.activityLog||[]).find(x => x.id === activityId);
+    if (!a) return;
+    a.pinned = !a.pinned;
+    crmSave(tab, data);
+    document.getElementById('spTpTimeline').innerHTML = spRenderTimeline(r);
+    return;
+  }
+}
+
+// ── EMAIL COMPOSE ──
+// Opens a real compose modal (to/subject/body). Sending routes through
+// mailto for now — the moment Brevo/Outlook are wired, swap the send
+// handler here for the API call; the logging behavior stays identical.
+function spOpenEmailCompose(id, tab) {
+  const pool = crmLoad(tab);
+  const r = pool.find(x => x.id === id);
+  if (!r) return;
+  var old = document.getElementById('spEmailComposeModal');
+  if (old) old.remove();
+  var wrap = document.createElement('div');
+  wrap.id = 'spEmailComposeModal';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px';
+  wrap.innerHTML = `
+    <div style="background:#fff;border-radius:14px;max-width:480px;width:100%;padding:0;overflow:hidden">
+      <div style="background:#1A1D21;color:#fff;padding:14px 18px;display:flex;align-items:center;justify-content:space-between">
+        <div style="font-weight:800;font-size:15px">📧 Send Email</div>
+        <button onclick="document.getElementById('spEmailComposeModal').remove()" style="background:none;border:none;color:#fff;font-size:20px;cursor:pointer">✕</button>
+      </div>
+      <div style="padding:18px">
+        <label style="font-size:11px;font-weight:700;color:var(--soft)">To</label>
+        <input id="spEmToInput" type="email" value="${escH(r.email||'')}" placeholder="customer@business.com" style="width:100%;margin:4px 0 12px;padding:9px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px">
+        <label style="font-size:11px;font-weight:700;color:var(--soft)">Subject</label>
+        <input id="spEmSubjectInput" type="text" placeholder="Following up on our conversation" style="width:100%;margin:4px 0 12px;padding:9px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px">
+        <label style="font-size:11px;font-weight:700;color:var(--soft)">Message</label>
+        <textarea id="spEmBodyInput" rows="6" style="width:100%;margin:4px 0 4px;padding:9px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;font-family:inherit;resize:vertical">Hi ${escH(r.name||r.contact||'')},\n\n\n\nBest,\n${(window._spRep&&_spRep.name)||''}</textarea>
+        <div style="font-size:11px;color:var(--soft);margin-bottom:14px">Opens in your email app to send. This gets logged to the timeline either way.</div>
+        <div style="display:flex;gap:10px">
+          <button onclick="spSendTouchpointEmail('${id}','${tab}')" style="flex:1;background:var(--red);color:#fff;border:none;border-radius:8px;padding:11px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px;letter-spacing:.05em;text-transform:uppercase;cursor:pointer">Send &amp; Log</button>
+          <button onclick="document.getElementById('spEmailComposeModal').remove()" style="background:#fff;border:1.5px solid var(--line);border-radius:8px;padding:11px 18px;font-size:13px;cursor:pointer">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+  setTimeout(() => document.getElementById('spEmSubjectInput')?.focus(), 60);
+}
+
+function spSendTouchpointEmail(id, tab) {
+  const to = document.getElementById('spEmToInput').value.trim();
+  const subject = document.getElementById('spEmSubjectInput').value.trim();
+  const body = document.getElementById('spEmBodyInput').value;
+  if (!to) { spToast('Enter a recipient email'); return; }
+  if (!subject) { spToast('Enter a subject line'); return; }
+
+  window.open('mailto:' + encodeURIComponent(to) + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body));
+
+  const pin = document.getElementById('spTpPin')?.checked || false;
+  const r = spLogTouchpoint(id, tab, { type: 'email', note: body.slice(0,300), subject, pin });
+  document.getElementById('spEmailComposeModal')?.remove();
+  if (r) {
+    document.getElementById('spTpTimeline').innerHTML = spRenderTimeline(r);
+    if (document.getElementById('spTpPin')) document.getElementById('spTpPin').checked = false;
+  }
+  spToast('✓ Email logged to timeline');
 }
 
 // ══════════════════════════════════════════════════════
@@ -2314,6 +2496,135 @@ var BIZ_TYPE_PRICING = {
 // Track current form type
 var _spFormType = 'rep'; // 'rep' or 'allpro'
 
+// ── VOICE-TO-FORM-FILL ──────────────────────────────────────────────────
+// A mic button sitting directly on the Add/Edit form itself (not a separate
+// modal). Tap, dictate naturally — business name, address, who you're
+// talking to — tap again, and the AI extracts structured fields straight
+// into the form that's already open. Reuses the same parsing endpoint as
+// the AI Camera's voice mode, just targets the live form instead of
+// creating a brand-new record.
+var _formVoiceRecog = null;
+var _formVoiceActive = false;
+var _formVoiceAccum = '';
+
+function spToggleFormVoiceFill(btnId) {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) { spToast('Talk-to-text needs Chrome or Safari on mobile'); return; }
+  if (_formVoiceActive) { spFinishFormVoiceFill(btnId); return; }
+
+  _formVoiceAccum = '';
+  _formVoiceRecog = new SpeechRecognition();
+  _formVoiceRecog.continuous = true;
+  _formVoiceRecog.interimResults = true;
+  _formVoiceRecog.lang = 'en-US';
+  _formVoiceActive = true;
+  const btn = document.getElementById(btnId);
+  if (btn) { btn.style.background = '#C8102E'; btn.innerHTML = '⏹ Stop — Tap When Done'; }
+
+  _formVoiceRecog.onresult = function(event) {
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      if (event.results[i].isFinal) _formVoiceAccum += event.results[i][0].transcript + ' ';
+    }
+  };
+  _formVoiceRecog.onerror = function(e) {
+    if (e.error !== 'no-speech') { _formVoiceActive = false; spToast('Microphone error: ' + e.error); }
+  };
+  _formVoiceRecog.onend = function() { if (_formVoiceActive) _formVoiceRecog.start(); };
+  _formVoiceRecog.start();
+}
+
+async function spFinishFormVoiceFill(btnId) {
+  _formVoiceActive = false;
+  if (_formVoiceRecog) { try { _formVoiceRecog.stop(); } catch(e){} _formVoiceRecog = null; }
+  const btn = document.getElementById(btnId);
+  if (btn) { btn.style.background = '#6B7280'; btn.innerHTML = '⏳ Filling form…'; }
+
+  const transcript = _formVoiceAccum.trim();
+  if (!transcript) { if (btn) { btn.style.background = '#1A1D21'; btn.innerHTML = '🎙️ Fill by Voice'; } return; }
+
+  try {
+    const res = await fetch('https://unipro-ai-proxy.termac-one.workers.dev', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6', max_tokens: 400,
+        messages: [{ role: 'user', content: [{ type: 'text', text:
+          'A field sales rep just dictated notes while setting up a new lead, contact, or opportunity. Extract structured fields from natural speech.\n\n' +
+          'Dictation: "' + transcript.replace(/"/g,'\\"') + '"\n\n' +
+          'Respond ONLY with valid JSON, no markdown:\n' +
+          '{"businessName":"name or null","address":"street address or null","city":"city or null","state":"2-letter state abbreviation or null","zip":"zip code or null","phone":"phone number or null","contactName":"person\'s name or null","notes":"everything else relevant as one string, or null"}'
+        }]}]
+      })
+    });
+    const data = await res.json();
+    const raw = (data.content||[]).map(c => c.text||'').join('').trim();
+    const parsed = JSON.parse(raw.replace(/```json|```/g,'').trim());
+
+    // Only fill blanks — never overwrite something the rep already typed.
+    const fill = (id, val) => { const el = document.getElementById(id); if (el && val && !el.value) el.value = val; };
+    fill('spf_business', parsed.businessName);
+    fill('spf_address', parsed.address);
+    fill('spf_city', parsed.city);
+    if (parsed.state) { const s = document.getElementById('spf_state'); if (s && !s.value) s.value = parsed.state; }
+    fill('spf_zip', parsed.zip);
+    fill('spf_owner_phone', parsed.phone);
+    fill('spf_owner_name', parsed.contactName);
+    const notesEl = document.getElementById('spf_notes');
+    if (notesEl && parsed.notes) notesEl.value = (notesEl.value ? notesEl.value + ' ' : '') + parsed.notes;
+
+    spToast('✓ Form filled from voice');
+  } catch(e) {
+    spToast('Could not parse voice input — check connection');
+  }
+  if (btn) { btn.style.background = '#1A1D21'; btn.innerHTML = '🎙️ Fill by Voice'; }
+}
+
+// ── PLAIN DICTATION ──────────────────────────────────────────────────────
+// A smaller mic for free-text fields — notes, touch-point log, visit
+// notes — where the words should just land verbatim, no AI extraction.
+var _dictRecog = null;
+var _dictActive = false;
+var _dictAccum = '';
+var _dictTargetId = null;
+
+function spToggleDictation(targetFieldId, btnId) {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) { spToast('Talk-to-text needs Chrome or Safari on mobile'); return; }
+  if (_dictActive && _dictTargetId === targetFieldId) { spStopDictation(btnId); return; }
+  if (_dictActive) spStopDictation(_dictBtnId);
+
+  _dictTargetId = targetFieldId;
+  _dictBtnId = btnId;
+  const el = document.getElementById(targetFieldId);
+  _dictAccum = el && el.value ? el.value + ' ' : '';
+  _dictRecog = new SpeechRecognition();
+  _dictRecog.continuous = true;
+  _dictRecog.interimResults = true;
+  _dictRecog.lang = 'en-US';
+  _dictActive = true;
+  const btn = document.getElementById(btnId);
+  if (btn) btn.style.color = '#C8102E';
+
+  _dictRecog.onresult = function(event) {
+    let interim = '';
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const t = event.results[i][0].transcript;
+      if (event.results[i].isFinal) _dictAccum += t + ' '; else interim = t;
+    }
+    const target = document.getElementById(_dictTargetId);
+    if (target) target.value = _dictAccum + interim;
+  };
+  _dictRecog.onerror = function(e) { if (e.error !== 'no-speech') spStopDictation(btnId); };
+  _dictRecog.onend = function() { if (_dictActive) _dictRecog.start(); };
+  _dictRecog.start();
+}
+var _dictBtnId = null;
+function spStopDictation(btnId) {
+  _dictActive = false;
+  if (_dictRecog) { try { _dictRecog.stop(); } catch(e){} _dictRecog = null; }
+  const btn = document.getElementById(btnId);
+  if (btn) btn.style.color = '';
+}
+
 function spBuildForm(tab, r) {
   // Default to rep form; AllPro form opened separately
   _spFormType = 'rep';
@@ -2340,6 +2651,9 @@ function spBuildAllProForm(r) {
   var leadSources = ['Permit harvester','Referral','Cold outreach','Bid / RFP','Driving by','Other'];
 
   return '<div class="sp-form-grid">' +
+
+    // Voice fill
+    '<button type="button" id="spFormVoiceBtnAP" onclick="spToggleFormVoiceFill(\'spFormVoiceBtnAP\')" class="sp-form-full" style="background:#1A1D21;color:#fff;border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">🎙️ Fill by Voice</button>' +
 
     // Header banner
     '<div class="sp-form-full" style="background:linear-gradient(135deg,#1A1D21,#2D3748);border-radius:9px;padding:12px 16px;margin-bottom:4px">' +
@@ -2468,6 +2782,10 @@ function spBuildRepForm(r) {
   const statusOpts = ['new','hot','warm','cold'].map(s => '<option ' + (v('status')===s?'selected':'') + '>' + s + '</option>').join('');
 
   return '<div class="sp-form-grid">' +
+
+    // Voice fill — dictate business name, address, contact, notes and let
+    // the AI drop them into the fields below instead of typing it all.
+    '<button type="button" id="spFormVoiceBtn" onclick="spToggleFormVoiceFill(\'spFormVoiceBtn\')" class="sp-form-full" style="background:#1A1D21;color:#fff;border:none;border-radius:8px;padding:11px;font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">🎙️ Fill by Voice</button>' +
 
     // Parent + Business
     '<div class="sp-form-full"><label>Parent Company / Franchise Group</label>' +
@@ -3581,6 +3899,20 @@ function renderInventoryResult(parsed, rawText, ctx) {
   body.innerHTML = html;
   if (title) title.textContent = '📦 ' + (parsed.products||[]).length + ' products scanned';
 
+  // If this scan was launched from inside the Visit wizard, offer to push
+  // the results straight into the wizard's inventory rows.
+  if (typeof _svCameraForVisit !== 'undefined' && _svCameraForVisit) {
+    var useInVisitBtn = document.getElementById('spCamUseInVisitBtn');
+    if (!useInVisitBtn) {
+      useInVisitBtn = document.createElement('button');
+      useInVisitBtn.id = 'spCamUseInVisitBtn';
+      useInVisitBtn.textContent = '✅ Use These in Visit Inventory';
+      useInVisitBtn.style.cssText = 'width:100%;margin-top:10px;padding:11px;background:#059669;color:#fff;border:none;border-radius:8px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer';
+      useInVisitBtn.onclick = svUseScannedInventory;
+      body.parentNode.appendChild(useInVisitBtn);
+    }
+  }
+
   // Build reorder list
   var urgentItems = (parsed.reorder_urgent||[]);
   var competitorItems = (parsed.products||[]).filter(function(p){return !p.is_termac && p.competitor_brand;});
@@ -3765,6 +4097,32 @@ function checkVisitCloseReminder(recordId, previousScore) {
 }
 
 // ── INVENTORY CHECK BUTTON (from account detail panel) ─────────────────────
+// ── VISIT: launches the existing 6-step wizard (Account → Inventory →
+// Order → Sign-Off → Payment → Done) directly. Scheduling a FUTURE visit
+// or appointment now lives entirely in Set Appointment's Existing
+// Customer / New Prospect toggle — this button is only for starting one
+// right now.
+function spVisitStartNow(id, tab) {
+  spOpenVisitModal(id);
+}
+
+// I'm Here now does two things at once: logs the arrival as a touch point
+// on the timeline, and drops the rep straight into the visit wizard — no
+// extra tap needed once you're standing on site.
+function spCheckInAndStartVisit(id, tab) {
+  spLogTouchpoint(id, tab, { type: 'visit', note: 'Checked in on site', pin: false });
+  var timeline = document.getElementById('spTpTimeline');
+  if (timeline) {
+    var pool = crmLoad(tab);
+    var r = pool.find(function(x){ return x.id === id; });
+    if (r) timeline.innerHTML = spRenderTimeline(r);
+  }
+  // Still surface the missing-data nudge if relevant — it's informational,
+  // not a gate, so it can float alongside the wizard.
+  if (typeof spShowArrivalPrompt === 'function') spShowArrivalPrompt(id);
+  spOpenVisitModal(id);
+}
+
 function spOpenInventoryCheck(recordId) {
   _spDetailId = recordId;
   spOpenCamera('inventory');
@@ -3793,7 +4151,7 @@ function spShowArrivalPrompt(recordId) {
     html += '</div>';
   });
   html += '<div style="display:flex;gap:8px;margin-top:10px">';
-  html += '<button onclick="spOpenInventoryCheck(\''+recordId+'\')" style="flex:1;background:#C8102E;color:#fff;border:none;border-radius:7px;padding:7px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;cursor:pointer">📦 Scan Inventory</button>';
+  html += '<button onclick="spVisitStartNow(\''+recordId+'\',\'accounts\')" style="flex:1;background:#C8102E;color:#fff;border:none;border-radius:7px;padding:7px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;cursor:pointer">🚚 Start Visit</button>';
   html += '<button onclick="spEditRecord(\''+recordId+'\',\'leads\')" style="flex:1;background:#374151;color:#fff;border:none;border-radius:7px;padding:7px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;cursor:pointer">✏️ Update Record</button>';
   html += '</div></div></div>';
 
@@ -3802,6 +4160,10 @@ function spShowArrivalPrompt(recordId) {
   setTimeout(function(){ var m=document.getElementById('spArrivalPromptModal'); if(m) m.remove(); }, 30000);
 }
 
+
+function spApptSwitchMode(id, tab, newMode) {
+  spOpenApptModal(id, tab, newMode);
+}
 
 function spOpenApptModal(id, tab, mode) {
   _spApptId = id;
@@ -3823,6 +4185,10 @@ function spOpenApptModal(id, tab, mode) {
         '<button onclick="spCloseApptModal()" style="background:none;border:none;color:rgba(255,255,255,.7);font-size:20px;cursor:pointer;line-height:1">✕</button>' +
       '</div>' +
       '<div style="padding:18px;display:flex;flex-direction:column;gap:12px">' +
+        '<div style="display:flex;gap:6px;background:#F1F5F9;border-radius:9px;padding:4px">' +
+          '<button onclick="spApptSwitchMode(\'' + id + '\',\'' + tab + '\',\'site_visit\')" style="flex:1;padding:8px;border:none;border-radius:6px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer;background:' + (!isAppt?'#D8690B':'transparent') + ';color:' + (!isAppt?'#fff':'#5A616B') + '">🏢 Existing Customer</button>' +
+          '<button onclick="spApptSwitchMode(\'' + id + '\',\'' + tab + '\',\'appointment\')" style="flex:1;padding:8px;border:none;border-radius:6px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer;background:' + (isAppt?'#1B5FA8':'transparent') + ';color:' + (isAppt?'#fff':'#5A616B') + '">🤝 New Prospect</button>' +
+        '</div>' +
         (isAppt ?
           // APPOINTMENT fields
           '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' +
@@ -5017,11 +5383,15 @@ var _spVoiceAccum = '';
 function spOpenCamera(mode) {
   _spCamMode = mode || 'general';
   _spCamB64 = null; _spCamContext = ''; _spCamParsed = null;
+  if (typeof _svCameraForVisit !== 'undefined' && mode !== 'inventory') _svCameraForVisit = false;
   document.getElementById('spCamModal').style.display = 'flex';
   spCamRenderMode();
 }
 function spCloseCamera() {
   spStopVoice();
+  _svCameraForVisit = false;
+  var useInVisitBtn = document.getElementById('spCamUseInVisitBtn');
+  if (useInVisitBtn) useInVisitBtn.remove();
   document.getElementById('spCamModal').style.display = 'none';
 }
 function spCamClear() {
@@ -5030,6 +5400,8 @@ function spCamClear() {
   ids.forEach(id => { const el = document.getElementById(id); if(el) el.style.display = 'none'; });
   const caps = ['spCamCapture','spCamTagCapture','spCamUpload'];
   caps.forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
+  const useInVisitBtn = document.getElementById('spCamUseInVisitBtn');
+  if (useInVisitBtn) useInVisitBtn.remove();
 }
 
 /* ── MODE TABS ── */
@@ -5719,8 +6091,10 @@ function spLoadIntelPanel(id, tab) {
   const panel = document.getElementById('spLeftContent');
   if (!panel) return;
 
-  // Find record
-  const all = [...crmLoad('leads'), ...crmLoad('accounts')];
+  // Find record — search all three pools. Missing 'contacts' here was the
+  // real bug: for any Contact record this always failed silently and left
+  // whichever record was last successfully loaded still on screen.
+  const all = [...crmLoad('leads'), ...crmLoad('accounts'), ...crmLoad('contacts')];
   const r = all.find(x => x.id === id);
   if (!r) return;
 
@@ -5809,12 +6183,9 @@ function spLoadIntelPanel(id, tab) {
 
   <!-- Action buttons -->
   <div style="padding:12px 14px;display:flex;flex-direction:column;gap:6px">
-    ${tab==='accounts'?`<button onclick="spOpenVisitModal('${id}')" style="padding:8px;background:#059669;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">📍 Log Customer Visit</button>
-    <button onclick="spOpenInventoryCheck('${id}')" style="padding:8px;background:#7C3AED;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">📦 Inventory Check</button>
-    <button onclick="spShowArrivalPrompt('${id}')" style="padding:8px;background:#D8690B;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">📍 I'm Here</button>`:''}
-    <button onclick="spOpenApptModal('${id}','${tab}','appointment')" style="padding:8px;background:#1B5FA8;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">📅 Set Appointment</button>
-    <button onclick="spOpenApptModal('${id}','${tab}','site_visit')" style="padding:8px;background:#D8690B;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">🗺️ Plan Visit</button>
-    <button onclick="spLogActivity('${id}','${tab}')" style="padding:8px;background:var(--red);color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">📝 Log Activity</button>
+    ${tab==='accounts'?`<button onclick="spVisitStartNow('${id}','${tab}')" style="padding:8px;background:#059669;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">🚀 Start Visit</button>
+    <button onclick="spCheckInAndStartVisit('${id}','${tab}')" style="padding:8px;background:#D8690B;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">📍 I'm Here</button>`:''}
+    <button onclick="spOpenApptModal('${id}','${tab}','${tab==='accounts'?'site_visit':'appointment'}')" style="padding:8px;background:#1B5FA8;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">📅 Set Appointment</button>
     <button onclick="spEditRecord('${id}','${tab}')" style="padding:8px;background:#fff;color:var(--ink);border:1.5px solid var(--line);border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">Edit Record</button>
   </div>`;
 
@@ -5846,10 +6217,6 @@ function spLoadIntelPanel(id, tab) {
   window._siCurrentRecord = r;
   window._siCurrentTab = tab;
   siResetChat();
-
-  // Reset call logger
-  document.getElementById('siLogNext').style.display = 'none';
-  window._siCallOutcome = null;
 
   // Fire AI analysis
   spRunAI(r, tab);
@@ -6292,48 +6659,6 @@ function spBuildTalkTracks(r) {
   section.style.display = 'block';
 }
 
-// ── CALL LOGGER
-window._siCallOutcome = null;
-function siLogCall(outcome) {
-  window._siCallOutcome = outcome;
-  document.getElementById('siLogNext').style.display = 'block';
-  // Visual feedback on buttons
-  ['reached','voicemail','no_answer'].forEach(o => {
-  // visual feedback handled by confirmLog
-  });
-}
-function siConfirmLog() {
-  const r = window._siCurrentRecord;
-  const tab = window._siCurrentTab;
-  if(!r || !window._siCallOutcome) return;
-  const nextStep = document.getElementById('siLogNextStep').value;
-  const outcomeLabels = {reached:'📞 Call — Reached', voicemail:'📱 Call — Voicemail Left', no_answer:'🔇 Call — No Answer'};
-  const activity = {
-    id: 'act_'+Date.now(),
-    ts: Date.now(),
-    title: outcomeLabels[window._siCallOutcome] || 'Call logged',
-    note: nextStep ? 'Next: '+nextStep : '',
-    type: 'call',
-    outcome: window._siCallOutcome
-  };
-  if(!r.activityLog) r.activityLog = [];
-  r.activityLog.push(activity);
-  r.lastContactDate = new Date().toISOString().split('T')[0];
-  // Save back to localStorage
-  const pool = JSON.parse(localStorage.getItem('termac_crm_leads')||'[]');
-  const idx = pool.findIndex(x=>x.id===r.id);
-  if(idx>=0) { pool[idx]=r; localStorage.setItem('termac_crm_leads', JSON.stringify(pool)); }
-  document.getElementById('siLogNext').style.display = 'none';
-  window._siCallOutcome = null;
-  // Show confirmation
-  const logSection = document.querySelector('.si-log-reached').parentElement;
-  const conf = document.createElement('div');
-  conf.style.cssText='font-size:10px;color:#34D399;text-align:center;padding:4px 0;font-family:Barlow Condensed,sans-serif;font-weight:700;letter-spacing:.08em';
-  conf.textContent='✓ CALL LOGGED';
-  logSection.appendChild(conf);
-  setTimeout(()=>conf.remove(), 2500);
-  spBuildAlerts(r);
-}
 
 async function spRunAI(r, tab) {
   const actSummary = (r.activityLog||[]).slice(-8).map(a => `${new Date(a.ts).toLocaleDateString()}: ${a.title}${a.note?' — '+a.note:''}`).join('\n') || 'No activity logged';
@@ -6583,7 +6908,10 @@ function svStep1(body, footer) {
     </div>
     <div>
       <label style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.10em;text-transform:uppercase;color:#5A616B;display:block;margin-bottom:5px">Visit Notes</label>
-      <textarea id="svNotes" rows="3" placeholder="What was discussed? Any follow-ups? Observations?" style="width:100%;padding:8px 10px;border:1.5px solid #D7DBE0;border-radius:7px;font-size:13px;resize:vertical;font-family:inherit;outline:none">${svEscH(_svNotes)}</textarea>
+      <div style="position:relative">
+        <textarea id="svNotes" rows="3" placeholder="What was discussed? Any follow-ups? Observations?" style="width:100%;padding:8px 34px 8px 10px;border:1.5px solid #D7DBE0;border-radius:7px;font-size:13px;resize:vertical;font-family:inherit;outline:none">${svEscH(_svNotes)}</textarea>
+        <button type="button" id="svNotesMicBtn" onclick="spToggleDictation('svNotes','svNotesMicBtn')" title="Dictate" style="position:absolute;top:8px;right:8px;background:none;border:none;font-size:16px;cursor:pointer;color:#9CA3AF">🎙️</button>
+      </div>
     </div>
     <!-- Previous order history if account is selected -->
     <div id="svPrevOrders" style="display:none">
@@ -6650,8 +6978,9 @@ function svStep2(body, footer) {
   body.innerHTML = `
   <div>
     <div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:10px 14px;font-size:12px;color:#92400E;margin-bottom:14px">
-      📋 <strong>Step 1 of the visit:</strong> Log what the customer currently has on hand. This becomes the baseline before placing a new order. You can leave quantities at 0 if not applicable.
+      📋 <strong>Step 1 of the visit:</strong> Log what the customer currently has on hand. This becomes the baseline before placing a new order. You can leave quantities at 0 if not applicable. Fractions are fine — half a bucket is 0.5.
     </div>
+    <button onclick="svOpenCameraForVisit()" style="width:100%;margin-bottom:14px;padding:11px;background:#1A1D21;color:#fff;border:none;border-radius:8px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px">📷 Scan Shelf with AI Camera</button>
     <div style="display:grid;grid-template-columns:1fr 1fr 80px 36px;gap:8px;margin-bottom:6px">
       <div style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#9CA3AF">Product</div>
       <div style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#9CA3AF">Size / Unit</div>
@@ -6683,9 +7012,9 @@ function svRenderInvRows() {
         <option value="">— Product —</option>${prodOpts}
       </select>
       <select id="svInvSize_${i}" onchange="_svInventory[${i}].size=this.value" style="padding:6px 8px;border:1.5px solid #D7DBE0;border-radius:6px;font-size:12px;font-family:inherit;outline:none">${sizeOpts}</select>
-      <input type="number" min="0" value="${row.onHandQty||0}" onchange="_svInventory[${i}].onHandQty=parseInt(this.value)||0" style="padding:6px 8px;border:1.5px solid #D7DBE0;border-radius:6px;font-size:13px;text-align:center;outline:none">
+      <input type="number" min="0" step="0.25" value="${row.onHandQty||0}" onchange="_svInventory[${i}].onHandQty=parseFloat(this.value)||0" style="padding:6px 8px;border:1.5px solid #D7DBE0;border-radius:6px;font-size:13px;text-align:center;outline:none">
       <button onclick="svRemoveInvRow(${i})" style="background:#FEE2E2;color:#991B1B;border:none;border-radius:6px;padding:6px;cursor:pointer;font-size:11px">✕</button>
-    </div>`;
+    </div>${row.unmatched ? '<div style="font-size:10px;color:#D97706;margin:-4px 0 6px 2px">📷 AI-scanned: "'+svEscH(row.aiName||'')+'" — not in catalog, confirm product manually</div>' : ''}`;
   }).join('');
 }
 
@@ -6710,6 +7039,47 @@ function svRemoveInvRow(i) {
   svRenderInvRows();
 }
 
+// ── AI CAMERA ↔ VISIT WIZARD BRIDGE ──
+// Opens the same AI camera used elsewhere in the app, in inventory mode,
+// with the wizard's account set as scan context (so the AI prompt gets
+// covers/day etc. for that account). After a scan, "Use in Visit" pushes
+// the detected products straight into the inventory rows — matched to the
+// catalog by name where possible, added as an unmatched row (rep confirms
+// manually) when the AI's product name isn't in the catalog. Quantity
+// levels convert to fractional on-hand amounts: full/half/quarter/empty.
+var _svCameraForVisit = false;
+const SV_QTY_LEVEL_MAP = { full: 1, half: 0.5, quarter: 0.25, empty: 0 };
+
+function svOpenCameraForVisit() {
+  _svCameraForVisit = true;
+  _spDetailId = _svAcctId;
+  spOpenCamera('inventory');
+}
+
+function svUseScannedInventory() {
+  if (!_spInvParsed || !_spInvParsed.products || !_spInvParsed.products.length) return;
+  const products = svGetProducts();
+  // Drop the placeholder empty first row if it's still untouched
+  if (_svInventory.length === 1 && !_svInventory[0].productId && !_svInventory[0].unmatched) _svInventory = [];
+
+  _spInvParsed.products.forEach(function(p) {
+    const nameLower = (p.name || '').toLowerCase();
+    const match = products.find(function(cat) { return cat.name && (nameLower.indexOf(cat.name.toLowerCase()) > -1 || cat.name.toLowerCase().indexOf(nameLower) > -1); });
+    const qty = SV_QTY_LEVEL_MAP[p.quantity_level] !== undefined ? SV_QTY_LEVEL_MAP[p.quantity_level] : (p.qty_units || 0);
+    if (match) {
+      _svInventory.push({ productId: match.id, name: match.name, size: match.sizes[0].unit, onHandQty: qty });
+    } else {
+      _svInventory.push({ productId: '', name: p.name || 'Unknown product', size: p.unit || '', onHandQty: qty, unmatched: true, aiName: p.name || '' });
+    }
+  });
+  if (!_svInventory.length) _svInventory = [{ productId:'', name:'', size:'', onHandQty:0 }];
+
+  spCloseCamera();
+  _svCameraForVisit = false;
+  svRenderInvRows();
+  spToast('✓ ' + _spInvParsed.products.length + ' item' + (_spInvParsed.products.length===1?'':'s') + ' added to visit inventory');
+}
+
 function svStep2Next() {
   // Sync size values from DOM before moving on
   _svInventory.forEach((row, i) => {
@@ -6729,6 +7099,61 @@ function svStep2Next() {
     if (!_svOrderLines.length) _svOrderLines.push({ productId:'', name:'', size:'', unitPrice:0, qty:1, lineTotal:0 });
   }
   svRender();
+}
+
+/* ---- Order history lookup: every past order this account has placed,
+   not just the last 3 shown as reference in Step 1. Used to flag "ordered
+   before" on products in the order builder, so a rep searching/picking
+   products can see instantly what this customer already buys. ---- */
+function svGetOrderHistoryMap(acctId) {
+  const map = {};
+  if (!acctId) return map;
+  try {
+    const orders = JSON.parse(localStorage.getItem('termac_orders')||'[]').filter(o => o.accountId === acctId);
+    orders.forEach(o => (o.lines||[]).forEach(l => {
+      if (!l.productId) return;
+      const e = map[l.productId] || { count: 0, lastTs: 0 };
+      e.count += 1;
+      e.lastTs = Math.max(e.lastTs, o.createdTs || 0);
+      map[l.productId] = e;
+    }));
+  } catch(e) {}
+  return map;
+}
+
+/* ---- Area recommendations: products other nearby accounts order that
+   this account has never ordered. City-matched first, falls back to the
+   whole order pool if there's not enough local data yet. ---- */
+function svGetAreaRecommendations(acctId, limit) {
+  limit = limit || 4;
+  try {
+    const accounts = svGetAccounts();
+    const acct = accounts.find(a => a.id === acctId);
+    if (!acct) return [];
+    const orders = JSON.parse(localStorage.getItem('termac_orders')||'[]');
+    const ownHistory = svGetOrderHistoryMap(acctId);
+    const acctCity = (acct.city || '').toLowerCase();
+
+    const freq = {}; // productId -> count among OTHER accounts (city-matched when possible)
+    orders.forEach(o => {
+      if (o.accountId === acctId) return;
+      const otherAcct = accounts.find(a => a.id === o.accountId);
+      const cityMatch = acctCity && otherAcct && (otherAcct.city||'').toLowerCase() === acctCity;
+      (o.lines||[]).forEach(l => {
+        if (!l.productId || ownHistory[l.productId]) return; // skip what they already buy
+        const key = l.productId;
+        freq[key] = freq[key] || { count: 0, cityCount: 0, name: l.name || '' };
+        freq[key].count += 1;
+        if (cityMatch) freq[key].cityCount += 1;
+      });
+    });
+
+    const products = svGetProducts();
+    return Object.keys(freq)
+      .map(pid => ({ productId: pid, name: (products.find(p=>p.id===pid)||{}).name || freq[pid].name, ...freq[pid] }))
+      .sort((a,b) => (b.cityCount - a.cityCount) || (b.count - a.count))
+      .slice(0, limit);
+  } catch(e) { return []; }
 }
 
 /* ── STEP 3: New Order Builder ── */
@@ -6754,9 +7179,11 @@ function svStep3(body, footer) {
       <span style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px;letter-spacing:.08em;text-transform:uppercase">Order Total</span>
       <span style="font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:22px;color:#1A1D21" id="svOrderTotalAmt">$0.00</span>
     </div>
+    <div id="svAreaRecs" style="margin-top:14px"></div>
   </div>`;
 
   svRenderOrderRows();
+  svRenderAreaRecs();
 
   footer.innerHTML = `
     <button onclick="_svStep=2;svRender()" style="background:#fff;border:1.5px solid #D7DBE0;border-radius:8px;padding:10px 20px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;cursor:pointer">← Back</button>
@@ -6831,16 +7258,41 @@ function openSpecialPricing(acctId){
 }
 window.openSpecialPricing=openSpecialPricing;
 
+function svRenderAreaRecs() {
+  const el = document.getElementById('svAreaRecs');
+  if (!el) return;
+  const recs = svGetAreaRecommendations(_svAcctId, 4);
+  if (!recs.length) { el.innerHTML = ''; return; }
+  el.innerHTML = '<div style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#5A616B;margin-bottom:6px">💡 Other Accounts Near You Also Order</div>'
+    + '<div style="display:flex;flex-wrap:wrap;gap:6px">'
+    + recs.map(r => `<button onclick="svAddRecommendedProduct('${r.productId}')" style="background:#EFF6FF;border:1px solid #BFDBFE;color:#1E40AF;border-radius:20px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer">+ ${svEscH(r.name||'Product')}</button>`).join('')
+    + '</div>';
+}
+
+function svAddRecommendedProduct(productId) {
+  const products = svGetProducts();
+  const prod = products.find(p => p.id === productId);
+  if (!prod) return;
+  _svOrderLines.push({ productId: prod.id, name: prod.name, size: prod.sizes[0].unit, qty: 1, unitPrice: prod.sizes[0].price, lineTotal: prod.sizes[0].price });
+  svRenderOrderRows();
+  svUpdateOrderTotal();
+}
+
 function svRenderOrderRows() {
   const container = document.getElementById('svOrderRows');
   if (!container) return;
   const products = svGetProducts();
+  const orderHistory = svGetOrderHistoryMap(_svAcctId);
   const _sp = svGetSpecial();
   const _spBadge = _sp
     ? `<div style="background:#ECFDF5;border:1px solid #A7F3D0;color:#065F46;padding:6px 10px;border-radius:8px;font-size:12px;margin-bottom:8px">Special pricing active${_sp.mode==='discount'?(' \u2014 '+_sp.discountPct+'% off catalog'):' \u2014 fixed rates'}${_sp.note?(' \u00b7 '+svEscH(_sp.note)):''} \u00b7 <a href="#" style="color:#065F46;font-weight:700" onclick="openSpecialPricing(_svAcctId);return false;">edit</a></div>`
     : (_svAcctId ? `<div style="font-size:12px;margin-bottom:8px"><a href="#" style="color:#2563EB;font-weight:700" onclick="openSpecialPricing(_svAcctId);return false;">+ Set special pricing for this account</a></div>` : '');
   container.innerHTML = _spBadge + _svOrderLines.map((row, i) => {
-    const prodOpts = products.map(p => `<option value="${p.id}" ${p.id===row.productId?'selected':''}>${svEscH(p.name)}</option>`).join('');
+    const prodOpts = products.map(p => {
+      const hist = orderHistory[p.id];
+      const label = hist ? '\u2b50 ' + p.name + ' (ordered ' + hist.count + 'x)' : p.name;
+      return `<option value="${p.id}" ${p.id===row.productId?'selected':''}>${svEscH(label)}</option>`;
+    }).join('');
     const selProd = products.find(p => p.id === row.productId);
     const sizeOpts = selProd ? selProd.sizes.map(s => `<option value="${s.unit}" data-price="${s.price}" ${s.unit===row.size?'selected':''}>${svEscH(s.unit)} — $${s.price.toFixed(2)}</option>`).join('') : '<option>Select product first</option>';
     return `<div style="display:grid;grid-template-columns:1fr 1fr 80px 80px 36px;gap:8px;margin-bottom:6px;align-items:center">
@@ -7098,6 +7550,13 @@ function svStep5Submit() {
 }
 
 /* ── SUBMIT & STEP 6 ── */
+// ── EDIT THIS when the real order-fulfillment process is defined ──
+// Who gets notified the instant a customer-visit order is submitted.
+// Names must match how they log in elsewhere (e.g. rcpRouteTo, notifyBridge).
+// Today it's a safe default (Manager); swap in the warehouse picker,
+// scheduler, or whoever owns "new order" once that process is decided.
+const ORDER_NOTIFICATION_RECIPIENTS = ['Manager'];
+
 function svSubmitVisit() {
   const now = Date.now();
 
@@ -7118,8 +7577,9 @@ function svSubmitVisit() {
   // Create order in warehouse queue
   if (validLines.length) {
     const orders = JSON.parse(localStorage.getItem('termac_orders')||'[]');
+    const orderId = 'ORD' + String(now).slice(-6);
     orders.unshift({
-      id: 'ORD' + String(now).slice(-6),
+      id: orderId,
       accountId: _svAcctId,
       accountName: acct.name || acct.business || '',
       address: acct.address || '',
@@ -7138,6 +7598,22 @@ function svSubmitVisit() {
       scheduledDelivery: null,
     });
     localStorage.setItem('termac_orders', JSON.stringify(orders));
+
+    // ── NEW ORDER NOTIFICATION ──────────────────────────────────────────
+    // Fires the moment an order is submitted, over the same cross-device
+    // bridge used everywhere else. ORDER_NOTIFICATION_RECIPIENTS below is
+    // the one line to edit once the real process is defined — warehouse
+    // picker, scheduler, or whoever should see it first.
+    if (typeof notifySendCrossDevice === 'function') {
+      ORDER_NOTIFICATION_RECIPIENTS.forEach(function(who) {
+        notifySendCrossDevice({
+          id: orderId + '_' + who.slice(0,3), ts: now, recipientName: who,
+          caller: acct.name || acct.business || '', company: acct.name || acct.business || '',
+          notes: '📦 New order — ' + validLines.length + ' item' + (validLines.length===1?'':'s') + ', $' + total.toFixed(2) + '. Placed by ' + rep + '.',
+          source: 'New Order — ' + orderId, loggedBy: rep,
+        });
+      });
+    }
   }
 
   // Log activity on account
