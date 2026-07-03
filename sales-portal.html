@@ -7740,18 +7740,34 @@ function spOpenNotifPanel(){
     ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:99999;display:flex;align-items:flex-start;justify-content:flex-end;padding:60px 16px 16px;font-family:-apple-system,Barlow Condensed,sans-serif';
     ov.onclick=function(e){if(e.target===ov)ov.remove();};document.body.appendChild(ov);}
   var rows='';
+  window._spNotifList = notifs.slice(0,20);
   if(notifs.length===0){
     rows='<div style="text-align:center;color:#94A3B8;padding:24px">No notifications yet</div>';
   } else {
-    var icons={hot_lead:'🔥',dms_escalation:'📞',routed_call:'📲',reception_lead:'🎯'};
-    notifs.slice(0,20).forEach(function(n){
-      var ic=icons[n.type]||'⚠️';
+    var icons={hot_lead:'🔥',dms_escalation:'📞',routed_call:'📲',reception_lead:'🎯',coll_overdue_mgr:'💵',cross_sell_hot:'🔥',tech_arrived:'📍'};
+    window._spNotifList.forEach(function(n,idx){
+      var ic=n.icon||icons[n.type]||'⚠️';
       var bg=n.read?'#F8FAFC':'#FEF2F2';
-      rows+='<div style="display:flex;gap:10px;padding:10px;border-radius:8px;background:'+bg+';margin-bottom:6px">'
+      // Bridge-style notifications (routed calls, escalations, emergencies)
+      // carry caller/company/notes instead of title/body — build a real
+      // headline from whatever fields exist so nothing shows as a bare
+      // "Notification" with no context.
+      var title = n.title || ((n.source ? n.source + ' — ' : '') + (n.caller || n.company || 'Notification'));
+      var bodyBits = [];
+      if (n.body) bodyBits.push(n.body);
+      if (!n.body) {
+        if (n.company && n.company !== n.caller) bodyBits.push(n.company);
+        if (n.phone) bodyBits.push(n.phone);
+        if (n.notes) bodyBits.push(n.notes);
+        if (n.loggedBy) bodyBits.push('via ' + n.loggedBy);
+      }
+      rows+='<div onclick="spNotifDrill('+idx+')" style="display:flex;gap:10px;padding:10px;border-radius:8px;background:'+bg+';margin-bottom:6px;cursor:pointer" '
+        +'onmouseover="this.style.background=\'#EEF2F7\'" onmouseout="this.style.background=\''+bg+'\'">'
         +'<span style="font-size:20px">'+ic+'</span>'
-        +'<div style="flex:1"><div style="font-weight:700;font-size:13px">'+(n.title||'Notification')+'</div>'
-        +'<div style="font-size:12px;color:#475569">'+(n.body||'')+'</div>'
-        +'<div style="font-size:10px;color:#94A3B8;margin-top:3px">'+new Date(n.ts||Date.now()).toLocaleString()+'</div>'
+        +'<div style="flex:1"><div style="font-weight:700;font-size:13px">'+title+'</div>'
+        +'<div style="font-size:12px;color:#475569">'+bodyBits.join(' · ')+'</div>'
+        +'<div style="font-size:10px;color:#94A3B8;margin-top:3px">'+new Date(n.ts||Date.now()).toLocaleString()+' · tap for details</div>'
+        +'<div id="spNotifDetail'+idx+'" style="display:none;margin-top:6px;background:#fff;border:1px solid #E2E8F0;border-radius:6px;padding:8px;font-size:12px;color:#334155"></div>'
         +'</div></div>';
     });
   }
@@ -7761,6 +7777,54 @@ function spOpenNotifPanel(){
     +'<button onclick="spCloseNotifPanel()" style="background:none;border:none;color:#fff;font-size:20px;cursor:pointer">×</button>'
     +'</div><div style="overflow:auto;padding:12px;flex:1">'+rows+'</div></div>';
   ov.style.display='flex';
+}
+
+// ── NOTIFICATION DRILL-DOWN ──
+// Click a notification: jump straight to the matching record's full page
+// (via the OS deep link) when one can be found by company/account name;
+// otherwise expand the row in place with every detail on the notification.
+function spNotifDrill(idx){
+  var n = (window._spNotifList||[])[idx];
+  if(!n) return;
+  // Candidate names to match against CRM records
+  var cands = [];
+  if (n.company) cands.push(n.company);
+  if (n.caller && n.caller !== n.company) cands.push(n.caller);
+  // Names in parentheses inside title/body (e.g. collection alerts carry "(Account Name)")
+  var parenMatches = ((n.title||'') + ' ' + (n.body||'')).match(/\(([^)]{3,60})\)/g) || [];
+  parenMatches.forEach(function(m){ cands.push(m.slice(1,-1)); });
+
+  var norm = function(x){ return String(x||'').toLowerCase().trim(); };
+  var pools = [['accounts','accounts'],['leads','leads'],['contacts','contacts']];
+  for (var c=0; c<cands.length; c++){
+    var target = norm(cands[c]);
+    if (!target) continue;
+    for (var p=0; p<pools.length; p++){
+      var recs = crmLoad(pools[p][0]);
+      var hit = recs.find(function(r){
+        return norm(r.business||r.bizName||r.businessName||r.name) === target;
+      });
+      if (hit){
+        window.location.href = 'termac-os.html?open=' + pools[p][1] + '&id=' + encodeURIComponent(hit.id);
+        return;
+      }
+    }
+  }
+  // No record match: expand full details in place
+  var det = document.getElementById('spNotifDetail'+idx);
+  if (!det) return;
+  if (det.style.display === 'block'){ det.style.display='none'; return; }
+  var esc = (typeof escH==='function')?escH:function(x){return String(x||'');};
+  var fields = [
+    ['From', n.source||n.type||''], ['Caller', n.caller||''], ['Company', n.company||''],
+    ['Phone', n.phone||''], ['Notes', n.notes||n.body||''], ['Logged by', n.loggedBy||''],
+    ['Routed to', n.recipientName||n.recipient||''], ['Time', new Date(n.ts||Date.now()).toLocaleString()]
+  ].filter(function(f){ return f[1]; });
+  det.innerHTML = fields.map(function(f){
+    var val = f[0]==='Phone' ? '<a href="tel:'+esc(f[1])+'" style="color:#1B5FA8">'+esc(f[1])+'</a>' : esc(f[1]);
+    return '<div style="margin-bottom:3px"><span style="font-weight:700">'+f[0]+':</span> '+val+'</div>';
+  }).join('') + '<div style="color:#94A3B8;font-size:11px;margin-top:4px">No matching CRM record found for one-tap open</div>';
+  det.style.display='block';
 }
 </script>
 </body>
