@@ -63,7 +63,8 @@ async function autocomplete({ text }, env) {
   const u = 'https://api.openrouteservice.org/geocode/autocomplete'
           + '?api_key=' + env.ORS_API_KEY
           + '&text=' + encodeURIComponent(text)
-          + '&boundary.country=US&size=6&layers=address,street';
+          + '&boundary.country=US&size=6&layers=venue,address,street'
+          + '&focus.point.lat=40.0&focus.point.lon=-75.2';
   const r = await fetch(u);
   if (!r.ok) return json({ error: 'ors ' + r.status }, 502);
   const d = await r.json();
