@@ -12,6 +12,10 @@
  *   /geocode   { address }                              -> { lat, lng }
  *        US Census one-line geocoder. Free, no key.
  *   /optimize  { start:[lat,lng], stops:[[lat,lng],..] } -> { order, savedMin, totalMin }
+ *   /autocomplete { text }                              -> { suggestions:[{label,street,city,state,zip}] }
+ *        ORS geocode autocomplete for address entry on intake + pitch forms.
+ *   /reverse   { lat, lng }                             -> { state, region, city }
+ *        ORS reverse geocode; used by the pitch tool's DE/other geo badge.
  *        ORS driving matrix (real road durations) + nearest-neighbor + 2-opt.
  *        order = stop indices in best driving sequence.
  *
@@ -36,6 +40,8 @@ export default {
       const body = await request.json();
       if (path.endsWith('/geocode')) return await geocode(body);
       if (path.endsWith('/optimize')) return await optimize(body, env);
+      if (path.endsWith('/autocomplete')) return await autocomplete(body, env);
+      if (path.endsWith('/reverse')) return await reverseGeocode(body, env);
       return json({ error: 'unknown route' }, 404);
     } catch (e) {
       return json({ error: String((e && e.message) || e) }, 500);
@@ -48,6 +54,45 @@ function json(obj, status = 200) {
     status,
     headers: { 'Content-Type': 'application/json', ...CORS }
   });
+}
+
+/* ---- Address autocomplete: ORS geocode (uses the same ORS_API_KEY) ---- */
+async function autocomplete({ text }, env) {
+  if (!text || String(text).trim().length < 3) return json({ suggestions: [] });
+  if (!env.ORS_API_KEY) return json({ error: 'ORS_API_KEY not configured' }, 500);
+  const u = 'https://api.openrouteservice.org/geocode/autocomplete'
+          + '?api_key=' + env.ORS_API_KEY
+          + '&text=' + encodeURIComponent(text)
+          + '&boundary.country=US&size=6&layers=address,street';
+  const r = await fetch(u);
+  if (!r.ok) return json({ error: 'ors ' + r.status }, 502);
+  const d = await r.json();
+  const suggestions = (d.features || []).map(f => {
+    const p = f.properties || {};
+    const street = [p.housenumber, p.street].filter(Boolean).join(' ') || p.name || '';
+    return {
+      label: p.label || street,
+      street: street,
+      city: p.locality || p.localadmin || p.county || '',
+      state: p.region_a || p.region || '',
+      zip: p.postalcode || '',
+    };
+  });
+  return json({ suggestions });
+}
+
+/* ---- Reverse geocode: ORS point -> place (uses the same ORS_API_KEY) ---- */
+async function reverseGeocode({ lat, lng }, env) {
+  if (typeof lat !== 'number' || typeof lng !== 'number') return json({ error: 'lat and lng required' }, 400);
+  if (!env.ORS_API_KEY) return json({ error: 'ORS_API_KEY not configured' }, 500);
+  const u = 'https://api.openrouteservice.org/geocode/reverse'
+          + '?api_key=' + env.ORS_API_KEY
+          + '&point.lat=' + lat + '&point.lon=' + lng + '&size=1';
+  const r = await fetch(u);
+  if (!r.ok) return json({ error: 'ors ' + r.status }, 502);
+  const d = await r.json();
+  const p = ((d.features || [])[0] || {}).properties || {};
+  return json({ state: p.region || '', region: p.region_a || '', city: p.locality || '' });
 }
 
 /* ---- Geocode: US Census one-line address (free, no key) ---- */
