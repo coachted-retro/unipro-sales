@@ -74,3 +74,5 @@ export default {
     }
   }
 };
+
+// Deploy trigger: first Workers deploy to termac-one account, July 2 2026
