@@ -431,7 +431,7 @@ function rcpEnterPortal(){
     if (cn) cn.textContent = name;
   })();
   // ── END USER CHIP ───────────────────────────────────────────────────────
-  setTimeout(function(){ rcpSwitchTab('incoming'); rcpUpdateRail(); rcpUpdateCBBadge(); rcpCheckCallbackEscalations(); }, 50);
+  setTimeout(function(){ rcpSwitchTab('incoming'); rcpUpdateRail(); rcpUpdateCBBadge(); rcpCheckCallbackEscalations(); rcpAttachAddressAutocomplete(); }, 50);
   setInterval(function(){ rcpCheckCallbackEscalations(); }, 300000);
 }
 
@@ -575,12 +575,21 @@ function rcpRenderCallLog(el){
             <option>Other</option>
           </select>
         </div>
+        <div class="rcp-form-full">
+          <label>Business Address</label>
+          <input id="rcpCallerAddress" type="text" placeholder="Street address (start typing for suggestions)" autocomplete="off">
+        </div>
+        <div>
+          <label>ZIP <span id="rcpTerritoryHint" style="font-size:10px;font-weight:700;color:#16A34A"></span></label>
+          <input id="rcpCallerZip" type="text" inputmode="numeric" maxlength="5" placeholder="19030" oninput="rcpResolveTerritory(this.value)">
+        </div>
         <div>
           <label>Route To</label>
           <select id="rcpRouteTo">
             <option value="">Select…</option>
             <option>Paul Brahan</option>
             <option>Lauren Canfield</option>
+            <option>Ted Scholl</option>
             <option>Sales Rep (Territory)</option>
             <option>Scheduling</option>
             <option>Dispatch</option>
@@ -634,7 +643,7 @@ function rcpRenderCallLog(el){
       var ts=d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
       return '<div class="rcp-log-item '+(c.type==='Complaint'?'complaint':'')+'">'
         +'<div class="rcp-log-time">'+ds+' '+ts+' · '+(c.loggedBy||'')+'</div>'
-        +'<div class="rcp-log-caller">'+(c.name||'Unknown')+(c.company?' — '+c.company:'')+'</div>'
+        +'<div class="rcp-log-caller">'+(c.callerName||c.name||'Unknown')+(c.company?' — '+c.company:'')+'</div>'
         +'<div class="rcp-log-detail">'+(c.type||'')+' · Routed to: '+(c.routeTo||'—')+' · '+(c.urgency||'Normal')+'</div>'
         +(c.notes?'<div style="font-size:12px;color:var(--soft);margin-top:4px">'+c.notes+'</div>':'')
         +'</div>';
@@ -714,13 +723,24 @@ function rcpLogCall(){
   const name    = document.getElementById('rcpCallerName').value.trim();
   const company = document.getElementById('rcpCallerCompany').value.trim();
   const phone   = document.getElementById('rcpCallerPhone').value.trim();
+  const address = document.getElementById('rcpCallerAddress')?.value.trim() || '';
+  const zip     = document.getElementById('rcpCallerZip')?.value.trim() || '';
   const type    = document.getElementById('rcpCallType').value;
-  const routeTo = document.getElementById('rcpRouteTo').value;
+  let routeTo = document.getElementById('rcpRouteTo').value;
   const urgency = document.getElementById('rcpUrgency').value;
   const notes   = document.getElementById('rcpNotes').value.trim();
   if(!name&&!company&&!phone){rcpToast('Enter at least caller name, company, or phone');return;}
 
-  const call = {ts:Date.now(), callerName:name, company, phone, callType:type, routeTo, urgency, notes, loggedBy:_rcpUser?.name||'Reception'};
+  // Resolve the generic territory placeholder to the actual rep from the
+  // ZIP. Without a ZIP it stays generic and won't reach anyone's device,
+  // so nudge for one.
+  if (routeTo === 'Sales Rep (Territory)') {
+    const rep = rcpTerritoryRep(zip);
+    if (rep) { routeTo = rep; }
+    else if (!zip) { rcpToast('Enter a ZIP so the territory rep can be identified'); return; }
+  }
+
+  const call = {ts:Date.now(), callerName:name, company, phone, address, zip, callType:type, routeTo, urgency, notes, loggedBy:_rcpUser?.name||'Reception'};
   const log = JSON.parse(localStorage.getItem('termac_crm_rcp_calls')||'[]');
   log.push(call);
   localStorage.setItem('termac_crm_rcp_calls', JSON.stringify(log));
@@ -787,14 +807,17 @@ function rcpLogAndCreateLead(){
   const phone   = document.getElementById('rcpCallerPhone').value.trim();
   const notes   = document.getElementById('rcpNotes').value.trim();
   const type    = document.getElementById('rcpCallType').value;
+  const address = document.getElementById('rcpCallerAddress')?.value.trim() || '';
+  const zip     = document.getElementById('rcpCallerZip')?.value.trim() || '';
+  const territoryRep = rcpTerritoryRep(zip);
   if(!company&&!name){rcpToast('Enter at least a name or company to create a lead');return;}
   rcpLogCall();
   const lead = {
     id:'RCP'+String(Date.now()).slice(-6),
     name:name||company, business:company||name,
-    phone, notes, source:'Reception Call',
+    phone, address, zip, notes, source:'Reception Call',
     lifecycleStage:'lead', status:'new',
-    createdBy:_rcpUser.name, ownedBy:'Unassigned',
+    createdBy:_rcpUser.name, ownedBy: territoryRep || 'Unassigned',
     created:Date.now(), updated:Date.now(),
     activityLog:[{ts:Date.now(),icon:'📞',type:'call',title:'Reception Call',note:type||'Inbound call',who:_rcpUser.name}]
   };
@@ -806,7 +829,8 @@ function rcpLogAndCreateLead(){
 }
 
 function rcpClearForm(){
-  ['rcpCallerName','rcpCallerCompany','rcpCallerPhone','rcpNotes'].forEach(id=>{
+  ['rcpCallerName','rcpCallerCompany','rcpCallerPhone','rcpCallerAddress','rcpCallerZip','rcpNotes'].forEach(id=>{
+  (function(){var h=document.getElementById('rcpTerritoryHint');if(h)h.textContent='';})();
     const el=document.getElementById(id);if(el)el.value='';
   });
   ['rcpCallType','rcpRouteTo'].forEach(id=>{
@@ -1082,6 +1106,98 @@ function rcpNextService(acct){
   return best;
 }
 
+// ═══════════════ TERRITORY ROUTING ═══════════════
+// ZIP prefix -> territory rep. Longest prefix wins. Seeded with the known
+// UniPro territory (Eastern PA 17/18/19, all NJ 07/08, all DE 197-199).
+// Add the other reps' ZIP prefixes here as the org chart provides them.
+var RCP_TERRITORY_MAP = [
+  { prefix: '197', rep: 'Ted Scholl' },
+  { prefix: '198', rep: 'Ted Scholl' },
+  { prefix: '199', rep: 'Ted Scholl' },
+  { prefix: '17',  rep: 'Ted Scholl' },
+  { prefix: '18',  rep: 'Ted Scholl' },
+  { prefix: '19',  rep: 'Ted Scholl' },
+  { prefix: '07',  rep: 'Ted Scholl' },
+  { prefix: '08',  rep: 'Ted Scholl' },
+];
+
+function rcpTerritoryRep(zip){
+  zip = String(zip||'').replace(/\D/g,'');
+  if (zip.length < 2) return null;
+  var best = null;
+  RCP_TERRITORY_MAP.forEach(function(t){
+    if (zip.indexOf(t.prefix) === 0 && (!best || t.prefix.length > best.prefix.length)) best = t;
+  });
+  return best ? best.rep : null;
+}
+
+function rcpResolveTerritory(zip){
+  var hint = document.getElementById('rcpTerritoryHint');
+  var route = document.getElementById('rcpRouteTo');
+  var rep = rcpTerritoryRep(zip);
+  if (rep) {
+    if (hint) hint.textContent = '\u2192 ' + rep + ' territory';
+    // Auto-select the rep if reception hasn't already picked a person,
+    // or if the generic placeholder is selected. Manual picks stay.
+    if (route && (route.value === '' || route.value === 'Sales Rep (Territory)')) {
+      var opt = Array.from(route.options).find(function(o){ return o.value === rep || o.text === rep; });
+      if (opt) route.value = opt.value || opt.text;
+    }
+  } else {
+    if (hint) hint.textContent = String(zip||'').length >= 5 ? '\u2192 territory unassigned' : '';
+  }
+}
+
+// Address autocomplete on the call form: same Worker, fills address + ZIP,
+// which then resolves the territory automatically.
+var _rcpAcTimer = null;
+function rcpAttachAddressAutocomplete(){
+  var input = document.getElementById('rcpCallerAddress');
+  if (!input || input.dataset.acAttached) return;
+  input.dataset.acAttached = '1';
+  var box = document.createElement('div');
+  box.style.cssText = 'position:relative;width:100%';
+  input.parentNode.insertBefore(box, input);
+  box.appendChild(input);
+  var dropdown = document.createElement('div');
+  dropdown.style.cssText = 'position:absolute;top:100%;left:0;right:0;background:#fff;border:1.5px solid var(--line,#D7DBE0);border-radius:8px;margin-top:2px;box-shadow:0 4px 14px rgba(0,0,0,.15);z-index:80;display:none;max-height:200px;overflow-y:auto';
+  box.appendChild(dropdown);
+
+  input.addEventListener('input', function(){
+    var text = input.value.trim();
+    clearTimeout(_rcpAcTimer);
+    if (text.length < 3) { dropdown.style.display = 'none'; return; }
+    _rcpAcTimer = setTimeout(function(){
+      fetch('https://ors-route-proxy.termac-one.workers.dev/autocomplete', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: text })
+      }).then(function(r){ return r.json(); }).then(function(data){
+        var suggestions = (data && data.suggestions) || [];
+        if (!suggestions.length) { dropdown.style.display = 'none'; return; }
+        dropdown.innerHTML = '';
+        suggestions.forEach(function(s){
+          var item = document.createElement('div');
+          item.style.cssText = 'padding:9px 12px;font-size:13px;color:#1A1D21;cursor:pointer;border-bottom:1px solid #F1F2F4';
+          item.textContent = s.label;
+          item.onmouseover = function(){ item.style.background = '#F5F6F8'; };
+          item.onmouseout  = function(){ item.style.background = '#fff'; };
+          item.onclick = function(){
+            input.value = (s.street || (s.label||'').split(',')[0] || '');
+            var zipEl = document.getElementById('rcpCallerZip');
+            if (zipEl && s.zip) { zipEl.value = s.zip; rcpResolveTerritory(s.zip); }
+            dropdown.style.display = 'none';
+          };
+          dropdown.appendChild(item);
+        });
+        dropdown.style.display = 'block';
+      }).catch(function(){ dropdown.style.display = 'none'; });
+    }, 300);
+  });
+  document.addEventListener('click', function(e){
+    if (!box.contains(e.target)) dropdown.style.display = 'none';
+  });
+}
+
 function rcpToast(msg,dur=2800){
   const el=document.getElementById('rcpToast');
   el.textContent=msg;el.style.opacity='1';
@@ -1119,7 +1235,7 @@ function rcpCallCard(c) {
   var timeStr = d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
   return '<div class="rcp-log-item '+(c.type==='Complaint'?'complaint':'')+'">' +
     '<div class="rcp-log-time">'+dateStr+' '+timeStr+' · '+escH(c.loggedBy||'')+'</div>' +
-    '<div class="rcp-log-caller">'+escH(c.name||'Unknown')+(c.company?' — '+escH(c.company):'')+'</div>' +
+    '<div class="rcp-log-caller">'+escH(c.callerName||c.name||'Unknown')+(c.company?' — '+escH(c.company):'')+'</div>' +
     '<div class="rcp-log-detail">'+escH(c.type||'')+' · Routed to: '+escH(c.routeTo||'—')+' · '+escH(c.urgency||'Normal')+'</div>' +
     (c.notes?'<div style="font-size:12px;color:var(--soft);margin-top:4px">'+escH(c.notes)+'</div>':'')+
     '</div>';
