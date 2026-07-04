@@ -1530,6 +1530,67 @@ function spRenderHome() {
   ${spRenderWeeksWins()}
   ${spNeedsAttention()}`;
   el.innerHTML = html;
+
+  // Fill the left rail with something useful while on the home agenda,
+  // instead of leaving "Select a Record" sitting empty all day.
+  const leftPanel = document.getElementById('spLeftContent');
+  if (leftPanel) leftPanel.innerHTML = spRenderIdlePanel();
+}
+
+// ── LEFT RAIL IDLE PANEL ── Shown on the home agenda whenever no record
+// is loaded into the intel panel. Weekly pace (so a rep can see if they're
+// on track for the week, not just today) stacked above the highest-priority
+// leads not already on today's agenda, so there's always an obvious next
+// move between stops.
+function spRenderIdlePanel() {
+  const repName = _spRep.name;
+  let quota = { callTarget:50, visitTarget:10 };
+  try {
+    const now = new Date();
+    const qKey = repName + '_q' + Math.ceil((now.getMonth()+1)/3);
+    const all = JSON.parse(localStorage.getItem('termac_goals_quotas')||'{}');
+    quota = { ...quota, ...(all[qKey]||{}) };
+  } catch(e) {}
+  const dailyTouchTarget = Math.max(1, Math.round(((quota.callTarget||50)+(quota.visitTarget||10)) / 5));
+
+  const myLeads = crmLoad('leads').filter(r => (r.ownedBy||r.assignedRep||r.createdBy||'') === repName);
+  const weekStart = new Date(); weekStart.setDate(weekStart.getDate() - weekStart.getDay()); weekStart.setHours(0,0,0,0);
+  const dayNames = ['S','M','T','W','T','F','S'];
+  const todayIdx = new Date().getDay();
+  const dayTouches = [0,0,0,0,0,0,0];
+  myLeads.forEach(r => (r.activityLog||[]).forEach(a => {
+    if ((a.ts||0) < weekStart.getTime()) return;
+    const d = new Date(a.ts).getDay();
+    dayTouches[d]++;
+  }));
+  const weekBars = dayTouches.map((n, i) => {
+    if (i > todayIdx) return `<div style="flex:1;text-align:center"><div style="height:34px;display:flex;align-items:flex-end;justify-content:center"><div style="width:14px;height:2px;background:#E5E7EB;border-radius:2px"></div></div><div style="font-size:9px;color:#D1D5DB;margin-top:3px">${dayNames[i]}</div></div>`;
+    const pct = Math.min(100, Math.round((n/dailyTouchTarget)*100));
+    const color = pct >= 100 ? '#059669' : pct >= 50 ? '#D97706' : (i===todayIdx ? '#C8102E' : '#D1D5DB');
+    const h = Math.max(4, Math.round(pct/100*34));
+    return `<div style="flex:1;text-align:center"><div style="height:34px;display:flex;align-items:flex-end;justify-content:center"><div style="width:14px;height:${h}px;background:${color};border-radius:2px"></div></div><div style="font-size:9px;color:${i===todayIdx?'var(--ink)':'var(--soft)'};font-weight:${i===todayIdx?800:400};margin-top:3px">${dayNames[i]}</div></div>`;
+  }).join('');
+
+  // Today's agenda account ids, so hot leads already scheduled don't duplicate
+  const agendaAcctIds = new Set(spBuildAgenda().map(s => s.accountId).filter(Boolean));
+  const hotLeads = myLeads
+    .filter(r => !agendaAcctIds.has(r.id) && ((r.score||0) >= 7 || r.status === 'hot'))
+    .sort((a,b) => (b.score||0) - (a.score||0) || (b.updated||0) - (a.updated||0))
+    .slice(0, 3);
+
+  return `
+  <div style="padding:14px 14px 0">
+    <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--soft);margin-bottom:10px">📊 This Week's Pace</div>
+    <div style="display:flex;gap:2px;margin-bottom:4px">${weekBars}</div>
+    <div style="font-size:10px;color:var(--soft);margin-bottom:18px">${dailyTouchTarget}/day target · touches logged</div>
+    <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--soft);margin-bottom:10px">🔥 Next Best Leads</div>
+    ${hotLeads.length ? hotLeads.map(r => `
+      <div onclick="spViewRecord('${r.id}','leads')" style="background:#fff;border:1px solid var(--line);border-radius:8px;padding:9px 10px;margin-bottom:8px;cursor:pointer">
+        <div style="font-size:12px;font-weight:700;color:var(--ink)">${escH(r.business||r.name||'Lead')}</div>
+        <div style="font-size:10px;color:var(--soft);margin-top:2px">${r.score ? '⭐ '+r.score+'/10' : ''}${r.address ? ' · '+escH(r.address.split(',')[0]) : ''}</div>
+      </div>`).join('')
+      : '<div style="font-size:11px;color:var(--soft);padding:8px 0">No hot leads waiting, all caught up.</div>'}
+  </div>`;
 }
 
 // ── TODAY'S PACE ── Calls/visits made today vs. a per-day target derived
@@ -2204,7 +2265,10 @@ function spStartColdCallSurvey() {
 
 function spCloseQuickSurveyModal(){ var m=document.getElementById('spQuickSurveyModal'); if(m) m.remove(); }
 
-function spCloseApptModal(){ var m=document.getElementById('spApptPickerModal'); if(m) m.remove(); }
+function spCloseApptModal(){
+  var m1=document.getElementById('spApptPickerModal'); if(m1) m1.remove();
+  var m2=document.getElementById('spApptModal'); if(m2) m2.remove();
+}
 function spSaveApptFromModal() {
   var modal = document.getElementById('spApptPickerModal');
   var aid = modal ? modal.dataset.accountId : '';
@@ -2277,10 +2341,40 @@ function spPlanMyDay() {
       + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:15px;margin-bottom:2px">🧭 Plan My Day</div>'
       + '<div style="font-size:11px;color:rgba(255,255,255,.75)">Auto-fills today with appointments, nearby leads & account check-ins</div>'
     + '</div>'
+    + '<div style="position:relative">'
+      + '<button onclick="spToggleCalendarDropdown(event)" style="background:rgba(255,255,255,.15);color:#fff;border:1.5px solid rgba(255,255,255,.3);border-radius:7px;padding:8px 16px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">📅 My Calendar ▾</button>'
+      + '<div id="spCalendarDropdown" style="display:none;position:absolute;top:calc(100% + 8px);left:50%;transform:translateX(-50%);z-index:400;width:300px;color:var(--ink)"></div>'
+    + '</div>'
     + '<div style="display:flex;gap:8px">'
       + '<button onclick="spOpenRouteMap()" style="background:rgba(255,255,255,.15);color:#fff;border:1.5px solid rgba(255,255,255,.3);border-radius:7px;padding:8px 16px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">Route Map →</button>'
     + '</div>'
   + '</div>';
+}
+
+// ── Toggle for the My Calendar dropdown embedded in the Plan My Day bar.
+// Surfaces the existing spCalendar() month view (previously built but never
+// wired into the UI) as a floating popover instead of pushing page content down.
+function spToggleCalendarDropdown(e) {
+  if (e) e.stopPropagation();
+  var dd = document.getElementById('spCalendarDropdown');
+  if (!dd) return;
+  var isOpen = dd.style.display === 'block';
+  if (isOpen) {
+    dd.style.display = 'none';
+    document.removeEventListener('click', spCalendarDropdownOutsideClick);
+  } else {
+    dd.innerHTML = spCalendar();
+    dd.style.display = 'block';
+    setTimeout(function(){ document.addEventListener('click', spCalendarDropdownOutsideClick); }, 0);
+  }
+}
+function spCalendarDropdownOutsideClick(e) {
+  var dd = document.getElementById('spCalendarDropdown');
+  if (!dd) return;
+  if (!dd.contains(e.target)) {
+    dd.style.display = 'none';
+    document.removeEventListener('click', spCalendarDropdownOutsideClick);
+  }
 }
 
 // ══════════════════════════════════════════════════════
@@ -2411,7 +2505,7 @@ function spOpenDetail(r, tab) {
 
   const el = document.getElementById('spContent');
   el.innerHTML = `
-  <button class="sp-btn sp-btn-ghost" style="margin-bottom:14px" onclick="spNav('${tab}')">← Back to ${SP_TITLES[tab]||tab}</button>
+  <button class="sp-btn sp-btn-ghost" style="margin-bottom:14px" onclick="spNav('home')">← Back to Home</button>
 
   <div class="sp-card">
     <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px">
@@ -7006,7 +7100,7 @@ document.addEventListener('click', function(e) {
 <!-- ══════════════════════════════════════════════════════
      CUSTOMER VISIT WIZARD MODAL
 ══════════════════════════════════════════════════════ -->
-<div id="spVisitModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:600;align-items:flex-start;justify-content:center;padding:20px;overflow-y:auto">
+<div id="spVisitModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:950;align-items:flex-start;justify-content:center;padding:72px 20px 20px;overflow-y:auto">
   <div style="background:#fff;border-radius:14px;width:min(720px,96vw);box-shadow:0 8px 40px rgba(0,0,0,.22);overflow:hidden;position:relative">
     <!-- Header -->
     <div style="background:#1A1D21;padding:16px 20px;display:flex;align-items:center;justify-content:space-between;border-bottom:2px solid var(--red)">
