@@ -3083,6 +3083,27 @@ function spLogTouchpoint(id, tab, opts) {
   r.activityLog.push(activity);
   r.lastContactDate = new Date().toISOString().slice(0,10);
   r.updated = Date.now();
+
+  // Auto-promote Lead -> Contact the moment a real, tangible conversation
+  // happens, so this never depends on a rep remembering to flip a status
+  // manually. A call marked Connected, or any logged in-person visit, both
+  // mean an actual back-and-forth took place, not just an attempt — a
+  // voicemail or no-answer correctly does NOT trigger this. Once inbound
+  // email reading exists, a customer reply could become a second trigger
+  // alongside this one.
+  const isRealConversation = (opts.type === 'call' && opts.outcome === 'reached') || opts.type === 'visit';
+  if (isRealConversation && spNormalizeStage(r.lifecycleStage) === 'lead') {
+    r.lifecycleStage = 'contacted';
+    r.autoPromotedToContact = true;
+    r.autoPromotedAt = Date.now();
+    r.activityLog.push({
+      id: 'act_' + Date.now() + Math.random().toString(36).slice(2,6),
+      ts: Date.now(), type: 'system', icon: '➡️',
+      title: 'Auto-promoted to Contact — real conversation logged',
+      note: null, who: 'System',
+    });
+  }
+
   pool[idx] = r;
   crmSave(tab, pool);
   return r;
@@ -3103,7 +3124,8 @@ function spTpSubmit(id, tab) {
   document.getElementById('spTpNote').value = '';
   document.getElementById('spTpPin').checked = false;
   document.getElementById('spTpTimeline').innerHTML = spRenderTimeline(r);
-  spToast('✓ Touch point logged');
+  const justPromoted = r.autoPromotedAt && (Date.now() - r.autoPromotedAt < 2000);
+  spToast(justPromoted ? '➡️ Real conversation logged — auto-promoted to Contact' : '✓ Touch point logged');
 }
 
 function spTpTogglePin(id, activityId) {
@@ -5211,7 +5233,7 @@ function spSaveAppt() {
         r.followupDate = date;
         r.status = 'hot';
         if (!['opportunity','site_visit','appointment','active','close'].includes(r.lifecycleStage||'')) {
-          r.lifecycleStage = 'appointment';
+          r.lifecycleStage = 'opportunity';
           r.promoted = true;
           r.promotedAt = Date.now();
         }
