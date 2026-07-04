@@ -1064,62 +1064,9 @@ function spRecentlyViewed() {
 }
 
 // ══════════════════════════════════════════════════════
-//  APPOINTMENTS CALENDAR
+//  APPOINTMENTS CALENDAR — see spOpenCalendarModal() for the full-screen
+//  version with month navigation and per-day add/review.
 // ══════════════════════════════════════════════════════
-function spCalendar() {
-  const today = new Date();
-  const yr = today.getFullYear(), mo = today.getMonth();
-  const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-  const firstDay = new Date(yr, mo, 1).getDay();
-  const daysInMonth = new Date(yr, mo+1, 0).getDate();
-  const appts = crmLoad('appointments') || [];
-  const dayMap = {};
-  appts.forEach(a => {
-    if (!a.date) return;
-    const d = new Date(a.date);
-    if (d.getFullYear() === yr && d.getMonth() === mo) {
-      const k = d.getDate(); if (!dayMap[k]) dayMap[k] = []; dayMap[k].push(a);
-    }
-  });
-  let cells = '';
-  for (let i = 0; i < firstDay; i++) cells += '<div></div>';
-  for (let d = 1; d <= daysInMonth; d++) {
-    const isToday = d === today.getDate();
-    const hasA = dayMap[d]?.length > 0;
-    cells += `<div class="sp-cal-day${isToday?' today':''}${hasA?' has-appt':''}" onclick="spShowDayAppts(${d},${yr},${mo})">
-      <div class="day-num">${d}</div>
-      ${hasA ? `<div style="font-size:9px;font-weight:700;color:${isToday?'#fff':'#1B5FA8'}">${dayMap[d].length}</div>` : ''}
-    </div>`;
-  }
-  return `<div class="sp-card" style="margin-bottom:14px">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-      <div class="sp-card-title" style="margin-bottom:0">🗓 My Appointments — ${monthNames[mo]} ${yr}</div>
-      <button class="sp-btn sp-btn-red" style="font-size:10px;padding:4px 10px" onclick="spOpenApptModal()">+ Add</button>
-    </div>
-    <div class="sp-cal-grid" style="margin-bottom:4px">
-      ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div class="sp-cal-hdr">${d}</div>`).join('')}
-    </div>
-    <div class="sp-cal-grid">${cells}</div>
-    <div id="spDayApptDetail" style="margin-top:10px;display:none"></div>
-  </div>`;
-}
-
-function spShowDayAppts(d, yr, mo) {
-  const appts = (crmLoad('appointments') || []).filter(a => {
-    if (!a.date) return false;
-    const dt = new Date(a.date);
-    return dt.getFullYear() === yr && dt.getMonth() === mo && dt.getDate() === d;
-  });
-  const el = document.getElementById('spDayApptDetail');
-  if (!el) return;
-  if (!appts.length) { el.style.display = 'none'; return; }
-  el.style.display = '';
-  el.innerHTML = appts.map(a => `<div style="background:#EFF6FF;border-radius:7px;padding:8px 12px;margin-bottom:6px;font-size:12px">
-    <strong>${escH(a.title||a.business||'Appointment')}</strong>
-    ${a.time ? ' · ' + escH(a.time) : ''}${a.address ? '<br>📍 '+escH(a.address) : ''}
-    ${a.notes ? '<br><span style="color:var(--soft)">'+escH(a.notes)+'</span>' : ''}
-  </div>`).join('');
-}
 
 function spCloseCollectModal(){ var m=document.getElementById('spCollectModal'); if(m) m.remove(); }
 function spCollectMethodToggle(){ var m=document.getElementById('colMethodField'), w=document.getElementById('colCheckWrap'); if(m&&w) w.style.display=(m.value==='check')?'block':'none'; }
@@ -2268,6 +2215,7 @@ function spCloseQuickSurveyModal(){ var m=document.getElementById('spQuickSurvey
 function spCloseApptModal(){
   var m1=document.getElementById('spApptPickerModal'); if(m1) m1.remove();
   var m2=document.getElementById('spApptModal'); if(m2) m2.remove();
+  _spApptPresetDate = null;
 }
 function spSaveApptFromModal() {
   var modal = document.getElementById('spApptPickerModal');
@@ -2341,9 +2289,8 @@ function spPlanMyDay() {
       + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:15px;margin-bottom:2px">🧭 Plan My Day</div>'
       + '<div style="font-size:11px;color:rgba(255,255,255,.75)">Auto-fills today with appointments, nearby leads & account check-ins</div>'
     + '</div>'
-    + '<div style="position:relative">'
-      + '<button onclick="spToggleCalendarDropdown(event)" style="background:rgba(255,255,255,.15);color:#fff;border:1.5px solid rgba(255,255,255,.3);border-radius:7px;padding:8px 16px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">📅 My Calendar ▾</button>'
-      + '<div id="spCalendarDropdown" style="display:none;position:absolute;top:calc(100% + 8px);left:50%;transform:translateX(-50%);z-index:400;width:300px;color:var(--ink)"></div>'
+    + '<div>'
+      + '<button onclick="spOpenCalendarModal()" style="background:rgba(255,255,255,.15);color:#fff;border:1.5px solid rgba(255,255,255,.3);border-radius:7px;padding:8px 16px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">📅 My Calendar</button>'
     + '</div>'
     + '<div style="display:flex;gap:8px">'
       + '<button onclick="spOpenRouteMap()" style="background:rgba(255,255,255,.15);color:#fff;border:1.5px solid rgba(255,255,255,.3);border-radius:7px;padding:8px 16px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">Route Map →</button>'
@@ -2351,30 +2298,141 @@ function spPlanMyDay() {
   + '</div>';
 }
 
-// ── Toggle for the My Calendar dropdown embedded in the Plan My Day bar.
-// Surfaces the existing spCalendar() month view (previously built but never
-// wired into the UI) as a floating popover instead of pushing page content down.
-function spToggleCalendarDropdown(e) {
-  if (e) e.stopPropagation();
-  var dd = document.getElementById('spCalendarDropdown');
-  if (!dd) return;
-  var isOpen = dd.style.display === 'block';
-  if (isOpen) {
-    dd.style.display = 'none';
-    document.removeEventListener('click', spCalendarDropdownOutsideClick);
-  } else {
-    dd.innerHTML = spCalendar();
-    dd.style.display = 'block';
-    setTimeout(function(){ document.addEventListener('click', spCalendarDropdownOutsideClick); }, 0);
-  }
+// ══════════════════════════════════════════════════════
+//  FULL-SCREEN CALENDAR MODAL
+//  Replaces the old small dropdown preview — fills the screen, supports
+//  browsing month to month, and every day is clickable: shows what's on
+//  it plus a same-day "+ Add" so there's always something to do, not just
+//  a static read-only grid.
+// ══════════════════════════════════════════════════════
+var _spCalViewYear = null, _spCalViewMonth = null, _spCalSelectedDay = null;
+
+function spOpenCalendarModal() {
+  const now = new Date();
+  if (_spCalViewYear === null) { _spCalViewYear = now.getFullYear(); _spCalViewMonth = now.getMonth(); }
+  _spCalSelectedDay = null;
+  var old = document.getElementById('spCalendarModal');
+  if (old) old.remove();
+  var wrap = document.createElement('div');
+  wrap.id = 'spCalendarModal';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9500;display:flex;align-items:center;justify-content:center;padding:16px';
+  wrap.innerHTML = '<div style="background:#fff;border-radius:14px;width:min(1040px,98vw);height:min(92vh,920px);box-shadow:0 24px 70px rgba(0,0,0,.35);display:flex;flex-direction:column;overflow:hidden">'
+    + '<div style="background:#1A1D21;padding:18px 24px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0">'
+      + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:19px;color:#fff;letter-spacing:.06em;text-transform:uppercase">🗓 My Calendar</div>'
+      + '<button onclick="spCloseCalendarModal()" style="background:none;border:1.5px solid #3A3E43;border-radius:8px;color:#9CA3AF;padding:9px 18px;font-size:15px;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:700">✕ Close</button>'
+    + '</div>'
+    + '<div style="flex:1;overflow-y:auto;padding:24px;display:flex;gap:28px;flex-wrap:wrap" id="spCalModalBody"></div>'
+  + '</div>';
+  document.body.appendChild(wrap);
+  spRenderCalendarModalBody();
 }
-function spCalendarDropdownOutsideClick(e) {
-  var dd = document.getElementById('spCalendarDropdown');
-  if (!dd) return;
-  if (!dd.contains(e.target)) {
-    dd.style.display = 'none';
-    document.removeEventListener('click', spCalendarDropdownOutsideClick);
+function spCloseCalendarModal() {
+  var m = document.getElementById('spCalendarModal');
+  if (m) m.remove();
+}
+function spCalNavMonth(delta) {
+  _spCalViewMonth += delta;
+  if (_spCalViewMonth < 0) { _spCalViewMonth = 11; _spCalViewYear--; }
+  if (_spCalViewMonth > 11) { _spCalViewMonth = 0; _spCalViewYear++; }
+  _spCalSelectedDay = null;
+  spRenderCalendarModalBody();
+}
+function spCalSelectDay(d) {
+  _spCalSelectedDay = d;
+  spRenderCalendarModalBody();
+}
+function spRenderCalendarModalBody() {
+  const body = document.getElementById('spCalModalBody');
+  if (!body) return;
+  const yr = _spCalViewYear, mo = _spCalViewMonth;
+  const today = new Date();
+  const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const firstDay = new Date(yr, mo, 1).getDay();
+  const daysInMonth = new Date(yr, mo+1, 0).getDate();
+  const appts = crmLoad('appointments') || [];
+  const dayMap = {};
+  appts.forEach(a => {
+    if (!a.date) return;
+    const d = new Date(a.date + 'T12:00:00');
+    if (d.getFullYear() === yr && d.getMonth() === mo) {
+      const k = d.getDate(); if (!dayMap[k]) dayMap[k] = []; dayMap[k].push(a);
+    }
+  });
+  let cells = '';
+  for (let i = 0; i < firstDay; i++) cells += '<div></div>';
+  for (let d = 1; d <= daysInMonth; d++) {
+    const isToday = d === today.getDate() && mo === today.getMonth() && yr === today.getFullYear();
+    const isSelected = d === _spCalSelectedDay;
+    const hasA = dayMap[d] && dayMap[d].length > 0;
+    const bg = isSelected ? '#1B5FA8' : (isToday ? 'var(--red)' : '#F9FAFB');
+    const txt = (isSelected || isToday) ? '#fff' : 'var(--ink)';
+    cells += '<div onclick="spCalSelectDay(' + d + ')" style="aspect-ratio:1;min-height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:10px;cursor:pointer;background:' + bg + ';border:1px solid ' + ((isSelected||isToday)?'transparent':'#E5E7EB') + '">'
+      + '<div style="font-family:Barlow Condensed,sans-serif;font-size:19px;font-weight:800;color:' + txt + '">' + d + '</div>'
+      + (hasA ? '<div style="width:6px;height:6px;border-radius:50%;background:' + ((isSelected||isToday)?'#fff':'#1B5FA8') + ';margin-top:3px"></div>' : '')
+    + '</div>';
   }
+  body.innerHTML = '<div style="flex:1;min-width:360px">'
+    + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">'
+      + '<button onclick="spCalNavMonth(-1)" style="background:none;border:1.5px solid var(--line);border-radius:8px;padding:12px 22px;cursor:pointer;font-size:18px;min-width:52px">←</button>'
+      + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:21px;color:var(--ink)">' + monthNames[mo] + ' ' + yr + '</div>'
+      + '<button onclick="spCalNavMonth(1)" style="background:none;border:1.5px solid var(--line);border-radius:8px;padding:12px 22px;cursor:pointer;font-size:18px;min-width:52px">→</button>'
+    + '</div>'
+    + '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:6px">'
+      + ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(function(d){ return '<div style="text-align:center;font-size:12px;font-weight:700;color:var(--soft);text-transform:uppercase;padding:4px 0">' + d + '</div>'; }).join('')
+    + '</div>'
+    + '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px">' + cells + '</div>'
+  + '</div>'
+  + '<div style="width:280px;flex-shrink:0;border-left:1px solid var(--line);padding-left:24px">' + spRenderCalDayPanel() + '</div>';
+}
+function spRenderCalDayPanel() {
+  if (!_spCalSelectedDay) {
+    return '<div style="color:var(--soft);font-size:14px;padding-top:10px">Click a day to see what\u2019s on it, or add something new.</div>';
+  }
+  const yr = _spCalViewYear, mo = _spCalViewMonth, d = _spCalSelectedDay;
+  const dateStr = yr + '-' + String(mo+1).padStart(2,'0') + '-' + String(d).padStart(2,'0');
+  const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const dayAppts = (crmLoad('appointments') || []).filter(function(a){ return a.date === dateStr; });
+  return '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:16px;color:var(--ink);margin-bottom:14px">' + monthNames[mo] + ' ' + d + ', ' + yr + '</div>'
+    + (dayAppts.length ? dayAppts.map(function(a) {
+        return '<div onclick="spViewApptDetail(\'' + a.id + '\')" style="background:#EFF6FF;border-radius:9px;padding:13px 14px;margin-bottom:10px;font-size:13px;cursor:pointer;border:1.5px solid transparent" onmouseover="this.style.borderColor=\'#1B5FA8\'" onmouseout="this.style.borderColor=\'transparent\'">'
+          + '<div style="font-weight:700;color:var(--ink);font-size:14px">' + escH(a.title || a.business || 'Appointment') + '</div>'
+          + (a.time ? '<div style="color:var(--soft);margin-top:3px">🕐 ' + escH(a.time) + '</div>' : '')
+          + (a.address ? '<div style="color:var(--soft)">📍 ' + escH(a.address) + '</div>' : '')
+          + '<div style="color:#1B5FA8;font-size:11px;font-weight:700;margin-top:4px">Tap to view →</div>'
+        + '</div>';
+      }).join('')
+      : '<div style="color:var(--soft);font-size:13px;margin-bottom:14px">Nothing on the books yet.</div>')
+    + '<button onclick="spOpenApptModal(null,null,\'appointment\',\'' + dateStr + '\')" style="width:100%;background:var(--red);color:#fff;border:none;border-radius:9px;padding:13px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;letter-spacing:.05em;text-transform:uppercase;cursor:pointer;margin-top:6px">+ Add for this day</button>';
+}
+
+// ── Read-only detail view for a single appointment, opened by tapping it
+// in the calendar day panel. This is a view, not an edit — full edit/save
+// against existing appointment records isn't wired up yet.
+function spViewApptDetail(apptId) {
+  const a = (crmLoad('appointments') || []).find(function(x){ return x.id === apptId; });
+  if (!a) return;
+  const typeLabel = a.type === 'appointment' ? '📅 Appointment' : '🗺️ Site Visit';
+  const dateLabel = a.date ? new Date(a.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'}) : '';
+  var old = document.getElementById('spApptDetailModal');
+  if (old) old.remove();
+  var wrap = document.createElement('div');
+  wrap.id = 'spApptDetailModal';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9600;display:flex;align-items:center;justify-content:center;padding:20px';
+  wrap.innerHTML = '<div style="background:#fff;border-radius:14px;width:min(420px,94vw);box-shadow:0 20px 60px rgba(0,0,0,.3);overflow:hidden">'
+    + '<div style="background:#1B5FA8;padding:16px 20px;display:flex;align-items:center;justify-content:space-between">'
+      + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:15px;color:#fff;letter-spacing:.05em;text-transform:uppercase">' + typeLabel + '</div>'
+      + '<button onclick="document.getElementById(\'spApptDetailModal\').remove()" style="background:none;border:none;color:rgba(255,255,255,.7);font-size:20px;cursor:pointer;line-height:1">✕</button>'
+    + '</div>'
+    + '<div style="padding:20px;display:flex;flex-direction:column;gap:12px">'
+      + '<div><div style="font-size:17px;font-weight:800;color:var(--ink)">' + escH(a.title||'Appointment') + '</div>'
+        + '<div style="font-size:13px;color:var(--soft);margin-top:2px">' + escH(dateLabel) + (a.time?' · '+escH(a.time):'') + '</div></div>'
+      + (a.address ? '<div style="font-size:13px;color:var(--ink)">📍 ' + escH(a.address) + '</div>' : '')
+      + (a.contact ? '<div style="font-size:13px;color:var(--ink)">👤 ' + escH(a.contact) + '</div>' : '')
+      + (a.notes ? '<div style="font-size:13px;color:var(--soft);background:#F8F9FA;border-radius:8px;padding:10px 12px;white-space:pre-wrap">' + escH(a.notes) + '</div>' : '')
+      + '<button onclick="document.getElementById(\'spApptDetailModal\').remove()" style="background:#F3F4F6;color:#6B7280;border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;cursor:pointer;letter-spacing:.05em;text-transform:uppercase;margin-top:4px">Close</button>'
+    + '</div>'
+  + '</div>';
+  document.body.appendChild(wrap);
 }
 
 // ══════════════════════════════════════════════════════
@@ -4528,23 +4586,35 @@ function spApptSwitchMode(id, tab, newMode) {
   spOpenApptModal(id, tab, newMode);
 }
 
-function spOpenApptModal(id, tab, mode) {
+var _spApptPresetDate = null;
+
+function spApptSwitchMode(id, tab, newMode) {
+  spOpenApptModal(id, tab, newMode, _spApptPresetDate);
+}
+
+function spOpenApptModal(id, tab, mode, presetDate) {
   _spApptId = id;
   _spApptTab = tab;
   _spApptMode = mode;
+  _spApptPresetDate = presetDate || _spApptPresetDate || null;
 
   const data = crmLoad('leads');
   const r = data.find(x => x.id === id) || {};
   const addr = r.address || r.addr || '';
   const contact = r.contact || r.name || '';
 
-  const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+  const defaultDate = _spApptPresetDate || new Date(Date.now() + 86400000).toISOString().split('T')[0];
 
-  const isAppt = mode === 'appointment';
+  // Existing Customer / New Prospect only changes which fields show below —
+  // it no longer changes the modal's own name or color. This is one concept,
+  // "Appointment"; the toggle is just how you classify who it's with.
+  // Unset mode (e.g. a bare "+ Add") defaults to New Prospect / appointment,
+  // not Existing Customer / site visit.
+  const isAppt = mode !== 'site_visit';
   const modalHTML = '<div id="spApptModal" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9000;display:flex;align-items:center;justify-content:center;padding:16px">' +
     '<div style="background:#fff;border-radius:12px;width:min(480px,96vw);max-height:88vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.3)">' +
-      '<div style="background:' + (isAppt?'#1B5FA8':'#D8690B') + ';border-radius:12px 12px 0 0;padding:14px 18px;display:flex;align-items:center;justify-content:space-between">' +
-        '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:16px;color:#fff;letter-spacing:.04em">' + (isAppt?'📅 Set Appointment':'🗺️ Plan Site Visit') + '</div>' +
+      '<div style="background:#1B5FA8;border-radius:12px 12px 0 0;padding:14px 18px;display:flex;align-items:center;justify-content:space-between">' +
+        '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:16px;color:#fff;letter-spacing:.04em">📅 Appointment</div>' +
         '<button onclick="spCloseApptModal()" style="background:none;border:none;color:rgba(255,255,255,.7);font-size:20px;cursor:pointer;line-height:1">✕</button>' +
       '</div>' +
       '<div style="padding:18px;display:flex;flex-direction:column;gap:12px">' +
@@ -4556,7 +4626,7 @@ function spOpenApptModal(id, tab, mode) {
           // APPOINTMENT fields
           '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' +
             '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Date *</label>' +
-            '<input type="date" id="spApptDate" value="' + tomorrow + '" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px"></div>' +
+            '<input type="date" id="spApptDate" value="' + defaultDate + '" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px"></div>' +
             '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Time *</label>' +
             '<input type="time" id="spApptTime" value="09:00" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px"></div>' +
           '</div>' +
@@ -4569,7 +4639,7 @@ function spOpenApptModal(id, tab, mode) {
           // SITE VISIT fields
           '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' +
             '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Date *</label>' +
-            '<input type="date" id="spVisitDate" value="' + tomorrow + '" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px"></div>' +
+            '<input type="date" id="spVisitDate" value="' + defaultDate + '" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px"></div>' +
             '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Time Window</label>' +
             '<select id="spVisitWindow" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px"><option value="morning">Morning</option><option value="afternoon">Afternoon</option><option value="anytime">Anytime</option></select></div>' +
           '</div>' +
@@ -4640,11 +4710,30 @@ function spSaveAppt() {
     crmSave('leads', data);
   }
 
-  // Save to appointments collection
+  // Save to the SAME appointments pool the Calendar and Today's Agenda both
+  // read from (crmLoad/crmSave('appointments')). This was previously writing
+  // to a raw, unprefixed 'termac_appointments' key that nothing else in the
+  // app ever reads — meaning a saved appointment never actually showed up
+  // anywhere. Also capturing the display fields (title/time/location/contact)
+  // that were missing entirely, so the calendar and agenda have something
+  // real to show instead of a bare date.
   try {
-    var appts = JSON.parse(localStorage.getItem('termac_appointments')||'[]');
-    appts.push({ id:(isAppt?'appt_':'visit_')+Date.now(), recordId:id, tab, type:mode, date, isFlexStop:!isAppt, createdAt:Date.now(), createdBy:_spRep.name });
-    localStorage.setItem('termac_appointments', JSON.stringify(appts));
+    const bizName = (r && (r.business || r.name)) || '';
+    const apptTitle = isAppt
+      ? (bizName || document.getElementById('spApptContact')?.value.trim() || 'Appointment')
+      : (bizName || 'Site Visit');
+    const time = isAppt ? (document.getElementById('spApptTime')?.value||'') : '';
+    const location = isAppt
+      ? (document.getElementById('spApptLocation')?.value.trim()||'')
+      : (document.getElementById('spVisitLocation')?.value.trim()||'');
+    const contact = isAppt ? (document.getElementById('spApptContact')?.value.trim()||'') : '';
+    const appts = crmLoad('appointments');
+    appts.push({
+      id: (isAppt?'appt_':'visit_')+Date.now(),
+      recordId: id, tab, type: mode, date, time, address: location, contact, notes,
+      title: apptTitle, isFlexStop: !isAppt, createdAt: Date.now(), createdBy: _spRep.name,
+    });
+    crmSave('appointments', appts);
   } catch(e){}
 
   document.getElementById('spApptModal')?.remove();
