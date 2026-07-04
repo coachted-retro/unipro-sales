@@ -1577,6 +1577,7 @@ function spRenderHome() {
   ${spRenderTodaysPace()}
   ${spRenderTodayAgenda()}
   ${spRenderAccountsToWatch()}
+  ${spRenderWinBack()}
   ${spRenderFollowUpsDueToday()}
   ${spRenderRecentActivityFeed()}
   ${spRenderMyAccountsToday()}
@@ -1636,6 +1637,38 @@ function spRenderAccountsToWatch() {
           <div style="font-size:11px;color:#D97706">Contract with ${escH(x.r.competitor||'competitor')} ends in ${x.daysLeft}d</div>
         </div>
       </div>`).join('')}
+  </div>`;
+}
+
+// ── WIN-BACK READY ── Accounts marked lost whose 90-day re-engagement
+// window has opened. Ported from the exact same query already proven in
+// termac-os.html's Manager Dashboard — same fields (lostDate, lostReason,
+// reengageAfter), same shared account data, just surfaced here too instead
+// of only being visible in the Manager Portal.
+function spRenderWinBack() {
+  const repName = _spRep.name;
+  const now = Date.now();
+
+  const ready = crmLoad('accounts')
+    .filter(a => (a.assignedRep === repName || a.ownedBy === repName || !a.assignedRep) && a.lostDate && a.reengageAfter && now >= a.reengageAfter)
+    .sort((a,b) => (a.reengageAfter||0) - (b.reengageAfter||0))
+    .slice(0, 4);
+
+  if (!ready.length) return '';
+
+  return `<div class="sp-card">
+    <div class="sp-card-title">🔁 Win-Back Ready</div>
+    <div style="font-size:11px;color:var(--soft);margin-bottom:10px;margin-top:-6px">Lost accounts whose 90-day re-engagement window is open — worth a fresh outreach</div>
+    ${ready.map(a => {
+      const lostDays = Math.floor((now - a.lostDate) / 86400000);
+      return `<div onclick="spViewRecord('${a.id}','accounts')" style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);cursor:pointer">
+        <div style="width:36px;height:36px;border-radius:8px;background:#F3E8FF;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">🔁</div>
+        <div style="flex:1">
+          <div style="font-size:13px;font-weight:700;color:var(--ink)">${escH(a.business||a.name||'Account')}</div>
+          <div style="font-size:11px;color:#7C3AED">Lost ${lostDays}d ago — ${escH(a.lostReason||'—')}</div>
+        </div>
+      </div>`;
+    }).join('')}
   </div>`;
 }
 
@@ -2758,6 +2791,7 @@ function spOpenDetail(r, tab) {
       <button onclick="spCheckInAndStartVisit('${r.id}','${tab}')" style="padding:8px 14px;background:#D8690B;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">📍 I'm Here</button>` : ''}
       <button onclick="spOpenApptModal('${r.id}','${tab}','${apptDefaultMode}')" style="padding:8px 14px;background:#1B5FA8;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">📅 Set Appointment</button>
       <button onclick="spEditRecord('${r.id}','${tab}')" style="padding:8px 14px;background:#fff;color:var(--ink);border:1.5px solid var(--line);border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">Edit Record</button>
+      ${isAccount ? `<button onclick="spOpenMarkLostModal('${r.id}','${tab}')" style="padding:8px 14px;background:#fff;color:#991B1B;border:1.5px solid #991B1B;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">🚫 Mark Lost</button>` : ''}
     </div>
   </div>
 
@@ -3011,6 +3045,64 @@ function spOpenAdd(tab) {
 
   setTimeout(() => attachAddressAutocompleteSplit('spf_address', 'spf_city', 'spf_state', 'spf_zip'), 0);
   setTimeout(() => attachBusinessNameAutocomplete('spf_business', 'spf_address', 'spf_city', 'spf_state', 'spf_zip'), 0);
+}
+
+// ══════════════════════════════════════════════════════
+//  WIN-BACK / MARK LOST — ported faithfully from termac-os.html's
+//  openMarkLostModal/markAccountLost. Same reason list, same field names
+//  (lostReason, lostDate, lostNotes, reengageAfter), same 90-day window,
+//  so an account marked lost here shows up correctly in the Manager
+//  Portal's re-engagement queue too, and vice versa — same shared data.
+// ══════════════════════════════════════════════════════
+const SP_LOST_REASONS = [
+  'Price too high', 'Went with competitor', 'No budget / cut spending',
+  'Poor response time', 'Service issue', 'Relationship / personnel change',
+  'Could not reach', 'Already under contract', 'Business closed', 'Other',
+];
+function spOpenMarkLostModal(id, tab) {
+  var reasonOpts = SP_LOST_REASONS.map(function(r){ return '<option value="' + r + '">' + r + '</option>'; }).join('');
+  var wrap = document.createElement('div');
+  wrap.id = 'spLostModal';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9700;display:flex;align-items:center;justify-content:center;padding:16px';
+  wrap.innerHTML = '<div style="background:#fff;border-radius:12px;max-width:440px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.3)">' +
+    '<div style="padding:20px">' +
+      '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:18px;color:var(--ink);margin-bottom:4px">🚫 Mark Account Lost</div>' +
+      '<div style="font-size:12px;color:var(--soft);margin-bottom:16px">This account will be marked inactive and queued for re-engagement in 90 days.</div>' +
+      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Reason Lost</label>' +
+      '<select id="spLostReasonSelect" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:12px"><option value="">— Select a reason —</option>' + reasonOpts + '</select>' +
+      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Notes (optional)</label>' +
+      '<textarea id="spLostNotesField" placeholder="Any additional context..." rows="3" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;resize:vertical;box-sizing:border-box;margin-bottom:16px"></textarea>' +
+      '<div style="display:flex;gap:10px;justify-content:flex-end">' +
+        '<button onclick="document.getElementById(\'spLostModal\').remove()" style="padding:8px 18px;border-radius:7px;border:1.5px solid var(--line);background:#fff;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:700">Cancel</button>' +
+        '<button onclick="spMarkAccountLost(\'' + id + '\',\'' + tab + '\')" style="padding:8px 18px;border-radius:7px;border:none;background:#991B1B;color:#fff;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:700">🚫 Confirm Lost</button>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+  document.body.appendChild(wrap);
+}
+function spMarkAccountLost(id, tab) {
+  var reason = document.getElementById('spLostReasonSelect')?.value;
+  var notes = document.getElementById('spLostNotesField')?.value?.trim();
+  if (!reason) { alert('Please select a reason.'); return; }
+  var data = crmLoad(tab);
+  var r = data.find(function(x){ return x.id === id; });
+  if (!r) return;
+  r.status = 'inactive';
+  r.lostReason = reason;
+  r.lostDate = Date.now();
+  r.lostNotes = notes || '';
+  r.reengageAfter = Date.now() + (90 * 86400000);
+  r.activityLog = r.activityLog || [];
+  r.activityLog.push({
+    ts: Date.now(), type: 'lost', icon: '🚫',
+    title: 'Account marked lost — ' + reason,
+    note: notes || ('Marked lost by ' + _spRep.name),
+    who: _spRep.name,
+  });
+  crmSave(tab, data);
+  document.getElementById('spLostModal')?.remove();
+  spToast('Account marked lost — queued for 90-day re-engagement');
+  spNav('home');
 }
 
 function spEditRecord(id, tab) {
