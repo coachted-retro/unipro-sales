@@ -2597,10 +2597,38 @@ function spRenderTimeline(r) {
       <div style="flex:1">
         <div style="font-size:13px;font-weight:600;color:var(--ink)">${escH(a.title||a.note||'Activity')}</div>
         <div style="font-size:11px;color:var(--soft)">${a.ts ? new Date(a.ts).toLocaleString() : '—'}${a.who?' · '+escH(a.who):''}</div>
-        ${a.note && a.title ? `<div style="font-size:12px;color:var(--soft);margin-top:2px;white-space:pre-wrap">${escH(a.note)}</div>` : ''}
+        ${a.emailTo ? `<div style="font-size:11px;color:var(--soft);margin-top:1px">To: ${escH(a.emailTo)}</div>` : ''}
+        ${a.note && a.title ? spRenderTimelineNote(a) : ''}
       </div>
       <button onclick="spTpTogglePin('${r.id}','${a.id}')" title="${a.pinned?'Unpin':'Pin to top'}" style="background:none;border:none;cursor:pointer;font-size:14px;opacity:${a.pinned?'1':'.35'};flex-shrink:0;align-self:flex-start">📌</button>
     </div>`).join('');
+}
+
+// Long touchpoint notes (full email bodies especially) get a short preview
+// with a click-to-expand toggle, instead of either a permanent 300-char cutoff
+// or always dumping the full text inline.
+function spRenderTimelineNote(a) {
+  const full = a.note || '';
+  const PREVIEW_LEN = 180;
+  if (full.length <= PREVIEW_LEN) {
+    return `<div style="font-size:12px;color:var(--soft);margin-top:2px;white-space:pre-wrap">${escH(full)}</div>`;
+  }
+  const uid = 'tpnote_' + a.id;
+  const preview = full.slice(0, PREVIEW_LEN);
+  return `<div style="font-size:12px;color:var(--soft);margin-top:2px">
+    <span id="${uid}_short" style="white-space:pre-wrap">${escH(preview)}… <a href="#" onclick="event.preventDefault();spTpExpandNote('${uid}')" style="color:var(--blue);font-weight:600;white-space:nowrap">Show full email</a></span>
+    <span id="${uid}_full" style="display:none;white-space:pre-wrap">${escH(full)} <a href="#" onclick="event.preventDefault();spTpCollapseNote('${uid}')" style="color:var(--blue);font-weight:600;white-space:nowrap">Show less</a></span>
+  </div>`;
+}
+function spTpExpandNote(uid) {
+  const s = document.getElementById(uid+'_short'), f = document.getElementById(uid+'_full');
+  if (s) s.style.display = 'none';
+  if (f) f.style.display = 'inline';
+}
+function spTpCollapseNote(uid) {
+  const s = document.getElementById(uid+'_short'), f = document.getElementById(uid+'_full');
+  if (f) f.style.display = 'none';
+  if (s) s.style.display = 'inline';
 }
 
 function spTpSetType(btn, type) {
@@ -2640,6 +2668,7 @@ function spLogTouchpoint(id, tab, opts) {
     id: 'act_' + Date.now() + Math.random().toString(36).slice(2,6),
     ts: Date.now(), type: opts.type, icon: icons[opts.type] || '📌',
     title, note: opts.note || '', outcome: opts.outcome || null,
+    emailTo: opts.emailTo || null,
     pinned: !!opts.pin, who: (window._spRep && _spRep.name) || 'Rep',
   };
   r.activityLog = r.activityLog || [];
@@ -2712,7 +2741,7 @@ function spOpenEmailCompose(id, tab) {
         <input id="spEmSubjectInput" type="text" placeholder="Following up on our conversation" style="width:100%;margin:4px 0 12px;padding:9px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px">
         <label style="font-size:11px;font-weight:700;color:var(--soft)">Message</label>
         <textarea id="spEmBodyInput" rows="6" style="width:100%;margin:4px 0 4px;padding:9px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;font-family:inherit;resize:vertical">Hi ${escH(r.name||r.contact||'')},\n\n\n\nBest,\n${(window._spRep&&_spRep.name)||''}</textarea>
-        <div style="font-size:11px;color:var(--soft);margin-bottom:14px">Opens in your email app to send. This gets logged to the timeline either way.</div>
+        <div style="font-size:11px;color:var(--soft);margin-bottom:14px">Opens in Outlook to send. This gets logged to the timeline either way.</div>
         <div style="display:flex;gap:10px">
           <button onclick="spSendTouchpointEmail('${id}','${tab}')" style="flex:1;background:var(--red);color:#fff;border:none;border-radius:8px;padding:11px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px;letter-spacing:.05em;text-transform:uppercase;cursor:pointer">Send &amp; Log</button>
           <button onclick="document.getElementById('spEmailComposeModal').remove()" style="background:#fff;border:1.5px solid var(--line);border-radius:8px;padding:11px 18px;font-size:13px;cursor:pointer">Cancel</button>
@@ -2730,10 +2759,14 @@ function spSendTouchpointEmail(id, tab) {
   if (!to) { spToast('Enter a recipient email'); return; }
   if (!subject) { spToast('Enter a subject line'); return; }
 
-  window.open('mailto:' + encodeURIComponent(to) + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body));
+  // Outlook Web compose deep link — guarantees Outlook opens specifically,
+  // rather than whatever mail handler happens to be the OS default. Real
+  // send still happens from the rep's own Outlook account, so replies and
+  // sent-item history stay correct on their side.
+  window.open('https://outlook.office.com/mail/deeplink/compose?to=' + encodeURIComponent(to) + '&subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body));
 
   const pin = document.getElementById('spTpPin')?.checked || false;
-  const r = spLogTouchpoint(id, tab, { type: 'email', note: body.slice(0,300), subject, pin });
+  const r = spLogTouchpoint(id, tab, { type: 'email', note: body, subject, emailTo: to, pin });
   document.getElementById('spEmailComposeModal')?.remove();
   if (r) {
     document.getElementById('spTpTimeline').innerHTML = spRenderTimeline(r);
