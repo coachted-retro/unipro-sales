@@ -497,7 +497,8 @@ body.rail-open .rail-overlay{display:block}
   <div class="sp-tabnav">
     <div class="sp-tabnav-inner">
       <div class="sp-tabnav-tabs">
-        <button class="sp-tab active" id="spTab-leads"        onclick="spNav('leads')">🎯 Leads</button>
+        <button class="sp-tab active" id="spTab-home"         onclick="spNav('home')">🏠 Home</button>
+        <button class="sp-tab" id="spTab-leads"        onclick="spNav('leads')">🎯 Leads</button>
         <button class="sp-tab"        id="spTab-contacts"     onclick="spNav('contacts')">👤 Contacts</button>
         <button class="sp-tab"        id="spTab-opportunities" onclick="spNav('opportunities')">💼 Opportunities</button>
         <button class="sp-tab"        id="spTab-accounts"     onclick="spNav('accounts')">🏢 Accounts</button>
@@ -744,7 +745,7 @@ function spEnterPortal() {
   })();
   // ── END USER CHIP ───────────────────────────────────────────────────────
   spUpdateQueueBadge();
-  spNav('leads');
+  spNav('home');
 }
 
 // ══════════════════════════════════════════════════════
@@ -776,7 +777,7 @@ function spAutoCloseDrawer() {
 }
 
 const SP_TITLES = {
-  leads:'Leads', contacts:'Contacts', opportunities:'Opportunities',
+  home:'Home', leads:'Leads', contacts:'Contacts', opportunities:'Opportunities',
   accounts:'Accounts', goals:'Goals & Stats', weekly:'Weekly Report',
   queue:'My Queue', employee:'Employee Portal'
 };
@@ -808,7 +809,8 @@ function spNav(tab) {
 function spRender(tab) {
   const el = document.getElementById('spContent');
   el.innerHTML = '';
-  if      (tab === 'leads')         { spRenderCRM('leads'); setTimeout(processCrossSellAlerts, 0); }
+  if      (tab === 'home')          { spRenderHome(); setTimeout(processCrossSellAlerts, 0); }
+  else if (tab === 'leads')         spRenderCRM('leads');
   else if (tab === 'contacts')      spRenderCRM('contacts');
   else if (tab === 'opportunities') spRenderCRM('opportunities');
   else if (tab === 'accounts')      spRenderCRM('accounts');
@@ -971,14 +973,6 @@ function spRenderCRM(tab) {
     <button class="sp-btn" onclick="spOpenAllProForm()" style="background:#1A1D21;color:#fff;border-color:#1A1D21;font-size:13px;padding:10px 22px">🏗️ AllPro / Hood Lead</button>
     <span style="font-size:12px;color:var(--soft)">or pull from the <strong>Lead Pool</strong> below</span>
   </div>` : ''}
-  <!-- Appointments Calendar (leads tab only) -->
-  ${tab === 'leads' ? spRenderTodayAgenda() : ''}
-  <!-- My Accounts Today (leads tab only) -->
-  ${tab === 'leads' ? spRenderMyAccountsToday() : ''}
-  <!-- Plan My Day (leads tab only) -->
-  ${tab === 'leads' ? spPlanMyDay() : ''}
-  <!-- Needs Attention (leads tab only) -->
-  ${tab === 'leads' ? spNeedsAttention() : ''}
   <!-- Filter bar -->
   <div class="sp-filter-bar">
     <input class="sp-search" id="spCrmSearch" placeholder="Search by name, business, zip…" oninput="spRenderCRM('${tab}')" value="${escH(q)}">
@@ -1498,8 +1492,8 @@ function spBuildAgenda() {
       notes:      'Hot lead nearby — good time for a pop-in',
       phone:      r.phone || '',
       score:      r.score || 0,
-      color:      '#D97706',
-      bg:         '#FEF3C7',
+      color:      '#0369A1',
+      bg:         '#E0F2FE',
       label:      '⭐ Nearby Lead',
       action:     'survey',
       accountType: r.accountType || null,
@@ -1517,6 +1511,161 @@ function spBuildAgenda() {
 }
 
 // ── Render the agenda ────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════
+//  HOME — the rep's daily agenda, separated out from the Leads list.
+//  Plan My Day leads (it's the one action that sets up the whole day),
+//  then a quick pulse of what's happened recently, then the actual
+//  batched stop-by-stop route, account check-ins, and anything overdue.
+// ══════════════════════════════════════════════════════
+function spRenderHome() {
+  const el = document.getElementById('spContent');
+  const html = `
+  ${spRecentlyViewed()}
+  ${spPlanMyDay()}
+  ${spRenderTodaysPace()}
+  ${spRenderFollowUpsDueToday()}
+  ${spRenderRecentActivityFeed()}
+  ${spRenderTodayAgenda()}
+  ${spRenderMyAccountsToday()}
+  ${spRenderWeeksWins()}
+  ${spNeedsAttention()}`;
+  el.innerHTML = html;
+}
+
+// ── TODAY'S PACE ── Calls/visits made today vs. a per-day target derived
+// from the same weekly quota used on Goals & Stats, so the numbers agree
+// wherever a rep looks. Answers "am I on track right now" at a glance.
+function spRenderTodaysPace() {
+  const repName = _spRep.name;
+  const myLeads = crmLoad('leads').filter(r => (r.ownedBy||r.assignedRep||r.createdBy||'') === repName);
+  let quota = { callTarget:50, visitTarget:10 };
+  try {
+    const now = new Date();
+    const qKey = repName + '_q' + Math.ceil((now.getMonth()+1)/3);
+    const all = JSON.parse(localStorage.getItem('termac_goals_quotas')||'{}');
+    quota = { ...quota, ...(all[qKey]||{}) };
+  } catch(e) {}
+  const dayStart = new Date(); dayStart.setHours(0,0,0,0);
+  let callsToday = 0, visitsToday = 0, touchesToday = 0;
+  myLeads.forEach(r => (r.activityLog||[]).forEach(a => {
+    if ((a.ts||0) < dayStart.getTime()) return;
+    touchesToday++;
+    if (a.type === 'call' || (a.title||'').toLowerCase().includes('call')) callsToday++;
+    if (a.type === 'visit' || (a.title||'').toLowerCase().includes('visit')) visitsToday++;
+  }));
+  const dailyCallTarget = Math.max(1, Math.round((quota.callTarget||50) / 5));
+  const dailyVisitTarget = Math.max(1, Math.round((quota.visitTarget||10) / 5));
+  const pill = (val, target, label) => {
+    const pct = Math.min(100, Math.round((val/target)*100));
+    const color = pct >= 100 ? '#059669' : pct >= 50 ? '#D97706' : '#C8102E';
+    return `<div style="flex:1;min-width:110px">
+      <div style="display:flex;align-items:baseline;gap:4px"><span style="font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:22px;color:${color}">${val}</span><span style="font-size:12px;color:var(--soft)">/ ${target}</span></div>
+      <div style="font-size:11px;color:var(--soft);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">${label}</div>
+      <div style="height:5px;background:var(--bg);border-radius:3px;overflow:hidden"><div style="height:100%;width:${pct}%;background:${color}"></div></div>
+    </div>`;
+  };
+  return `<div class="sp-card" style="margin-bottom:14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div class="sp-card-title" style="margin-bottom:0">📊 Today's Pace</div>
+      <a href="#" onclick="spNav('goals');return false" style="font-size:11px;color:var(--blue);font-weight:700">Full Stats →</a>
+    </div>
+    <div style="display:flex;gap:18px;flex-wrap:wrap">
+      ${pill(callsToday, dailyCallTarget, 'Calls Today')}
+      ${pill(visitsToday, dailyVisitTarget, 'Visits Today')}
+      ${pill(touchesToday, dailyCallTarget+dailyVisitTarget, 'Total Touch Points')}
+    </div>
+  </div>`;
+}
+
+// ── FOLLOW-UPS DUE TODAY ── A literal checklist, not a vague reminder.
+// Pulls anything with a due date at or before today from every record
+// this rep owns, across every pool, sorted soonest first.
+function spRenderFollowUpsDueToday() {
+  const repName = _spRep.name;
+  const todayEnd = new Date(); todayEnd.setHours(23,59,59,999);
+  const pools = ['leads', 'contacts', 'accounts'];
+  let dueItems = [];
+  pools.forEach(p => crmLoad(p).forEach(r => {
+    const owner = r.ownedBy || r.assignedRep || r.createdBy || '';
+    if (owner && owner !== repName) return;
+    (r.opportunityFollowups||[]).forEach(f => {
+      if (f.done) return;
+      if ((f.dueAt||0) <= todayEnd.getTime()) {
+        dueItems.push({ recordId:r.id, tab:p, recordName:r.business||r.name||'Record', dueAt:f.dueAt, note:f.note||'' });
+      }
+    });
+  }));
+  dueItems.sort((a,b) => (a.dueAt||0) - (b.dueAt||0));
+  if (!dueItems.length) return '';
+  return `<div class="sp-card" style="margin-bottom:14px">
+    <div class="sp-card-title">✅ Follow-Ups Due Today (${dueItems.length})</div>
+    ${dueItems.map(f => {
+      const overdue = f.dueAt < Date.now() - 86400000;
+      return `<div onclick="spViewRecord('${f.recordId}','${f.tab}')" style="display:flex;justify-content:space-between;align-items:center;padding:9px 10px;background:${overdue?'#FEE2E2':'var(--bg)'};border-radius:7px;cursor:pointer;margin-bottom:6px">
+        <div>
+          <div style="font-size:13px;font-weight:700;color:var(--ink)">${escH(f.recordName)}</div>
+          ${f.note ? `<div style="font-size:11px;color:var(--soft)">${escH(f.note)}</div>` : ''}
+        </div>
+        <span style="font-size:11px;font-weight:700;color:${overdue?'#C8102E':'var(--soft)'}">${overdue?'Overdue':'Due today'}</span>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+// ── THIS WEEK'S WINS ── A confidence boost before the overdue list —
+// deals closed and revenue booked this week, pulled from real acceptedAt
+// timestamps on this rep's own accounts.
+function spRenderWeeksWins() {
+  const repName = _spRep.name;
+  const weekStart = new Date(); weekStart.setDate(weekStart.getDate() - weekStart.getDay()); weekStart.setHours(0,0,0,0);
+  const accts = crmLoad('accounts').filter(a => (a.ownedBy||a.assignedRep||'') === repName && a.acceptedAt >= weekStart.getTime());
+  const orders = (function(){ try { return JSON.parse(localStorage.getItem('termac_orders')||'[]'); } catch(e){ return []; } })()
+    .filter(o => o.rep === repName && o.createdTs >= weekStart.getTime());
+  const dealsClosed = accts.length;
+  const revenueThisWeek = accts.reduce((s,a) => s + (a.annualValue||0), 0) + orders.reduce((s,o) => s + (o.total||0), 0);
+  if (!dealsClosed && !orders.length) return '';
+  return `<div class="sp-card" style="margin-bottom:14px;background:linear-gradient(135deg,#ECFDF5,#F0FDF4);border:1px solid #A7F3D0">
+    <div class="sp-card-title">🏆 This Week's Wins</div>
+    <div style="display:flex;gap:24px;flex-wrap:wrap">
+      <div><div style="font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:26px;color:#059669">${dealsClosed}</div><div style="font-size:11px;color:var(--soft);text-transform:uppercase">Deals Closed</div></div>
+      <div><div style="font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:26px;color:#059669">${orders.length}</div><div style="font-size:11px;color:var(--soft);text-transform:uppercase">Orders Placed</div></div>
+      <div><div style="font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:26px;color:#059669">$${revenueThisWeek.toLocaleString()}</div><div style="font-size:11px;color:var(--soft);text-transform:uppercase">Revenue Booked</div></div>
+    </div>
+  </div>`;
+}
+
+// A quick pulse across everything this rep touched recently — calls
+// logged, visits, notes — pulled from every account/lead/contact they
+// own, not just whichever record happens to be open right now.
+function spRenderRecentActivityFeed() {
+  const pools = ['leads', 'contacts', 'accounts'];
+  let all = [];
+  pools.forEach(p => {
+    crmLoad(p).forEach(r => {
+      const owner = r.ownedBy || r.assignedRep || r.createdBy || '';
+      if (owner && owner !== _spRep.name) return;
+      (r.activityLog || []).forEach(a => all.push({ ...a, recordName: r.business || r.name || 'Record', recordId: r.id, tab: p }));
+    });
+  });
+  all.sort((a, b) => (b.ts||0) - (a.ts||0));
+  const recent = all.slice(0, 8);
+
+  if (!recent.length) {
+    return '<div class="sp-card" style="margin-bottom:14px;text-align:center;color:var(--soft);font-size:13px;padding:20px">No activity logged yet today.</div>';
+  }
+
+  return `<div class="sp-card" style="margin-bottom:14px">
+    <div class="sp-card-title">Recent Activity</div>
+    ${recent.map(a => `<div onclick="spViewRecord('${a.recordId}','${a.tab}')" style="display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);cursor:pointer">
+      <div style="font-size:16px;flex-shrink:0">${a.icon||'📌'}</div>
+      <div style="flex:1">
+        <div style="font-size:13px;font-weight:600;color:var(--ink)">${escH(a.recordName)} — ${escH(a.title||'Activity')}</div>
+        <div style="font-size:11px;color:var(--soft)">${a.ts ? new Date(a.ts).toLocaleString() : '—'}${a.who?' · '+escH(a.who):''}</div>
+      </div>
+    </div>`).join('')}
+  </div>`;
+}
+
 function spRenderTodayAgenda() {
   var agenda = spBuildAgenda();
   var todayLabel = new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'});
@@ -4629,7 +4778,7 @@ function spUpdateQueueBadge(count) {
 function spRenderEmployee() {
   const el = document.getElementById('spContent');
   el.innerHTML = `
-  <button class="sp-btn sp-btn-ghost" style="margin-bottom:18px" onclick="spNav('leads')">← Back to Sales Portal</button>
+  <button class="sp-btn sp-btn-ghost" style="margin-bottom:18px" onclick="spNav('home')">← Back to Sales Portal</button>
   <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:20px;margin-bottom:4px">Employee Portal</div>
   <div style="font-size:13px;color:var(--soft);margin-bottom:20px">Access HR, learning, and benefits.</div>
   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px">
