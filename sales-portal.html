@@ -684,6 +684,63 @@ body.rail-open .rail-overlay{display:block}
 // ══════════════════════════════════════════════════════
 function crmLoad(key){ try{ return JSON.parse(localStorage.getItem('termac_crm_'+key)||'[]'); }catch(e){return[];} }
 function crmSave(key,val){ try{ localStorage.setItem('termac_crm_'+key,JSON.stringify(val)); }catch(e){} }
+
+// ══════════════════════════════════════════════════════
+//  CHURN RISK SCORING — ported directly from termac-os.html's
+//  calcChurnScore/acctCalcHealth/churnLabel, same weights and thresholds.
+//  Not a reinvention — this is the same math already proven there.
+// ══════════════════════════════════════════════════════
+const HEALTH_WEIGHTS = {
+  services_current: 0.25,
+  invoices_paid:    0.20,
+  checkin_90days:   0.20,
+  no_deficiencies:  0.20,
+  positive_contact: 0.15,
+};
+function acctCalcHealth(r) {
+  const now = Date.now();
+  const day = 86400000;
+  const factors = {
+    services_current: r.nextDue ? (new Date(r.nextDue) > new Date() ? 1 : 0) : 0.5,
+    invoices_paid:    r.invoicePaid ? 1 : (r.invoicePaid === false ? 0 : 0.8),
+    checkin_90days:   r.lastCheckin ? ((now - r.lastCheckin) < 90*day ? 1 : 0) : 0,
+    no_deficiencies:  r.openDeficiencies ? 0 : 1,
+    positive_contact: r.lastActivity && r.lastActivity.positive ? 1 : (r.lastActivity ? 0.5 : 0),
+  };
+  let score = 0;
+  Object.entries(HEALTH_WEIGHTS).forEach(([k,w]) => { score += (factors[k]||0) * w; });
+  return { score: Math.round(score * 5), factors };
+}
+function calcChurnScore(r) {
+  const now = Date.now(), day = 86400000;
+  let risk = 0;
+  const health = typeof acctCalcHealth === 'function' ? acctCalcHealth(r).score : 3;
+  risk += (5 - health) * 1.4;
+  const lastContact = r.lastActivity?.ts || r.lastCheckin || r.created || now;
+  const daysSince = (now - lastContact) / day;
+  if (daysSince > 90) risk += 2;
+  else if (daysSince > 60) risk += 1.2;
+  else if (daysSince > 30) risk += 0.6;
+  if ((r.openDeficiencies || 0) > 0) risk += 0.8;
+  if ((r.services || []).length < 2) risk += 0.6;
+  if (r.nextDue) {
+    const daysToRenew = (new Date(r.nextDue).getTime() - now) / day;
+    if (daysToRenew < 0) risk += 1.5;
+    else if (daysToRenew < 30) risk += 0.8;
+    else if (daysToRenew < 60) risk += 0.4;
+  }
+  const logs = r.activityLog || [];
+  const negOutcomes = logs.filter(l => ['Not Interested','No Reply','No Answer','Bounced'].includes(l.outcome)).length;
+  const posOutcomes = logs.filter(l => ['Connected','Interested','Replied','Meeting Booked'].includes(l.outcome)).length;
+  if (negOutcomes > posOutcomes && logs.length > 2) risk += 0.8;
+  return Math.min(10, Math.max(1, Math.round(risk)));
+}
+function churnLabel(score) {
+  if (score >= 8) return { label:'🔴 High Risk', color:'#C8102E', bg:'#FEE2E2' };
+  if (score >= 6) return { label:'🟠 Elevated', color:'#D8690B', bg:'#FEF3C7' };
+  if (score >= 4) return { label:'🟡 Monitor', color:'#B88010', bg:'#FFFBEB' };
+  return { label:'🟢 Stable', color:'#1E7B3C', bg:'#D1FAE5' };
+}
 function escH(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
 // ══════════════════════════════════════════════════════
@@ -1519,6 +1576,7 @@ function spRenderHome() {
   ${spPlanMyDay()}
   ${spRenderTodaysPace()}
   ${spRenderTodayAgenda()}
+  ${spRenderAccountsToWatch()}
   ${spRenderFollowUpsDueToday()}
   ${spRenderRecentActivityFeed()}
   ${spRenderMyAccountsToday()}
@@ -1530,6 +1588,55 @@ function spRenderHome() {
   // instead of leaving "Select a Record" sitting empty all day.
   const leftPanel = document.getElementById('spLeftContent');
   if (leftPanel) leftPanel.innerHTML = spRenderIdlePanel();
+}
+
+// ── ACCOUNTS TO WATCH ── Combines Churn Risk (active accounts showing signs
+// they might leave) with Competitor Contract Countdown (leads whose current
+// vendor's contract is ending soon, making them worth prioritizing now
+// instead of later). Two different signals, same practical question for a
+// rep: which relationships need attention before something goes wrong or
+// a window closes.
+function spRenderAccountsToWatch() {
+  const repName = _spRep.name;
+  const now = Date.now(), day = 86400000;
+
+  const atRiskAccounts = crmLoad('accounts')
+    .filter(r => (r.ownedBy||r.assignedRep||'') === repName)
+    .map(r => ({ r, score: calcChurnScore(r) }))
+    .filter(x => x.score >= 6)
+    .sort((a,b) => b.score - a.score)
+    .slice(0, 4);
+
+  const competitorCountdowns = crmLoad('leads')
+    .filter(r => (r.ownedBy||r.assignedRep||r.createdBy||'') === repName && r.competitorContractEnd)
+    .map(r => ({ r, daysLeft: Math.floor((new Date(r.competitorContractEnd).getTime() - now) / day) }))
+    .filter(x => x.daysLeft >= 0 && x.daysLeft <= 60)
+    .sort((a,b) => a.daysLeft - b.daysLeft)
+    .slice(0, 4);
+
+  if (!atRiskAccounts.length && !competitorCountdowns.length) return '';
+
+  return `<div class="sp-card">
+    <div class="sp-card-title">👀 Accounts to Watch</div>
+    ${atRiskAccounts.map(x => {
+      const lbl = churnLabel(x.score);
+      return `<div onclick="spViewRecord('${x.r.id}','accounts')" style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);cursor:pointer">
+        <div style="width:36px;height:36px;border-radius:8px;background:${lbl.bg};display:flex;align-items:center;justify-content:center;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:15px;color:${lbl.color};flex-shrink:0">${x.score}</div>
+        <div style="flex:1">
+          <div style="font-size:13px;font-weight:700;color:var(--ink)">${escH(x.r.business||x.r.name||'Account')}</div>
+          <div style="font-size:11px;color:${lbl.color}">${lbl.label} — churn risk</div>
+        </div>
+      </div>`;
+    }).join('')}
+    ${competitorCountdowns.map(x => `
+      <div onclick="spViewRecord('${x.r.id}','leads')" style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);cursor:pointer">
+        <div style="width:36px;height:36px;border-radius:8px;background:#FEF3C7;display:flex;align-items:center;justify-content:center;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;color:#D97706;flex-shrink:0">${x.daysLeft}d</div>
+        <div style="flex:1">
+          <div style="font-size:13px;font-weight:700;color:var(--ink)">${escH(x.r.business||x.r.name||'Lead')}</div>
+          <div style="font-size:11px;color:#D97706">Contract with ${escH(x.r.competitor||'competitor')} ends in ${x.daysLeft}d</div>
+        </div>
+      </div>`).join('')}
+  </div>`;
 }
 
 // ── LEFT RAIL IDLE PANEL ── Shown on the home agenda whenever no record
@@ -3353,7 +3460,8 @@ function spBuildRepForm(r) {
 
     // Competitor intel
     '<div><label>Current Service Provider</label><input id="spf_competitor" value="' + v('competitor') + '" placeholder="Who are they with now?"></div>' +
-    '<div><label>Contract Expiration</label><input id="spf_contract_exp" value="' + v('contractExp') + '" placeholder="e.g. Jan 2027 or unknown"></div>' +
+    '<div><label>Contract Expiration <span style="font-weight:400;text-transform:none;font-size:10px">(loose notes — e.g. "early 2027")</span></label><input id="spf_contract_exp" value="' + v('contractExp') + '" placeholder="e.g. Jan 2027 or unknown"></div>' +
+    '<div><label>Contract End Date <span style="font-weight:400;text-transform:none;font-size:10px">(exact date, if known — drives the countdown alert)</span></label><input type="date" id="spf_contract_end_date" value="' + v('competitorContractEnd') + '"></div>' +
 
     // Status + preferred window
     '<div><label>Status</label><select id="spf_status">' + statusOpts + '</select></div>' +
@@ -3481,6 +3589,7 @@ function spSaveRecord() {
       architectEmail: document.getElementById('spf_architect_email')?.value.trim() || '',
       competitor:     document.getElementById('spf_competitor')?.value.trim() || '',
       contractExp:    document.getElementById('spf_contract_exp')?.value.trim() || '',
+      competitorContractEnd: document.getElementById('spf_contract_end_date')?.value || '',
       serviceWindow:  document.getElementById('spf_service_window')?.value || '',
       bizType:        bizTypeKey,
       pricingMode:    bizTypeCfg.mode,      // persists to survey
