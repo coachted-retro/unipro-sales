@@ -1038,6 +1038,22 @@ function renderDaySchedule(date){
 }
 
 // ── CALL LIST ──────────────────────────────────────────────────
+// Last attempt of any kind (not just successful bookings) — this is what
+// was missing. A no-answer or callback-requested call used to vanish
+// without a trace, so an account could go months with no follow-up simply
+// because nothing recorded that a call was ever tried.
+function daysSinceLastAttempt(accountId){
+  var attempts = CALL_LOG.filter(function(c){ return c.accountId===accountId; });
+  if (!attempts.length) return null;
+  var lastTs = Math.max.apply(null, attempts.map(function(c){ return c.ts||0; }));
+  return Math.floor((Date.now()-lastTs)/86400000);
+}
+function lastAttemptResult(accountId){
+  var attempts = CALL_LOG.filter(function(c){ return c.accountId===accountId; })
+    .sort(function(a,b){ return (b.ts||0)-(a.ts||0); });
+  return attempts.length ? attempts[0].result : null;
+}
+
 function buildCallData(){
   var today = new Date();
   var items = [];
@@ -1069,13 +1085,28 @@ function buildCallData(){
     if(estVal > 500) score += 10;
     if(estVal > 1500) score += 20;
 
-    items.push({a:a, score:score, type:type, tags:tags, estVal:estVal, alreadyScheduled:alreadyScheduled, daysSince:daysSince});
+    // Follow-up cadence — an account already called once but not booked
+    // shouldn't just disappear until the next full review cycle. Every 7
+    // days without a successful booking bumps it back up, so it keeps
+    // resurfacing on its own instead of relying on someone remembering.
+    var lastAttemptDays = daysSinceLastAttempt(a.id);
+    var lastResult = lastAttemptResult(a.id);
+    if (lastAttemptDays !== null && lastResult !== 'scheduled' && !alreadyScheduled) {
+      if (lastAttemptDays >= 7) {
+        score += 50;
+        tags.push({t:'Follow-Up Due ('+lastAttemptDays+'d)', c:'red'});
+      } else {
+        tags.push({t:'Contacted '+lastAttemptDays+'d ago', c:'blue'});
+      }
+    }
+
+    items.push({a:a, score:score, type:type, tags:tags, estVal:estVal, alreadyScheduled:alreadyScheduled, daysSince:daysSince, lastAttemptDays:lastAttemptDays, lastResult:lastResult});
   });
 
   // Add open leads
   DB.leads.filter(function(l){ return l.stage!=='won'&&l.stage!=='lost'; }).forEach(function(l){
     var acc = DB.accounts.find(function(a){ return a.id===l.accountId; }) || {name:l.name||'Unknown Lead'};
-    items.push({a:{...acc, _lead:l}, score:40+(Number(l.value)||0)/100, type:'lead', tags:[{t:'Lead',c:'blue'}], estVal:Number(l.value)||0, alreadyScheduled:false, daysSince:999});
+    items.push({a:{...acc, _lead:l}, score:40+(Number(l.value)||0)/100, type:'lead', tags:[{t:'Lead',c:'blue'}], estVal:Number(l.value)||0, alreadyScheduled:false, daysSince:999, lastAttemptDays:null, lastResult:null});
   });
 
   return items.sort(function(a,b){ return b.score-a.score; });
@@ -1123,10 +1154,46 @@ function renderCallList(search){
       '<div class="card-meta">'+esc(item.a.addr||'No address')+'</div>' +
       '<div class="card-meta">'+daysLabel+' · Est. $'+item.estVal+'</div>' +
       '<div class="card-badges">'+tagHtml+'</div>' +
+      (item.alreadyScheduled ? '' : '<button onclick="event.stopPropagation();openLogAttemptModal(\''+item.a.id+'\',\''+esc(item.a.name||'')+'\')" style="margin-top:6px;width:100%;background:none;border:1.5px dashed var(--line);border-radius:6px;padding:6px;font-size:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;color:var(--soft);cursor:pointer">📞 Log Call Attempt</button>') +
     '</div>';
   }).join('');
 
   updateBadges(items);
+}
+
+// ── LOG CALL ATTEMPT — records what happened even when it doesn't end in
+// a booking, so the follow-up cadence above has something to work from
+// instead of accounts silently going quiet for months. ──
+var _logAttemptAcctId = null;
+function openLogAttemptModal(accountId, accountName){
+  _logAttemptAcctId = accountId;
+  var el = document.getElementById('logAttemptModal');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'logAttemptModal';
+    el.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9000;display:flex;align-items:center;justify-content:center';
+    document.body.appendChild(el);
+  }
+  el.innerHTML = '<div style="background:#fff;border-radius:12px;padding:20px;width:min(360px,92vw);box-shadow:0 20px 50px rgba(0,0,0,.3)">' +
+    '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:15px;margin-bottom:4px">📞 Log Call — '+esc(accountName)+'</div>' +
+    '<div style="font-size:12px;color:var(--soft);margin-bottom:14px">What happened on this call?</div>' +
+    '<div style="display:flex;flex-direction:column;gap:8px">' +
+      ['No Answer','Left Voicemail','Spoke — Callback Requested','Declined','Wrong Number'].map(function(r){
+        return '<button onclick="logCallAttempt(\''+r+'\')" style="text-align:left;background:#F9FAFB;border:1.5px solid var(--line);border-radius:7px;padding:10px 12px;font-size:13px;cursor:pointer" onmouseover="this.style.borderColor=\'var(--red)\'" onmouseout="this.style.borderColor=\'var(--line)\'">'+r+'</button>';
+      }).join('') +
+    '</div>' +
+    '<button onclick="document.getElementById(\'logAttemptModal\').remove()" style="margin-top:14px;width:100%;background:none;border:none;color:var(--soft);font-size:12px;cursor:pointer">Cancel</button>' +
+  '</div>';
+  el.style.display = 'flex';
+}
+function logCallAttempt(result){
+  if (!_logAttemptAcctId) return;
+  CALL_LOG.push({ date: new Date().toISOString().slice(0,10), accountId: _logAttemptAcctId, result: result, ts: Date.now() });
+  try{ localStorage.setItem('unipro_calls', JSON.stringify(CALL_LOG)); }catch(e){}
+  var el = document.getElementById('logAttemptModal');
+  if (el) el.remove();
+  _logAttemptAcctId = null;
+  renderCallList();
 }
 
 function updateBadges(items){
