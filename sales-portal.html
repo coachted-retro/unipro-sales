@@ -2950,8 +2950,7 @@ function spOpenDetail(r, tab) {
       <select onchange="spSetStage('${r.id}','${tab}',this.value,this)" style="padding:8px 12px;border:1.5px solid #059669;border-radius:7px;font-size:12px;font-family:'Barlow Condensed',sans-serif;font-weight:700;background:#059669;color:#fff;cursor:pointer;height:34px">
         ${spStageOptions(r, tab)}
       </select>
-      ${isAccount ? `<button onclick="spVisitStartNow('${r.id}','${tab}')" style="padding:8px 14px;background:#059669;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">🚀 Start Visit</button>
-      <button onclick="spCheckInAndStartVisit('${r.id}','${tab}')" style="padding:8px 14px;background:#D8690B;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">📍 I'm Here</button>` : ''}
+      ${isAccount ? `<button onclick="spCheckInAndStartVisit('${r.id}','${tab}')" style="padding:8px 14px;background:#D8690B;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">📍 I'm Here — Start Visit</button>` : ''}
       <button onclick="spOpenApptModal('${r.id}','${tab}','${apptDefaultMode}')" style="padding:8px 14px;background:#1B5FA8;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">📅 Set Appointment</button>
       <button onclick="spEditRecord('${r.id}','${tab}')" style="padding:8px 14px;background:#fff;color:var(--ink);border:1.5px solid var(--line);border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">Edit Record</button>
       ${isAccount ? `<button onclick="spOpenMarkLostModal('${r.id}','${tab}')" style="padding:8px 14px;background:#fff;color:#991B1B;border:1.5px solid #991B1B;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">🚫 Mark Lost</button>` : ''}
@@ -3841,9 +3840,18 @@ function spSaveRecord() {
     rec = {
       id: _spEditId || ('SP' + String(now).slice(-6)),
       name: name || business,
+      // Canonical field names going forward — contact name/phone/email were
+      // previously only saved under the generic name/phone/email keys,
+      // which is ambiguous (name could mean business or contact) and
+      // required every reader to guess or fall back between two names.
+      // Both are written for now so nothing that already reads the old
+      // keys directly breaks; new code should read the canonical ones.
+      contactName:  name || business,
       business,
       phone:          document.getElementById('spf_phone')?.value.trim() || '',
+      contactPhone:   document.getElementById('spf_phone')?.value.trim() || '',
       email:          document.getElementById('spf_email')?.value.trim() || '',
+      contactEmail:   document.getElementById('spf_email')?.value.trim() || '',
       address, zip, city, state,
       parentCompany:  document.getElementById('spf_parent')?.value.trim() || '',
       billingAddress: document.getElementById('spf_billing_addr')?.value.trim() || '',
@@ -3877,7 +3885,7 @@ function spSaveRecord() {
       notes:          document.getElementById('spf_notes')?.value.trim() || '',
       siteNotes:      document.getElementById('spf_siteNotes')?.value.trim() || '',
       formType:       'rep',
-      lifecycleStage: _spTab === 'contacts' ? 'contact' : _spTab === 'opportunities' ? 'opportunity' : _spTab === 'accounts' ? 'active' : 'lead',
+      lifecycleStage: _spTab === 'contacts' ? 'contacted' : _spTab === 'opportunities' ? 'opportunity' : _spTab === 'accounts' ? 'active' : 'lead',
       assignedRep:    _spRep.name,
       ownedBy:        _spRep.name,
       createdBy:      _spEditId ? undefined : _spRep.name,
@@ -8202,7 +8210,7 @@ function svStep2(body, footer) {
       📋 <strong>Step 1 of the visit:</strong> Log what the customer currently has on hand. This becomes the baseline before placing a new order. You can leave quantities at 0 if not applicable. Fractions are fine — half a bucket is 0.5.
     </div>
     <button onclick="svOpenCameraForVisit()" style="width:100%;margin-bottom:14px;padding:11px;background:#1A1D21;color:#fff;border:none;border-radius:8px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px">📷 Scan Shelf with AI Camera</button>
-    <div style="display:grid;grid-template-columns:1fr 1fr 80px 36px;gap:8px;margin-bottom:6px">
+    <div style="display:grid;grid-template-columns:1fr 1fr 118px 36px;gap:8px;margin-bottom:6px">
       <div style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#9CA3AF">Product</div>
       <div style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#9CA3AF">Size / Unit</div>
       <div style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#9CA3AF">On Hand</div>
@@ -8224,19 +8232,34 @@ function svRenderInvRows() {
   const container = document.getElementById('svInvRows');
   if (!container) return;
   const products = svGetProducts();
+  const lastInv = svGetLastInventoryMap(_svAcctId);
   container.innerHTML = _svInventory.map((row, i) => {
     const prodOpts = products.map(p => `<option value="${p.id}" ${p.id===row.productId?'selected':''}>${svEscH(p.name)}</option>`).join('');
     const selProd = products.find(p => p.id === row.productId);
     const sizeOpts = selProd ? selProd.sizes.map(s => `<option value="${s.unit}" ${s.unit===row.size?'selected':''}>${svEscH(s.unit)}</option>`).join('') : '<option>Select product first</option>';
-    return `<div style="display:grid;grid-template-columns:1fr 1fr 80px 36px;gap:8px;margin-bottom:6px;align-items:center">
+    const lastEntry = row.productId ? lastInv[row.productId] : null;
+    return `<div style="display:grid;grid-template-columns:1fr 1fr 118px 36px;gap:8px;margin-bottom:4px;align-items:center">
       <select onchange="svInvProdChange(${i},this.value)" style="padding:6px 8px;border:1.5px solid #D7DBE0;border-radius:6px;font-size:12px;font-family:inherit;outline:none">
         <option value="">— Product —</option>${prodOpts}
       </select>
       <select id="svInvSize_${i}" onchange="_svInventory[${i}].size=this.value" style="padding:6px 8px;border:1.5px solid #D7DBE0;border-radius:6px;font-size:12px;font-family:inherit;outline:none">${sizeOpts}</select>
-      <input type="number" min="0" step="0.25" value="${row.onHandQty||0}" onchange="_svInventory[${i}].onHandQty=parseFloat(this.value)||0" style="padding:6px 8px;border:1.5px solid #D7DBE0;border-radius:6px;font-size:13px;text-align:center;outline:none">
+      <div style="display:flex;align-items:center;justify-content:center;gap:3px">
+        <button onclick="svAdjustInvQty(${i},-0.25)" style="width:32px;height:32px;flex-shrink:0;border-radius:7px;border:1.5px solid #D7DBE0;background:#F9FAFB;font-size:17px;font-weight:800;color:#374151;cursor:pointer">−</button>
+        <div id="svInvQtyVal_${i}" style="min-width:34px;text-align:center;font-size:14px;font-weight:800;color:var(--ink)">${row.onHandQty||0}</div>
+        <button onclick="svAdjustInvQty(${i},0.25)" style="width:32px;height:32px;flex-shrink:0;border-radius:7px;border:1.5px solid #D7DBE0;background:#F9FAFB;font-size:17px;font-weight:800;color:#374151;cursor:pointer">+</button>
+      </div>
       <button onclick="svRemoveInvRow(${i})" style="background:#FEE2E2;color:#991B1B;border:none;border-radius:6px;padding:6px;cursor:pointer;font-size:11px">✕</button>
-    </div>${row.unmatched ? '<div style="font-size:10px;color:#D97706;margin:-4px 0 6px 2px">📷 AI-scanned: "'+svEscH(row.aiName||'')+'" — not in catalog, confirm product manually</div>' : ''}`;
+    </div>
+    ${row.unmatched ? '<div style="font-size:10px;color:#D97706;margin:-2px 0 8px 2px">📷 AI-scanned: "'+svEscH(row.aiName||'')+'" — not in catalog, confirm product manually</div>' : ''}
+    ${lastEntry ? '<div style="font-size:10px;color:#6B7280;margin:-2px 0 8px 2px">🕐 Last visit ('+new Date(lastEntry.ts).toLocaleDateString()+'): '+lastEntry.qty+'</div>' : (row.productId ? '<div style="font-size:10px;color:#9CA3AF;margin:-2px 0 8px 2px">First time logging this product</div>' : '')}`;
   }).join('');
+}
+function svAdjustInvQty(i, delta) {
+  const cur = _svInventory[i].onHandQty || 0;
+  const next = Math.max(0, Math.round((cur + delta) * 100) / 100);
+  _svInventory[i].onHandQty = next;
+  const el = document.getElementById('svInvQtyVal_' + i);
+  if (el) el.textContent = next;
 }
 
 function svInvProdChange(i, prodId) {
@@ -8342,6 +8365,28 @@ function svGetOrderHistoryMap(acctId) {
   return map;
 }
 
+// Last on-hand quantity logged per product for this account, so a rep
+// counting inventory has an immediate point of comparison ("was full last
+// time, is it still full") instead of no reference at all. Reads from the
+// same inventorySnapshot already saved on every completed visit order —
+// no new data model needed, just surfacing what's already there.
+function svGetLastInventoryMap(acctId) {
+  const map = {};
+  if (!acctId) return map;
+  try {
+    const orders = JSON.parse(localStorage.getItem('termac_orders')||'[]')
+      .filter(o => o.accountId === acctId && Array.isArray(o.inventorySnapshot) && o.inventorySnapshot.length)
+      .sort((a,b) => (b.createdTs||0) - (a.createdTs||0));
+    if (!orders.length) return map;
+    // Most recent visit only — earlier ones would just be overwritten anyway
+    orders[0].inventorySnapshot.forEach(row => {
+      if (!row.productId) return;
+      map[row.productId] = { qty: row.onHandQty||0, ts: orders[0].createdTs||0 };
+    });
+  } catch(e) {}
+  return map;
+}
+
 /* ---- Area recommendations: products other nearby accounts order that
    this account has never ordered. City-matched first, falls back to the
    whole order pool if there's not enough local data yet. ---- */
@@ -8386,7 +8431,7 @@ function svStep3(body, footer) {
     <div style="background:#DBEAFE;border:1px solid #93C5FD;border-radius:8px;padding:10px 14px;font-size:12px;color:#1E40AF;margin-bottom:14px">
       📦 <strong>Step 2 — Build the order.</strong> Lines pre-filled from inventory check. Adjust quantities, add items, or remove lines. Customer will sign off in the next step.
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr 80px 80px 36px;gap:8px;margin-bottom:6px;align-items:center">
+    <div style="display:grid;grid-template-columns:1fr 1fr 112px 80px 36px;gap:8px;margin-bottom:6px;align-items:center">
       <div style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#9CA3AF">Product</div>
       <div style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#9CA3AF">Size</div>
       <div style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#9CA3AF;text-align:center">Qty</div>
@@ -8516,17 +8561,27 @@ function svRenderOrderRows() {
     }).join('');
     const selProd = products.find(p => p.id === row.productId);
     const sizeOpts = selProd ? selProd.sizes.map(s => `<option value="${s.unit}" data-price="${s.price}" ${s.unit===row.size?'selected':''}>${svEscH(s.unit)} — $${s.price.toFixed(2)}</option>`).join('') : '<option>Select product first</option>';
-    return `<div style="display:grid;grid-template-columns:1fr 1fr 80px 80px 36px;gap:8px;margin-bottom:6px;align-items:center">
+    return `<div style="display:grid;grid-template-columns:1fr 1fr 112px 80px 36px;gap:8px;margin-bottom:6px;align-items:center">
       <select onchange="svOrderProdChange(${i},this.value)" style="padding:6px 8px;border:1.5px solid #D7DBE0;border-radius:6px;font-size:12px;font-family:inherit;outline:none">
         <option value="">— Product —</option>${prodOpts}
       </select>
       <select id="svOrdSize_${i}" onchange="svOrderSizeChange(${i})" style="padding:6px 8px;border:1.5px solid #D7DBE0;border-radius:6px;font-size:12px;font-family:inherit;outline:none">${sizeOpts}</select>
-      <input type="number" min="1" value="${row.qty||1}" onchange="svOrderQtyChange(${i},this.value)" style="padding:6px 8px;border:1.5px solid #D7DBE0;border-radius:6px;font-size:13px;text-align:center;outline:none">
+      <div style="display:flex;align-items:center;justify-content:center;gap:3px">
+        <button onclick="svAdjustOrderQty(${i},-1)" style="width:32px;height:32px;flex-shrink:0;border-radius:7px;border:1.5px solid #D7DBE0;background:#F9FAFB;font-size:17px;font-weight:800;color:#374151;cursor:pointer">−</button>
+        <div id="svOrdQtyVal_${i}" style="min-width:26px;text-align:center;font-size:14px;font-weight:800;color:var(--ink)">${row.qty||1}</div>
+        <button onclick="svAdjustOrderQty(${i},1)" style="width:32px;height:32px;flex-shrink:0;border-radius:7px;border:1.5px solid #D7DBE0;background:#F9FAFB;font-size:17px;font-weight:800;color:#374151;cursor:pointer">+</button>
+      </div>
       <div style="text-align:right;font-weight:700;font-size:13px;color:#1A1D21" id="svOrdLine_${i}">$${(row.lineTotal||0).toFixed(2)}</div>
       <button onclick="svRemoveOrderRow(${i})" style="background:#FEE2E2;color:#991B1B;border:none;border-radius:6px;padding:6px;cursor:pointer;font-size:11px">✕</button>
     </div>`;
   }).join('');
   svUpdateOrderTotal();
+}
+function svAdjustOrderQty(i, delta) {
+  const next = Math.max(1, (_svOrderLines[i].qty || 1) + delta);
+  svOrderQtyChange(i, next);
+  const el = document.getElementById('svOrdQtyVal_' + i);
+  if (el) el.textContent = next;
 }
 
 function svOrderProdChange(i, prodId) {
