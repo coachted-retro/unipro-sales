@@ -7141,19 +7141,43 @@ function spGlobalSearch(q) {
   const results = [];
   const seen = new Set();
 
-  const typeMap = {
-    lead:'leads', contacted:'leads', qualified:'leads', disqualified:'leads',
-    contact:'contacts', appointment:'contacts', site_visit:'contacts',
-    opportunity:'opportunities', survey:'opportunities', survey_done:'opportunities',
-    proposal:'opportunities', accepted:'accounts', lost:'opportunities',
-    close:'accounts', onboarding:'accounts', active:'accounts', renewal:'accounts'
-  };
+  // Route every record through the same normalized-stage model the rest of
+  // the app already uses (spNormalizeStage + SP_TAB_STAGES), instead of a
+  // separate, older mapping that predated the stage taxonomy fix and
+  // disagreed with it — e.g. this used to always file "disqualified" under
+  // Leads regardless of which stage it was actually disqualified from, and
+  // treated "lost" as its own destination instead of the same disqualified
+  // path everything else now uses.
+  function spSearchTab(stage) {
+    const normalized = spNormalizeStage(stage);
+    for (const tab in SP_TAB_STAGES) {
+      if (SP_TAB_STAGES[tab].includes(normalized)) return tab;
+    }
+    return 'leads';
+  }
   const typeBadge = {
     leads:       {label:'Lead',        bg:'#EBF2FD', color:'#1B5FA8'},
     contacts:    {label:'Contact',     bg:'#F3E8FF', color:'#6B21A8'},
     opportunities:{label:'Opportunity',bg:'#FEF3C7', color:'#D97706'},
     accounts:    {label:'Account',     bg:'#DCFCE7', color:'#166534'},
   };
+
+  // Search accounts FIRST. A converted Opportunity leaves a vestigial
+  // leftover copy behind in the leads pool (lifecycleStage 'accepted',
+  // same id as the real account — see spFindRecordAnyPool's comment on
+  // this same vestigial-copy issue). Searching leads first meant that
+  // stale copy won the dedup race below, so a converted account showed
+  // up in search mislabeled as an outdated Lead while the real, live
+  // account record got silently hidden. Accounts first means the real
+  // record wins instead.
+  crmLoad('accounts').forEach(r => {
+    if (seen.has(r.id)) return;
+    const blob = [r.name, r.business, r.phone, r.address, r.email, r.city, r.contact]
+      .filter(Boolean).join(' ').toLowerCase();
+    if (!blob.includes(term)) return;
+    seen.add(r.id);
+    results.push({ ...r, _tab: 'accounts', _badge: typeBadge.accounts });
+  });
 
   // Search unified leads pool (all pipeline stages)
   const allLeads = crmLoad('leads');
@@ -7164,18 +7188,8 @@ function spGlobalSearch(q) {
     if (!blob.includes(term)) return;
     seen.add(r.id);
     const stage = r.lifecycleStage || 'lead';
-    const tabKey = typeMap[stage] || 'leads';
+    const tabKey = spSearchTab(stage);
     results.push({ ...r, _tab: tabKey, _badge: typeBadge[tabKey] });
-  });
-
-  // Also search legacy accounts pool
-  crmLoad('accounts').forEach(r => {
-    if (seen.has(r.id)) return;
-    const blob = [r.name, r.business, r.phone, r.address, r.email, r.city, r.contact]
-      .filter(Boolean).join(' ').toLowerCase();
-    if (!blob.includes(term)) return;
-    seen.add(r.id);
-    results.push({ ...r, _tab: 'accounts', _badge: typeBadge.accounts });
   });
 
   // Render overlay
