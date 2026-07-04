@@ -2153,7 +2153,99 @@ function spSetStopAccountType(stopId, accountId) {
 }
 
 // ── GENERATE / REFRESH ──────────────────────────────────────────────────────
-function spOpenRouteMap(){ window.open('termac-os.html','_blank'); }
+// ══════════════════════════════════════════════════════
+//  ROUTE MAP — ported faithfully from termac-os.html's routeTotalDist/
+//  buildRouteMapUrl/buildRouteSummaryBar. Same ZIP-distance math (a
+//  simplified same-ZIP/prefix-match heuristic, NOT real driving distance),
+//  so estimates stay consistent between the Manager Portal and here rather
+//  than showing two different numbers for the same math. Upgrading this to
+//  true driving-distance via ORS's routing engine is a separate, bigger
+//  task — it needs changes on the Cloudflare Worker side (ors-route-proxy
+//  currently only does geocoding), not just this file.
+// ══════════════════════════════════════════════════════
+function spExtractZip(address) {
+  const m = (address || '').match(/\b(\d{5})\b/);
+  return m ? m[1] : null;
+}
+function spZipDistance(zip1, zip2) {
+  if (!zip1 || !zip2) return 20;
+  if (zip1 === zip2) return 0;
+  if (zip1.slice(0,4) === zip2.slice(0,4)) return 1;
+  if (zip1.slice(0,3) === zip2.slice(0,3)) return 3;
+  if (zip1.slice(0,2) === zip2.slice(0,2)) return 8;
+  return 20;
+}
+function spRouteTotalDist(anchorAddress, stops) {
+  if (!stops.length) return 0;
+  const anchorZip = spExtractZip(anchorAddress) || '';
+  let total = 0, prev = anchorZip;
+  stops.forEach(o => {
+    const z = spExtractZip(o.address) || prev;
+    total += spZipDistance(prev, z);
+    prev = z;
+  });
+  return total;
+}
+function spBuildRouteMapUrl(anchorAddress, orderedStops) {
+  const stops = [anchorAddress, ...orderedStops.slice(0,9).map(o => o.address || o.title)].filter(Boolean);
+  return 'https://www.google.com/maps/dir/' + stops.map(s => encodeURIComponent(s)).join('/');
+}
+function spBuildRouteSummaryBar(anchorAddress, originalStops, optimizedStops, mapUrl) {
+  const origDist  = spRouteTotalDist(anchorAddress, originalStops);
+  const optDist   = spRouteTotalDist(anchorAddress, optimizedStops);
+  const savedMi   = Math.max(0, origDist - optDist);
+  const savedMin  = Math.round(savedMi * 3.5);
+  const estMiles  = optDist;
+  const estTime   = Math.round(optDist * 6 + optimizedStops.length * 20);
+  const savingsHtml = savedMi > 0
+    ? `<span style="background:#D1FAE5;color:#065F46;border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700">✂️ Saves ~${savedMi} mi · ~${savedMin} min vs. unoptimized</span>`
+    : `<span style="background:#F3F4F6;color:var(--soft);border-radius:4px;padding:2px 8px;font-size:10px">Route already near-optimal</span>`;
+  return `
+    <div style="background:#1A1D21;border-radius:10px;padding:12px 16px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center">
+        <div style="text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:20px;color:#fff">${optimizedStops.length}</div><div style="font-size:9px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.06em">Stops</div></div>
+        <div style="width:1px;height:30px;background:rgba(255,255,255,.1)"></div>
+        <div style="text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:20px;color:#fff">~${estMiles}</div><div style="font-size:9px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.06em">Est. Miles</div></div>
+        <div style="width:1px;height:30px;background:rgba(255,255,255,.1)"></div>
+        <div style="text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:20px;color:#fff">~${estTime}m</div><div style="font-size:9px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.06em">Est. Time</div></div>
+        <div>${savingsHtml}</div>
+      </div>
+      <a href="${mapUrl}" target="_blank" style="background:#1B5FA8;color:#fff;border-radius:8px;padding:9px 16px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;text-decoration:none;white-space:nowrap;flex-shrink:0">🗺 Open Full Route in Maps</a>
+    </div>`;
+}
+function spOpenRouteMap() {
+  const stops = spBuildAgenda().filter(s => s.address);
+  if (!stops.length) {
+    spToast('No addresses on today\u2019s agenda yet to route.');
+    return;
+  }
+  const anchor = stops[0].address;
+  const rest = stops.slice(1);
+  const mapUrl = spBuildRouteMapUrl(anchor, rest);
+  const summaryHtml = spBuildRouteSummaryBar(anchor, rest, rest, mapUrl);
+
+  var old = document.getElementById('spRouteMapModal');
+  if (old) old.remove();
+  var wrap = document.createElement('div');
+  wrap.id = 'spRouteMapModal';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9500;display:flex;align-items:center;justify-content:center;padding:16px';
+  wrap.innerHTML = '<div style="background:#fff;border-radius:14px;width:min(560px,96vw);max-height:85vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.3)">'
+    + '<div style="background:#1A1D21;padding:16px 20px;display:flex;align-items:center;justify-content:space-between">'
+      + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:16px;color:#fff;letter-spacing:.04em">🗺 Today\u2019s Route</div>'
+      + '<button onclick="document.getElementById(\'spRouteMapModal\').remove()" style="background:none;border:none;color:rgba(255,255,255,.7);font-size:20px;cursor:pointer;line-height:1">✕</button>'
+    + '</div>'
+    + '<div style="padding:18px">'
+      + summaryHtml
+      + '<div style="font-size:11px;color:var(--soft);margin-bottom:10px">Starting from ' + escH(stops[0].title||'your first stop') + ':</div>'
+      + stops.map((s, i) => '<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)">'
+          + '<div style="width:24px;height:24px;border-radius:50%;background:var(--red);color:#fff;display:flex;align-items:center;justify-content:center;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;flex-shrink:0">' + (i+1) + '</div>'
+          + '<div style="flex:1"><div style="font-size:13px;font-weight:700;color:var(--ink)">' + escH(s.title||'Stop') + '</div><div style="font-size:11px;color:var(--soft)">' + escH(s.address||'') + '</div></div>'
+        + '</div>').join('')
+      + '<div style="font-size:10px;color:var(--soft);margin-top:12px">Estimates are ZIP-based, not live driving distance — treat as a rough guide, not turn-by-turn accuracy.</div>'
+    + '</div>'
+  + '</div>';
+  document.body.appendChild(wrap);
+}
 
 function spGenerateDay() {
   spNav('leads');
