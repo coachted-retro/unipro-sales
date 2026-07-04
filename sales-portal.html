@@ -791,6 +791,13 @@ function spNav(tab) {
   if (titleEl) titleEl.textContent = SP_TITLES[tab] || tab;
   // Clear search
   spClearSearch();
+  // The left intel panel belongs to a specific record, not the general
+  // list view. It used to only ever get shown and never hidden again, so
+  // it kept displaying whatever was last clicked no matter which tab you
+  // navigated to afterward. Hide it here; spLoadIntelPanel shows it again
+  // the moment an actual record is opened.
+  const intelCol = document.getElementById('spIntelCol');
+  if (intelCol) intelCol.classList.add('sp-intel-hidden');
   // Render
   spRender(tab);
 }
@@ -825,53 +832,77 @@ function spSvcColor(s){
 // ══════════════════════════════════════════════════════
 //  STAGE LABELS
 // ══════════════════════════════════════════════════════
+// ── STAGE MIGRATION ──────────────────────────────────────────────────────
+// Old stage names get folded into the clean 4-stage progression on read,
+// so records saved under the previous taxonomy don't vanish or misbehave.
+// Nothing is rewritten in storage — this is applied wherever a stage is
+// read for tab-bucketing, the dropdown, or the pill label.
+const SP_STAGE_MIGRATION = {
+  qualified: 'opportunity',
+  contact: 'contacted',
+  appointment: 'contacted',
+  site_visit: 'opportunity',
+  survey: 'opportunity',
+  survey_done: 'opportunity',
+  proposal: 'opportunity',
+  lost: 'disqualified',
+  close: 'active',
+  first_service: 'onboarding',
+};
+function spNormalizeStage(stage) {
+  return SP_STAGE_MIGRATION[stage] || stage || 'lead';
+}
+
 const SP_STAGES = {
-  lead:         {label:'New Lead',         color:'#1B5FA8', bg:'#EBF2FD'},
-  contacted:    {label:'Contacted',        color:'#1E40AF', bg:'#DBEAFE'},
-  qualified:    {label:'Qualified',        color:'#065F46', bg:'#ECFDF5'},
-  disqualified: {label:'Disqualified',     color:'#C8102E', bg:'#FEE9EC'},
-  contact:      {label:'Contact',          color:'#6B21A8', bg:'#F3E8FF'},
-  appointment:  {label:'Appointment Set',  color:'#4C1D95', bg:'#EDE9FE'},
-  site_visit:   {label:'Site Visit',       color:'#92400E', bg:'#FEF3C7'},
-  opportunity:  {label:'Opportunity',      color:'#D97706', bg:'#FEF3C7'},
-  survey:       {label:'Survey Pending',   color:'#C2410C', bg:'#FFF7ED'},
-  survey_done:  {label:'Survey Complete',  color:'#059669', bg:'#ECFDF5'},
-  proposal:     {label:'Proposal Sent',    color:'#2563EB', bg:'#EFF6FF'},
-  accepted:     {label:'Accepted',         color:'#166534', bg:'#DCFCE7'},
-  lost:         {label:'Lost',             color:'#9F1239', bg:'#FEE9EC'},
-  close:        {label:'Closed Won',       color:'#166534', bg:'#DCFCE7'},
-  active:       {label:'Active',           color:'#1E7B3C', bg:'#DCFCE7'},
-  onboarding:   {label:'Onboarding',       color:'#0D7490', bg:'#E0F2FE'},
+  lead:         {label:'New Lead',     color:'#1B5FA8', bg:'#EBF2FD'},
+  contacted:    {label:'Contacted',    color:'#7C3AED', bg:'#F3E8FF'},
+  opportunity:  {label:'Opportunity',  color:'#D97706', bg:'#FEF3C7'},
+  accepted:     {label:'Account',      color:'#166534', bg:'#DCFCE7'},
+  disqualified: {label:'Disqualified', color:'#C8102E', bg:'#FEE9EC'},
+  onboarding:   {label:'Onboarding',   color:'#0D7490', bg:'#E0F2FE'},
+  active:       {label:'Active',       color:'#1E7B3C', bg:'#DCFCE7'},
+  renewal:      {label:'Renewal',      color:'#B45309', bg:'#FEF3C7'},
+  jeopardy:     {label:'Jeopardy',     color:'#991B1B', bg:'#FEE2E2'},
 };
 
+// One clean forward progression per tab. Picking a stage that belongs to
+// the NEXT tab moves the record there; Disqualified is always available
+// as the passive exit and always lands the record in Opportunities for
+// follow-up, regardless of which stage it was disqualified from.
 const SP_TAB_STAGE_OPTIONS = {
   leads: [
     {key:'lead',         label:'🎯 New Lead'},
-    {key:'contacted',    label:'📞 Contacted'},
-    {key:'qualified',    label:'✅ Qualified'},
+    {key:'contacted',    label:'📞 Move to Contacted'},
     {key:'disqualified', label:'🚫 Disqualified'},
   ],
   contacts: [
-    {key:'contact',      label:'👤 Contact'},
-    {key:'appointment',  label:'📅 Appointment Set'},
-    {key:'site_visit',   label:'🏢 Site Visit'},
+    {key:'contacted',    label:'📞 Contacted'},
+    {key:'opportunity',  label:'💼 Move to Opportunity'},
     {key:'disqualified', label:'🚫 Disqualified'},
   ],
   opportunities: [
     {key:'opportunity',  label:'💼 Opportunity'},
-    {key:'survey',       label:'📋 Survey Pending'},
-    {key:'survey_done',  label:'📝 Survey Complete'},
-    {key:'proposal',     label:'📄 Proposal Sent'},
-    {key:'accepted',     label:'🤝 Accepted'},
-    {key:'lost',         label:'❌ Lost'},
+    {key:'accepted',     label:'✅ Convert to Account'},
+    {key:'disqualified', label:'🚫 Disqualified'},
+  ],
+  accounts: [
+    {key:'onboarding',   label:'🚀 Onboarding'},
+    {key:'active',       label:'✅ Active'},
+    {key:'renewal',      label:'🔄 Renewal'},
+    {key:'jeopardy',     label:'⚠️ Jeopardy'},
+    {key:'disqualified', label:'🚫 Disqualified / Dead'},
   ],
 };
 
+// Exclusive bucketing — every stage belongs to exactly one tab now. This
+// is what was actually broken: 'contacted' used to live inside the Leads
+// bucket while Contacts used a completely different, disconnected set of
+// stage names, so moving a lead to Contacted never left the Leads tab.
 const SP_TAB_STAGES = {
-  leads:['lead','contacted','qualified','disqualified'],
-  contacts:['contact','appointment','site_visit'],
-  opportunities:['opportunity','survey','survey_done','proposal','lost'],
-  accounts:['accepted','close','onboarding','first_service','active','renewal','jeopardy'],
+  leads:['lead'],
+  contacts:['contacted'],
+  opportunities:['opportunity','disqualified'],
+  accounts:['onboarding','active','renewal','jeopardy'],
 };
 
 // ══════════════════════════════════════════════════════
@@ -881,30 +912,33 @@ function spRenderCRM(tab) {
   const el = document.getElementById('spContent');
   const stageKeys = SP_TAB_STAGES[tab] || ['lead'];
 
-  // Load from unified leads pool (matches termac-os architecture)
-  let data = crmLoad('leads').filter(r => {
-    const s = r.lifecycleStage || 'lead';
-    return stageKeys.includes(s);
-  });
+  // Load from unified leads pool (matches termac-os architecture).
+  // Stages are normalized on read — old names like 'qualified' or
+  // 'site_visit' fold into the current clean progression automatically.
+  let data = crmLoad('leads').filter(r => stageKeys.includes(spNormalizeStage(r.lifecycleStage)));
 
-  // Also include legacy per-tab pool — but only records that actually
-  // belong on THIS tab. Previously this merged in every legacy record
-  // unconditionally, so a lead still sitting in lifecycleStage:'lead'
-  // (like Charcoal BYOB) would leak into the Accounts tab just because it
-  // existed in the old accounts storage array, regardless of its real stage.
+  // Also include legacy per-tab pools — but only records that actually
+  // belong on THIS tab once normalized. Previously this merged in every
+  // legacy record unconditionally, so a lead still sitting at
+  // lifecycleStage:'lead' (like Charcoal BYOB) would leak into the
+  // Accounts tab just because it existed in the old accounts array.
   if (tab === 'accounts') {
-    const legacy = crmLoad('accounts').filter(r => {
-      const s = r.lifecycleStage || 'active';
-      return !data.find(x => x.id === r.id) && stageKeys.includes(s);
-    });
+    const legacy = crmLoad('accounts').filter(r =>
+      !data.find(x => x.id === r.id) && stageKeys.includes(spNormalizeStage(r.lifecycleStage || 'active')));
     data = [...data, ...legacy];
   }
   if (tab === 'contacts') {
-    const legacyC = crmLoad('contacts').filter(r => {
-      const s = r.lifecycleStage || 'contact';
-      return !data.find(x => x.id === r.id) && stageKeys.includes(s);
-    });
+    const legacyC = crmLoad('contacts').filter(r =>
+      !data.find(x => x.id === r.id) && stageKeys.includes(spNormalizeStage(r.lifecycleStage || 'contacted')));
     data = [...data, ...legacyC];
+  }
+  if (tab === 'opportunities') {
+    // Disqualified accounts or contacts (a dead deal, or an account that
+    // went bad) park here for passive follow-up, regardless of which
+    // storage pool they physically live in.
+    const legacyO = [...crmLoad('accounts'), ...crmLoad('contacts')].filter(r =>
+      !data.find(x => x.id === r.id) && stageKeys.includes(spNormalizeStage(r.lifecycleStage)));
+    data = [...data, ...legacyO];
   }
 
   // Filter to this rep's records only
@@ -982,7 +1016,7 @@ function spRenderCRM(tab) {
 }
 
 function spRecordCard(r, tab) {
-  const stage = SP_STAGES[r.lifecycleStage || 'lead'] || SP_STAGES.lead;
+  const stage = SP_STAGES[spNormalizeStage(r.lifecycleStage)] || SP_STAGES.lead;
   const svcs = (r.services || []).map(s => {
     const c = spSvcColor(s);
     return `<span style="background:${c.bg};color:${c.color};border-radius:4px;padding:2px 7px;font-size:10px;font-weight:700">${spSvcLabel(s)}</span>`;
@@ -2184,7 +2218,7 @@ function spViewRecord(id, tab) {
 }
 
 function spOpenDetail(r, tab) {
-  const stage = SP_STAGES[r.lifecycleStage || 'lead'] || SP_STAGES.lead;
+  const stage = SP_STAGES[spNormalizeStage(r.lifecycleStage)] || SP_STAGES.lead;
   const svcs = (r.services || []).map(s => { const c = spSvcColor(s); return `<span style="background:${c.bg};color:${c.color};border-radius:4px;padding:3px 9px;font-size:11px;font-weight:700">${spSvcLabel(s)}</span>`; }).join(' ');
   const extraContacts = (r.extraContacts || []).map((c,i) => `<div style="border-top:1px dashed var(--line);padding-top:8px;margin-top:8px">
     <div style="font-size:10px;font-weight:700;color:var(--soft);text-transform:uppercase;margin-bottom:4px">Contact ${i+2}${c.role?' — '+escH(c.role):''}</div>
@@ -2199,6 +2233,32 @@ function spOpenDetail(r, tab) {
   // rail. No hunting across panels for what you're standing there to do.
   const isAccount = tab === 'accounts';
   const apptDefaultMode = isAccount ? 'site_visit' : 'appointment';
+
+  // Open opportunities tied to this account — matched by business name
+  // since there's no hard foreign key linking pipeline records to the
+  // account they came from. Shown only on Account pages so a rep can see
+  // everything currently in motion with this customer in one glance.
+  let openOppsHtml = '';
+  if (isAccount) {
+    const bizNorm = (r.business || r.name || '').toLowerCase().trim();
+    const openOpps = bizNorm ? crmLoad('leads').filter(o =>
+      o.id !== r.id &&
+      spNormalizeStage(o.lifecycleStage) === 'opportunity' &&
+      (o.business || o.name || '').toLowerCase().trim() === bizNorm
+    ) : [];
+    if (openOpps.length) {
+      openOppsHtml = `<div style="padding:12px 0;border-bottom:1px solid var(--line);margin-bottom:12px">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:8px">💼 Open Opportunities (${openOpps.length})</div>
+        ${openOpps.map(o => `<div onclick="spViewRecord('${o.id}','leads')" style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:#FEF3C7;border-radius:7px;cursor:pointer;margin-bottom:6px" onmouseover="this.style.background='#FDE9BC'" onmouseout="this.style.background='#FEF3C7'">
+          <div>
+            <div style="font-size:13px;font-weight:700;color:var(--ink)">${escH(o.name || o.contact || 'Opportunity')}</div>
+            <div style="font-size:11px;color:var(--soft)">${(o.services||[]).map(s=>spSvcLabel(s)).join(', ') || 'No services tagged'}${o.notes ? ' · '+escH(o.notes.slice(0,60)) : ''}</div>
+          </div>
+          <span style="font-size:11px;color:#92400E;font-weight:700">View →</span>
+        </div>`).join('')}
+      </div>`;
+    }
+  }
 
   const el = document.getElementById('spContent');
   el.innerHTML = `
@@ -2232,6 +2292,8 @@ function spOpenDetail(r, tab) {
         ${r.notes ? `<div style="margin-top:8px;padding:8px;background:var(--bg);border-radius:6px;font-size:12px;color:var(--soft)">${escH(r.notes)}</div>` : ''}
       </div>
     </div>
+
+    ${openOppsHtml}
 
     <!-- Stage + action buttons, right on the card -->
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -3528,7 +3590,7 @@ function processCrossSellAlerts() {
 
 const STAGE_SEQUENCE = ['lead','contact','opportunity','site_visit','close','onboarding','first_service','active'];
 function spStageOptions(r, tab) {
-  const cur = r.lifecycleStage || 'lead';
+  const cur = spNormalizeStage(r.lifecycleStage);
   const opts = SP_TAB_STAGE_OPTIONS[tab] || [{key:cur, label:cur}];
   let hasCur = opts.find(o => o.key === cur);
   const allOpts = hasCur ? opts : [{key:cur, label:'— ' + (SP_STAGES[cur]?.label || cur) + ' —'}, ...opts];
@@ -3537,11 +3599,37 @@ function spStageOptions(r, tab) {
   ).join('');
 }
 
+// Finds a record by id across every pool it could live in, and reports
+// which pool it came from so callers save back to the right place.
+// preferredPool is checked first — this matters once a record has been
+// converted (e.g. Opportunity -> Account): the original still exists as a
+// vestigial copy in 'leads' marked 'accepted', while the real, live record
+// lives in 'accounts'. Without a preferred pool, a later stage change made
+// from the Accounts tab would silently find and mutate the wrong copy.
+function spFindRecordAnyPool(id, preferredPool) {
+  const pools = preferredPool
+    ? [preferredPool, ...['leads', 'contacts', 'accounts'].filter(p => p !== preferredPool)]
+    : ['leads', 'contacts', 'accounts'];
+  for (const p of pools) {
+    const data = crmLoad(p);
+    const idx = data.findIndex(x => x.id === id);
+    if (idx > -1) return { pool: p, data, idx };
+  }
+  return null;
+}
+
+const SP_TAB_POOL = { leads: 'leads', contacts: 'contacts', opportunities: 'leads', accounts: 'accounts' };
+
 function spSetStage(id, tab, newStage, selectEl) {
-  const data = crmLoad('leads');
-  const r = data.find(x => x.id === id);
-  if (!r) { spToast('Record not found'); return; }
-  const oldStage = r.lifecycleStage || 'lead';
+  const found = spFindRecordAnyPool(id, SP_TAB_POOL[tab]);
+  if (!found) {
+    spToast('Record not found');
+    if (selectEl) spRenderCRM(tab); // re-render to clear the stale selection rather than leave it dangling
+    return;
+  }
+  const { pool, data, idx } = found;
+  const r = data[idx];
+  const oldStage = spNormalizeStage(r.lifecycleStage);
   if (oldStage === newStage) return;
 
   // Disqualified / Lost: require note
@@ -3665,9 +3753,8 @@ function spSetStage(id, tab, newStage, selectEl) {
   r.updated = Date.now();
   r.activityLog = r.activityLog || [];
   r.activityLog.push({ ts:Date.now(), type:'stage', icon:'🔄', title:`Stage: ${oldStage} → ${newStage}`, who:_spRep.name });
-  const idx = data.findIndex(x => x.id === id);
-  if (idx > -1) data[idx] = r; else data.push(r);
-  crmSave('leads', data);
+  data[idx] = r;
+  crmSave(pool, data);
 
   // ── UPSELL TRACKING: credit rep for closing cross-sell gaps ────────────
   spTrackUpsellAction(r, oldStage, newStage);
@@ -6021,7 +6108,7 @@ function spGlobalSearch(q) {
 
   list.innerHTML = results.map(r => {
     const badge = r._badge || typeBadge.leads;
-    const stage = SP_STAGES[r.lifecycleStage] || {};
+    const stage = SP_STAGES[spNormalizeStage(r.lifecycleStage)] || {};
     const lastContact = r.lastContactDate
       ? Math.round((Date.now() - new Date(r.lastContactDate)) / 86400000) + 'd ago'
       : r.updated ? Math.round((Date.now() - r.updated) / 86400000) + 'd ago' : '';
@@ -6098,7 +6185,7 @@ function spLoadIntelPanel(id, tab) {
   const r = all.find(x => x.id === id);
   if (!r) return;
 
-  const stage = SP_STAGES[r.lifecycleStage] || {label: r.lifecycleStage, color:'#6B7280', bg:'#F3F4F6'};
+  const stage = SP_STAGES[spNormalizeStage(r.lifecycleStage)] || {label: r.lifecycleStage, color:'#6B7280', bg:'#F3F4F6'};
   const score = r.score || 0;
   const scoreColor = score>=8?'#166534':score>=6?'#92400E':'#991B1B';
   const scoreBg    = score>=8?'#DCFCE7':score>=6?'#FEF3C7':'#FEE2E2';
@@ -6113,13 +6200,26 @@ function spLoadIntelPanel(id, tab) {
   }).join('');
 
   const actLog = (r.activityLog||[]).slice(-5).reverse();
-  const actHtml = actLog.length ? actLog.map(a =>
-    `<div style="border-left:2px solid var(--line);padding:4px 0 4px 8px;margin-bottom:6px">
-      <div style="font-size:10px;color:var(--soft)">${a.icon||'📝'} ${new Date(a.ts).toLocaleDateString('en-US',{month:'short',day:'numeric'})} · ${escH(a.who||'')}</div>
-      <div style="font-size:11px;color:var(--ink)">${escH(a.title||'')}</div>
-      ${a.note?`<div style="font-size:11px;color:var(--soft);margin-top:2px">${escH(a.note)}</div>`:''}
-    </div>`
-  ).join('') : '<div style="font-size:12px;color:var(--soft)">No activity logged yet</div>';
+
+  // ── CUSTOMER HISTORY — a summary, not a duplicate of the full log below
+  // the card. Lifetime orders, revenue, and tenure at a glance.
+  const allOrders = (function(){ try { return JSON.parse(localStorage.getItem('termac_orders')||'[]').filter(o => o.accountId === id); } catch(e){ return []; } })();
+  const lifetimeValue = allOrders.reduce((s,o) => s + (o.total||0), 0);
+  const tenureDays = r.created ? Math.round((Date.now() - r.created) / 86400000) : null;
+  const tenureStr = tenureDays !== null ? (tenureDays > 365 ? Math.floor(tenureDays/365) + 'y ' + Math.floor((tenureDays%365)/30) + 'mo' : Math.floor(tenureDays/30) + ' months') : '—';
+
+  // ── CURRENT INVENTORY — pulled from the most recent visit's snapshot,
+  // so a rep can glance at what's on the shelf without leaving this panel.
+  const lastOrderWithInv = allOrders.filter(o => o.inventorySnapshot && o.inventorySnapshot.length).sort((a,b) => b.createdTs - a.createdTs)[0];
+  const invHtml = lastOrderWithInv
+    ? lastOrderWithInv.inventorySnapshot.map(function(item) {
+        const qty = item.onHandQty;
+        const low = qty !== undefined && qty <= 0.25;
+        return '<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0">'
+          + '<span>' + escH(item.name||'Item') + '</span>'
+          + '<span style="font-weight:700;' + (low ? 'color:#C8102E' : '') + '">' + (qty!==undefined ? qty : '—') + (item.size ? ' '+escH(item.size) : '') + '</span></div>';
+      }).join('') + '<div style="font-size:10px;color:var(--soft);margin-top:4px">As of ' + new Date(lastOrderWithInv.createdTs).toLocaleDateString('en-US',{month:'short',day:'numeric'}) + '</div>'
+    : '<div style="font-size:12px;color:var(--soft)">No inventory logged yet — Start Visit to record one</div>';
 
   const nextFu = (r.opportunityFollowups||[]).find(f=>!f.done);
   const nextFuStr = nextFu ? new Date(nextFu.dueAt).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : null;
@@ -6134,14 +6234,6 @@ function spLoadIntelPanel(id, tab) {
       ${score?`<span style="background:${scoreBg};color:${scoreColor};border-radius:99px;padding:2px 8px;font-size:10px;font-weight:800">${score}/10</span>`:''}
       ${svcs}
     </div>
-  </div>
-
-  <!-- Contact info -->
-  <div class="sp-intel-section">
-    <div class="sp-intel-label">Contact Info</div>
-    ${r.phone?`<div style="font-size:12px;margin-bottom:3px">📞 <a href="tel:${escH(r.phone)}" style="color:var(--blue)">${escH(r.phone)}</a></div>`:''}
-    ${r.email?`<div style="font-size:12px;margin-bottom:3px">📧 <a href="mailto:${escH(r.email)}" style="color:var(--blue)">${escH(r.email)}</a></div>`:''}
-    ${r.address?`<div style="font-size:12px;color:var(--soft)">📍 ${escH(r.address)}</div>`:''}
   </div>
 
   <!-- Pipeline intel -->
@@ -6167,27 +6259,36 @@ function spLoadIntelPanel(id, tab) {
     </div>
   </div>
 
+  <!-- Customer history — summary, not a duplicate of the full log -->
+  <div class="sp-intel-section">
+    <div class="sp-intel-label">Customer History</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div style="background:var(--bg);border-radius:6px;padding:8px">
+        <div style="font-size:9px;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px">Lifetime Orders</div>
+        <div style="font-size:12px;font-weight:600;color:var(--ink)">${allOrders.length}</div>
+      </div>
+      <div style="background:var(--bg);border-radius:6px;padding:8px">
+        <div style="font-size:9px;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px">Lifetime Value</div>
+        <div style="font-size:12px;font-weight:600;color:var(--ink)">$${lifetimeValue.toLocaleString()}</div>
+      </div>
+      <div style="background:var(--bg);border-radius:6px;padding:8px;grid-column:1/-1">
+        <div style="font-size:9px;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px">Customer Since</div>
+        <div style="font-size:12px;font-weight:600;color:var(--ink)">${tenureStr}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Current inventory — from the most recent visit's snapshot -->
+  <div class="sp-intel-section">
+    <div class="sp-intel-label">Current Inventory <span style="font-weight:400;text-transform:none;color:var(--soft)">(last visit)</span></div>
+    ${invHtml}
+  </div>
+
   <!-- Site notes -->
   ${r.siteNotes?`<div class="sp-intel-section">
     <div class="sp-intel-label">Site Notes</div>
     <div style="font-size:12px;color:var(--ink);line-height:1.5">${escH(r.siteNotes)}</div>
-  </div>`:''}
-
-  <!-- Activity log -->
-  <div class="sp-intel-section">
-    <div class="sp-intel-label">Recent Activity</div>
-    ${actHtml}
-  </div>
-
-
-
-  <!-- Action buttons -->
-  <div style="padding:12px 14px;display:flex;flex-direction:column;gap:6px">
-    ${tab==='accounts'?`<button onclick="spVisitStartNow('${id}','${tab}')" style="padding:8px;background:#059669;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">🚀 Start Visit</button>
-    <button onclick="spCheckInAndStartVisit('${id}','${tab}')" style="padding:8px;background:#D8690B;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">📍 I'm Here</button>`:''}
-    <button onclick="spOpenApptModal('${id}','${tab}','${tab==='accounts'?'site_visit':'appointment'}')" style="padding:8px;background:#1B5FA8;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">📅 Set Appointment</button>
-    <button onclick="spEditRecord('${id}','${tab}')" style="padding:8px;background:#fff;color:var(--ink);border:1.5px solid var(--line);border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">Edit Record</button>
-  </div>`;
+  </div>`:''}`;
 
   // Show intel column
   const intelCol = document.getElementById('spIntelCol');
