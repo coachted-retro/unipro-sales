@@ -2154,14 +2154,16 @@ function spSetStopAccountType(stopId, accountId) {
 
 // ── GENERATE / REFRESH ──────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════
-//  ROUTE MAP — ported faithfully from termac-os.html's routeTotalDist/
-//  buildRouteMapUrl/buildRouteSummaryBar. Same ZIP-distance math (a
-//  simplified same-ZIP/prefix-match heuristic, NOT real driving distance),
-//  so estimates stay consistent between the Manager Portal and here rather
-//  than showing two different numbers for the same math. Upgrading this to
-//  true driving-distance via ORS's routing engine is a separate, bigger
-//  task — it needs changes on the Cloudflare Worker side (ors-route-proxy
-//  currently only does geocoding), not just this file.
+//  ROUTE MAP — three tiers, tries the best available and falls back cleanly:
+//   1. Real driving distance/time via ORS's Matrix API, through a Worker
+//      endpoint (/matrix) that may or may not be deployed yet — if it's not
+//      there, or ORS errors, this tier is skipped silently.
+//   2. Real geocoded coordinates + straight-line (haversine) distance — a
+//      genuine accuracy upgrade over guessing from ZIP codes, ships tonight
+//      with no Worker changes needed, since /geocode already exists.
+//   3. The old ZIP-prefix heuristic (routeTotalDist/etc. below) — only used
+//      if geocoding itself fails for a stop (bad address, ORS hiccup, etc.),
+//      so the feature never just breaks.
 // ══════════════════════════════════════════════════════
 function spExtractZip(address) {
   const m = (address || '').match(/\b(\d{5})\b/);
@@ -2174,6 +2176,48 @@ function spZipDistance(zip1, zip2) {
   if (zip1.slice(0,3) === zip2.slice(0,3)) return 3;
   if (zip1.slice(0,2) === zip2.slice(0,2)) return 8;
   return 20;
+}
+function spHaversineMiles(a, b) {
+  const R = 3958.8;
+  const dLat = (b[0]-a[0]) * Math.PI/180, dLng = (b[1]-a[1]) * Math.PI/180;
+  const la1 = a[0]*Math.PI/180, la2 = b[0]*Math.PI/180;
+  const h = Math.sin(dLat/2)**2 + Math.cos(la1)*Math.cos(la2)*Math.sin(dLng/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+async function spGeocodeAddress(addr) {
+  addr = (addr||'').trim();
+  if (!addr) return null;
+  let cache = {};
+  try { cache = JSON.parse(localStorage.getItem('termac_geocode_cache')||'{}'); } catch(e) {}
+  if (cache[addr]) return cache[addr];
+  try {
+    const r = await fetch('https://ors-route-proxy.termac-one.workers.dev/geocode', {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ address: addr }),
+    });
+    if (r.ok) {
+      const d = await r.json();
+      if (typeof d.lat === 'number') {
+        cache[addr] = [d.lat, d.lng];
+        try { localStorage.setItem('termac_geocode_cache', JSON.stringify(cache)); } catch(e) {}
+        return cache[addr];
+      }
+    }
+  } catch(e) {}
+  return null;
+}
+async function spTryDrivingMatrix(coords) {
+  // coords: array of [lat,lng]. Returns {distances, durations} in miles/minutes
+  // from the /matrix Worker endpoint, or null if unavailable/not yet deployed.
+  try {
+    const r = await fetch('https://ors-route-proxy.termac-one.workers.dev/matrix', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ coordinates: coords.map(c => [c[1], c[0]]) }), // ORS wants [lng,lat]
+    });
+    if (!r.ok) return null;
+    const d = await r.json();
+    if (!d.distances || !d.durations) return null;
+    return { distances: d.distances, durations: d.durations }; // miles, seconds (per Worker's ORS call)
+  } catch(e) { return null; }
 }
 function spRouteTotalDist(anchorAddress, stops) {
   if (!stops.length) return 0;
@@ -2190,39 +2234,63 @@ function spBuildRouteMapUrl(anchorAddress, orderedStops) {
   const stops = [anchorAddress, ...orderedStops.slice(0,9).map(o => o.address || o.title)].filter(Boolean);
   return 'https://www.google.com/maps/dir/' + stops.map(s => encodeURIComponent(s)).join('/');
 }
-function spBuildRouteSummaryBar(anchorAddress, originalStops, optimizedStops, mapUrl) {
-  const origDist  = spRouteTotalDist(anchorAddress, originalStops);
-  const optDist   = spRouteTotalDist(anchorAddress, optimizedStops);
-  const savedMi   = Math.max(0, origDist - optDist);
-  const savedMin  = Math.round(savedMi * 3.5);
-  const estMiles  = optDist;
-  const estTime   = Math.round(optDist * 6 + optimizedStops.length * 20);
-  const savingsHtml = savedMi > 0
-    ? `<span style="background:#D1FAE5;color:#065F46;border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700">✂️ Saves ~${savedMi} mi · ~${savedMin} min vs. unoptimized</span>`
-    : `<span style="background:#F3F4F6;color:var(--soft);border-radius:4px;padding:2px 8px;font-size:10px">Route already near-optimal</span>`;
+function spBuildRouteSummaryBar(stopCount, estMiles, estTime, mapUrl, sourceLabel) {
   return `
     <div style="background:#1A1D21;border-radius:10px;padding:12px 16px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
       <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center">
-        <div style="text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:20px;color:#fff">${optimizedStops.length}</div><div style="font-size:9px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.06em">Stops</div></div>
+        <div style="text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:20px;color:#fff">${stopCount}</div><div style="font-size:9px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.06em">Stops</div></div>
         <div style="width:1px;height:30px;background:rgba(255,255,255,.1)"></div>
         <div style="text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:20px;color:#fff">~${estMiles}</div><div style="font-size:9px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.06em">Est. Miles</div></div>
         <div style="width:1px;height:30px;background:rgba(255,255,255,.1)"></div>
         <div style="text-align:center"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:20px;color:#fff">~${estTime}m</div><div style="font-size:9px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.06em">Est. Time</div></div>
-        <div>${savingsHtml}</div>
+        <div><span style="background:#F3F4F6;color:var(--soft);border-radius:4px;padding:2px 8px;font-size:10px">${sourceLabel}</span></div>
       </div>
       <a href="${mapUrl}" target="_blank" style="background:#1B5FA8;color:#fff;border-radius:8px;padding:9px 16px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;text-decoration:none;white-space:nowrap;flex-shrink:0">🗺 Open Full Route in Maps</a>
     </div>`;
 }
-function spOpenRouteMap() {
+async function spOpenRouteMap() {
   const stops = spBuildAgenda().filter(s => s.address);
   if (!stops.length) {
     spToast('No addresses on today\u2019s agenda yet to route.');
     return;
   }
-  const anchor = stops[0].address;
-  const rest = stops.slice(1);
-  const mapUrl = spBuildRouteMapUrl(anchor, rest);
-  const summaryHtml = spBuildRouteSummaryBar(anchor, rest, rest, mapUrl);
+  spToast('📍 Calculating route…');
+  const mapUrl = spBuildRouteMapUrl(stops[0].address, stops.slice(1));
+
+  // Tier 1 & 2: geocode every stop for real coordinates
+  const coords = await Promise.all(stops.map(s => spGeocodeAddress(s.address)));
+  const allGeocoded = coords.every(c => c !== null);
+
+  let estMiles, estTime, sourceLabel;
+
+  if (allGeocoded) {
+    // Try tier 1: real driving distance via the Worker's /matrix endpoint
+    const matrix = await spTryDrivingMatrix(coords);
+    if (matrix) {
+      let totalMi = 0, totalSec = 0;
+      for (let i = 0; i < coords.length - 1; i++) {
+        totalMi += matrix.distances[i][i+1] || 0;
+        totalSec += matrix.durations[i][i+1] || 0;
+      }
+      estMiles = Math.round(totalMi);
+      estTime = Math.round(totalSec / 60);
+      sourceLabel = '🛣️ Real driving distance (ORS)';
+    } else {
+      // Tier 2: real coordinates, straight-line distance
+      let totalMi = 0;
+      for (let i = 0; i < coords.length - 1; i++) totalMi += spHaversineMiles(coords[i], coords[i+1]);
+      estMiles = Math.round(totalMi);
+      estTime = Math.round(totalMi * 2.2 + stops.length * 5); // rough minutes: ~27mph avg + 5min/stop overhead
+      sourceLabel = '📍 Straight-line estimate (geocoded)';
+    }
+  } else {
+    // Tier 3: fallback for whichever stops couldn't be geocoded
+    estMiles = spRouteTotalDist(stops[0].address, stops.slice(1));
+    estTime = Math.round(estMiles * 6 + stops.length * 20);
+    sourceLabel = '📮 ZIP-based estimate (some addresses unresolved)';
+  }
+
+  const summaryHtml = spBuildRouteSummaryBar(stops.length, estMiles, estTime, mapUrl, sourceLabel);
 
   var old = document.getElementById('spRouteMapModal');
   if (old) old.remove();
@@ -2241,7 +2309,7 @@ function spOpenRouteMap() {
           + '<div style="width:24px;height:24px;border-radius:50%;background:var(--red);color:#fff;display:flex;align-items:center;justify-content:center;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;flex-shrink:0">' + (i+1) + '</div>'
           + '<div style="flex:1"><div style="font-size:13px;font-weight:700;color:var(--ink)">' + escH(s.title||'Stop') + '</div><div style="font-size:11px;color:var(--soft)">' + escH(s.address||'') + '</div></div>'
         + '</div>').join('')
-      + '<div style="font-size:10px;color:var(--soft);margin-top:12px">Estimates are ZIP-based, not live driving distance — treat as a rough guide, not turn-by-turn accuracy.</div>'
+      + '<div style="font-size:10px;color:var(--soft);margin-top:12px">' + (sourceLabel.includes('Real driving') ? 'Real driving distance from ORS.' : sourceLabel.includes('Straight-line') ? 'Straight-line distance from real coordinates, not turn-by-turn roads — treat as a good guide, not exact.' : 'Some addresses couldn\u2019t be located precisely, falling back to a rougher ZIP-based estimate for this route.') + '</div>'
     + '</div>'
   + '</div>';
   document.body.appendChild(wrap);
