@@ -445,6 +445,7 @@ body.rail-open .rail-overlay{display:block}
     <div class="trn-title" id="trnRoleTitle">Sales Dashboard</div>
     <div class="trn-spacer"></div>
     <button class="trn-btn" onclick="window.open('user-manuals.html?role=sales','_blank')" style="font-size:10px;padding:5px 10px">? Help</button>
+    <button id="lcAlertIcon" onclick="spOpenLcAlerts()" title="Account Alerts" style="position:relative;background:none;border:none;cursor:pointer;padding:6px 8px;color:#fff;font-size:18px;line-height:1">🚨<span id="lcAlertBadge" style="display:none;position:absolute;top:2px;right:0;background:#FF3B30;color:#fff;border-radius:10px;font-size:9px;font-weight:900;padding:1px 5px;min-width:16px;text-align:center;font-family:Barlow Condensed,sans-serif;line-height:14px;border:2px solid #1A1D21"></span></button>
     <button onclick="spOpenNotifPanel()" title="Hot Lead Notifications" style="position:relative;background:none;border:none;cursor:pointer;padding:6px 8px;color:#fff;font-size:18px;line-height:1">🔔<span id="notifBadge" style="display:none;position:absolute;top:2px;right:0;background:#FF3B30;color:#fff;border-radius:10px;font-size:9px;font-weight:900;padding:1px 5px;min-width:16px;text-align:center;font-family:Barlow Condensed,sans-serif;line-height:14px;border:2px solid #1A1D21"></span></button>
     <span class="trn-user-chip" id="spUserChip" style="display:none"><span class="trn-user-chip-avatar" id="spChipInitials" style="background:#C8102E"></span><span><span class="trn-user-chip-name" id="spChipName"></span><br><span class="trn-user-chip-role">Sales Rep</span></span></span>
     <button class="trn-btn" id="spBidPipelineBtn" style="display:none;background:#1B5FA8;color:#fff;border-color:#1B5FA8" onclick="window.open('termac-os.html?view=bids','_blank')" title="Your exclusive Bid &amp; RFP pipeline">📑 Bid Pipeline</button>
@@ -692,13 +693,18 @@ function spLogin() {
   if (!rep || rep.pin !== pin) { err.textContent = 'Incorrect PIN — try again.'; err.style.display = 'block'; return; }
 
   _spRep = { name, ...rep };
-  sessionStorage.setItem('sp_rep', JSON.stringify(_spRep));
+  // Persist to the SAME localStorage key every other Termac One portal reads
+  // (termac_current_user), not sessionStorage — sessionStorage is scoped to
+  // a single tab and clears the moment that tab closes, which was forcing a
+  // fresh login every time the tab was closed and reopened even though the
+  // computer itself never logged out of anything.
+  try { localStorage.setItem('termac_current_user', name); } catch(e) {}
   spEnterPortal();
 }
 
 function spLogout() {
-  sessionStorage.removeItem('sp_rep');
   _spRep = null;
+  try { localStorage.removeItem('termac_current_user'); } catch(e) {}
   document.getElementById('spLogin').style.display = 'flex';
   document.getElementById('spMain').style.display = 'none';
 }
@@ -2284,14 +2290,12 @@ function spSaveAppt(accountId, tab) {
 //  PLAN MY DAY
 // ══════════════════════════════════════════════════════
 function spPlanMyDay() {
-  return '<div style="background:linear-gradient(135deg,#1B5FA8,#0F3E73);border-radius:12px;padding:14px 18px;color:#fff;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:14px">'
+  return '<div style="background:linear-gradient(135deg,#1B5FA8,#0F3E73);border-radius:12px;padding:14px 18px;color:#fff;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:14px;position:relative">'
     + '<div>'
       + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:15px;margin-bottom:2px">🧭 Plan My Day</div>'
       + '<div style="font-size:11px;color:rgba(255,255,255,.75)">Auto-fills today with appointments, nearby leads & account check-ins</div>'
     + '</div>'
-    + '<div>'
-      + '<button onclick="spOpenCalendarModal()" style="background:rgba(255,255,255,.15);color:#fff;border:1.5px solid rgba(255,255,255,.3);border-radius:7px;padding:8px 16px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">📅 My Calendar</button>'
-    + '</div>'
+    + '<button onclick="spOpenCalendarModal()" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:rgba(255,255,255,.15);color:#fff;border:1.5px solid rgba(255,255,255,.3);border-radius:7px;padding:8px 16px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;white-space:nowrap">📅 My Calendar</button>'
     + '<div style="display:flex;gap:8px">'
       + '<button onclick="spOpenRouteMap()" style="background:rgba(255,255,255,.15);color:#fff;border:1.5px solid rgba(255,255,255,.3);border-radius:7px;padding:8px 16px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">Route Map →</button>'
     + '</div>'
@@ -4611,7 +4615,7 @@ function spOpenApptModal(id, tab, mode, presetDate) {
   // Unset mode (e.g. a bare "+ Add") defaults to New Prospect / appointment,
   // not Existing Customer / site visit.
   const isAppt = mode !== 'site_visit';
-  const modalHTML = '<div id="spApptModal" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9000;display:flex;align-items:center;justify-content:center;padding:16px">' +
+  const modalHTML = '<div id="spApptModal" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9700;display:flex;align-items:center;justify-content:center;padding:16px">' +
     '<div style="background:#fff;border-radius:12px;width:min(480px,96vw);max-height:88vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.3)">' +
       '<div style="background:#1B5FA8;border-radius:12px 12px 0 0;padding:14px 18px;display:flex;align-items:center;justify-content:space-between">' +
         '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:16px;color:#fff;letter-spacing:.04em">📅 Appointment</div>' +
@@ -8624,47 +8628,80 @@ function svStep6(body, footer) {
 
 <script src="termac-messaging.js"></script>
 <script>
-/* Lifecycle alert banner for sales reps — reads the same store
-   that termac-os.html's lifecycle engine writes to */
+/* Lifecycle alerts for sales reps — reads the same store that termac-os.html's
+   lifecycle engine writes to. Was previously a full-width sticky banner that
+   sat right under the nav and kept reappearing every 5 minutes because
+   dismissing it only hid the DOM element, never actually marked the
+   underlying alert dismissed. Now a small icon + badge next to the bell,
+   matching the existing notification bell pattern. Clicking opens a proper
+   list where each alert can be dismissed for real. */
 (function() {
   var LC_KEY = 'termac_lifecycle_alerts';
   function loadAlerts() { try { return JSON.parse(localStorage.getItem(LC_KEY)||'[]'); } catch(e) { return []; } }
+  function saveAlerts(a) { try { localStorage.setItem(LC_KEY, JSON.stringify(a)); } catch(e) {} }
   function repName() {
     try { if(window._spRep&&_spRep.name) return _spRep.name; } catch(e) {}
     return localStorage.getItem('termac_current_user') || '';
   }
-  function renderRepBanner() {
-    var b = document.getElementById('spLcAlertBanner');
-    if (!b) return;
-    var user = repName(); if (!user) { b.style.display='none'; return; }
-    var alerts = loadAlerts().filter(function(a) { return !a.dismissed && a.assignedRep === user; });
-    if (!alerts.length) { b.style.display='none'; return; }
-    var high = alerts.filter(function(a) { return a.severity==='high'; }).length;
-    var color = '#C8102E';
-    var msg = high ? '\uD83D\uDEA8 ' + high + ' urgent account alert' + (high>1?'s':'') + ' — view before heading out'
-                   : '\u26A0\uFE0F ' + alerts.length + ' account alert' + (alerts.length>1?'s':'') + ' need your attention';
-    b.style.cssText = 'display:flex;align-items:center;gap:10px;background:'+color+';color:#fff;padding:9px 16px;font-size:12px;font-weight:700;font-family:-apple-system,Segoe UI,Roboto,sans-serif;position:sticky;top:56px;z-index:900';
-    b.innerHTML = '<span style="flex:1">'+msg+'</span>'
-      +'<button onclick="spOpenLcAlerts()" style="background:rgba(255,255,255,.2);border:none;border-radius:6px;color:#fff;padding:4px 12px;font-weight:700;cursor:pointer;font-size:11px">View Alerts</button>'
-      +'<button onclick="document.getElementById(\'spLcAlertBanner\').style.display=\'none\'" style="background:none;border:none;color:#fff;font-size:18px;cursor:pointer">\u2715</button>';
+  function myAlerts() {
+    var user = repName(); if (!user) return [];
+    return loadAlerts().filter(function(a) { return !a.dismissed && a.assignedRep === user; });
+  }
+  function renderLcIcon() {
+    var icon = document.getElementById('lcAlertIcon');
+    var badge = document.getElementById('lcAlertBadge');
+    if (!icon || !badge) return;
+    var alerts = myAlerts();
+    if (!alerts.length) { badge.style.display = 'none'; return; }
+    badge.style.display = '';
+    badge.textContent = alerts.length;
+    var high = alerts.some(function(a){ return a.severity === 'high'; });
+    badge.style.background = high ? '#FF3B30' : '#D97706';
   }
   window.spOpenLcAlerts = function() {
-    if (typeof openLCAlertModal === 'function') { openLCAlertModal(); return; }
-    // Fallback: simple alert list
-    var user = repName();
-    var alerts = loadAlerts().filter(function(a){ return !a.dismissed && a.assignedRep === user; });
     var typeLabel = {followup:'Follow-Up Due',checkin:'Check-In Overdue',renewal:'Renewal Window',jeopardy:'Jeopardy',atrisk:'At Risk',opp_stale:'Opportunity Stale'};
-    alert(alerts.map(function(a){ return (typeLabel[a.type]||a.type)+': '+a.account+'\n'+a.detail; }).join('\n\n') || 'No alerts.');
+    var alerts = myAlerts().sort(function(a,b){ return (b.severity==='high'?1:0) - (a.severity==='high'?1:0); });
+    var old = document.getElementById('lcAlertModal'); if (old) old.remove();
+    var wrap = document.createElement('div');
+    wrap.id = 'lcAlertModal';
+    wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9800;display:flex;align-items:flex-start;justify-content:center;padding:70px 20px 20px';
+    wrap.innerHTML = '<div style="background:#fff;border-radius:14px;width:min(480px,96vw);max-height:80vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.35)">'
+      + '<div style="background:#1A1D21;padding:16px 20px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0">'
+        + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:15px;color:#fff;letter-spacing:.06em;text-transform:uppercase">🚨 Account Alerts</div>'
+        + '<button onclick="document.getElementById(\'lcAlertModal\').remove()" style="background:none;border:none;color:rgba(255,255,255,.7);font-size:20px;cursor:pointer;line-height:1">✕</button>'
+      + '</div>'
+      + '<div style="padding:14px">'
+      + (alerts.length ? alerts.map(function(a) {
+          var sevColor = a.severity === 'high' ? '#C8102E' : '#D97706';
+          var sevBg = a.severity === 'high' ? '#FEE2E2' : '#FEF3C7';
+          return '<div style="background:'+sevBg+';border-radius:9px;padding:11px 13px;margin-bottom:8px;display:flex;gap:10px;align-items:flex-start">'
+            + '<div style="flex:1;cursor:pointer" onclick="document.getElementById(\'lcAlertModal\').remove();spViewRecord(\''+a.accountId+'\',\'accounts\')">'
+              + '<div style="font-size:12px;font-weight:800;color:'+sevColor+';text-transform:uppercase;letter-spacing:.04em">'+(typeLabel[a.type]||a.type)+'</div>'
+              + '<div style="font-size:13px;font-weight:700;color:var(--ink);margin-top:2px">'+escH(a.account||'Account')+'</div>'
+              + '<div style="font-size:12px;color:var(--soft);margin-top:2px">'+escH(a.detail||'')+'</div>'
+            + '</div>'
+            + '<button onclick="spDismissLcAlert(\''+a.id+'\')" title="Dismiss" style="background:none;border:none;color:var(--soft);font-size:16px;cursor:pointer;flex-shrink:0">✕</button>'
+          + '</div>';
+        }).join('')
+        : '<div style="text-align:center;color:var(--soft);font-size:13px;padding:24px">No alerts right now.</div>')
+      + '</div>'
+    + '</div>';
+    document.body.appendChild(wrap);
   };
-  // Inject banner at the top of the page body
+  window.spDismissLcAlert = function(alertId) {
+    var all = loadAlerts();
+    var target = all.find(function(a){ return a.id === alertId; });
+    if (target) target.dismissed = true;
+    saveAlerts(all);
+    renderLcIcon();
+    spOpenLcAlerts(); // re-render the list with this one removed
+  };
   document.addEventListener('DOMContentLoaded', function() {
-    var b = document.createElement('div'); b.id = 'spLcAlertBanner'; b.style.display='none';
-    var nav = document.querySelector('nav') || document.body.firstChild;
-    document.body.insertBefore(b, nav ? nav.nextSibling : document.body.firstChild);
-    renderRepBanner();
-    setInterval(renderRepBanner, 5*60*1000);
+    renderLcIcon();
+    setInterval(renderLcIcon, 5*60*1000);
   });
 })();
+</script>
 </script>
 
 <script src="termac-notify.js"></script>
