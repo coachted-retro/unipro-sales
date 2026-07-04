@@ -1,41 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Deficiency Queue — Termac One</title>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Barlow',sans-serif;background:#F5F6F8;color:#1A1D21;font-size:14px;line-height:1.5}
+.hdr{background:#1A1D21;border-bottom:4px solid #C8102E;padding:16px 24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px}
+.hdr-title{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:20px;color:#fff;letter-spacing:.02em}
+.hdr-title span{color:#C8102E}
+.hdr-back{color:#9CA3AF;text-decoration:none;font-size:12px;font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+.wrap{max-width:960px;margin:0 auto;padding:20px 16px 60px}
+.kpi-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:22px}
+.kpi{background:#fff;border-radius:10px;padding:14px 16px;box-shadow:0 1px 3px rgba(26,29,33,.08);border-top:3px solid #C8102E}
+.kpi-val{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:26px}
+.kpi-lbl{font-size:11px;color:#6B7280;text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin-top:2px}
+.sec-title{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:15px;letter-spacing:.04em;text-transform:uppercase;color:#374151;margin:22px 0 10px;display:flex;align-items:center;gap:8px}
+.def-card{background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:14px 16px;margin-bottom:10px;border-left:4px solid #6B7280;display:flex;gap:14px;align-items:flex-start}
+.def-card.critical{border-left-color:#C8102E}
+.def-card.moderate{border-left-color:#D97706}
+.def-card.minor{border-left-color:#0D7490}
+.def-main{flex:1;min-width:0}
+.def-acct{font-weight:700;font-size:14px}
+.def-addr{font-size:12px;color:#6B7280;margin-top:1px}
+.def-equip{font-weight:600;font-size:13px;margin-top:8px}
+.def-desc{font-size:12px;color:#4B5563;margin-top:2px;line-height:1.5}
+.def-meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.badge{border-radius:4px;padding:2px 8px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}
+.badge.critical{background:#FEE2E2;color:#991B1B}
+.badge.moderate{background:#FEF3C7;color:#92400E}
+.badge.minor{background:#E0F2FE;color:#075985}
+.badge.status-needs_quote{background:#F3F4F6;color:#374151}
+.badge.status-quote_sent{background:#EFF6FF;color:#1E40AF}
+.badge.status-signed{background:#DCFCE7;color:#166534}
+.def-aging{flex-shrink:0;text-align:center;min-width:74px}
+.def-aging-days{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:22px}
+.def-aging-days.fresh{color:#166534}
+.def-aging-days.watch{color:#92400E}
+.def-aging-days.urgent{color:#C8102E}
+.def-aging-lbl{font-size:9px;color:#6B7280;text-transform:uppercase;letter-spacing:.05em;margin-top:-2px}
+.def-actions{margin-top:10px;display:flex;gap:8px}
+.btn{border:none;border-radius:6px;padding:7px 14px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.05em;text-transform:uppercase;cursor:pointer}
+.btn-primary{background:#C8102E;color:#fff}
+.btn-ghost{background:#F3F4F6;color:#374151}
+.empty{text-align:center;padding:40px 20px;color:#9CA3AF}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <div class="hdr-title">🔧 Lexi's <span>Deficiency Queue</span></div>
+  <a class="hdr-back" href="termac-os.html">← Back to Termac One</a>
+</div>
+
+<div class="wrap">
+  <div class="kpi-row" id="kpiRow"></div>
+
+  <div class="sec-title">📋 Deficiencies — Oldest First</div>
+  <div id="defList"></div>
+</div>
+
+<script>
 // ── BUILD DEFICIENCY ID (stable across renders) ──
 function defId(item){ return item.id || (item.account + '|' + item.equipment + '|' + item.ts); }
+
+// ── STATUS — three-stage lifecycle: needs a quote written, quote sent
+// and awaiting customer signature, or signed/approved. This is what the
+// aging view and KPI counts are built on. ──
+function defGetStatus(item){
+  if (item.quoteSigned) return 'signed';
+  if (item.quoteSent) return 'quote_sent';
+  return 'needs_quote';
+}
+var STATUS_LABEL = { needs_quote:'Needs Quote', quote_sent:'Quote Sent — Awaiting Signature', signed:'Signed' };
+
+function crmLoad(key){ try{ return JSON.parse(localStorage.getItem('termac_crm_'+key)||'[]'); }catch(e){ return []; } }
 
 // ── LOAD + NORMALIZE DEFICIENCY DATA from officeQueue + account/location activityLog ──
 function loadDeficiencies(){
   let queue = [];
-  try { queue = JSON.parse(localStorage.getItem('officeQueue') || '[]').filter(q => q.type === 'deficiency'); } catch(e) {}
+  try { queue = JSON.parse(localStorage.getItem('officeQueue') || '[]').filter(function(q){ return q.type === 'deficiency'; }); } catch(e) {}
 
-  const accounts = crmLoad('accounts');
-  const seen = new Set(queue.map(q => defId(q)));
+  var accounts = crmLoad('accounts');
+  var seen = new Set(queue.map(function(q){ return defId(q); }));
 
-  accounts.forEach(acct => {
-    // Location-aware: accounts created after the Company/Location split carry a locations[] array.
-    // Older flat accounts (no locations[] yet) fall back to treating the account itself as a single
-    // implicit location, so nothing that existed before this change breaks.
-    const locs = (acct.locations && acct.locations.length) ? acct.locations : [{
+  accounts.forEach(function(acct) {
+    var locs = (acct.locations && acct.locations.length) ? acct.locations : [{
       id: acct.id, name: acct.business || acct.name || 'Account',
       address: acct.address || '', activityLog: acct.activityLog || []
     }];
 
-    locs.forEach(loc => {
-      // Display name: "Parent Company - Location" when they differ, just the name when they're the same
-      // (no parent company case), matching the ServiceTrade convention.
-      const parentName = acct.name || acct.business || '';
-      const locName = loc.name || parentName;
-      const displayName = (parentName && locName && parentName !== locName) ? (parentName + ' - ' + locName) : locName;
+    locs.forEach(function(loc) {
+      var parentName = acct.name || acct.business || '';
+      var locName = loc.name || parentName;
+      var displayName = (parentName && locName && parentName !== locName) ? (parentName + ' - ' + locName) : locName;
 
-      const log = loc.activityLog || acct.activityLog || [];
-      log.forEach(entry => {
+      var log = loc.activityLog || acct.activityLog || [];
+      log.forEach(function(entry) {
         if (entry.type === 'tech' && entry.icon === '⚠️') {
-          const fakeItem = { ts: entry.ts, account: displayName, equipment: (entry.title||'').replace(/^Deficiency Flagged ?(\[.*?\])? ?,? ?/,'') || 'Equipment' };
-          const id = defId(fakeItem);
+          var fakeItem = { ts: entry.ts, account: displayName, equipment: (entry.title||'').replace(/^Deficiency Flagged ?(\[.*?\])? ?,? ?/,'') || 'Equipment' };
+          var id = defId(fakeItem);
           if (!seen.has(id)) {
             seen.add(id);
             queue.push({
-              id, ts: entry.ts, account: displayName, address: loc.address || acct.address || '',
+              id: id, ts: entry.ts, account: displayName, address: loc.address || acct.address || '',
               equipment: fakeItem.equipment || 'Equipment', description: entry.note || '',
-              severity: entry.title?.toLowerCase().includes('critical') ? 'critical' : entry.title?.toLowerCase().includes('major') ? 'critical' : entry.title?.toLowerCase().includes('moderate') ? 'moderate' : 'minor',
+              severity: entry.title && entry.title.toLowerCase().includes('critical') ? 'critical' : entry.title && entry.title.toLowerCase().includes('major') ? 'critical' : entry.title && entry.title.toLowerCase().includes('moderate') ? 'moderate' : 'minor',
               techName: entry.who || 'Tech', quoteSent: entry.quoteSent || false,
               _acctId: acct.id, _locId: loc.id || null, _logTs: entry.ts
             });
@@ -47,16 +119,70 @@ function loadDeficiencies(){
 
   // Seed demo data if nothing exists yet
   if (!queue.length) {
-    const now = Date.now();
+    var now = Date.now();
     queue = [
       { id:'seed1', ts:now-3600000*2, account:'Ferraro Ristorante', address:'1204 Walnut St, Philadelphia PA 19103', equipment:'Extinguisher #3, kitchen entrance', description:'Pressure gauge sitting in the red during the drill, needs recharge or replacement', severity:'critical', techName:'Brad Fickes' },
       { id:'seed2', ts:now-3600000*5, account:'Midtown Office Plaza', address:'1701 JFK Blvd, Philadelphia PA 19103', equipment:'Exit light, 3rd floor stairwell', description:'Battery backup failed, unit not illuminating on test', severity:'moderate', techName:'Chris Carzo' },
-      { id:'seed3', ts:now-86400000,  account:'Eastside Grille', address:'892 Spring Garden St, Philadelphia PA 19123', equipment:'Hood suppression nozzle, Station 2', description:'Nozzle blocked, grease accumulation preventing full coverage', severity:'moderate', techName:'Dan Rini' },
+      { id:'seed3', ts:now-86400000,  account:'Eastside Grille', address:'892 Spring Garden St, Philadelphia PA 19123', equipment:'Hood suppression nozzle, Station 2', description:'Nozzle blocked, grease accumulation preventing full coverage', severity:'moderate', techName:'Dan Rini', quoteSent:true },
       { id:'seed4', ts:now-86400000*2, account:'Harbor View Hotel', address:'410 Dockside Ave, Wilmington DE 19801', equipment:'Sprinkler head, Banquet hall', description:'Corroded head, replace before next inspection cycle', severity:'minor', techName:'Tom Jordan' },
+      { id:'seed5', ts:now-86400000*9, account:'Wu Dim Sum Palace', address:'927 Race St, Philadelphia PA 19107', equipment:'Extinguisher #1, front entrance', description:'Tag expired, no location signage', severity:'critical', techName:'Brad Fickes', quoteSent:true },
     ];
   }
 
-  queue.forEach(item => { item._id = defId(item); item._status = defGetStatus(item); });
-  queue.sort((a,b) => b.ts - a.ts);
+  queue.forEach(function(item) { item._id = defId(item); item._status = defGetStatus(item); });
+  // Oldest first — the whole point of this view is knowing which ones have
+  // been sitting the longest and need a follow-up push, not what just came in.
+  queue.sort(function(a,b){ return a.ts - b.ts; });
   return queue;
 }
+
+function escH(s){ return (s==null?'':String(s)).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+
+function daysAgo(ts){ return Math.floor((Date.now() - ts) / 86400000); }
+function agingClass(days){ return days >= 5 ? 'urgent' : days >= 2 ? 'watch' : 'fresh'; }
+
+function render(){
+  var items = loadDeficiencies();
+  var needsQuote = items.filter(function(i){ return i._status === 'needs_quote'; }).length;
+  var awaitingSig = items.filter(function(i){ return i._status === 'quote_sent'; }).length;
+  var oldestDays = items.length ? daysAgo(items[0].ts) : 0;
+
+  document.getElementById('kpiRow').innerHTML =
+    '<div class="kpi"><div class="kpi-val">' + items.length + '</div><div class="kpi-lbl">Open Deficiencies</div></div>' +
+    '<div class="kpi" style="border-top-color:#374151"><div class="kpi-val">' + needsQuote + '</div><div class="kpi-lbl">Need a Quote</div></div>' +
+    '<div class="kpi" style="border-top-color:#1E40AF"><div class="kpi-val">' + awaitingSig + '</div><div class="kpi-lbl">Awaiting Signature</div></div>' +
+    '<div class="kpi" style="border-top-color:#C8102E"><div class="kpi-val">' + oldestDays + 'd</div><div class="kpi-lbl">Oldest Pending</div></div>';
+
+  var list = document.getElementById('defList');
+  if (!items.length) {
+    list.innerHTML = '<div class="empty">Nothing open right now — clean queue.</div>';
+    return;
+  }
+
+  list.innerHTML = items.map(function(item) {
+    var days = daysAgo(item.ts);
+    return '<div class="def-card ' + item.severity + '">' +
+      '<div class="def-aging"><div class="def-aging-days ' + agingClass(days) + '">' + days + 'd</div><div class="def-aging-lbl">Open</div></div>' +
+      '<div class="def-main">' +
+        '<div class="def-acct">' + escH(item.account) + '</div>' +
+        '<div class="def-addr">📍 ' + escH(item.address||'') + '</div>' +
+        '<div class="def-equip">' + escH(item.equipment) + '</div>' +
+        '<div class="def-desc">' + escH(item.description||'') + '</div>' +
+        '<div class="def-meta">' +
+          '<span class="badge ' + item.severity + '">' + item.severity + '</span>' +
+          '<span class="badge status-' + item._status + '">' + STATUS_LABEL[item._status] + '</span>' +
+          '<span style="font-size:11px;color:#9CA3AF;align-self:center">Flagged by ' + escH(item.techName||'Tech') + '</span>' +
+        '</div>' +
+        '<div class="def-actions">' +
+          (item._status === 'needs_quote' ? '<button class="btn btn-primary" onclick="alert(\'Quote tool — building next, this button is wired and ready for it.\')">✍️ Write Quote</button>' : '') +
+          (item._status === 'quote_sent' ? '<button class="btn btn-ghost" onclick="alert(\'Follow-up reminder — coming with the quote tool.\')">🔔 Nudge Customer</button>' : '') +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+render();
+</script>
+</body>
+</html>
