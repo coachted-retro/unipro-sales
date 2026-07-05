@@ -68,6 +68,8 @@
       'assigned_to', 'due_date', 'resolved_at', 'notes', 'created_at', 'updated_at'],
     collections: ['id', 'account_id', 'invoice_ref', 'amount_due', 'amount_paid',
       'due_date', 'status', 'last_contact', 'notes', 'created_at', 'updated_at'],
+    rep_cards: ['id', 'rep_slug', 'name', 'title', 'divisions', 'phone', 'email',
+      'linkedin', 'bio', 'service_area', 'years_experience', 'created_at', 'updated_at'],
   };
 
   function d1NormalizeRecord(table, record) {
@@ -145,6 +147,34 @@
   // jobs table, tagging each record with its division so the scheduler,
   // dispatch, and tech portal — which all read/write these keys directly —
   // can gain D1 sync without having to be rewritten internally.
+  async function upsertRepCard(record) {
+    if (!record || !record.rep_slug) return { ok: false, error: 'rep_slug is required' };
+    try {
+      var existing = await d1Fetch('GET', '/api/rep_cards?rep_slug=' + encodeURIComponent(record.rep_slug));
+      if (existing.ok && Array.isArray(existing.results) && existing.results.length > 0) {
+        var existingId = existing.results[0].id;
+        var updateBody = d1NormalizeRecord('rep_cards', record);
+        delete updateBody.id;
+        return await d1Fetch('PUT', '/api/rep_cards/' + existingId, updateBody);
+      } else {
+        var newBody = d1NormalizeRecord('rep_cards', record);
+        return await d1Fetch('POST', '/api/rep_cards', newBody);
+      }
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  }
+
+  async function getRepCard(repSlug) {
+    try {
+      var res = await d1Fetch('GET', '/api/rep_cards?rep_slug=' + encodeURIComponent(repSlug));
+      if (res.ok && Array.isArray(res.results) && res.results.length > 0) return res.results[0];
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
   var JOB_DIVISION_KEYS = {
     unipro_jobs: 'UniPro', quality3_jobs: 'Quality III', gto_jobs: 'GTO',
     filterman_jobs: 'Filter Man', allpro_jobs: 'AllPro', termac_jobs: 'Termac',
@@ -190,6 +220,8 @@
     d1HydrateAll: d1HydrateAll,
     d1PushJobs: d1PushJobs,
     startJobSyncSweep: startJobSyncSweep,
+    upsertRepCard: upsertRepCard,
+    getRepCard: getRepCard,
     d1NormalizeRecord: d1NormalizeRecord,
     crmSave: crmSave,
     crmLoad: crmLoad,
