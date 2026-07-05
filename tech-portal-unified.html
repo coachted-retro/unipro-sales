@@ -101,7 +101,7 @@ body{background:var(--bg);color:var(--ink);font-family:Barlow,sans-serif;font-si
 .modal-title{font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:16px;color:#fff;letter-spacing:.08em;text-transform:uppercase}
 .modal-close{background:none;border:1.5px solid #3A3E43;border-radius:6px;color:#9CA3AF;padding:4px 10px;font-size:14px;cursor:pointer}
 .modal-body{padding:20px;display:flex;flex-direction:column;gap:14px}
-label.field-lbl{font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--soft);display:block;margin-bottom:4px}
+label.field-lbl,div.field-lbl{font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--soft);display:block;margin-bottom:4px}
 input.field,select.field,textarea.field{width:100%;border:1.5px solid var(--line);border-radius:7px;padding:9px 12px;font-family:Barlow,sans-serif;font-size:13px;color:var(--ink);background:#fff;outline:none}
 input.field:focus,select.field:focus{border-color:var(--div-primary)}
 .form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
@@ -168,6 +168,10 @@ input.field:focus,select.field:focus{border-color:var(--div-primary)}
       <button class="sb-btn" id="sb_jobs" onclick="showSection('jobs')">
         <span class="sb-icon">🔧</span> Jobs
       </button>
+    </div>
+    <div class="sb-section">
+      <div class="sb-label">Up Next</div>
+      <div id="sbNextJob" style="padding:0 4px"></div>
     </div>
     <div class="sb-section">
       <div class="sb-label">Field Tools</div>
@@ -320,6 +324,17 @@ input.field:focus,select.field:focus{border-color:var(--div-primary)}
       <button class="modal-close" onclick="closeModal('closeModal')">✕</button>
     </div>
     <div class="modal-body" id="closeModalBody"></div>
+  </div>
+</div>
+
+<!-- JOB ARRIVAL BRIEF MODAL -->
+<div class="modal-bg" id="arrivalModal">
+  <div class="modal">
+    <div class="modal-hdr">
+      <div class="modal-title" id="arrivalModalTitle">📍 Job Brief</div>
+      <button class="modal-close" onclick="closeModal('arrivalModal')">✕</button>
+    </div>
+    <div class="modal-body" id="arrivalModalBody"></div>
   </div>
 </div>
 
@@ -736,14 +751,35 @@ function renderMyDay() {
     qv.innerHTML = pending.slice(0,3).map(buildJobCard).join('') +
       (pending.length > 3 ? '<div style="text-align:center;padding:10px;color:var(--soft);font-size:12px">+' + (pending.length-3) + ' more stops — <button onclick="showSection(\'myDay\')" style="background:none;border:none;color:var(--blue);cursor:pointer;font-weight:700">View all</button></div>' : '');
   }
+
+  renderNextJobWidget(today);
+}
+
+function renderNextJobWidget(today) {
+  var el = document.getElementById('sbNextJob');
+  if (!el) return;
+  var pending = (today || getJobs()).filter(function(j){ return j.status !== 'complete' && j.id !== _activeJobId; });
+  if (!pending.length) {
+    el.innerHTML = '<div style="font-size:11px;color:rgba(255,255,255,.4);padding:6px 8px">No more stops today</div>';
+    return;
+  }
+  var next = pending[0];
+  el.innerHTML = '<div style="background:rgba(255,255,255,.06);border-radius:8px;padding:10px 12px">' +
+    '<div style="font-weight:700;font-size:13px;color:#fff">' + escH(next.business||'') + '</div>' +
+    '<div style="font-size:11px;color:rgba(255,255,255,.55);margin-top:2px">' + escH(next.time||'') + (next.address ? ' · '+escH(next.address) : '') + '</div>' +
+  '</div>';
 }
 
 function buildJobCard(job) {
   var isComplete = job.status === 'complete';
+  var acct = findAccountForJob(job);
+  var bizLabel = acct
+    ? '<span class="job-biz" style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted" onclick="window.open(\'termac-os.html?open=accounts&id='+encodeURIComponent(acct.id)+'&from=tech_portal\',\'_blank\')" title="View account">' + escH(job.business) + '</span>'
+    : '<span class="job-biz">' + escH(job.business) + '</span>';
   return '<div class="job-card' + (isComplete?' complete':'') + '">' +
     '<div class="job-hdr">' +
       '<div>' +
-        '<div class="job-biz">' + escH(job.business) + '</div>' +
+        '<div>' + bizLabel + '</div>' +
         '<div class="job-addr">' + escH(job.address) + '</div>' +
         '<div style="margin-top:4px;font-size:11px;color:var(--soft)">' + escH(job.time||'') + (job.contact?' · '+escH(job.contact):'') + '</div>' +
       '</div>' +
@@ -751,7 +787,7 @@ function buildJobCard(job) {
     '</div>' +
     '<div class="job-actions">' +
       (isComplete
-        ? '<span style="color:var(--green);font-weight:700;font-size:12px">✅ Complete</span>'
+        ? '<span style="color:var(--green);font-weight:700;font-size:12px">✅ Complete' + (job.laborMinutes != null ? ' · '+job.laborMinutes+' min' : '') + '</span>'
         : '<button class="job-btn arrive" onclick="arriveJob(\'' + job.id + '\')">📍 I\'m Here</button>' +
           '<button class="job-btn close" onclick="openCloseModal(\'' + job.id + '\')">✅ Close Job</button>' +
           '<button class="job-btn collect" onclick="openCollectModal(\'' + job.id + '\',\'' + escH(job.business) + '\')">💵</button>') +
@@ -760,62 +796,145 @@ function buildJobCard(job) {
   '</div>';
 }
 
+function findAccountForJob(job) {
+  try {
+    var accts = JSON.parse(localStorage.getItem('termac_crm_accounts') || '[]');
+    var name = (job.accountName || job.account || job.business || '').toLowerCase();
+    if (!name) return null;
+    return accts.find(function(a){ return (a.name||a.business||'').toLowerCase() === name; }) || null;
+  } catch(e) { return null; }
+}
+
 function arriveJob(id) {
   _activeJobId = id;
-  showToast('\U0001F4CD Arrived \u2014 job started');
 
-  // Notify the assigned rep
+  var jk = (window.DIV && DIV.jobsKey) || 'unipro_jobs';
+  var jobs = JSON.parse(localStorage.getItem(jk) || '[]');
+  var job = jobs.find(function(j){ return j.id === id; });
+  if (job && !job.onSiteStart) {
+    job.onSiteStart = Date.now();
+    job.techName = job.techName || ((window.currentTech && currentTech.name) || 'Tech');
+    try { localStorage.setItem(jk, JSON.stringify(jobs)); } catch(e){}
+  }
+
+  showToast('\U0001F4CD Arrived \u2014 job started, timer running');
+  notifyRepOfArrival(id, job);
+  showArrivalBrief(id, job);
+}
+
+function notifyRepOfArrival(id, job) {
+  if (!job) return;
   try {
-    var jk=(window.DIV&&DIV.jobsKey)||'unipro_jobs';
-    var jobs=JSON.parse(localStorage.getItem(jk)||'[]');
-    var job=jobs.find(function(j){return j.id===id;});
-    if(job){
-      if(!job.onSiteStart){ job.onSiteStart=Date.now(); job.techName=job.techName||((window.currentTech&&currentTech.name)||'Tech'); try{localStorage.setItem(jk,JSON.stringify(jobs));}catch(e){} }
-      var accts=JSON.parse(localStorage.getItem('termac_crm_accounts')||'[]');
-      var acct=accts.find(function(a){
-        return (a.name||a.business||'').toLowerCase()===(job.accountName||job.account||'').toLowerCase();
-      });
-      var repName=(acct&&acct.assignedRep)||'';
-      var techName=(window.currentTech&&currentTech.name)||'Tech';
-      var notif={
-        id:'arrived_'+id+'_'+Date.now(),
-        type:'tech_arrived',
-        title:'Tech On-Site: '+(job.accountName||job.account||''),
-        body:techName+' arrived at '+(job.accountName||'')+
-          (job.address?' \u00b7 '+job.address:'')+
-          ' \u00b7 '+(job.serviceType||job.type||'')+
-          ' \u00b7 '+new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}),
-        account:job.accountName||job.account||'',
-        techName:techName,repName:repName,jobId:id,
-        ts:Date.now(),read:false,
-        source:(window.DIV&&DIV.label)||'Termac',
-      };
-      var notifs=[];
-      try{notifs=JSON.parse(localStorage.getItem('termac_hotlead_notifs')||'[]');}catch(e){}
-      notifs.unshift(notif);
-      localStorage.setItem('termac_hotlead_notifs',JSON.stringify(notifs.slice(0,100)));
+    var accts = JSON.parse(localStorage.getItem('termac_crm_accounts')||'[]');
+    var acct = accts.find(function(a){
+      return (a.name||a.business||'').toLowerCase()===(job.accountName||job.account||'').toLowerCase();
+    });
+    var repName = (acct && acct.assignedRep) || '';
+    var techName = (window.currentTech && currentTech.name) || 'Tech';
+    var notif = {
+      id:'arrived_'+id+'_'+Date.now(), type:'tech_arrived',
+      title:'Tech On-Site: '+(job.accountName||job.account||''),
+      body:techName+' arrived at '+(job.accountName||'')+
+        (job.address?' \u00b7 '+job.address:'')+
+        ' \u00b7 '+(job.serviceType||job.type||'')+
+        ' \u00b7 '+new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}),
+      account:job.accountName||job.account||'',
+      techName:techName, repName:repName, jobId:id,
+      ts:Date.now(), read:false,
+      source:(window.DIV&&DIV.label)||'Termac',
+    };
+    var notifs = [];
+    try { notifs = JSON.parse(localStorage.getItem('termac_hotlead_notifs')||'[]'); } catch(e){}
+    notifs.unshift(notif);
+    localStorage.setItem('termac_hotlead_notifs', JSON.stringify(notifs.slice(0,100)));
 
-      // mailto to rep
-      var REP_EMAILS={
-        'Ted Scholl':'tscholl@termac.com',
-        'Tom Pittakas':'tpittakas@termac.com',
-        'Jim Kennedy':'jkennedy@termac.com',
-        'Paul Brahan':'pbrahan@termac.com',
-      };
-      var repEmail=repName?REP_EMAILS[repName]:null;
-      if(repEmail){
-        var sub=encodeURIComponent('Tech On-Site: '+(job.accountName||'')+' \u2014 '+(job.serviceType||''));
-        var bod=encodeURIComponent(
-          techName+' has arrived at '+(job.accountName||'')+'\n'+
-          (job.address||'')+'\n'+
-          'Service: '+(job.serviceType||job.type||'')+'\n'+
-          'Time: '+new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})+'\n\n'+
-          'Open your sales portal to see the full job brief and contact the tech or customer directly.'
-        );
-        window.open('mailto:'+repEmail+'?subject='+sub+'&body='+bod,'_blank');
-      }
+    var REP_EMAILS = {
+      'Ted Scholl':'tscholl@termac.com', 'Tom Pittakas':'tpittakas@termac.com',
+      'Jim Kennedy':'jkennedy@termac.com', 'Paul Brahan':'pbrahan@termac.com',
+    };
+    var repEmail = repName ? REP_EMAILS[repName] : null;
+    if (repEmail) {
+      var sub = encodeURIComponent('Tech On-Site: '+(job.accountName||'')+' \u2014 '+(job.serviceType||''));
+      var bod = encodeURIComponent(
+        techName+' has arrived at '+(job.accountName||'')+'\n'+
+        (job.address||'')+'\n'+
+        'Service: '+(job.serviceType||job.type||'')+'\n'+
+        'Time: '+new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})+'\n\n'+
+        'Open your sales portal to see the full job brief and contact the tech or customer directly.'
+      );
+      window.open('mailto:'+repEmail+'?subject='+sub+'&body='+bod,'_blank');
     }
-  }catch(e){}
+  } catch(e) {}
+}
+
+// ── JOB ARRIVAL BRIEF ─────────────────────────────────────
+// Shows everything actually on file for this stop so the tech isn't
+// walking in blind: job details, account history/deficiencies if the
+// job matches a known account, and a running labor timer that starts
+// now and gets read back at Close for the labor-hours calculation.
+function showArrivalBrief(jobId, job) {
+  if (!job) { job = getJobs().find(function(j){ return j.id === jobId; }) || {}; }
+  var acct = findAccountForJob(job);
+
+  document.getElementById('arrivalModalTitle').textContent = '📍 ' + (job.business || job.accountName || 'Job Brief');
+
+  var rows = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">' +
+    '<div><div class="field-lbl">Service Type</div><div style="font-weight:700">' + escH(job.type || job.serviceType || DIV.serviceTypes[0]) + '</div></div>' +
+    '<div><div class="field-lbl">Scheduled</div><div style="font-weight:700">' + escH(job.time || '\u2014') + '</div></div>' +
+    '<div><div class="field-lbl">Contact</div><div style="font-weight:700">' + escH(job.contact || '\u2014') + '</div></div>' +
+    '<div><div class="field-lbl">Phone</div><div style="font-weight:700">' + (job.phone ? '<a href="tel:'+escH(job.phone)+'">'+escH(job.phone)+'</a>' : '\u2014') + '</div></div>' +
+  '</div>';
+
+  var addr = '<div style="margin-bottom:14px"><div class="field-lbl">Address</div><div style="font-weight:700">' + escH(job.address || '') + '</div></div>';
+
+  var timerRow = '<div style="background:var(--bg);border-radius:8px;padding:10px 14px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between">' +
+    '<div><div class="field-lbl">Labor Timer</div><div style="font-weight:800;font-size:16px" id="arrivalTimerVal">00:00</div></div>' +
+    '<div style="font-size:11px;color:var(--soft)">Started ' + new Date(job.onSiteStart || Date.now()).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}) + '</div>' +
+  '</div>';
+
+  var acctBlock = '';
+  if (acct) {
+    var lastService = acct.lastService || acct.lastCheckin ? new Date(acct.lastService || acct.lastCheckin).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '\u2014';
+    var openDefs = acct.openDeficiencies ? (typeof acct.openDeficiencies === 'number' ? acct.openDeficiencies : 1) : 0;
+    var recentHistory = (acct.serviceHistory || []).slice(0,3).map(function(h) {
+      return '<div style="font-size:11px;color:var(--soft);padding:3px 0;border-bottom:1px dashed var(--line)">' + escH(h.date) + ' \u2014 ' + escH(h.division) + ': ' + escH(h.service) + (h.result ? ' (' + escH(h.result) + ')' : '') + '</div>';
+    }).join('');
+    acctBlock = '<div style="border-top:1px solid var(--line);padding-top:12px;margin-top:4px">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">' +
+        '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--soft)">Account on File</div>' +
+        '<button onclick="window.open(\'termac-os.html?open=accounts&id='+encodeURIComponent(acct.id)+'&from=tech_portal\',\'_blank\')" style="background:var(--div-primary);color:#fff;border:none;border-radius:6px;padding:5px 10px;font-size:11px;font-weight:700;cursor:pointer">View Full Account →</button>' +
+      '</div>' +
+      '<div style="font-size:12px;margin-bottom:6px">Last service: <strong>' + lastService + '</strong>' + (openDefs ? ' &nbsp;\u00b7&nbsp; <span style="color:var(--red);font-weight:700">' + openDefs + ' open deficienc' + (openDefs===1?'y':'ies') + '</span>' : '') + (acct.estimateBuilt ? ' &nbsp;\u00b7&nbsp; <span style="color:#1E7B3C;font-weight:700">Estimate on file</span>' : '') + '</div>' +
+      (recentHistory ? '<div style="margin-top:6px">' + recentHistory + '</div>' : '<div style="font-size:11px;color:var(--soft)">No service history on record yet.</div>') +
+      (acct.notes ? '<div style="font-size:11px;color:var(--soft);margin-top:8px;font-style:italic">"' + escH(acct.notes) + '"</div>' : '') +
+    '</div>';
+  } else {
+    acctBlock = '<div style="border-top:1px solid var(--line);padding-top:12px;margin-top:4px;font-size:12px;color:var(--soft)">No matching account record found for this job \u2014 nothing else on file to show.</div>';
+  }
+
+  document.getElementById('arrivalModalBody').innerHTML = rows + addr + timerRow + acctBlock +
+    '<div style="display:flex;gap:10px;margin-top:16px">' +
+      '<button onclick="closeModal(\'arrivalModal\')" style="flex:1;background:none;border:1.5px solid var(--line);border-radius:8px;padding:10px;font-family:Barlow Condensed,sans-serif;font-weight:700;cursor:pointer">Got it, close brief</button>' +
+      '<button onclick="closeModal(\'arrivalModal\');openCloseModal(\''+jobId+'\')" style="flex:1;background:var(--div-primary);color:#fff;border:none;border-radius:8px;padding:10px;font-family:Barlow Condensed,sans-serif;font-weight:800;cursor:pointer">✅ Close Job Now</button>' +
+    '</div>';
+
+  openModal('arrivalModal');
+  startArrivalTimer(job.onSiteStart || Date.now());
+}
+
+var _arrivalTimerInterval = null;
+function startArrivalTimer(startedAt) {
+  if (_arrivalTimerInterval) clearInterval(_arrivalTimerInterval);
+  function tick() {
+    var el = document.getElementById('arrivalTimerVal');
+    if (!el) { clearInterval(_arrivalTimerInterval); return; }
+    var elapsed = Math.max(0, Date.now() - startedAt);
+    var mins = Math.floor(elapsed / 60000);
+    var secs = Math.floor((elapsed % 60000) / 1000);
+    el.textContent = String(mins).padStart(2,'0') + ':' + String(secs).padStart(2,'0');
+  }
+  tick();
+  _arrivalTimerInterval = setInterval(tick, 1000);
 }
 
 function navToJob(addr) {
@@ -934,10 +1053,20 @@ function cpmPreviewCheckPhoto(input) {
 function submitJobClose() {
   var jobs = getJobs();
   var idx = jobs.findIndex(function(j){ return j.id===_activeJobId; });
+  var laborMinutes = null;
   if (idx >= 0) {
     jobs[idx].status = 'complete';
     jobs[idx].closedAt = Date.now();
     jobs[idx].closedBy = _currentTech?.name || 'Tech';
+
+    // Labor time for the job -- onSiteStart is captured in arriveJob().
+    // If a tech closes a job without ever tapping "I'm Here" first (skips
+    // straight to Close), there's no start time to measure against, so
+    // this stays null rather than showing a fabricated duration.
+    if (jobs[idx].onSiteStart) {
+      laborMinutes = Math.round((jobs[idx].closedAt - jobs[idx].onSiteStart) / 60000);
+      jobs[idx].laborMinutes = laborMinutes;
+    }
 
     // Capture every division-specific close field (gallons pumped, trap
     // condition, filters exchanged, chemical levels, etc.) -- these were
@@ -981,7 +1110,10 @@ function submitJobClose() {
 
   window._checkPhotoData = null; // clear after logging
   closeModal('closeModal');
-  showToast('✅ Job closed — sending customer survey...');
+  if (_arrivalTimerInterval) { clearInterval(_arrivalTimerInterval); _arrivalTimerInterval = null; }
+  showToast(laborMinutes != null
+    ? '✅ Job closed — ' + laborMinutes + ' min on site — sending customer survey...'
+    : '✅ Job closed — sending customer survey...');
   renderMyDay();
 
   // Fire NPS survey after 30 seconds (demo: 3 seconds)

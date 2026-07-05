@@ -1887,21 +1887,58 @@ function spSaveQuickCapture() {
   // If the contact form is already on screen, sync it live too.
   spApplyQuickCaptureToForm();
 }
+function spGetRealCatalog() {
+  // Same shared source as sales-portal.html and termac-os.html -- synced
+  // into localStorage by termac-os.html whenever it loads. This used to
+  // fall back to the plain TERMAC_PRODUCTS inventory/COGS list (SKU + unit
+  // only, no price, no dilution, no competitor pricing) which is why this
+  // panel never matched the real catalog design.
+  try {
+    var pc = JSON.parse(localStorage.getItem('termac_product_catalog') || 'null');
+    if (pc && pc.length) return pc;
+  } catch(e) {}
+  return [];
+}
 function spRenderCatalog() {
   var listEl = document.getElementById('spCatalogList');
   if (!listEl) return;
   var q = (document.getElementById('spCatSearch').value || '').toLowerCase();
+  var products = spGetRealCatalog();
+  if (!products.length) {
+    listEl.innerHTML = '<div style="color:rgba(255,255,255,.4);font-size:12px;text-align:center;padding:20px 10px;line-height:1.5">Catalog hasn\'t synced to this device yet \u2014 open Termac One (termac-os.html) once on this device first, then come back.</div>';
+    return;
+  }
   var groups = {};
-  TERMAC_PRODUCTS.forEach(function(p) {
-    if (q && p.name.toLowerCase().indexOf(q) === -1 && p.sku.toLowerCase().indexOf(q) === -1) return;
-    (groups[p.category] = groups[p.category] || []).push(p);
+  products.forEach(function(p) {
+    if (q && p.name.toLowerCase().indexOf(q) === -1 && (p.sku||'').toLowerCase().indexOf(q) === -1) return;
+    (groups[p.category || 'Other'] = groups[p.category || 'Other'] || []).push(p);
   });
   var html = '';
   Object.keys(groups).forEach(function(cat) {
     html += '<div class="sp-cat-group-title">' + cat + '</div>';
     groups[cat].forEach(function(p) {
-      html += '<div class="sp-cat-item"><div class="sp-cat-item-name">' + p.name + '</div>' +
-        '<div class="sp-cat-item-meta">' + p.sku + ' · ' + p.unit + '</div></div>';
+      var competitors = p.competitors || [];
+      var compMin = competitors.length ? Math.min.apply(null, competitors.map(function(c){ return c.price; })) : null;
+      var sizeRows = (p.sizes || []).map(function(s) {
+        var savings = (compMin != null && s.price != null) ? (compMin - s.price) : null;
+        var badge = (savings != null && savings > 0)
+          ? '<span style="background:rgba(34,197,94,.2);color:#4ADE80;border-radius:4px;padding:1px 5px;font-size:9px;font-weight:700;margin-left:5px">Save $' + savings.toFixed(2) + '</span>'
+          : '';
+        return '<div style="display:flex;justify-content:space-between;align-items:center;padding:3px 0">' +
+          '<span style="font-size:11px;color:rgba(255,255,255,.7)">' + (s.unit||'') + '</span>' +
+          '<span><span style="font-size:13px;font-weight:800;color:#fff">$' + (s.price!=null?Number(s.price).toFixed(2):'\u2014') + '</span>' + badge + '</span>' +
+        '</div>';
+      }).join('');
+      var dilution = p.dilution ? '<div style="font-size:10px;color:rgba(255,255,255,.55);margin-top:4px">\ud83d\udca7 ' + p.dilution + '</div>' : '';
+      var compLine = competitors.length ? '<div style="font-size:10px;color:rgba(255,255,255,.5);margin-top:4px">vs ' +
+        competitors.map(function(c){ return c.name+': $'+Number(c.price).toFixed(2); }).join(' \u00b7 ') + '</div>' : '';
+      html += '<div class="sp-cat-item">' +
+        '<div class="sp-cat-item-name">' + p.name + '</div>' +
+        (p.sku ? '<div class="sp-cat-item-meta">' + p.sku + '</div>' : '') +
+        dilution +
+        '<div style="margin-top:6px">' + sizeRows + '</div>' +
+        compLine +
+      '</div>';
     });
   });
   listEl.innerHTML = html || '<div style="color:rgba(255,255,255,.4);font-size:13px;text-align:center;padding:20px 0">No products match.</div>';
