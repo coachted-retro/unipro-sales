@@ -409,6 +409,15 @@ function lcWonLead(leadOrAccount, estimateData) {
     });
   }
 
+  // 4k. Create the real invoice record — this is the actual AR source of
+  // truth, tied to this account so any rep/receptionist/accounting staff
+  // with account access can find and resend it. Per-visit customers get
+  // auto-paid same day off the card on file; contract accounts get a due
+  // date on their own billing cadence and genuinely need follow-up.
+  if (typeof TermacInvoices !== 'undefined') {
+    try { TermacInvoices.create(account, jobPacket, estimateData); } catch(e) {}
+  }
+
   lcShowWonToast(biz, rep);
   return { account, jobPacket };
 }
