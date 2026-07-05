@@ -247,6 +247,79 @@
     }
   }
 
+  // Reverse of the field mapping used when pushing jobs to D1 — D1 stores
+  // snake_case columns (account_id, tech_id, scheduled_date...), but every
+  // portal that actually reads a job locally expects accountId, techId,
+  // date, time, serviceType. Confirmed directly against scheduler-v2.html
+  // and dispatch-v2.html before building this, rather than assumed.
+  function d1JobToLocalShape(d1job, accountName) {
+    return {
+      id: d1job.id,
+      accountId: d1job.account_id || null,
+      accountName: accountName || '',
+      techId: d1job.tech_id || null,
+      date: d1job.scheduled_date || null,
+      time: d1job.scheduled_time || null,
+      serviceType: d1job.service_type || '',
+      status: d1job.status || 'pending_schedule',
+      notes: d1job.notes || '',
+      reportUrl: d1job.report_url || null,
+      squareRef: d1job.square_ref || null,
+      completedAt: d1job.completed_at || null,
+      created: d1job.created_at || null,
+      division: d1job.division || '',
+    };
+  }
+
+  // Pulls jobs down from D1 and merges any that don't already exist
+  // locally into the right per-division key. Local data always wins for
+  // anything already present — this only ever adds jobs a rep hasn't seen
+  // yet (e.g. created on a different device), never overwrites one
+  // someone might be actively working on.
+  async function hydrateJobs() {
+    var res;
+    try {
+      res = await d1Fetch('GET', '/api/jobs?limit=500');
+    } catch (e) { return { added: 0 }; }
+    if (!res.ok || !Array.isArray(res.results) || !res.results.length) return { added: 0 };
+
+    var accounts = crmLoad('accounts');
+    function accountNameFor(accountId) {
+      var acct = accounts.find(function (a) { return a.id === accountId; });
+      return acct ? (acct.business || acct.name || '') : '';
+    }
+
+    var byKey = {};
+    var initialized = {};
+    Object.keys(JOB_DIVISION_KEYS).forEach(function (key) { byKey[key] = []; initialized[key] = false; });
+
+    var added = 0;
+    res.results.forEach(function (d1job) {
+      var localKey = null;
+      Object.keys(JOB_DIVISION_KEYS).forEach(function (key) {
+        if (JOB_DIVISION_KEYS[key] === d1job.division) localKey = key;
+      });
+      if (!localKey) return; // unrecognized division, skip rather than guess
+
+      var existing;
+      try { existing = JSON.parse(localStorage.getItem(localKey) || '[]'); } catch (e) { existing = []; }
+      var alreadyHave = existing.some(function (j) { return j && j.id === d1job.id; });
+      if (alreadyHave) return; // local wins, never overwrite
+
+      if (!initialized[localKey]) { byKey[localKey] = existing; initialized[localKey] = true; }
+      byKey[localKey].push(d1JobToLocalShape(d1job, accountNameFor(d1job.account_id)));
+      added++;
+    });
+
+    Object.keys(byKey).forEach(function (key) {
+      if (byKey[key].length) {
+        try { localStorage.setItem(key, JSON.stringify(byKey[key])); } catch (e) {}
+      }
+    });
+
+    return { added: added };
+  }
+
   // Non-invasive periodic sweep — deliberately does NOT touch any existing
   // save function in Scheduler, Dispatch, or the Tech Portal, all of which
   // have several different, scattered ways of writing job data today.
@@ -255,12 +328,15 @@
   // site individually, at the cost of a short sync delay instead of an
   // instant push. Call once per page; safe to call from multiple portals.
   var _jobSweepStarted = false;
-  function startJobSyncSweep(intervalMs) {
+  function startJobSyncSweep(intervalMs, onHydrate) {
     if (_jobSweepStarted) return;
     _jobSweepStarted = true;
     var keys = Object.keys(JOB_DIVISION_KEYS);
     function sweep() {
       keys.forEach(function (k) { d1PushJobs(k).catch(function () {}); });
+      hydrateJobs().then(function (result) {
+        if (result.added > 0 && typeof onHydrate === 'function') onHydrate(result.added);
+      }).catch(function () {});
     }
     sweep(); // run once immediately, then on the interval
     setInterval(sweep, intervalMs || 30000);
@@ -273,6 +349,7 @@
     d1Hydrate: d1Hydrate,
     d1HydrateAll: d1HydrateAll,
     d1PushJobs: d1PushJobs,
+    hydrateJobs: hydrateJobs,
     startJobSyncSweep: startJobSyncSweep,
     upsertRepCard: upsertRepCard,
     getRepCard: getRepCard,
