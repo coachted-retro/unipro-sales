@@ -59,7 +59,7 @@ body{background:var(--bg);color:var(--ink);font-family:Barlow,sans-serif;font-si
   <span class="nav-logo">TERMAC ONE</span>
   <span class="nav-sep"></span>
   <span class="nav-title">Accounts Receivable</span>
-  <a class="nav-back" href="accounting-portal.html">&larr; Accounting Office</a>
+  <a href="employee-portal.html" style="background:#C8102E;border:1.5px solid #C8102E;border-radius:7px;color:#fff;font-family:Barlow,sans-serif;font-weight:700;font-size:11px;letter-spacing:.10em;text-transform:uppercase;padding:6px 14px;cursor:pointer;white-space:nowrap;text-decoration:none;display:inline-flex;align-items:center;gap:6px;margin-left:8px">🏠 Employee Portal</a>
   <a class="nav-help" href="user-manuals.html?role=ar-assistant" target="_blank">? Help</a>
 </div>
 
@@ -71,12 +71,14 @@ body{background:var(--bg);color:var(--ink);font-family:Barlow,sans-serif;font-si
 
   <div class="tabs">
     <button class="tab-btn active" data-tab="worklist" onclick="setTab('worklist')">Collection Worklist</button>
+    <button class="tab-btn" data-tab="invoices" onclick="setTab('invoices')">Search Invoices</button>
     <button class="tab-btn" data-tab="reconcile" onclick="setTab('reconcile')">Reconcile Field Payments</button>
     <button class="tab-btn" data-tab="statement" onclick="setTab('statement')">Customer Statement</button>
     <button class="tab-btn" data-tab="promises" onclick="setTab('promises')">Promises to Pay</button>
   </div>
 
   <div class="tab-panel active" id="tab-worklist"></div>
+  <div class="tab-panel" id="tab-invoices"></div>
   <div class="tab-panel" id="tab-reconcile"></div>
   <div class="tab-panel" id="tab-statement"></div>
   <div class="tab-panel" id="tab-promises"></div>
@@ -85,6 +87,7 @@ body{background:var(--bg);color:var(--ink);font-family:Barlow,sans-serif;font-si
 <div class="modal-bg" id="modalBg"><div class="modal" id="modalBody"></div></div>
 <div class="toast" id="toast"></div>
 
+<script src="termac-invoices.js"></script>
 <script src="termac-finance.js"></script>
 <script src="termac-credit.js"></script>
 <script>
@@ -101,7 +104,64 @@ function fullyPaid(i){ return F.fullyPaid(i); }
 function ageStatus(i){ return F.ageStatus(i); }
 
 function setTab(t){ _tab=t; document.querySelectorAll('.tab-btn').forEach(function(b){ b.classList.toggle('active', b.dataset.tab===t); }); document.querySelectorAll('.tab-panel').forEach(function(p){ p.classList.toggle('active', p.id==='tab-'+t); }); renderTab(); }
-function renderTab(){ ({worklist:renderWorklist,reconcile:renderReconcile,statement:renderStatement,promises:renderPromises}[_tab]||function(){})(); }
+function renderTab(){ ({worklist:renderWorklist,invoices:renderInvoiceSearch,reconcile:renderReconcile,statement:renderStatement,promises:renderPromises}[_tab]||function(){})(); }
+
+// ── SEARCH INVOICES ──────────────────────────────────────────────────────
+// Real invoice records now exist (termac-invoices.js), tied to the same
+// CRM account every other portal already uses. This is the searchable
+// history that was missing — invoice number, account, division, status,
+// with a resend action any accounting staff can trigger.
+var INV_STATUS_LABEL = { draft:'Draft', sent:'Sent — Awaiting Payment', paid:'Paid', overdue:'Overdue', disputed:'Disputed' };
+var INV_STATUS_COLOR = { draft:'#6B7280', sent:'#1B5FA8', paid:'#1E7B3C', overdue:'#C8102E', disputed:'#D97706' };
+
+function renderInvoiceSearch(){
+  var panel = document.getElementById('tab-invoices');
+  if (!window.TermacInvoices) { panel.innerHTML = '<div class="muted">Invoice module not loaded.</div>'; return; }
+  if (typeof TermacInvoices.overdueCheck === 'function') TermacInvoices.overdueCheck();
+
+  panel.innerHTML =
+    '<div style="margin-bottom:12px">' +
+      '<input id="invSearchBox" type="text" placeholder="Search by invoice #, account, or division..." ' +
+      'style="width:100%;max-width:420px;padding:9px 12px;border:1.5px solid var(--line);border-radius:8px;font-size:13px" ' +
+      'oninput="renderInvoiceResults(this.value)">' +
+    '</div>' +
+    '<div id="invResultsBody"></div>';
+
+  document.getElementById('invSearchBox').focus();
+  renderInvoiceResults('');
+}
+
+function renderInvoiceResults(query){
+  var body = document.getElementById('invResultsBody');
+  var results = TermacInvoices.search(query);
+  if (!results.length) {
+    body.innerHTML = '<div class="muted">No invoices found' + (query ? ' for "' + esc(query) + '"' : '') + '.</div>';
+    return;
+  }
+  body.innerHTML = results.slice(0, 100).map(function(inv){
+    var color = INV_STATUS_COLOR[inv.status] || '#6B7280';
+    var label = INV_STATUS_LABEL[inv.status] || inv.status;
+    var issued = new Date(inv.issuedDate).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+    var due = inv.dueDate ? new Date(inv.dueDate).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—';
+    return '<div style="background:#fff;border:1px solid var(--line);border-radius:9px;padding:12px 16px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">' +
+      '<div>' +
+        '<div style="font-weight:700;font-size:13px">' + esc(inv.invoiceNumber) + ' — ' + esc(inv.accountName) + '</div>' +
+        '<div style="font-size:12px;color:#6B7280;margin-top:2px">' + esc(inv.division) + ' · Issued ' + issued + ' · Due ' + due + '</div>' +
+      '</div>' +
+      '<div style="display:flex;align-items:center;gap:10px">' +
+        '<span style="background:' + color + '1A;color:' + color + ';border-radius:5px;padding:3px 10px;font-size:11px;font-weight:800;text-transform:uppercase">' + label + '</span>' +
+        '<span style="font-weight:800;font-size:14px">' + money(inv.amount) + '</span>' +
+        '<button onclick="resendInvoiceFromSearch(\'' + inv.id + '\')" style="background:#1A1D21;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:11px;font-weight:700;text-transform:uppercase;cursor:pointer">Resend</button>' +
+      '</div>' +
+    '</div>';
+  }).join('') + (results.length > 100 ? '<div class="muted" style="margin-top:8px">Showing first 100 of ' + results.length + ' results — narrow your search.</div>' : '');
+}
+
+function resendInvoiceFromSearch(id){
+  var inv = TermacInvoices.resend(id, (typeof _currentUser !== 'undefined' && _currentUser?.name) || 'Accounting');
+  if (inv) { toast('Invoice ' + inv.invoiceNumber + ' marked resent to ' + inv.accountName + '.'); }
+  renderInvoiceResults(document.getElementById('invSearchBox') ? document.getElementById('invSearchBox').value : '');
+}
 
 function renderStats(){
   var ar=F.loadAR(), openAR=0, overdue=0;
