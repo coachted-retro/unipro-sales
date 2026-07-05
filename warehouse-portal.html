@@ -3395,19 +3395,57 @@ function applyInvoiceReceiving() {
   alert('Applied '+applied+' line item(s) to receiving. Pricing updated where invoiced cost differed.');
 }
 
+var WAREHOUSE_TO_DIVISION = { termac: 'Termac', unipro: 'UniPro', allpro: 'AllPro' };
+
+function apNormName(s) { return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]/g, ''); }
+
 function saveAPRecord() {
   var wh = document.getElementById('invScanWHSel').value;
   var l0 = _invScanLines[0]||{};
+  var vendor = l0.vendor || 'Unknown Vendor';
+  var total = _invScanLines.reduce(function(s,l){return s+(l.lineTotal||0);},0);
+
+  // Same duplicate-bill check already used in ap-portal.html for
+  // manually-entered bills — this is exactly the case it exists to catch,
+  // a bill arriving through a second channel for the same vendor/amount.
+  var normVendor = apNormName(vendor);
+  var existingAP = [];
+  try { existingAP = JSON.parse(localStorage.getItem('termac_payables') || '[]'); } catch(e) {}
+  var dupes = existingAP.filter(function(b) { return apNormName(b.vendor) === normVendor && Math.abs((Number(b.amount)||0) - total) < 0.01; });
+  if (dupes.length && !confirm('A bill for ' + vendor + ' at $' + total.toFixed(2) + ' already exists in Accounts Payable. Save anyway?')) {
+    try {
+      var dupLog = JSON.parse(localStorage.getItem('termac_ap_dupes_caught') || '[]');
+      dupLog.unshift({ vendor: vendor, amount: total, at: Date.now() });
+      localStorage.setItem('termac_ap_dupes_caught', JSON.stringify(dupLog));
+    } catch(e) {}
+    alert('Not saved — duplicate caught.');
+    return;
+  }
+
+  var lineSummary = _invScanLines.map(function(l) {
+    return (l.description||'Item') + ' x' + (l.qty||1) + ' @ $' + (l.unitPrice||0).toFixed(2);
+  }).join('; ');
+  var notes = 'Scanned from warehouse (' + (WAREHOUSE_TO_DIVISION[wh]||wh) + ').' +
+    (l0.invoiceDate ? ' Invoice date: ' + l0.invoiceDate + '.' : '') +
+    (lineSummary ? ' Items: ' + lineSummary : '');
+
   var record = {
-    id: 'ap_'+Date.now(), ts: Date.now(), saved: new Date().toLocaleString(),
-    warehouse: wh, vendor: l0.vendor||'Unknown Vendor',
-    invoiceNumber: l0.invoiceNum||'', invoiceDate: l0.invoiceDate||'',
-    total: _invScanLines.reduce(function(s,l){return s+(l.lineTotal||0);},0),
-    lines: _invScanLines.map(function(l){ return { description:l.description, qty:l.qty, unitPrice:l.unitPrice, lineTotal:l.lineTotal, matchedSKU:l.matched?l.matched.id:null }; }),
-    status: 'pending'
+    id: 'ap' + Date.now(),
+    vendor: vendor,
+    amount: total,
+    division: WAREHOUSE_TO_DIVISION[wh] || wh,
+    category: '',
+    dueDate: '',
+    invoiceNum: l0.invoiceNum || '',
+    notes: notes,
+    status: 'open',
+    loggedAt: Date.now(),
   };
-  var all = loadAPInvoices(); all.unshift(record); saveAPInvoices(all);
-  alert('AP record saved for '+record.vendor+' ('+record.lines.length+' lines, $'+record.total.toFixed(2)+'). View all AP records in the COGS & Margins tab or export to CSV for accounting.');
+
+  existingAP.unshift(record);
+  try { localStorage.setItem('termac_payables', JSON.stringify(existingAP)); } catch(e) {}
+
+  alert('Saved to Accounts Payable for ' + vendor + ' ($' + total.toFixed(2) + '). Accounting will see this in their Bills Worklist.');
 }
 
 function exportAPRecord() {
