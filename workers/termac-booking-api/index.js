@@ -1,5 +1,6 @@
 /**
  * termac-booking-api — Termac One
+ * Deployed: 2026-07-05
  * The ONLY worker a customer's browser talks to directly when booking an
  * appointment through a rep's Digital Business Card. Deliberately narrow:
  * it can do exactly one thing (accept a booking request), and it never
