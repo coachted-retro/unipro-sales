@@ -287,23 +287,29 @@ body{font-family:Barlow,sans-serif;background:var(--bg);color:var(--ink);min-hei
         </div>
         <!-- Admin post button — shown only for manager/admin -->
         <div id="nlAdminBar" style="display:none;padding:10px 14px;border-top:1px solid var(--line);background:#F8F9FA">
-          <button onclick="nlOpenPost()" style="width:100%;padding:8px;background:var(--red);color:#fff;border:none;border-radius:7px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">+ Add Personal Post</button>
+          <button onclick="nlOpenPost()" style="width:100%;padding:8px;background:var(--red);color:#fff;border:none;border-radius:7px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">+ Add Post</button>
         </div>
       </div>
 
       <!-- Add Post Modal -->
       <div id="nlPostModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9000;align-items:center;justify-content:center">
         <div style="background:#fff;border-radius:14px;padding:28px;width:min(460px,94vw);max-height:90vh;overflow-y:auto">
-          <div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:20px;text-transform:uppercase;color:var(--ink);margin-bottom:4px">Add Personal Post</div>
-          <div style="font-size:12px;color:var(--soft);margin-bottom:18px">Announce a life event, milestone, or special occasion</div>
+          <div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:20px;text-transform:uppercase;color:var(--ink);margin-bottom:4px">Add Post</div>
+          <div style="font-size:12px;color:var(--soft);margin-bottom:18px">Company Spotlight posts to the Company tab. Everything else posts to Family.</div>
           <select id="nlPostType" style="width:100%;padding:9px 12px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;margin-bottom:10px;font-family:Barlow,sans-serif">
-            <option value="birth">👶 New Baby / Family Addition</option>
-            <option value="wedding">💍 Wedding / Engagement</option>
-            <option value="anniversary">🎉 Special Anniversary</option>
-            <option value="graduation">🎓 Graduation</option>
-            <option value="milestone">🏆 Personal Milestone</option>
-            <option value="condolence">🕊️ Condolences</option>
-            <option value="other">📌 Other Announcement</option>
+            <optgroup label="Company Spotlight (posts to Company tab)">
+              <option value="spotlight">🌟 Company Spotlight — great job, great inspection</option>
+              <option value="recognition">👏 Employee Recognition</option>
+            </optgroup>
+            <optgroup label="Personal / Family (posts to Family tab)">
+              <option value="birth">👶 New Baby / Family Addition</option>
+              <option value="wedding">💍 Wedding / Engagement</option>
+              <option value="anniversary">🎉 Special Anniversary</option>
+              <option value="graduation">🎓 Graduation</option>
+              <option value="milestone">🏆 Personal Milestone</option>
+              <option value="condolence">🕊️ Condolences</option>
+              <option value="other">📌 Other Announcement</option>
+            </optgroup>
           </select>
           <input id="nlPostTitle" placeholder="Headline (e.g. Welcome Baby Smith!)" style="width:100%;padding:9px 12px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;margin-bottom:10px;font-family:Barlow,sans-serif">
           <textarea id="nlPostBody" placeholder="Details…" rows="3" style="width:100%;padding:9px 12px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;margin-bottom:10px;font-family:Barlow,sans-serif;resize:vertical"></textarea>
@@ -903,7 +909,8 @@ const NL_DIVISIONS = [
    prompt:'stainless steel fabrication for commercial kitchens — NSF equipment certification news, commercial kitchen design trends, health department equipment standards, hood suppression system integration with stainless fabrication'},
 ];
 
-const NL_TYPE_ICONS = {birth:'👶',wedding:'💍',anniversary:'🎉',graduation:'🎓',milestone:'🏆',condolence:'🕊️',other:'📌',birthday:'🎂',workanniversary:'🥳'};
+const NL_TYPE_ICONS = {birth:'👶',wedding:'💍',anniversary:'🎉',graduation:'🎓',milestone:'🏆',condolence:'🕊️',other:'📌',birthday:'🎂',workanniversary:'🥳',spotlight:'🌟',recognition:'👏'};
+const NL_COMPANY_TYPES = ['spotlight','recognition'];
 let _nlActiveSection = 'industry';
 let _nlContent = null;
 
@@ -987,6 +994,23 @@ function nlSavePost(){
   const body=document.getElementById('nlPostBody').value.trim();
   const employee=document.getElementById('nlPostEmployee').value.trim();
   if(!title){document.getElementById('nlPostTitle').style.borderColor='var(--red)';return;}
+
+  if(NL_COMPANY_TYPES.includes(type)){
+    // Company Spotlight / Recognition -> Company tab, via termac_hr_announcements
+    // (nlGetHRAnnouncements already reads this key -- it just never had a writer before)
+    let announcements=[];
+    try{announcements=JSON.parse(localStorage.getItem('termac_hr_announcements')||'[]');}catch(e){}
+    announcements.unshift({
+      title:(NL_TYPE_ICONS[type]||'')+' '+title+(employee?` — ${employee}`:''),
+      body,
+      ts:Date.now(),
+    });
+    localStorage.setItem('termac_hr_announcements',JSON.stringify(announcements));
+    document.getElementById('nlPostModal').style.display='none';
+    nlShowSection('company');nlRender();epToast('Posted to Company tab! 🌟');
+    return;
+  }
+
   const posts=nlGetPersonalPosts();
   posts.unshift({type,title,body:body+(employee?` — Congrats to ${employee}!`:''),date:new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}),ts:Date.now()});
   localStorage.setItem('termac_nl_posts',JSON.stringify(posts));
