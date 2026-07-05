@@ -3,6 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <script src="termac-intelligence.js"></script>
+<script src="termac-invoices.js"></script>
+<script src="termac-d1-sync.js"></script>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Termac One — Sales Portal</title>
 <link rel="icon" type="image/png" sizes="32x32" href="icons/icon-main-32.png">
@@ -677,8 +679,13 @@ body.rail-open .rail-overlay{display:block}
 // ══════════════════════════════════════════════════════
 //  SHARED STORAGE (same keys as termac-os.html)
 // ══════════════════════════════════════════════════════
-function crmLoad(key){ try{ return JSON.parse(localStorage.getItem('termac_crm_'+key)||'[]'); }catch(e){return[];} }
-function crmSave(key,val){ try{ localStorage.setItem('termac_crm_'+key,JSON.stringify(val)); }catch(e){} }
+// crmLoad/crmSave now come from termac-d1-sync.js (loaded above), which
+// writes local immediately and pushes to D1 in the background. Previously
+// this file defined its own localStorage-only versions right here, which
+// would have silently overridden the shared, sync-enabled versions since
+// function declarations later in the page simply replace earlier ones —
+// this was the actual mechanism keeping Sales Portal disconnected from D1
+// even after the shared module is loaded.
 
 // ══════════════════════════════════════════════════════
 //  CHURN RISK SCORING — ported directly from termac-os.html's
@@ -831,6 +838,16 @@ function spEnterPortal() {
   // ── END USER CHIP ───────────────────────────────────────────────────────
   spUpdateQueueBadge();
   spNav('home');
+
+  // If this is a fresh device with empty local storage, pull down whatever
+  // already exists in D1 rather than showing an empty CRM. Only touches
+  // tables that were actually empty locally — never overwrites real local
+  // data, matching the "local wins if present" rule in termac-d1-sync.js.
+  if (typeof TermacD1Sync !== 'undefined') {
+    TermacD1Sync.d1HydrateAll(function () {
+      if (typeof spNav === 'function') spNav('home');
+    }).catch(function () {});
+  }
 }
 
 // ══════════════════════════════════════════════════════
@@ -2835,6 +2852,17 @@ function spViewRecord(id, tab) {
   spAutoCloseDrawer();
 }
 
+function spResendInvoice(invoiceId) {
+  if (typeof TermacInvoices === 'undefined') return;
+  const by = (typeof _currentUser !== 'undefined' && _currentUser?.name) || 'Rep';
+  const inv = TermacInvoices.resend(invoiceId, by);
+  if (!inv) return;
+  if (typeof showToast === 'function') showToast('Invoice ' + inv.invoiceNumber + ' marked resent to ' + inv.accountName + '.');
+  // Re-render the currently open account so the invoice list reflects it
+  const r = crmLoad('accounts').find(x => x.id === inv.accountId);
+  if (r) spOpenDetail(r, 'accounts');
+}
+
 function spOpenDetail(r, tab) {
   const stage = SP_STAGES[spNormalizeStage(r.lifecycleStage)] || SP_STAGES.lead;
   const svcs = (r.services || []).map(s => { const c = spSvcColor(s); return `<span style="background:${c.bg};color:${c.color};border-radius:4px;padding:3px 9px;font-size:11px;font-weight:700">${spSvcLabel(s)}</span>`; }).join(' ');
@@ -2878,6 +2906,37 @@ function spOpenDetail(r, tab) {
     }
   }
 
+  // Invoices tied to this account — real invoice records (termac-invoices.js),
+  // not a derived view. Any rep or receptionist looking at this account can
+  // see and resend one, which is exactly the point of using the same
+  // account identity on both sides.
+  let invoicesHtml = '';
+  if (isAccount && typeof TermacInvoices !== 'undefined') {
+    const acctInvoices = TermacInvoices.getForAccount(r.id);
+    if (acctInvoices.length) {
+      const INV_COLOR = { draft:'#6B7280', sent:'#1B5FA8', paid:'#1E7B3C', overdue:'#C8102E', disputed:'#D97706' };
+      const INV_LABEL = { draft:'Draft', sent:'Sent — Awaiting Payment', paid:'Paid', overdue:'Overdue', disputed:'Disputed' };
+      invoicesHtml = `<div style="padding:12px 0;border-bottom:1px solid var(--line);margin-bottom:12px">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:8px">🧾 Invoices (${acctInvoices.length})</div>
+        ${acctInvoices.slice(0,10).map(inv => {
+          const color = INV_COLOR[inv.status] || '#6B7280';
+          const label = INV_LABEL[inv.status] || inv.status;
+          const issued = new Date(inv.issuedDate).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+          return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:var(--bg);border-radius:7px;margin-bottom:6px">
+            <div>
+              <div style="font-size:13px;font-weight:700;color:var(--ink)">${escH(inv.invoiceNumber)} · ${TermacInvoices.money(inv.amount)}</div>
+              <div style="font-size:11px;color:var(--soft)">${escH(inv.division)} · Issued ${issued}</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="background:${color}1A;color:${color};border-radius:5px;padding:2px 8px;font-size:10px;font-weight:800;text-transform:uppercase">${label}</span>
+              <button onclick="spResendInvoice('${inv.id}')" style="background:#1A1D21;color:#fff;border:none;border-radius:6px;padding:5px 10px;font-size:10px;font-weight:700;text-transform:uppercase;cursor:pointer">Resend</button>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>`;
+    }
+  }
+
   const el = document.getElementById('spContent');
   el.innerHTML = `
   <button class="sp-btn sp-btn-ghost" style="margin-bottom:14px" onclick="spNav('home')">← Back to Home</button>
@@ -2912,6 +2971,7 @@ function spOpenDetail(r, tab) {
     </div>
 
     ${openOppsHtml}
+    ${invoicesHtml}
 
     <!-- Stage + action buttons, right on the card -->
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
