@@ -1232,44 +1232,205 @@ function sendMessage() {
 
 // ── AI CAMERA ─────────────────────────────────────────────
 function openAICamera() {
+  var jobs = getJobs();
+  var todayStr = new Date().toISOString().slice(0,10);
+  var todaysJobs = jobs.filter(function(j){ return j.date === todayStr; });
+  var defaultJobId = (_activeJobId && jobs.some(function(j){ return j.id === _activeJobId; })) ? _activeJobId : (todaysJobs[0] ? todaysJobs[0].id : '');
+
+  var jobOptions = '<option value="">Not attached to a job</option>' +
+    todaysJobs.map(function(j){
+      return '<option value="'+j.id+'"'+(j.id===defaultJobId?' selected':'')+'>'+escH(j.accountName||'Job')+' — '+(j.time||'')+'</option>';
+    }).join('');
+
+  var speechSupported = (typeof window.SpeechRecognition !== 'undefined') || (typeof window.webkitSpeechRecognition !== 'undefined');
+
   document.getElementById('aiCameraBody').innerHTML =
     '<div style="font-size:13px;color:var(--soft);margin-bottom:14px">' + DIV.aiCameraPrompt.slice(0,120) + '…</div>' +
-    '<div style="border:2px dashed var(--line);border-radius:9px;padding:20px;text-align:center;cursor:pointer;margin-bottom:14px" onclick="document.getElementById(\'ai_photo_input\').click()">' +
-      '<input type="file" id="ai_photo_input" accept="image/*" capture="environment" style="display:none" onchange="runAICamera(this)">' +
-      '<div style="font-size:32px;margin-bottom:8px">📷</div>' +
-      '<div style="font-weight:700">Tap to take photo or upload</div>' +
-      '<div style="font-size:12px;color:var(--soft);margin-top:4px">Photo will be analyzed by AI</div>' +
+    '<div style="margin-bottom:14px">' +
+      '<label class="field-lbl">Attach to job (optional)</label>' +
+      '<select class="field" id="ai_job_select">' + jobOptions + '</select>' +
     '</div>' +
+    '<div style="border:2px dashed var(--line);border-radius:9px;padding:20px;text-align:center;cursor:pointer;margin-bottom:14px" onclick="document.getElementById(\'ai_photo_input\').click()">' +
+      '<input type="file" id="ai_photo_input" accept="image/*" capture="environment" style="display:none" onchange="onAIPhotoSelected(this)">' +
+      '<div id="ai_photo_preview_area">' +
+        '<div style="font-size:32px;margin-bottom:8px">📷</div>' +
+        '<div style="font-weight:700">Tap to take photo or upload</div>' +
+      '</div>' +
+    '</div>' +
+    '<div id="ai_voice_section" style="display:none;margin-bottom:14px">' +
+      '<label class="field-lbl">Describe what you\'re looking at (optional)</label>' +
+      (speechSupported
+        ? '<button type="button" id="ai_voice_btn" onclick="toggleAIVoiceCapture()" style="width:100%;padding:10px;border-radius:8px;border:1.5px solid var(--line);background:#F8F9FA;font-weight:700;cursor:pointer;margin-bottom:8px">🎤 Tap to Speak</button>'
+        : '') +
+      '<textarea id="ai_voice_transcript" class="field" placeholder="' + (speechSupported ? 'Tap the mic, or type here' : 'Voice input not supported on this browser — type here instead') + '" style="min-height:60px"></textarea>' +
+    '</div>' +
+    '<button type="button" id="ai_analyze_btn" onclick="runAICamera()" style="display:none;width:100%;background:var(--red);color:#fff;border:none;border-radius:8px;padding:12px;font-weight:700;cursor:pointer;margin-bottom:14px">🔍 Analyze</button>' +
     '<div id="ai_camera_result" style="min-height:40px"></div>';
   openModal('aiCameraModal');
 }
 
-function runAICamera(input) {
+function onAIPhotoSelected(input) {
   var file = input.files[0];
   if (!file) return;
+  _aiCameraFile = file;
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    document.getElementById('ai_photo_preview_area').innerHTML =
+      '<img src="'+e.target.result+'" style="max-width:100%;max-height:180px;border-radius:8px">';
+  };
+  reader.readAsDataURL(file);
+  document.getElementById('ai_voice_section').style.display = 'block';
+  document.getElementById('ai_analyze_btn').style.display = 'block';
+}
+
+// ── VOICE CAPTURE — feature-detected, never shown as a broken button on
+// browsers without Web Speech API support. Transcript lands in an
+// editable textarea since voice recognition in noisy field conditions
+// isn't always perfect, and the tech should be able to correct it before
+// it goes to the AI.
+var _aiVoiceRecognition = null;
+var _aiVoiceListening = false;
+function toggleAIVoiceCapture() {
+  var btn = document.getElementById('ai_voice_btn');
+  var textarea = document.getElementById('ai_voice_transcript');
+  if (_aiVoiceListening) {
+    if (_aiVoiceRecognition) _aiVoiceRecognition.stop();
+    return;
+  }
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return;
+  _aiVoiceRecognition = new SR();
+  _aiVoiceRecognition.continuous = true;
+  _aiVoiceRecognition.interimResults = true;
+  var baseText = textarea.value ? textarea.value.trim() + ' ' : '';
+
+  _aiVoiceRecognition.onstart = function() {
+    _aiVoiceListening = true;
+    btn.textContent = '⏹ Listening — tap to stop';
+    btn.style.background = '#FEE2E2';
+  };
+  _aiVoiceRecognition.onresult = function(event) {
+    var transcript = '';
+    for (var i = 0; i < event.results.length; i++) {
+      transcript += event.results[i][0].transcript;
+    }
+    textarea.value = baseText + transcript;
+  };
+  _aiVoiceRecognition.onerror = function() {
+    _aiVoiceListening = false;
+    btn.textContent = '🎤 Tap to Speak';
+    btn.style.background = '#F8F9FA';
+  };
+  _aiVoiceRecognition.onend = function() {
+    _aiVoiceListening = false;
+    btn.textContent = '🎤 Tap to Speak';
+    btn.style.background = '#F8F9FA';
+  };
+  _aiVoiceRecognition.start();
+}
+
+var _aiCameraFile = null;
+var _aiCameraLastAnalysis = null;
+
+function runAICamera() {
+  var file = _aiCameraFile;
+  if (!file) return;
   var res = document.getElementById('ai_camera_result');
-  if (res) res.innerHTML = '<div style="color:var(--soft);font-style:italic">🤖 Analyzing photo...</div>';
+  var transcriptEl = document.getElementById('ai_voice_transcript');
+  var transcript = transcriptEl ? transcriptEl.value.trim() : '';
+  if (res) res.innerHTML = '<div style="color:var(--soft);font-style:italic">🤖 Analyzing photo' + (transcript ? ' and notes' : '') + '...</div>';
+
   var reader = new FileReader();
   reader.onload = function(e) {
     var b64 = e.target.result.split(',')[1];
+    var prompt = DIV.aiCameraPrompt;
+    if (transcript) {
+      prompt += '\n\nThe technician described what they\'re looking at: "' + transcript + '". Use this context alongside the image in your analysis.';
+    }
     fetch('https://unipro-ai-proxy.termac-one.workers.dev/', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        prompt: DIV.aiCameraPrompt,
-        image: b64,
-        mediaType: file.type || 'image/jpeg'
-      })
+      body:JSON.stringify({ prompt: prompt, image: b64, mediaType: file.type || 'image/jpeg' })
     }).then(function(r){ return r.json(); })
       .then(function(d) {
         var text = (d.content&&d.content[0]&&d.content[0].text) || d.result || 'No response';
-        if (res) res.innerHTML = '<div style="background:#F8F9FA;border-radius:8px;padding:14px;font-size:13px;line-height:1.6;white-space:pre-wrap">' + escH(text) + '</div>';
+        _aiCameraLastAnalysis = text;
+        if (res) res.innerHTML =
+          '<div style="background:#F8F9FA;border-radius:8px;padding:14px;font-size:13px;line-height:1.6;white-space:pre-wrap;margin-bottom:10px">' + escH(text) + '</div>' +
+          '<button type="button" onclick="saveAICameraToJob()" style="width:100%;background:#1E7B3C;color:#fff;border:none;border-radius:8px;padding:12px;font-weight:700;cursor:pointer">💾 Save to Job</button>' +
+          '<div id="ai_save_status" style="font-size:12px;margin-top:8px;display:none"></div>';
       })
       .catch(function(err) {
         if (res) res.innerHTML = '<div style="color:var(--red)">AI analysis failed — check connection.</div>';
       });
   };
   reader.readAsDataURL(file);
+}
+
+// ── SAVE TO JOB — uploads the photo through the same photo-upload worker
+// already proven out for rep cards, then persists photo + transcript +
+// AI analysis onto the job's own record so it becomes real, retained
+// history instead of disappearing the moment the modal closes.
+async function saveAICameraToJob() {
+  var statusEl = document.getElementById('ai_save_status');
+  var jobSelect = document.getElementById('ai_job_select');
+  var jobId = jobSelect ? jobSelect.value : '';
+  statusEl.style.display = 'block';
+  statusEl.style.color = 'var(--soft)';
+  statusEl.textContent = 'Saving...';
+
+  var photoUrl = '';
+  try {
+    var base64 = await new Promise(function(resolve, reject) {
+      var r = new FileReader();
+      r.onload = function(e) { resolve(e.target.result); };
+      r.onerror = reject;
+      r.readAsDataURL(_aiCameraFile);
+    });
+    var uploadRes = await fetch('https://termac-photo-upload.termac-one.workers.dev', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        accountId: 'job-docs',
+        key: (jobId || 'unattached') + '-' + Date.now(),
+        base64: base64,
+        contentType: _aiCameraFile.type || 'image/jpeg',
+      }),
+    });
+    var uploadData = await uploadRes.json();
+    if (uploadData.ok) photoUrl = uploadData.url;
+  } catch (e) {}
+
+  var transcriptEl = document.getElementById('ai_voice_transcript');
+  var entry = {
+    ts: Date.now(),
+    photoUrl: photoUrl,
+    transcript: transcriptEl ? transcriptEl.value.trim() : '',
+    aiAnalysis: _aiCameraLastAnalysis || '',
+  };
+
+  if (jobId) {
+    try {
+      var jobs = getJobs();
+      var job = jobs.find(function(j){ return j.id === jobId; });
+      if (job) {
+        job.documentation = job.documentation || [];
+        job.documentation.push(entry);
+        localStorage.setItem(DIV.jobsKey, JSON.stringify(jobs));
+        statusEl.style.color = '#166534';
+        statusEl.textContent = '✓ Saved to ' + (job.accountName || 'job');
+      } else {
+        statusEl.style.color = '#991B1B';
+        statusEl.textContent = 'Job not found — not saved.';
+      }
+    } catch (e) {
+      statusEl.style.color = '#991B1B';
+      statusEl.textContent = 'Could not save.';
+    }
+  } else {
+    statusEl.style.color = '#166534';
+    statusEl.textContent = '✓ Photo saved' + (photoUrl ? '' : ' (upload failed, analysis kept in this session only)');
+  }
 }
 
 // ── MODAL HELPERS ─────────────────────────────────────────
