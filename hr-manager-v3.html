@@ -353,6 +353,14 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--ink);min-h
       <div class="hm-page" id="hmPage-calendar">
         <div class="hm-page-title">Company Calendar</div>
         <div class="hm-page-sub">Company-observed holidays and scheduled days off — feeds PTO calculations and the scheduler across every division</div>
+        <div class="hm-card" style="padding:16px;margin-bottom:16px;display:flex;align-items:end;gap:10px;flex-wrap:wrap">
+          <div>
+            <label style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#6B7280;display:block;margin-bottom:4px">Year</label>
+            <input id="hmHolYear" type="number" style="width:100px;padding:8px 10px;border:1.5px solid #D7DBE0;border-radius:7px;font-size:13px;box-sizing:border-box">
+          </div>
+          <button class="hm-btn" style="height:37px;background:#EFF6FF;color:#1E40AF" onclick="hmLoadStandardHolidays()">📅 Load Standard U.S. Holidays</button>
+          <div style="font-size:11px;color:#6B7280;flex:1;min-width:200px">Loads the 11 standard federal holidays for that year. Skips any that already exist, and every one added this way can still be edited or removed individually below.</div>
+        </div>
         <div class="hm-card" style="padding:16px;margin-bottom:16px">
           <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:10px;align-items:end">
             <div>
@@ -729,12 +737,67 @@ function hmAddHoliday(){
   document.getElementById('hmHolDate').value = '';
   hmRenderCalendar();
 }
+
+// ── STANDARD U.S. FEDERAL HOLIDAYS ──
+// nthWeekday: the Nth occurrence of a weekday in a month (e.g. 3rd Monday).
+// lastWeekday: the last occurrence of a weekday in a month (Memorial Day).
+function hmNthWeekday(year, month, weekday, n){ // month 0-indexed, weekday 0=Sun
+  var d = new Date(year, month, 1);
+  var offset = (weekday - d.getDay() + 7) % 7;
+  var day = 1 + offset + (n-1)*7;
+  return new Date(year, month, day);
+}
+function hmLastWeekday(year, month, weekday){ // month 0-indexed
+  var d = new Date(year, month+1, 0); // last day of month
+  var offset = (d.getDay() - weekday + 7) % 7;
+  return new Date(year, month, d.getDate() - offset);
+}
+function hmDateStr(d){ return d.toISOString().split('T')[0]; }
+
+function hmStandardHolidaysForYear(year){
+  return [
+    { name:"New Year's Day",                date: hmDateStr(new Date(year,0,1)) },
+    { name:'Martin Luther King Jr. Day',    date: hmDateStr(hmNthWeekday(year,0,1,3)) },
+    { name:"Presidents Day (Washington's Birthday)", date: hmDateStr(hmNthWeekday(year,1,1,3)) },
+    { name:'Memorial Day',                  date: hmDateStr(hmLastWeekday(year,4,1)) },
+    { name:'Juneteenth',                    date: hmDateStr(new Date(year,5,19)) },
+    { name:'Independence Day',              date: hmDateStr(new Date(year,6,4)) },
+    { name:'Labor Day',                     date: hmDateStr(hmNthWeekday(year,8,1,1)) },
+    { name:'Columbus Day',                  date: hmDateStr(hmNthWeekday(year,9,1,2)) },
+    { name:'Veterans Day',                  date: hmDateStr(new Date(year,10,11)) },
+    { name:'Thanksgiving Day',              date: hmDateStr(hmNthWeekday(year,10,4,4)) },
+    { name:'Christmas Day',                 date: hmDateStr(new Date(year,11,25)) },
+  ];
+}
+
+function hmLoadStandardHolidays(){
+  var year = parseInt(document.getElementById('hmHolYear').value) || new Date().getFullYear();
+  var list = hrLoad('holidays');
+  var existing = {};
+  list.forEach(function(h){ existing[h.name.toLowerCase()+'|'+h.date] = true; });
+
+  var toAdd = hmStandardHolidaysForYear(year).filter(function(h){
+    return !existing[h.name.toLowerCase()+'|'+h.date];
+  });
+
+  if (!toAdd.length) { alert('All standard holidays for '+year+' are already on the calendar.'); return; }
+
+  toAdd.forEach(function(h, i){
+    list.push({ id:'hol_'+Date.now()+'_'+i, name:h.name, date:h.date, type:'company_holiday', addedBy:(_hmUser&&_hmUser.name)||'HR', addedAt:Date.now(), standard:true });
+  });
+  hrSave('holidays', list);
+  hmRenderCalendar();
+  if (typeof showToast === 'function') showToast('Added '+toAdd.length+' standard holiday(s) for '+year);
+  else alert('Added '+toAdd.length+' standard holiday(s) for '+year+'.');
+}
 function hmDeleteHoliday(id){
   var list = hrLoad('holidays').filter(function(h){ return h.id !== id; });
   hrSave('holidays', list);
   hmRenderCalendar();
 }
 function hmRenderCalendar(){
+  var yearInput = document.getElementById('hmHolYear');
+  if (yearInput && !yearInput.value) yearInput.value = new Date().getFullYear();
   var el = document.getElementById('hmCalendarList');
   if (!el) return;
   var list = hrLoad('holidays').slice().sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
