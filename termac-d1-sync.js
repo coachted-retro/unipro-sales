@@ -69,7 +69,7 @@
     collections: ['id', 'account_id', 'invoice_ref', 'amount_due', 'amount_paid',
       'due_date', 'status', 'last_contact', 'notes', 'created_at', 'updated_at'],
     rep_cards: ['id', 'rep_slug', 'name', 'title', 'divisions', 'phone', 'email',
-      'linkedin', 'bio', 'service_area', 'years_experience', 'created_at', 'updated_at'],
+      'linkedin', 'bio', 'service_area', 'years_experience', 'photo_url', 'created_at', 'updated_at'],
   };
 
   function d1NormalizeRecord(table, record) {
@@ -147,6 +147,60 @@
   // jobs table, tagging each record with its division so the scheduler,
   // dispatch, and tech portal — which all read/write these keys directly —
   // can gain D1 sync without having to be rewritten internally.
+  var PHOTO_UPLOAD_URL = 'https://termac-photo-upload.termac-one.workers.dev';
+  var MAX_PHOTO_BYTES = 5 * 1024 * 1024; // 5MB
+  var ALLOWED_PHOTO_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+
+  function fileToBase64(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () { resolve(reader.result); };
+      reader.onerror = function () { reject(new Error('Could not read file')); };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // Uploads a rep's card photo via the existing termac-photo-upload worker
+  // (already deployed, backed by the real termac-photos R2 bucket) and
+  // returns the resulting public URL. Validates type and size client-side
+  // before ever sending the bytes.
+  async function uploadRepPhoto(repSlug, file) {
+    if (!file) return { ok: false, error: 'No file provided' };
+    if (!ALLOWED_PHOTO_TYPES.includes(file.type)) {
+      return { ok: false, error: 'Please choose a JPG, PNG, or WebP image' };
+    }
+    if (file.size > MAX_PHOTO_BYTES) {
+      return { ok: false, error: 'Photo is too large — please choose one under 5MB' };
+    }
+
+    var base64;
+    try {
+      base64 = await fileToBase64(file);
+    } catch (e) {
+      return { ok: false, error: 'Could not read the selected file' };
+    }
+
+    try {
+      var res = await fetch(PHOTO_UPLOAD_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accountId: 'rep-cards',
+          key: repSlug,
+          base64: base64,
+          contentType: file.type,
+        }),
+      });
+      var data = await res.json();
+      if (!res.ok || !data.ok) {
+        return { ok: false, error: data.error || 'Upload failed' };
+      }
+      return { ok: true, url: data.url };
+    } catch (e) {
+      return { ok: false, error: 'Could not reach the upload service' };
+    }
+  }
+
   async function upsertRepCard(record) {
     if (!record || !record.rep_slug) return { ok: false, error: 'rep_slug is required' };
     try {
@@ -222,6 +276,7 @@
     startJobSyncSweep: startJobSyncSweep,
     upsertRepCard: upsertRepCard,
     getRepCard: getRepCard,
+    uploadRepPhoto: uploadRepPhoto,
     d1NormalizeRecord: d1NormalizeRecord,
     crmSave: crmSave,
     crmLoad: crmLoad,
