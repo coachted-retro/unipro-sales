@@ -2666,6 +2666,14 @@ async function spOpenMyCardModal() {
       + '<button onclick="document.getElementById(\'spMyCardModalBg\').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--soft)">✕</button>'
     + '</div>'
     + '<div style="font-size:12px;color:var(--soft);margin-bottom:16px">This is what customers see when they scan your QR code or click your link.</div>'
+    + '<div style="display:flex;gap:14px;align-items:center;margin-bottom:16px">'
+      + '<div id="spCardPhoto" style="width:64px;height:64px;border-radius:50%;background:#1A1D21;color:#fff;display:flex;align-items:center;justify-content:center;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:22px;flex-shrink:0;overflow:hidden">' + spRepInitials(repName) + '</div>'
+      + '<div>'
+        + '<input type="file" id="spCardPhotoInput" accept="image/jpeg,image/png,image/webp" style="display:none" onchange="spUploadMyPhoto(\''+slug+'\')">'
+        + '<button class="sp-btn sp-btn-ghost" onclick="document.getElementById(\'spCardPhotoInput\').click()" style="font-size:11px">📷 Change Photo</button>'
+        + '<div id="spPhotoStatus" style="font-size:11px;margin-top:4px;display:none"></div>'
+      + '</div>'
+    + '</div>'
     + '<div style="display:flex;gap:16px;align-items:center;margin-bottom:18px;padding-bottom:18px;border-bottom:1px solid var(--line)">'
       + '<div id="spCardQR" style="width:100px;height:100px;background:#F5F6F8;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0"></div>'
       + '<div style="flex:1;min-width:0">'
@@ -2687,7 +2695,53 @@ async function spOpenMyCardModal() {
   if (typeof TermacD1Sync !== 'undefined') {
     try { existing = await TermacD1Sync.getRepCard(slug); } catch (e) {}
   }
+  if (existing && existing.photo_url) {
+    document.getElementById('spCardPhoto').innerHTML = '<img src="'+existing.photo_url+'" style="width:100%;height:100%;object-fit:cover">';
+  }
   spRenderCardForm(slug, repName, existing);
+}
+
+function spRepInitials(name) {
+  return (name || '').split(' ').map(w => w[0] || '').join('').slice(0,2).toUpperCase();
+}
+
+async function spUploadMyPhoto(slug) {
+  const input = document.getElementById('spCardPhotoInput');
+  const statusEl = document.getElementById('spPhotoStatus');
+  const photoEl = document.getElementById('spCardPhoto');
+  const file = input.files[0];
+  if (!file) return;
+
+  statusEl.style.display = 'block';
+  statusEl.style.color = 'var(--soft)';
+  statusEl.textContent = 'Uploading...';
+
+  if (typeof TermacD1Sync === 'undefined') {
+    statusEl.style.color = '#991B1B';
+    statusEl.textContent = 'Sync module not available.';
+    return;
+  }
+
+  const uploadResult = await TermacD1Sync.uploadRepPhoto(slug, file);
+  if (!uploadResult.ok) {
+    statusEl.style.color = '#991B1B';
+    statusEl.textContent = uploadResult.error;
+    return;
+  }
+
+  // Save the photo immediately, separate from the rest of the form —
+  // it's a distinct action with its own instant confirmation, rather than
+  // waiting on whatever else the rep might still be editing below.
+  const saveResult = await TermacD1Sync.upsertRepCard({ rep_slug: slug, name: _spRep.name, photo_url: uploadResult.url });
+  if (saveResult.ok) {
+    photoEl.innerHTML = '<img src="'+uploadResult.url+'" style="width:100%;height:100%;object-fit:cover">';
+    statusEl.style.color = '#166534';
+    statusEl.textContent = '✓ Photo updated';
+    if (typeof showToast === 'function') showToast('Your card photo has been updated.');
+  } else {
+    statusEl.style.color = '#991B1B';
+    statusEl.textContent = 'Photo uploaded but could not save: ' + (saveResult.error || 'unknown error');
+  }
 }
 
 function spRenderCardForm(slug, repName, existing) {
