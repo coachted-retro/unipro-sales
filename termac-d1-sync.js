@@ -229,6 +229,68 @@
     }
   }
 
+  // ── WAREHOUSE INVENTORY ── Each warehouse's stock (on-hand quantities +
+  // transaction history per SKU) is stored as one JSON blob per warehouse,
+  // not normalized into individual rows. Unlike jobs, which get created
+  // independently by many different processes and genuinely need
+  // per-record merging, a warehouse's inventory is realistically managed
+  // by one operator at a time — so this always pushes the current local
+  // state up (local is the freshest view), and only pulls down from D1
+  // when local is completely empty, e.g. a brand new device. It never
+  // silently overwrites an operator's in-progress counts.
+  async function d1PushWarehouseInventory(warehouseKey) {
+    var data;
+    try { data = localStorage.getItem(warehouseKey); } catch (e) { return { ok: false, error: 'Could not read local storage' }; }
+    if (data === null) return { ok: false, error: 'Nothing to push for ' + warehouseKey };
+
+    try {
+      var existing = await d1Fetch('GET', '/api/warehouse_inventory?warehouse_key=' + encodeURIComponent(warehouseKey));
+      var body = { warehouse_key: warehouseKey, data_json: data };
+      if (existing.ok && Array.isArray(existing.results) && existing.results.length > 0) {
+        return await d1Fetch('PUT', '/api/warehouse_inventory/' + existing.results[0].id, { data_json: data });
+      } else {
+        return await d1Fetch('POST', '/api/warehouse_inventory', body);
+      }
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  }
+
+  async function hydrateWarehouseInventory(warehouseKey) {
+    var local;
+    try { local = localStorage.getItem(warehouseKey); } catch (e) { local = null; }
+    if (local !== null) return { hydrated: false }; // local wins if present, even an empty object
+
+    try {
+      var res = await d1Fetch('GET', '/api/warehouse_inventory?warehouse_key=' + encodeURIComponent(warehouseKey));
+      if (res.ok && Array.isArray(res.results) && res.results.length > 0 && res.results[0].data_json) {
+        try { localStorage.setItem(warehouseKey, res.results[0].data_json); } catch (e) {}
+        return { hydrated: true };
+      }
+    } catch (e) {}
+    return { hydrated: false };
+  }
+
+  var WAREHOUSE_KEYS = ['wh_termac_v1', 'wh_unipro_v1', 'wh_allpro_v1'];
+
+  var _warehouseSweepStarted = false;
+  function startWarehouseSyncSweep(intervalMs, onHydrate) {
+    if (_warehouseSweepStarted) return;
+    _warehouseSweepStarted = true;
+    function sweep() {
+      WAREHOUSE_KEYS.forEach(function (key) {
+        hydrateWarehouseInventory(key).then(function (result) {
+          if (result.hydrated && typeof onHydrate === 'function') onHydrate(key);
+          // Push after hydrate check so a first-time device pulls before
+          // it ever pushes its own (empty) state back up.
+          d1PushWarehouseInventory(key).catch(function () {});
+        }).catch(function () {});
+      });
+    }
+    sweep();
+    setInterval(sweep, intervalMs || 30000);
+  }
+
   var JOB_DIVISION_KEYS = {
     unipro_jobs: 'UniPro', quality3_jobs: 'Quality III', gto_jobs: 'GTO',
     filterman_jobs: 'Filter Man', allpro_jobs: 'AllPro', termac_jobs: 'Termac',
@@ -350,6 +412,9 @@
     d1HydrateAll: d1HydrateAll,
     d1PushJobs: d1PushJobs,
     hydrateJobs: hydrateJobs,
+    d1PushWarehouseInventory: d1PushWarehouseInventory,
+    hydrateWarehouseInventory: hydrateWarehouseInventory,
+    startWarehouseSyncSweep: startWarehouseSyncSweep,
     startJobSyncSweep: startJobSyncSweep,
     upsertRepCard: upsertRepCard,
     getRepCard: getRepCard,
