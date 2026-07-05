@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <script src="termac-intelligence.js"></script>
 <script src="termac-notify.js"></script>
+<script src="termac-lifecycle.js"></script>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Termac One — DMS</title>
 <link rel="icon" type="image/png" sizes="32x32" href="icons/icon-main-32.png">
@@ -965,27 +966,64 @@ function dmsEscalate(id){
   const data = crmLoad('dms_coldcall');
   const r = data.find(x=>x.id===id);
   if(!r) return;
-  r.dmsEscalated = sel.value;
+  const escVal = sel.value;
+  r.dmsEscalated = escVal;
   r.dmsEscalatedBy = _dmsUser.name;
   r.dmsEscalatedTs = Date.now();
   r.updated = Date.now();
-  const escVal = sel.value;
+
   if(escVal==='sales' || escVal==='ted_direct'){
     r.lifecycleStage = 'lead';
     r.status = 'hot';
+
+    // Assign the correct territory rep by ZIP -- 'ted_direct' always goes
+    // to Ted regardless of territory; 'sales' auto-routes to whoever
+    // actually covers that ZIP (getRepForZip, from termac-lifecycle.js).
+    if (escVal === 'ted_direct') {
+      r.assignedRep = 'Ted Scholl';
+    } else if (typeof getRepForZip === 'function') {
+      r.assignedRep = getRepForZip(r.zip) || 'Unassigned';
+    }
+
     const leads = crmLoad('leads');
     if(!leads.find(x=>x.id===id)) { leads.unshift(r); crmSave('leads',leads); }
-  }
-  r.dmsEscalated = escVal;
-  crmSave('dms_coldcall', data);
+    else { const li=leads.findIndex(x=>x.id===id); leads[li]=r; crmSave('leads',leads); }
 
-  // Fire notification engine
-  if (typeof notifyOnDmsEscalation === 'function') {
-    notifyOnDmsEscalation(r, escVal);
-  } else if (typeof _dmsFireMailto === 'function') {
-    _dmsFireMailto(r, escVal);
+    // This is the actual notification send -- TermacLifecycle.notifyNewLead
+    // builds the full email and opens mailto to the assigned rep, CC'ing
+    // Jim Kennedy + Tom Pittakas + Ted Scholl. Previously this whole path
+    // was dead: notifyOnDmsEscalation/_dmsFireMailto were called but never
+    // existed anywhere in the codebase, so nothing ever actually sent.
+    if (typeof TermacLifecycle !== 'undefined') {
+      TermacLifecycle.notifyNewLead(r, 'DMS Escalation — ' + _dmsUser.name);
+    }
+    dmsToast('🔥 Escalated to ' + (r.assignedRep||'Unassigned') + ' — email opened');
+
+  } else {
+    // Manager / Scheduling / Dispatch -- not a sales lead, just needs a
+    // direct heads-up to the right desk.
+    const ESCALATION_CONTACTS = {
+      manager:    { label:'Manager — Jim Kennedy', emails:['jkennedy@termac.com'] },
+      scheduling: { label:'Scheduling',            emails:['acurran@termac.com','jpaez@termac.com','sholmes@termac.com'] },
+      dispatch:   { label:'Dispatch',               emails:['jkennedy@termac.com'] }, // no dedicated dispatch contact on file yet -- flagged below
+    };
+    const dest = ESCALATION_CONTACTS[escVal];
+    if (dest) {
+      const subj = encodeURIComponent('DMS Escalation — ' + (r.business||r.name||'Caller'));
+      const body = encodeURIComponent(
+        _dmsUser.name+' escalated a call to '+dest.label+'.\n\n'+
+        'Business: '+(r.business||r.name||'—')+'\n'+
+        'Phone: '+(r.phone||'—')+'\n'+
+        'Notes: '+(r.notes||'—')+'\n\n'+
+        (escVal==='dispatch' ? 'NOTE: no dedicated Dispatch contact is configured yet -- routed to Jim Kennedy in the meantime.\n\n' : '')+
+        '— Termac One DMS'
+      );
+      window.open('mailto:'+dest.emails.join(',')+'?subject='+subj+'&body='+body, '_blank');
+    }
+    dmsToast('🔥 Escalated: ' + (dest?dest.label:escVal) + ' — email opened');
   }
-  dmsToast('🔥 Escalated: ' + (escVal === 'ted_direct' ? 'Ted Scholl notified' : escVal));
+
+  crmSave('dms_coldcall', data);
   dmsRender('leads');
 }
 
