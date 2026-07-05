@@ -92,51 +92,40 @@ body{font-family:'Barlow',sans-serif;background:#F5F6F8;color:#1A1D21;min-height
 
 <script>
 // ── REP PROFILES ──────────────────────────────────────────────────────────
-// Simple, easily-extended profile data. Not yet backed by D1 — the booking
-// SUBMISSION goes through the real, secure booking worker, but the profile
-// display itself is static data for now rather than a new database table,
-// keeping tonight's scope to what's been tested end to end.
-var REP_PROFILES = {
-  'ted-scholl': {
-    name: 'Ted Scholl',
-    title: 'Senior Account & Operations Manager',
-    divisions: ['UniPro'],
-    phone: '267-421-6336',
-    email: 'tscholl@termac.com',
-    linkedin: '', // add your real LinkedIn URL here
-    focus: 'Large commercial accounts & competitive bid work',
-  },
-  'tom-jordan': {
-    name: 'Tom Jordan',
-    title: 'Account Manager',
-    divisions: ['Termac'],
-    phone: '',
-    email: '',
-    linkedin: '',
-    focus: 'Dish machine chemicals & service',
-  },
-  // All other reps sell across the full family of companies —
-  // UniPro, AllPro, Filter Man, GTO, and Termac.
-};
-
+var PROFILE_API_URL = 'https://termac-booking-api.termac-one.workers.dev/profile';
 var BOOKING_API_URL = 'https://termac-booking-api.termac-one.workers.dev/book';
 
 function initials(name) {
   return name.split(' ').map(function(w){ return w[0]||''; }).join('').slice(0,2).toUpperCase();
 }
 
-function render() {
+async function render() {
   var params = new URLSearchParams(window.location.search);
   var repId = params.get('rep');
-  var profile = REP_PROFILES[repId];
   var app = document.getElementById('app');
 
-  if (!profile) {
+  if (!repId) {
     app.innerHTML = '<div class="card"><div class="notfound"><h2>Card not found</h2><p style="margin-top:8px">This link doesn\'t match a rep profile. Check the link and try again.</p></div></div>';
     return;
   }
 
-  var divPills = profile.divisions.map(function(d){ return '<span class="div-pill">'+d+'</span>'; }).join('');
+  app.innerHTML = '<div class="card"><div class="notfound">Loading...</div></div>';
+
+  var profile;
+  try {
+    var res = await fetch(PROFILE_API_URL + '?rep=' + encodeURIComponent(repId));
+    var data = await res.json();
+    if (!res.ok || !data.ok) {
+      app.innerHTML = '<div class="card"><div class="notfound"><h2>Card not found</h2><p style="margin-top:8px">This link doesn\'t match a rep profile. Check the link and try again.</p></div></div>';
+      return;
+    }
+    profile = data.profile;
+  } catch (e) {
+    app.innerHTML = '<div class="card"><div class="notfound"><h2>Couldn\'t load this card</h2><p style="margin-top:8px">Check your connection and try again.</p></div></div>';
+    return;
+  }
+
+  var divPills = (profile.divisions || []).map(function(d){ return '<span class="div-pill">'+d+'</span>'; }).join('');
 
   var linkedinRow = profile.linkedin
     ? '<a class="contact-row linkedin-row" href="'+profile.linkedin+'" target="_blank">' +
@@ -159,6 +148,10 @@ function render() {
       '</a>'
     : '';
 
+  var metaLine = [];
+  if (profile.yearsExperience) metaLine.push(profile.yearsExperience + '+ years experience');
+  if (profile.serviceArea) metaLine.push('Serving ' + profile.serviceArea);
+
   app.innerHTML =
     '<div class="card">' +
       '<div class="hdr">' +
@@ -168,9 +161,10 @@ function render() {
         '<div class="divisions">'+divPills+'</div>' +
       '</div>' +
       '<div class="body">' +
-        (profile.focus ? '<p style="font-size:13px;color:#4B5563;margin-bottom:16px;line-height:1.5">'+profile.focus+'</p>' : '') +
+        (profile.bio ? '<p style="font-size:13px;color:#4B5563;margin-bottom:10px;line-height:1.5">'+profile.bio+'</p>' : '') +
+        (metaLine.length ? '<p style="font-size:12px;color:#9CA3AF;margin-bottom:16px">'+metaLine.join(' · ')+'</p>' : '') +
         phoneRow + emailRow + linkedinRow +
-        '<button class="cta" onclick="openBookModal(\''+repId+'\', \''+profile.name.replace(/'/g,"\\'")+'\', \''+(profile.divisions[0]||'')+'\')">📅 Book an Appointment</button>' +
+        '<button class="cta" onclick="openBookModal(\''+repId+'\', \''+profile.name.replace(/'/g,"\\'")+'\', \''+((profile.divisions && profile.divisions[0]) || '')+'\')">📅 Book an Appointment</button>' +
         '<a class="company-link" href="company-card.html">See all Termac Family of Companies →</a>' +
       '</div>' +
     '</div>';
