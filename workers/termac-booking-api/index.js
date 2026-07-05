@@ -120,6 +120,7 @@ export default {
           phone: r.phone || '', email: r.email || '', linkedin: r.linkedin || '',
           bio: r.bio || '', serviceArea: r.service_area || '',
           yearsExperience: r.years_experience || null,
+          photoUrl: r.photo_url || '',
         };
         return json({ ok: true, profile: publicProfile }, 200, origin);
       } catch (e) {
