@@ -239,6 +239,9 @@ input.field:focus,select.field:focus{border-color:var(--div-primary)}
         </div>
       </div>
 
+      <!-- NEW ACCOUNT BRIEFS -->
+      <div id="newAccountBriefs" style="margin-bottom:6px"></div>
+
       <!-- TODAY QUICK VIEW -->
       <div class="section-hdr" id="todayHdr">📅 Today</div>
       <div id="todayQuickJobs" style="margin-bottom:16px"></div>
@@ -753,6 +756,46 @@ function renderMyDay() {
   }
 
   renderNextJobWidget(today);
+  renderNewAccountBriefs();
+}
+
+// ── NEW ACCOUNT BRIEFS ─────────────────────────────────────
+// Reads termac_tech_briefs, written by the lifecycle engine when an
+// estimate is signed (lcWonLead → _lcQueueTechBrief). This queue existed
+// but nothing was ever reading it, so techs never saw first-visit briefs
+// for new accounts even though the data was there the whole time.
+function renderNewAccountBriefs() {
+  var el = document.getElementById('newAccountBriefs');
+  if (!el) return;
+  var briefs = [];
+  try { briefs = JSON.parse(localStorage.getItem('termac_tech_briefs') || '[]'); } catch(e) {}
+  var DIV_LABELS = { unipro:'UniPro', gto:'GTO', filterman:'Filter Man', termac:'Termac', allpro:'AllPro', quality3:'Quality III' };
+  var myLabel = DIV_LABELS[(window.DIV && DIV.id) || 'unipro'];
+  var mine = briefs.filter(function(b) { return !b.read && (!b.division || b.division === myLabel); });
+  if (!mine.length) { el.innerHTML = ''; return; }
+  el.innerHTML = mine.map(function(b) {
+    return '<div style="background:#FFF8E6;border:1.5px solid #F2B705;border-radius:10px;padding:12px 14px;margin-bottom:10px">' +
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">' +
+        '<div>' +
+          '<span style="background:#F2B705;color:#1A1D21;border-radius:4px;padding:1px 7px;font-size:9px;font-weight:800;letter-spacing:.06em;text-transform:uppercase">NEW ACCOUNT</span>' +
+          '<div style="font-weight:800;font-size:14px;margin-top:5px">' + escH(b.account||'') + '</div>' +
+          (b.address ? '<div style="font-size:11px;color:var(--soft)">' + escH(b.address) + '</div>' : '') +
+          (b.contact ? '<div style="font-size:11px;color:var(--soft)">👤 ' + escH(b.contact) + (b.phone?' · '+escH(b.phone):'') + '</div>' : '') +
+          '<div style="font-size:12px;margin-top:6px">' + escH(b.notes||'') + '</div>' +
+        '</div>' +
+        '<button onclick="dismissTechBrief(\''+b.id+'\')" style="background:none;border:1.5px solid #F2B705;border-radius:6px;padding:5px 10px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap">Got it</button>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+function dismissTechBrief(id) {
+  try {
+    var briefs = JSON.parse(localStorage.getItem('termac_tech_briefs') || '[]');
+    var b = briefs.find(function(x){ return x.id === id; });
+    if (b) b.read = true;
+    localStorage.setItem('termac_tech_briefs', JSON.stringify(briefs));
+  } catch(e) {}
+  renderNewAccountBriefs();
 }
 
 function renderNextJobWidget(today) {

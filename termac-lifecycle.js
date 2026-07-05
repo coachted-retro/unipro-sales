@@ -340,6 +340,21 @@ function lcNotifyHarvestDigest(rep, leads, source) {
 // ── 4. wonLead() — FULL LIFECYCLE TRIGGER ON SIGNATURE ────────────────────
 // Called from estSigProceed() after customer signs estimate.
 // Creates account, generates job packet, alerts scheduler/warehouse/tech.
+// Maps an account's division name to the correct tech-portal jobs key.
+// Must match DIV.jobsKey in tech-portal-unified.html exactly, or a job
+// packet lands in the wrong division's queue and no tech ever sees it.
+var LC_DIVISION_JOBS_KEY = {
+  'UniPro':      'unipro_jobs',
+  'GTO':         'gto_jobs',
+  'Filter Man':  'filterman_jobs',
+  'Termac':      'termac_jobs',
+  'AllPro':      'allpro_jobs',
+  'Quality III': 'quality3_jobs',
+};
+function lcJobsKeyForDivision(division) {
+  return LC_DIVISION_JOBS_KEY[division] || 'unipro_jobs';
+}
+
 function lcWonLead(leadOrAccount, estimateData) {
   const now     = Date.now();
   const dateStr = new Date().toISOString().split('T')[0];
@@ -366,9 +381,10 @@ function lcWonLead(leadOrAccount, estimateData) {
   // 4b. Build job packet
   const jobPacket = _lcBuildJobPacket(account, estimateData, now);
   try {
-    const jobs = JSON.parse(localStorage.getItem('unipro_jobs') || '[]');
+    const jk = lcJobsKeyForDivision(jobPacket.division);
+    const jobs = JSON.parse(localStorage.getItem(jk) || '[]');
     jobs.unshift(jobPacket);
-    localStorage.setItem('unipro_jobs', JSON.stringify(jobs));
+    localStorage.setItem(jk, JSON.stringify(jobs));
   } catch(e) {}
 
   // 4c. Scheduler alert
@@ -487,6 +503,32 @@ function _lcBuildJobPacket(account, est, now) {
 }
 
 function _lcAlertScheduler(account, job) {
+  // scheduler-v2.html's "New Account Inbox" reads termac_scheduler_queue,
+  // not termac_scheduler_alerts -- this used to write to the wrong key
+  // entirely, so a signed estimate's first job never actually reached the
+  // scheduler's screen even though the code "fired" without error.
+  try {
+    const queue = JSON.parse(localStorage.getItem('termac_scheduler_queue') || '[]');
+    queue.unshift({
+      id:            account.id,
+      business:      account.name,
+      name:          account.name,
+      address:       account.address,
+      phone:         account.phone,
+      contact:       account.contact,
+      services:      account.services,
+      rep:           account.assignedRep || '',
+      billingCadence:account.billingCadence || 'per_visit',
+      accountNumber: account.accountNumber || '',
+      acceptedAt:    Date.now(),
+      status:        'needs_scheduling',
+      firstServiceScheduled: false,
+      jobId:         job.id,
+    });
+    localStorage.setItem('termac_scheduler_queue', JSON.stringify(queue));
+  } catch(e) {}
+
+  // Also keep the urgent-alerts feed for anything else that watches it
   try {
     const alerts = JSON.parse(localStorage.getItem('termac_scheduler_alerts') || '[]');
     alerts.unshift({
@@ -549,6 +591,7 @@ function _lcQueueTechBrief(account, job) {
     briefs.unshift({
       id:       'brief_' + Date.now(),
       jobId:    job.id,
+      division: job.division,
       account:  account.name,
       address:  account.address,
       zip:      account.zip,

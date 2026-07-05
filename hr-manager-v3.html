@@ -264,6 +264,7 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--ink);min-h
       <div class="hm-rail-item" onclick="hmNav('dashboard')" id="hmSide-dashboard"><div class="hm-rail-icon">📊</div><div class="hm-rail-label">Dashboard</div></div>
       <div class="hm-rail-item" onclick="hmNav('employees')" id="hmSide-employees"><div class="hm-rail-icon">👥</div><div class="hm-rail-label">Directory</div></div>
       <div class="hm-rail-item" onclick="hmNav('approvals')" id="hmSide-approvals"><div class="hm-rail-icon">✅</div><div class="hm-rail-label">Approvals</div></div>
+      <div class="hm-rail-item" onclick="hmNav('calendar')" id="hmSide-calendar"><div class="hm-rail-icon">📅</div><div class="hm-rail-label">Company Calendar</div></div>
       <div class="hm-rail-item" onclick="hmNav('reviews')" id="hmSide-reviews"><div class="hm-rail-icon">⭐</div><div class="hm-rail-label">Reviews</div></div>
       <div class="hm-rail-item" onclick="hmNav('conduct')" id="hmSide-conduct"><div class="hm-rail-icon">🚨</div><div class="hm-rail-label">Conduct</div></div>
       <div class="hm-rail-item" onclick="hmNav('certdash')" id="hmSide-certdash"><div class="hm-rail-icon">🎓</div><div class="hm-rail-label">Certifications</div></div>
@@ -346,6 +347,34 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--ink);min-h
         <div class="hm-page-title">Approvals Queue</div>
         <div class="hm-page-sub">Pending time off requests — approve or deny</div>
         <div id="hmApprovalsList"></div>
+      </div>
+
+      <!-- COMPANY CALENDAR -->
+      <div class="hm-page" id="hmPage-calendar">
+        <div class="hm-page-title">Company Calendar</div>
+        <div class="hm-page-sub">Company-observed holidays and scheduled days off — feeds PTO calculations and the scheduler across every division</div>
+        <div class="hm-card" style="padding:16px;margin-bottom:16px">
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:10px;align-items:end">
+            <div>
+              <label style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#6B7280;display:block;margin-bottom:4px">Holiday / Closure Name</label>
+              <input id="hmHolName" placeholder="e.g. Thanksgiving" style="width:100%;padding:8px 10px;border:1.5px solid #D7DBE0;border-radius:7px;font-size:13px;box-sizing:border-box">
+            </div>
+            <div>
+              <label style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#6B7280;display:block;margin-bottom:4px">Date</label>
+              <input id="hmHolDate" type="date" style="width:100%;padding:8px 10px;border:1.5px solid #D7DBE0;border-radius:7px;font-size:13px;box-sizing:border-box">
+            </div>
+            <div>
+              <label style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#6B7280;display:block;margin-bottom:4px">Type</label>
+              <select id="hmHolType" style="width:100%;padding:8px 10px;border:1.5px solid #D7DBE0;border-radius:7px;font-size:13px;box-sizing:border-box">
+                <option value="company_holiday">Company Holiday — office &amp; field closed</option>
+                <option value="office_closure">Office Closure Only</option>
+                <option value="observed">Observed — optional</option>
+              </select>
+            </div>
+            <button class="hm-btn hm-btn-primary" onclick="hmAddHoliday()" style="height:37px">+ Add</button>
+          </div>
+        </div>
+        <div id="hmCalendarList"></div>
       </div>
 
       <!-- REVIEWS -->
@@ -681,6 +710,54 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--ink);min-h
 // ── SHARED DATA HELPERS (same keys as hr-portal.html) ──
 function hrLoad(k){try{return JSON.parse(localStorage.getItem('termac_hr_'+k)||'[]');}catch(e){return[];}}
 function hrSave(k,v){localStorage.setItem('termac_hr_'+k,JSON.stringify(v));}
+
+// ── COMPANY CALENDAR — holidays & closures ──
+// Stored under termac_hr_holidays so it's reachable by the same hrLoad/
+// hrSave pattern everything else here uses. Other portals (scheduler,
+// PTO accrual) can read this same key going forward for holiday-aware
+// scheduling and blackout dates.
+var HOL_TYPE_LABEL = { company_holiday:'Company Holiday', office_closure:'Office Closure Only', observed:'Observed — Optional' };
+function hmAddHoliday(){
+  var name = document.getElementById('hmHolName').value.trim();
+  var date = document.getElementById('hmHolDate').value;
+  var type = document.getElementById('hmHolType').value;
+  if (!name || !date) { alert('Enter both a name and a date.'); return; }
+  var list = hrLoad('holidays');
+  list.push({ id:'hol_'+Date.now(), name:name, date:date, type:type, addedBy:(_hmUser&&_hmUser.name)||'HR', addedAt:Date.now() });
+  hrSave('holidays', list);
+  document.getElementById('hmHolName').value = '';
+  document.getElementById('hmHolDate').value = '';
+  hmRenderCalendar();
+}
+function hmDeleteHoliday(id){
+  var list = hrLoad('holidays').filter(function(h){ return h.id !== id; });
+  hrSave('holidays', list);
+  hmRenderCalendar();
+}
+function hmRenderCalendar(){
+  var el = document.getElementById('hmCalendarList');
+  if (!el) return;
+  var list = hrLoad('holidays').slice().sort(function(a,b){ return new Date(a.date) - new Date(b.date); });
+  var today = new Date().toISOString().split('T')[0];
+  var upcoming = list.filter(function(h){ return h.date >= today; });
+  var past = list.filter(function(h){ return h.date < today; });
+
+  function row(h, isPast){
+    var d = new Date(h.date + 'T00:00:00');
+    var dateLabel = d.toLocaleDateString('en-US', {weekday:'short', month:'short', day:'numeric', year:'numeric'});
+    return '<tr' + (isPast ? ' style="opacity:.5"' : '') + '>' +
+      '<td style="font-weight:700">' + dateLabel + '</td>' +
+      '<td>' + h.name.replace(/[&<>]/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];}) + '</td>' +
+      '<td>' + (HOL_TYPE_LABEL[h.type]||h.type) + '</td>' +
+      '<td><button class="hm-btn hm-btn-ghost" onclick="hmDeleteHoliday(\''+h.id+'\')">Remove</button></td>' +
+    '</tr>';
+  }
+
+  el.innerHTML = '<div class="hm-card"><table class="hm-table"><thead><tr><th>Date</th><th>Holiday / Closure</th><th>Type</th><th></th></tr></thead><tbody>' +
+    (upcoming.length ? upcoming.map(function(h){return row(h,false);}).join('') : '<tr><td colspan="4" style="text-align:center;color:#9CA3AF;padding:20px">No upcoming holidays entered yet — add one above.</td></tr>') +
+    (past.length ? '<tr><td colspan="4" style="padding:8px 14px;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#9CA3AF;background:#F8F9FA">Past</td></tr>' + past.map(function(h){return row(h,true);}).join('') : '') +
+    '</tbody></table></div>';
+}
 function hrLoadObj(k,d){try{return JSON.parse(localStorage.getItem('termac_hr_'+k)||JSON.stringify(d));}catch(e){return d;}}
 function hrId(){return 'hr_'+Date.now()+'_'+Math.random().toString(36).slice(2,7);}
 function escH(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
@@ -715,7 +792,7 @@ const HR_USERS_DEFAULT=[
   {id:'u_matt',username:'matt.belz',password:'Termac2025!',name:'Matt Belz',role:'employee',division:'UniPro',title:'Sales Representative — P3 Territory',email:'mbelz@termac.com',phone:'',startDate:'2020-02-01',avatar:'MB',color:'#1B5FA8',status:'Active',territory:'P3',division2:'All Services'},
   {id:'u_todd',username:'todd.grill',password:'Termac2025!',name:'Todd Grill',role:'employee',division:'UniPro',title:'Sales Representative — S4 Territory',email:'tgrill@termac.com',phone:'',startDate:'2019-07-01',avatar:'TG',color:'#1B5FA8',status:'Active',territory:'S4',division2:'All Services'},
   {id:'u_tjordan',username:'tom.jordan',password:'Termac2025!',name:'Tom Jordan',role:'employee',division:'Termac',title:'Sales Representative — P1 Territory (Termac Division)',email:'tjordan@termac.com',phone:'',startDate:'2021-01-01',avatar:'TJ',color:'#6D28D9',status:'Active',territory:'P1',division2:'Termac Only — Dish Machines & Chemicals'},
-  {id:'u_tj',username:'tj.orielly',password:'Termac2025!',name:'TJ O'Reilly',role:'employee',division:'UniPro',title:'Sales Representative — Territory TBD',email:'tjorielly@termac.com',phone:'',startDate:'2024-01-01',avatar:'TJO',color:'#1B5FA8',status:'Active',territory:'TBD',division2:'All Services'},
+  {id:'u_tj',username:'tj.orielly',password:'Termac2025!',name:'TJ O\'Reilly',role:'employee',division:'UniPro',title:'Sales Representative — Territory TBD',email:'tjorielly@termac.com',phone:'',startDate:'2024-01-01',avatar:'TJO',color:'#1B5FA8',status:'Active',territory:'TBD',division2:'All Services'},
   {id:'u_dan',username:'dan.soleau',password:'Termac2025!',name:'Dan Soleau',role:'manager',division:'AllPro',title:'AllPro Division Manager',email:'dsoleau@termac.com',phone:'',startDate:'2015-04-01',avatar:'DS',color:'#065F46',status:'Active'},
 ];
 function hmGetUsers(){const s=hrLoad('users');if(!s.length){hrSave('users',HR_USERS_DEFAULT);return HR_USERS_DEFAULT;}return s;}
@@ -786,6 +863,7 @@ function hmRenderPage(p){
     orgchart:hmRenderOrgChart,
     jobdesc:hmRenderJobDesc,
     policies:hmRenderPolicies,
+    calendar:hmRenderCalendar,
   };
   if(map[p])map[p]();
 }
