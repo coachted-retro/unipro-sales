@@ -99,6 +99,33 @@ export default {
     }
 
     const url = new URL(request.url);
+
+    // GET /profile?rep=<slug> — public, read-only. Returns only the
+    // specific fields a card displays, never the raw D1 record (no id,
+    // no created_at/updated_at) and never requires the caller to hold
+    // any secret.
+    if (url.pathname === '/profile' && request.method === 'GET') {
+      const slug = (url.searchParams.get('rep') || '').trim();
+      if (!slug) return err('Missing rep parameter', 400, origin);
+      try {
+        const result = await d1Fetch(env, 'GET', '/api/rep_cards?rep_slug=' + encodeURIComponent(slug));
+        if (!result.ok || !Array.isArray(result.results) || result.results.length === 0) {
+          return err('Profile not found', 404, origin);
+        }
+        const r = result.results[0];
+        const publicProfile = {
+          name: r.name || '', title: r.title || '',
+          divisions: r.divisions ? r.divisions.split(',').map(s => s.trim()).filter(Boolean) : [],
+          phone: r.phone || '', email: r.email || '', linkedin: r.linkedin || '',
+          bio: r.bio || '', serviceArea: r.service_area || '',
+          yearsExperience: r.years_experience || null,
+        };
+        return json({ ok: true, profile: publicProfile }, 200, origin);
+      } catch (e) {
+        return err('Profile service unavailable: ' + e.message, 502, origin);
+      }
+    }
+
     if (url.pathname !== '/book' || request.method !== 'POST') {
       return err('Not found', 404, origin);
     }
