@@ -3219,11 +3219,7 @@ function scanAddAnother() {
    → flags any pricing changes vs current unit cost
    → saves an AP record for accounting
    ============================================================ */
-const WH_AP_KEY = 'wh_ap_invoices_v1';
 const AI_PROXY_WH = 'https://unipro-ai-proxy.termac-one.workers.dev/';
-
-function loadAPInvoices() { try { return JSON.parse(localStorage.getItem(WH_AP_KEY)||'[]'); } catch(e) { return []; } }
-function saveAPInvoices(arr) { try { localStorage.setItem(WH_AP_KEY, JSON.stringify(arr)); } catch(e) {} }
 
 function getAllWHProducts() {
   const all = [];
@@ -3440,6 +3436,7 @@ function saveAPRecord() {
     notes: notes,
     status: 'open',
     loggedAt: Date.now(),
+    source: 'warehouse_scan',
   };
 
   existingAP.unshift(record);
@@ -3498,15 +3495,17 @@ function openAPExportModal() {
           '<div>',
             '<label style="font-size:11px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Status</label>',
             '<select id="apStatusSel" onchange="renderAPQueue()" style="padding:7px 10px;border:1px solid #CBD5E1;border-radius:8px;font-size:13px">',
-              '<option value="pending">Pending</option>',
+              '<option value="open">Open</option>',
               '<option value="paid">Paid</option>',
               '<option value="all">All</option>',
             '</select>',
           '</div>',
           '<div style="margin-left:auto;display:flex;gap:8px">',
             '<button onclick="exportAPCSV()" style="background:#1E3A8A;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-weight:700;font-size:12px;cursor:pointer">&#11015; Export CSV</button>',
-            '<button onclick="markAllAPPaid()" style="background:#1E7B3C;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-weight:700;font-size:12px;cursor:pointer">&#10003; Mark Filtered Paid</button>',
           '</div>',
+        '</div>',
+        '<div style="padding:8px 18px;background:#FFFBEB;border-bottom:1px solid #FDE68A;flex-shrink:0;font-size:11px;color:#92400E">',
+          'Read-only — this shows what you\'ve submitted and its status. Marking a bill paid is handled by Accounting in the AP Portal.',
         '</div>',
         '<div style="padding:10px 18px;background:#F8FAFC;border-bottom:1px solid #E2E8F0;flex-shrink:0">',
           '<div id="apQueueSummary" style="font-size:12px;color:#475569;display:flex;gap:24px;flex-wrap:wrap"></div>',
@@ -3518,12 +3517,12 @@ function openAPExportModal() {
                 '<th style="text-align:left;padding:8px 12px;font-weight:700;color:#475569">#</th>',
                 '<th style="text-align:left;padding:8px 12px;font-weight:700;color:#475569">Vendor</th>',
                 '<th style="text-align:left;padding:8px 12px;font-weight:700;color:#475569">Invoice #</th>',
-                '<th style="text-align:left;padding:8px 12px;font-weight:700;color:#475569">Company</th>',
-                '<th style="text-align:left;padding:8px 12px;font-weight:700;color:#475569">Invoice Date</th>',
+                '<th style="text-align:left;padding:8px 12px;font-weight:700;color:#475569">Division</th>',
+                '<th style="text-align:left;padding:8px 12px;font-weight:700;color:#475569">Submitted</th>',
                 '<th style="text-align:left;padding:8px 12px;font-weight:700;color:#475569">Due Date</th>',
                 '<th style="text-align:right;padding:8px 12px;font-weight:700;color:#475569">Amount</th>',
                 '<th style="text-align:left;padding:8px 12px;font-weight:700;color:#475569">Status</th>',
-                '<th style="text-align:left;padding:8px 12px;font-weight:700;color:#475569">Actions</th>',
+                '<th style="text-align:left;padding:8px 12px;font-weight:700;color:#475569">Notes</th>',
               '</tr>',
             '</thead>',
             '<tbody id="apQueueBody"></tbody>',
@@ -3539,31 +3538,30 @@ function openAPExportModal() {
 }
 
 function apDueDate(inv) {
-  // Due date = invoice date + terms (default Net 30 if not set)
+  // Due date = when submitted + terms (default Net 30 if not set)
   if (inv.dueDate) return new Date(inv.dueDate);
-  var base = inv.invoiceDate ? new Date(inv.invoiceDate) : new Date(inv.ts || Date.now());
+  var base = new Date(inv.loggedAt || Date.now());
   var terms = inv.paymentTerms || 30;
   base.setDate(base.getDate() + terms);
   return base;
 }
 
-function apCompanyLabel(wh) {
-  return { termac:'Termac', unipro:'UniPro / Quality III', allpro:'AllPro', gto:'GTO', filterman:'Filter Man' }[wh] || wh || 'Termac';
-}
-
 function getFilteredAP() {
   var period = document.getElementById('apPeriodSel') ? document.getElementById('apPeriodSel').value : 'all';
-  var status = document.getElementById('apStatusSel') ? document.getElementById('apStatusSel').value : 'pending';
+  var status = document.getElementById('apStatusSel') ? document.getElementById('apStatusSel').value : 'open';
   var now = Date.now();
   var weekStart = now - 7*86400000;
   var monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0,0,0,0);
 
-  var all = loadAPInvoices();
+  var all = [];
+  try { all = JSON.parse(localStorage.getItem('termac_payables') || '[]'); } catch(e) {}
+  all = all.filter(function(inv) { return inv.source === 'warehouse_scan'; });
+
   return all
     .filter(function(inv) {
-      if (status !== 'all' && (inv.status||'pending') !== status) return false;
-      if (period === 'week') return (inv.ts||0) >= weekStart;
-      if (period === 'month') return (inv.ts||0) >= monthStart.getTime();
+      if (status !== 'all' && (inv.status||'open') !== status) return false;
+      if (period === 'week') return (inv.loggedAt||0) >= weekStart;
+      if (period === 'month') return (inv.loggedAt||0) >= monthStart.getTime();
       return true;
     })
     .sort(function(a, b) {
@@ -3578,9 +3576,9 @@ function renderAPQueue() {
   var summary = document.getElementById('apQueueSummary');
   if (!tbody) return;
 
-  var totalAmt = records.reduce(function(s,r){ return s+(r.total||0); },0);
-  var overdue = records.filter(function(r){ return apDueDate(r).getTime() < Date.now() && (r.status||'pending')==='pending'; }).length;
-  var dueThisWeek = records.filter(function(r){ var d=apDueDate(r).getTime(); return d>=Date.now() && d<Date.now()+7*86400000 && (r.status||'pending')==='pending'; }).length;
+  var totalAmt = records.reduce(function(s,r){ return s+(r.amount||0); },0);
+  var overdue = records.filter(function(r){ return apDueDate(r).getTime() < Date.now() && (r.status||'open')==='open'; }).length;
+  var dueThisWeek = records.filter(function(r){ var d=apDueDate(r).getTime(); return d>=Date.now() && d<Date.now()+7*86400000 && (r.status||'open')==='open'; }).length;
 
   summary.innerHTML = [
     '<span><b>'+records.length+'</b> invoices</span>',
@@ -3597,79 +3595,51 @@ function renderAPQueue() {
   var now = Date.now();
   tbody.innerHTML = records.map(function(inv, i) {
     var due = apDueDate(inv);
-    var isOverdue = due.getTime() < now && (inv.status||'pending') === 'pending';
-    var isDueSoon = !isOverdue && due.getTime() < now + 7*86400000 && (inv.status||'pending') === 'pending';
+    var isOverdue = due.getTime() < now && (inv.status||'open') === 'open';
+    var isDueSoon = !isOverdue && due.getTime() < now + 7*86400000 && (inv.status||'open') === 'open';
     var rowBg = isOverdue ? '#FFF5F5' : isDueSoon ? '#FFFBEB' : '#fff';
     var dueTxt = isOverdue
       ? '<span style="color:#C8102E;font-weight:700">'+due.toLocaleDateString()+' OVERDUE</span>'
       : isDueSoon
         ? '<span style="color:#D97706;font-weight:700">'+due.toLocaleDateString()+' (soon)</span>'
         : due.toLocaleDateString();
-    var statusBadge = (inv.status||'pending') === 'paid'
+    var statusBadge = (inv.status||'open') === 'paid'
       ? '<span style="background:#F0FDF4;color:#1E7B3C;border:1px solid #86EFAC;border-radius:12px;padding:2px 8px;font-size:11px;font-weight:700">PAID</span>'
       : isOverdue
         ? '<span style="background:#FFF5F5;color:#C8102E;border:1px solid #FECACA;border-radius:12px;padding:2px 8px;font-size:11px;font-weight:700">OVERDUE</span>'
-        : '<span style="background:#FEF3C7;color:#92400E;border:1px solid #FDE68A;border-radius:12px;padding:2px 8px;font-size:11px;font-weight:700">PENDING</span>';
+        : '<span style="background:#FEF3C7;color:#92400E;border:1px solid #FDE68A;border-radius:12px;padding:2px 8px;font-size:11px;font-weight:700">OPEN</span>';
+    var submittedTxt = inv.loggedAt ? new Date(inv.loggedAt).toLocaleDateString() : '-';
+    var notesPreview = (inv.notes||'').length > 60 ? escHtml(inv.notes.slice(0,60)) + '…' : escHtml(inv.notes||'-');
     return '<tr style="border-bottom:1px solid #F1F5F9;background:'+rowBg+'">'
       +'<td style="padding:8px 12px;color:#64748B">'+(i+1)+'</td>'
       +'<td style="padding:8px 12px;font-weight:700">'+escHtml(inv.vendor||'Unknown')+'</td>'
-      +'<td style="padding:8px 12px;color:#475569">'+escHtml(inv.invoiceNumber||'-')+'</td>'
-      +'<td style="padding:8px 12px">'+escHtml(apCompanyLabel(inv.warehouse))+'</td>'
-      +'<td style="padding:8px 12px;color:#64748B">'+(inv.invoiceDate||'-')+'</td>'
+      +'<td style="padding:8px 12px;color:#475569">'+escHtml(inv.invoiceNum||'-')+'</td>'
+      +'<td style="padding:8px 12px">'+escHtml(inv.division||'-')+'</td>'
+      +'<td style="padding:8px 12px;color:#64748B">'+submittedTxt+'</td>'
       +'<td style="padding:8px 12px">'+dueTxt+'</td>'
-      +'<td style="padding:8px 12px;text-align:right;font-weight:700">$'+(inv.total||0).toFixed(2)+'</td>'
+      +'<td style="padding:8px 12px;text-align:right;font-weight:700">$'+(inv.amount||0).toFixed(2)+'</td>'
       +'<td style="padding:8px 12px">'+statusBadge+'</td>'
-      +'<td style="padding:8px 12px">'
-        +'<button onclick="markAPPaid(\''+inv.id+'\')" style="font-size:10px;background:none;border:1px solid #CBD5E1;border-radius:6px;padding:3px 8px;cursor:pointer;font-weight:700;color:#1E7B3C">Mark Paid</button> '
-        +'<button onclick="viewAPLines(\''+inv.id+'\')" style="font-size:10px;background:none;border:1px solid #CBD5E1;border-radius:6px;padding:3px 8px;cursor:pointer;font-weight:700;color:#1E3A8A">Lines</button>'
-      +'</td>'
+      +'<td style="padding:8px 12px;color:#64748B;max-width:220px" title="'+escHtml(inv.notes||'')+'">'+notesPreview+'</td>'
       +'</tr>';
   }).join('');
-}
-
-function markAPPaid(id) {
-  var all = loadAPInvoices();
-  var i = all.findIndex(function(r){ return r.id===id; });
-  if (i>=0) { all[i].status='paid'; all[i].paidAt=new Date().toLocaleString(); saveAPInvoices(all); }
-  renderAPQueue();
-}
-
-function markAllAPPaid() {
-  var records = getFilteredAP();
-  var ids = new Set(records.map(function(r){ return r.id; }));
-  var all = loadAPInvoices().map(function(r){ return ids.has(r.id) ? Object.assign({},r,{status:'paid',paidAt:new Date().toLocaleString()}) : r; });
-  saveAPInvoices(all);
-  renderAPQueue();
-}
-
-function viewAPLines(id) {
-  var inv = loadAPInvoices().find(function(r){ return r.id===id; });
-  if (!inv) return;
-  var lines = (inv.lines||[]).map(function(l,i){
-    return (i+1)+'. '+l.description+' — qty '+l.qty+' @ $'+(l.unitPrice||0).toFixed(2)+' = $'+(l.lineTotal||0).toFixed(2)+(l.matchedSKU?' ['+l.matchedSKU+']':'');
-  }).join('\n');
-  alert(inv.vendor+' | Invoice '+inv.invoiceNumber+'\n'+inv.invoiceDate+' | $'+inv.total.toFixed(2)+'\n\n'+lines);
 }
 
 function exportAPCSV() {
   var records = getFilteredAP();
   var period = document.getElementById('apPeriodSel').value;
-  var rows = [['#','Vendor','Invoice #','Company / Warehouse','Invoice Date','Due Date','Payment Terms (Days)','Amount','Status','Paid At','Line Items']];
+  var rows = [['#','Vendor','Invoice #','Division','Submitted','Due Date','Amount','Status','Notes']];
   records.forEach(function(inv, i) {
     var due = apDueDate(inv);
-    var linesSummary = (inv.lines||[]).map(function(l){ return l.description+' ('+l.qty+' '+l.unit+' @ $'+(l.unitPrice||0).toFixed(2)+')'; }).join('; ');
     rows.push([
       i+1,
       inv.vendor||'',
-      inv.invoiceNumber||'',
-      apCompanyLabel(inv.warehouse),
-      inv.invoiceDate||'',
+      inv.invoiceNum||'',
+      inv.division||'',
+      inv.loggedAt ? new Date(inv.loggedAt).toLocaleDateString() : '',
       due.toLocaleDateString(),
-      inv.paymentTerms||30,
-      (inv.total||0).toFixed(2),
-      inv.status||'pending',
-      inv.paidAt||'',
-      linesSummary
+      (inv.amount||0).toFixed(2),
+      inv.status||'open',
+      inv.notes||''
     ]);
   });
   var csv = rows.map(function(r){ return r.map(function(v){ return '"'+String(v||'').replace(/"/g,'""')+'"'; }).join(','); }).join('\n');
