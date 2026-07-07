@@ -422,6 +422,13 @@ button{cursor:pointer}
         </div>
       </div>
 
+      <!-- PHONE PERFORMANCE (real phone-system data, not CRM-logged activity) -->
+      <div class="dms-rail-section">
+        <div class="dms-rail-hdr">📞 Phone Performance</div>
+        <div id="railPhonePerf"></div>
+        <button onclick="dmsOpenPhonePerf()" style="width:100%;margin-top:8px;background:none;border:1.5px dashed var(--line);border-radius:7px;padding:7px;font-size:11px;font-weight:700;color:var(--soft);cursor:pointer">View Full Report</button>
+      </div>
+
     </div><!-- /left rail -->
 
     <!-- ══ RIGHT MAIN ══ -->
@@ -1250,9 +1257,178 @@ function dmsCommitImport(){
   dmsRender('leads');
 }
 
+/* ══ PHONE PERFORMANCE — real phone-system data (dial counts, average
+   handle time, sales/hour, dials/hour), distinct from CRM-logged
+   activity. Stored as dated weekly snapshots so history isn't lost each
+   time new numbers come in. Updated via paste from the phone system's
+   own weekly export (Excel copy → tab-separated paste), rather than
+   requiring anyone to retype the whole table by hand. ══ */
+var DMS_PHONE_KEY = 'termac_dms_phoneperf';
+
+function dmsLoadPhonePerf(){ try{ return JSON.parse(localStorage.getItem(DMS_PHONE_KEY)||'[]'); }catch(e){ return []; } }
+function dmsSavePhonePerf(arr){ try{ localStorage.setItem(DMS_PHONE_KEY, JSON.stringify(arr)); }catch(e){} }
+
+function dmsSeedPhonePerfIfEmpty(){
+  if (dmsLoadPhonePerf().length) return;
+  dmsSavePhonePerf([{
+    weekLabel: 'Jun 22–26',
+    dates: ['22-Jun','23-Jun','24-Jun','25-Jun','26-Jun'],
+    outbound: [
+      { name:'Amanda McGowan', ext:'3001', daily:[11,1,4,1,6], total:23, aht:156.4444, sales:4, hours:35, sph:0.11, dph:'na' },
+      { name:'Gina Kluge', ext:'3002', daily:[185,244,208,226,null], total:863, aht:2.867903, sales:2, hours:28, sph:0.07, dph:31 },
+      { name:'Chrystal Bush', ext:'3003', daily:[33,95,128,121,95], total:472, aht:9.243644, sales:6, hours:28, sph:0.21, dph:17 },
+      { name:'Tara Colona', ext:'3004', daily:[null,102,93,87,108], total:390, aht:4.546154, sales:1, hours:28, sph:0.04, dph:14 },
+      { name:'Donna Myer', ext:'3005', daily:[117,157,127,138,null], total:539, aht:20.80334, sales:7, hours:28, sph:0.25, dph:19 },
+      { name:'Kimberly Reinhart', ext:'3006', daily:[null,309,134,149,155], total:747, aht:4.796519, sales:0, hours:28, sph:0, dph:27 },
+    ],
+    inbound: [
+      { name:'Amanda McGowan', ext:'3001', daily:[1,15,3,8,3], total:30, aht:85.1 },
+      { name:'Gina Kluge', ext:'3002', daily:[null,null,4,null,null], total:4, aht:229.75 },
+      { name:'Chrystal Bush', ext:'3003', daily:[null,null,null,11,28], total:39, aht:199.2821 },
+      { name:'Tara Colona', ext:'3004', daily:[null,null,null,7,2], total:9, aht:124.7778 },
+      { name:'Donna Myer', ext:'3005', daily:[17,1,2,null,null], total:20, aht:172.1 },
+      { name:'Kimberly Reinhart', ext:'3006', daily:[null,null,null,null,null], total:0, aht:0 },
+    ],
+    importedAt: Date.now(),
+  }]);
+}
+
+function dmsLatestPhonePerf(){
+  dmsSeedPhonePerfIfEmpty();
+  var all = dmsLoadPhonePerf();
+  return all.length ? all[all.length-1] : null;
+}
+
+function dmsRenderPhonePerfSummary(){
+  var el2 = document.getElementById('railPhonePerf');
+  if (!el2) return;
+  var wk = dmsLatestPhonePerf();
+  if (!wk){ el2.innerHTML = '<div class="dms-empty-state">No data yet</div>'; return; }
+  var topSph = wk.outbound.slice().sort(function(a,b){ return (b.sph||0)-(a.sph||0); })[0];
+  var teamDials = wk.outbound.reduce(function(s,r){ return s+(r.total||0); },0);
+  el2.innerHTML =
+    '<div style="font-size:11px;color:var(--soft);margin-bottom:6px">Week of ' + escH(wk.weekLabel) + '</div>' +
+    '<div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0"><span>Team dials</span><b>' + teamDials + '</b></div>' +
+    (topSph ? '<div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0"><span>Top SPH</span><b>' + escH(topSph.name) + ' (' + topSph.sph + ')</b></div>' : '');
+}
+
+function dmsOpenPhonePerf(){
+  var wk = dmsLatestPhonePerf();
+  _dmsModalMode = 'phone-perf';
+  document.getElementById('dmsModalTitle').textContent = '📞 Phone Performance — Week of ' + (wk?wk.weekLabel:'—');
+  document.getElementById('dmsModalBody').innerHTML = dmsPhonePerfTableHtml(wk) +
+    '<button type="button" onclick="dmsOpenPhonePerfPaste()" style="width:100%;margin-top:12px;background:#1E7B3C;color:#fff;border:none;border-radius:7px;padding:9px;font-weight:700;font-size:12px;cursor:pointer">📋 Paste This Week\'s Numbers</button>';
+  document.getElementById('dmsModalBg').classList.add('open');
+}
+
+function dmsPhonePerfTableHtml(wk){
+  if (!wk) return '<div class="dms-empty-state">No data yet</div>';
+  function row(r, cols){
+    return '<tr><td style="padding:5px 8px;font-weight:700">'+escH(r.name)+'</td><td style="padding:5px 8px;color:var(--soft)">'+escH(r.ext)+'</td>' +
+      r.daily.map(function(d){ return '<td style="padding:5px 8px;text-align:right">'+(d==null?'—':d)+'</td>'; }).join('') +
+      '<td style="padding:5px 8px;text-align:right;font-weight:700">'+r.total+'</td>' +
+      cols.map(function(c){ return '<td style="padding:5px 8px;text-align:right">'+(r[c]==null?'—':r[c])+'</td>'; }).join('') +
+      '</tr>';
+  }
+  var dateHeaders = wk.dates.map(function(d){ return '<th style="padding:5px 8px;text-align:right;font-size:10px;color:var(--soft)">'+escH(d)+'</th>'; }).join('');
+  return '<div style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;margin-bottom:4px">Outbound</div>' +
+    '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr>' +
+      '<th style="padding:5px 8px;text-align:left;font-size:10px;color:var(--soft)">Rep</th><th style="padding:5px 8px;font-size:10px;color:var(--soft)">Ext</th>' + dateHeaders +
+      '<th style="padding:5px 8px;text-align:right;font-size:10px;color:var(--soft)">Total</th><th style="padding:5px 8px;text-align:right;font-size:10px;color:var(--soft)">AHT</th><th style="padding:5px 8px;text-align:right;font-size:10px;color:var(--soft)">Sales</th><th style="padding:5px 8px;text-align:right;font-size:10px;color:var(--soft)">Hrs</th><th style="padding:5px 8px;text-align:right;font-size:10px;color:var(--soft)">SPH</th><th style="padding:5px 8px;text-align:right;font-size:10px;color:var(--soft)">DPH</th>' +
+    '</tr></thead><tbody>' + wk.outbound.map(function(r){ return row(r, ['aht','sales','hours','sph','dph']); }).join('') + '</tbody></table></div>' +
+    '<div style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;margin:14px 0 4px">Inbound</div>' +
+    '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr>' +
+      '<th style="padding:5px 8px;text-align:left;font-size:10px;color:var(--soft)">Rep</th><th style="padding:5px 8px;font-size:10px;color:var(--soft)">Ext</th>' + dateHeaders +
+      '<th style="padding:5px 8px;text-align:right;font-size:10px;color:var(--soft)">Total</th><th style="padding:5px 8px;text-align:right;font-size:10px;color:var(--soft)">AHT</th>' +
+    '</tr></thead><tbody>' + wk.inbound.map(function(r){ return row(r, ['aht']); }).join('') + '</tbody></table></div>';
+}
+
+function dmsOpenPhonePerfPaste(){
+  _dmsModalMode = 'phone-perf-paste';
+  document.getElementById('dmsModalTitle').textContent = '📋 Paste Phone Report';
+  document.getElementById('dmsModalBody').innerHTML =
+    '<div style="font-size:12px;color:var(--soft);margin-bottom:10px">Copy the whole report from Excel (both the DMS-OUTBOUND and DMS-INBOUND tables) and paste it below. Use the Save button to import it.</div>' +
+    '<textarea id="pp_paste" class="dms-input" style="min-height:200px;font-family:monospace;font-size:11px" placeholder="Paste here…"></textarea>' +
+    '<div id="pp_err" style="color:#C8102E;font-size:12px;margin-top:8px;display:none"></div>';
+  document.getElementById('dmsModalBg').classList.add('open');
+}
+
+// Flexible parser — doesn't assume specific dates, just whatever date
+// columns actually sit between EXT and TOTAL, since next week's export
+// will have different dates in it.
+function dmsParsePhonePerfSection(lines, startIdx, hasExtraCols){
+  var headerIdx = -1;
+  for (var i = startIdx; i < lines.length; i++){
+    if (/\bEXT\b/i.test(lines[i]) && /TOTAL/i.test(lines[i])) { headerIdx = i; break; }
+  }
+  if (headerIdx === -1) return { rows: [], nextIdx: lines.length, dates: [] };
+
+  var headers = lines[headerIdx].split('\t').map(function(h){ return h.trim(); });
+  var extIdx = headers.findIndex(function(h){ return /^EXT$/i.test(h); });
+  var totalIdx = headers.findIndex(function(h){ return /^TOTAL$/i.test(h); });
+  var dateHeaders = headers.slice(extIdx+1, totalIdx);
+
+  var rows = [];
+  var i2 = headerIdx + 1;
+  for (; i2 < lines.length; i2++){
+    var line = lines[i2];
+    if (!line.trim()) break;
+    if (/^TOTAL:/i.test(line.trim())) { i2++; break; }
+    var cells = line.split('\t').map(function(c){ return c.trim(); });
+    var name = cells[0];
+    if (!name) continue;
+    var ext = cells[extIdx] || '';
+    var daily = cells.slice(extIdx+1, totalIdx).map(function(c){ return c === '' ? null : Number(c); });
+    var total = Number(cells[totalIdx]) || 0;
+    var row = { name: name, ext: ext, daily: daily, total: total, aht: Number(cells[totalIdx+1])||0 };
+    if (hasExtraCols){
+      row.sales = Number(cells[totalIdx+2])||0;
+      row.hours = Number(cells[totalIdx+3])||0;
+      row.sph = cells[totalIdx+4]||0;
+      row.dph = cells[totalIdx+5]||0;
+    }
+    rows.push(row);
+  }
+  return { rows: rows, nextIdx: i2, dates: dateHeaders };
+}
+
+function dmsCommitPhonePerfPaste(){
+  var text = document.getElementById('pp_paste').value;
+  var errEl = document.getElementById('pp_err');
+  var lines = text.split(/\r?\n/);
+
+  var outStart = lines.findIndex(function(l){ return /OUTBOUND/i.test(l); });
+  var inStart = lines.findIndex(function(l){ return /INBOUND/i.test(l); });
+  if (outStart === -1 || inStart === -1){
+    errEl.textContent = 'Couldn\'t find both an OUTBOUND and INBOUND section in what was pasted.';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  var outbound = dmsParsePhonePerfSection(lines, outStart, true);
+  var inbound = dmsParsePhonePerfSection(lines, inStart, false);
+
+  if (!outbound.rows.length || !inbound.rows.length){
+    errEl.textContent = 'Found the sections but couldn\'t read any rep rows — check the paste includes the full tables.';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  var dates = outbound.dates.length ? outbound.dates : inbound.dates;
+  var weekLabel = dates.length ? (dates[0] + '–' + dates[dates.length-1]) : 'Latest';
+
+  var all = dmsLoadPhonePerf();
+  all.push({ weekLabel: weekLabel, dates: dates, outbound: outbound.rows, inbound: inbound.rows, importedAt: Date.now() });
+  dmsSavePhonePerf(all);
+  dmsCloseModal();
+  dmsToast('Phone performance updated for week of ' + weekLabel);
+  dmsUpdateRail();
+}
+
 function dmsSaveRecord(){
   if (_dmsModalMode === 'add-lead') return dmsSaveNewLead();
   if (_dmsModalMode === 'confirm-import') return dmsCommitImport();
+  if (_dmsModalMode === 'phone-perf-paste') return dmsCommitPhonePerfPaste();
 }
 
 function dmsSaveNewLead(){
@@ -1947,6 +2123,7 @@ if (document.readyState === 'loading') {
 
 /* ══ LEFT RAIL — MISSION CONTROL ═══════════════════════════════ */
 function dmsUpdateRail() {
+  dmsRenderPhonePerfSummary();
   const rows = dmsGetSheet();
   if (!rows || !rows.length) return;
   const today = new Date().toISOString().slice(0,10);
