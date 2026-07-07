@@ -97,6 +97,8 @@ button{cursor:pointer}
 /* ── FILTER BAR ── */
 .dms-filter-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px}
 .dms-search{flex:1;min-width:200px;max-width:300px;padding:8px 12px;border:1.5px solid var(--line);border-radius:7px;background:#fff;font-size:13px}
+.dms-lbl{display:block;font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px}
+.dms-input{width:100%;padding:8px 12px;border:1.5px solid var(--line);border-radius:7px;background:#fff;font-size:13px;font-family:inherit}
 .dms-filter-sel{padding:7px 10px;border:1.5px solid var(--line);border-radius:7px;background:#fff;font-size:12px;color:var(--ink)}
 .dms-btn{display:inline-flex;align-items:center;gap:5px;padding:7px 13px;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;cursor:pointer;white-space:nowrap}
 .dms-btn-red{background:var(--red);color:#fff}
@@ -654,6 +656,11 @@ function dmsRenderCallSheet(el){
   </div>
   <!-- Filter bar -->
   <div class="dms-filter-bar">
+    <button onclick="dmsOpenAddLead()" style="background:#C8102E;color:#fff;border:none;border-radius:7px;padding:8px 14px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer;white-space:nowrap">+ Add New Lead</button>
+    ${_dmsUser && _dmsUser.name === 'Chrystal Bush' ? `
+    <button onclick="dmsOpenImport('csv')" style="background:#1E7B3C;color:#fff;border:none;border-radius:7px;padding:8px 14px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer;white-space:nowrap">⬆ Import CSV</button>
+    <button onclick="dmsOpenImport('pdf')" style="background:#1B5FA8;color:#fff;border:none;border-radius:7px;padding:8px 14px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer;white-space:nowrap">⬆ Import PDF</button>
+    ` : ''}
     <input class="dms-search" id="dmsSearchInput" placeholder="Search business, city, zip…" oninput="dmsRender('leads')" value="${escH(q)}">
     <select class="dms-filter-sel" id="dmsStatusFilter" onchange="dmsRender('leads')">
       <option value="">All Statuses</option>
@@ -1035,7 +1042,246 @@ function dmsRemoveLead(id){
   if(row){row.style.transition='opacity .25s';row.style.opacity='0';setTimeout(function(){if(row&&row.parentNode)row.parentNode.removeChild(row);},260);}
   dmsToast('Lead removed from call sheet');
 }
-function dmsSaveRecord(){}
+var _dmsModalMode = null;
+
+function dmsOpenAddLead(){
+  _dmsModalMode = 'add-lead';
+  document.getElementById('dmsModalTitle').textContent = '+ Add New Lead';
+  document.getElementById('dmsModalBody').innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div><label class="dms-lbl">Business Name *</label>
+        <input class="dms-input" id="nl_business" placeholder="Business name"></div>
+      <div><label class="dms-lbl">Contact Name</label>
+        <input class="dms-input" id="nl_name" placeholder="Contact name"></div>
+      <div style="display:flex;gap:8px">
+        <div style="flex:1"><label class="dms-lbl">Phone *</label>
+          <input class="dms-input" id="nl_phone" placeholder="(555) 555-5555"></div>
+        <div style="flex:1"><label class="dms-lbl">Zip</label>
+          <input class="dms-input" id="nl_zip" placeholder="19067"></div>
+      </div>
+      <div><label class="dms-lbl">City</label>
+        <input class="dms-input" id="nl_city" placeholder="City"></div>
+      <div id="nl_err" style="color:#C8102E;font-size:12px;display:none"></div>
+    </div>`;
+  document.getElementById('dmsModalBg').classList.add('open');
+}
+
+// ── CSV / PDF IMPORT — Chrystal Bush only. Both paths land in the same
+// preview-before-commit step so nothing gets added to the call sheet
+// without a human confirming it first, and duplicates (matched by phone
+// number against what's already on the sheet) are flagged, not silently
+// re-added.
+var _dmsImportRows = [];
+
+function dmsOpenImport(kind){
+  var input = document.createElement('input');
+  input.type = 'file';
+  input.accept = kind === 'csv' ? '.csv' : '.pdf';
+  input.onchange = function(){
+    var file = input.files[0];
+    if (!file) return;
+    if (kind === 'csv') dmsParseCSVFile(file);
+    else dmsParsePDFFile(file);
+  };
+  input.click();
+}
+
+function dmsParseCSVField(row){
+  // Minimal CSV field splitter handling quoted fields with embedded commas.
+  var out = [], cur = '', inQuotes = false;
+  for (var i = 0; i < row.length; i++){
+    var c = row[i];
+    if (inQuotes){
+      if (c === '"' && row[i+1] === '"'){ cur += '"'; i++; }
+      else if (c === '"'){ inQuotes = false; }
+      else cur += c;
+    } else {
+      if (c === '"') inQuotes = true;
+      else if (c === ','){ out.push(cur); cur = ''; }
+      else cur += c;
+    }
+  }
+  out.push(cur);
+  return out.map(function(s){ return s.trim(); });
+}
+
+function dmsFindCol(headers, candidates){
+  for (var i = 0; i < headers.length; i++){
+    var h = headers[i].toLowerCase().replace(/[^a-z]/g,'');
+    if (candidates.indexOf(h) !== -1) return i;
+  }
+  return -1;
+}
+
+function dmsParseCSVFile(file){
+  var reader = new FileReader();
+  reader.onload = function(e){
+    var lines = String(e.target.result).split(/\r?\n/).filter(function(l){ return l.trim(); });
+    if (!lines.length){ dmsToast('That file looks empty.'); return; }
+    var headers = dmsParseCSVField(lines[0]);
+    var biCol = dmsFindCol(headers, ['business','businessname','company','companyname']);
+    var naCol = dmsFindCol(headers, ['name','contact','contactname']);
+    var phCol = dmsFindCol(headers, ['phone','phonenumber','tel','telephone']);
+    var ciCol = dmsFindCol(headers, ['city']);
+    var ziCol = dmsFindCol(headers, ['zip','zipcode','postal','postalcode']);
+
+    if (biCol === -1 || phCol === -1){
+      dmsToast('Couldn\'t find Business and Phone columns — check the file has headers like "Business" and "Phone".');
+      return;
+    }
+
+    var existing = crmLoad('dms_coldcall');
+    var existingPhones = {};
+    existing.forEach(function(r){ if (r.phone) existingPhones[String(r.phone).replace(/\D/g,'')] = true; });
+
+    var rows = [];
+    for (var i = 1; i < lines.length; i++){
+      var f = dmsParseCSVField(lines[i]);
+      var business = (f[biCol]||'').trim();
+      var phone = (f[phCol]||'').trim();
+      if (!business || !phone) continue;
+      var normPhone = phone.replace(/\D/g,'');
+      rows.push({
+        business: business,
+        name: naCol!==-1 ? (f[naCol]||'').trim() : '',
+        phone: phone,
+        city: ciCol!==-1 ? (f[ciCol]||'').trim() : '',
+        zip: ziCol!==-1 ? (f[ziCol]||'').trim() : '',
+        isDupe: !!existingPhones[normPhone],
+      });
+    }
+    dmsShowImportPreview(rows, 'CSV');
+  };
+  reader.readAsText(file);
+}
+
+function dmsParsePDFFile(file){
+  if (file.size > 20 * 1024 * 1024){
+    dmsToast('That PDF is too large — please try a file under 20MB.');
+    return;
+  }
+  dmsToast('Reading PDF — this can take a moment...');
+  var reader = new FileReader();
+  reader.onload = function(e){
+    var b64 = e.target.result.split(',')[1];
+    fetch('https://unipro-ai-proxy.termac-one.workers.dev/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 4000,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } },
+            { type: 'text', text: 'Extract every customer/business record from this document as a JSON array. Each item should have exactly these fields: business (string), name (string, contact name if present, else empty string), phone (string), city (string, else empty string), zip (string, else empty string). Respond with ONLY the JSON array, no markdown formatting, no explanation, no code fences.' }
+          ]
+        }]
+      })
+    }).then(function(r){ return r.json(); })
+      .then(function(d){
+        var text = (d.content && d.content[0] && d.content[0].text) || '';
+        var cleaned = text.replace(/```json|```/g, '').trim();
+        var parsed;
+        try { parsed = JSON.parse(cleaned); }
+        catch(err){ dmsToast('Could not read structured data from that PDF — try converting it to CSV instead.'); return; }
+        if (!Array.isArray(parsed) || !parsed.length){ dmsToast('No records found in that PDF.'); return; }
+
+        var existing = crmLoad('dms_coldcall');
+        var existingPhones = {};
+        existing.forEach(function(r){ if (r.phone) existingPhones[String(r.phone).replace(/\D/g,'')] = true; });
+
+        var rows = parsed.filter(function(r){ return r.business && r.phone; }).map(function(r){
+          return {
+            business: String(r.business).trim(), name: String(r.name||'').trim(),
+            phone: String(r.phone).trim(), city: String(r.city||'').trim(), zip: String(r.zip||'').trim(),
+            isDupe: !!existingPhones[String(r.phone).replace(/\D/g,'')],
+          };
+        });
+        if (!rows.length){ dmsToast('No usable business/phone records found in that PDF.'); return; }
+        dmsShowImportPreview(rows, 'PDF');
+      })
+      .catch(function(){ dmsToast('Could not process that PDF — check connection and try again.'); });
+  };
+  reader.readAsDataURL(file);
+}
+
+function dmsShowImportPreview(rows, sourceLabel){
+  _dmsImportRows = rows;
+  _dmsModalMode = 'confirm-import';
+  var dupeCount = rows.filter(function(r){ return r.isDupe; }).length;
+  document.getElementById('dmsModalTitle').textContent = 'Import Preview — ' + sourceLabel;
+  document.getElementById('dmsModalBody').innerHTML =
+    '<div style="font-size:12px;color:var(--soft);margin-bottom:10px">' +
+      rows.length + ' record' + (rows.length===1?'':'s') + ' found' +
+      (dupeCount ? ', ' + dupeCount + ' already on the call sheet (unchecked by default)' : '') +
+    '.</div>' +
+    '<div style="max-height:320px;overflow-y:auto;border:1.5px solid var(--line);border-radius:8px">' +
+      rows.map(function(r, i){
+        return '<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--line);font-size:12px;' + (r.isDupe?'opacity:.55':'') + '">' +
+          '<input type="checkbox" id="imp_row_' + i + '" ' + (r.isDupe?'':'checked') + '>' +
+          '<span style="flex:1"><b>' + escH(r.business) + '</b>' + (r.name?' — '+escH(r.name):'') + '<br>' +
+          '<span style="color:var(--soft)">' + escH(r.phone) + (r.city?' · '+escH(r.city):'') + (r.zip?' '+escH(r.zip):'') + '</span></span>' +
+          (r.isDupe ? '<span style="color:#D97706;font-size:10px;font-weight:700">DUPLICATE</span>' : '') +
+        '</label>';
+      }).join('') +
+    '</div>';
+  document.getElementById('dmsModalBg').classList.add('open');
+}
+
+function dmsCommitImport(){
+  var toAdd = [];
+  _dmsImportRows.forEach(function(r, i){
+    var checkbox = document.getElementById('imp_row_' + i);
+    if (checkbox && checkbox.checked){
+      toAdd.push({
+        id: 'dms' + Date.now() + i,
+        business: r.business, name: r.name, phone: r.phone,
+        city: r.city, zip: r.zip, services: [], status: 'new', updated: Date.now(),
+      });
+    }
+  });
+  if (!toAdd.length){ dmsToast('Nothing selected to import.'); return; }
+  var data = crmLoad('dms_coldcall');
+  data = toAdd.concat(data);
+  crmSave('dms_coldcall', data);
+  dmsCloseModal();
+  dmsToast(toAdd.length + ' lead' + (toAdd.length===1?'':'s') + ' imported to the call sheet');
+  dmsRender('leads');
+}
+
+function dmsSaveRecord(){
+  if (_dmsModalMode === 'add-lead') return dmsSaveNewLead();
+  if (_dmsModalMode === 'confirm-import') return dmsCommitImport();
+}
+
+function dmsSaveNewLead(){
+  var business = document.getElementById('nl_business').value.trim();
+  var phone = document.getElementById('nl_phone').value.trim();
+  var errEl = document.getElementById('nl_err');
+  if (!business || !phone) {
+    errEl.textContent = 'Business name and phone are required.';
+    errEl.style.display = 'block';
+    return;
+  }
+  var record = {
+    id: 'dms' + Date.now(),
+    business: business,
+    name: document.getElementById('nl_name').value.trim(),
+    phone: phone,
+    city: document.getElementById('nl_city').value.trim(),
+    zip: document.getElementById('nl_zip').value.trim(),
+    services: [],
+    status: 'new',
+    updated: Date.now(),
+  };
+  var data = crmLoad('dms_coldcall');
+  data.unshift(record);
+  crmSave('dms_coldcall', data);
+  dmsCloseModal();
+  dmsToast('Lead added to call sheet');
+  dmsRender('leads');
+}
 function dmsCloseModal(){document.getElementById('dmsModalBg').classList.remove('open');}
 
 
@@ -1776,6 +2022,7 @@ function dmsUpdateRail() {
 }
 
 function dmsUpdateWeekCompare(rows, rep) {
+  const today = new Date().toISOString().slice(0,10);
   const now = new Date();
   const dayOfWeek = now.getDay();
   const weekStart = new Date(now);
