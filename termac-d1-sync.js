@@ -20,7 +20,7 @@
   var D1_API_URL = 'https://unipro-ai-proxy.termac-one.workers.dev';
   var D1_API_SECRET = 'termac2026';
   var D1_SYNC_TABLES = ['accounts', 'leads', 'contacts', 'opportunities', 'bids',
-    'jobs', 'deficiencies', 'collections'];
+    'jobs', 'deficiencies', 'collections', 'dms_coldcall'];
 
   async function d1Fetch(method, path, body) {
     try {
@@ -46,6 +46,13 @@
     contacts: {
       assignedRep: 'assigned_rep', created: 'created_at',
     },
+    dms_coldcall: {
+      contactName: 'contact_name', parentCompany: 'parent_company', bizType: 'biz_type',
+      pricingMode: 'pricing_mode', ownerName: 'owner_name', ownerPhone: 'owner_phone',
+      ownerEmail: 'owner_email', decisionMaker: 'decision_maker', dmPhone: 'dm_phone',
+      dmEmail: 'dm_email', landlordPhone: 'landlord_phone', landlordEmail: 'landlord_email',
+      contractExp: 'contract_exp', updated: 'updated_at',
+    },
   };
 
   var VALID = {
@@ -68,6 +75,11 @@
       'assigned_to', 'due_date', 'resolved_at', 'notes', 'created_at', 'updated_at'],
     collections: ['id', 'account_id', 'invoice_ref', 'amount_due', 'amount_paid',
       'due_date', 'status', 'last_contact', 'notes', 'created_at', 'updated_at'],
+    dms_coldcall: ['id', 'business', 'contact_name', 'phone', 'email', 'parent_company',
+      'biz_type', 'pricing_mode', 'address', 'city', 'state', 'zip', 'owner_name',
+      'owner_phone', 'owner_email', 'role', 'decision_maker', 'dm_phone', 'dm_email',
+      'landlord', 'landlord_phone', 'landlord_email', 'competitor', 'contract_exp',
+      'notes', 'status', 'updated_at', 'created_at'],
     rep_cards: ['id', 'rep_slug', 'name', 'title', 'divisions', 'phone', 'email',
       'linkedin', 'bio', 'service_area', 'years_experience', 'photo_url', 'created_at', 'updated_at'],
   };
@@ -227,6 +239,105 @@
     } catch (e) {
       return null;
     }
+  }
+
+  // ── TOUCHPOINTS ── The actual "living history" mechanism — every call,
+  // visit, note, or scheduling action from any role, against any account,
+  // lead, or contact, logged here. Uses the real, existing activity_log
+  // table (confirmed via direct database access: id, entity_type,
+  // entity_id, account_id, user_id, action, detail, created_at) rather
+  // than a redundant new table — deliberately not an array field on the
+  // record itself, since arrays get silently stripped by d1NormalizeRecord
+  // when a record syncs, meaning an activityLog array living only inside
+  // a synced record would never actually leave the device it was written on.
+  function logTouchpoint(pool, recordId, entry, accountId) {
+    if (!pool || !recordId || !entry) return null;
+    var now = Date.now();
+    var full = {
+      id: 'act_' + now + '_' + Math.floor(Math.random() * 10000),
+      ts: entry.ts || now,
+      type: entry.type || 'note',
+      icon: entry.icon || '📝',
+      title: entry.title || '',
+      note: entry.note || '',
+      who: entry.who || '',
+    };
+
+    // Write local immediately, matching the exact pattern Sales Portal
+    // already uses, so the UI updates instantly regardless of network.
+    try {
+      var records = crmLoad(pool);
+      var rec = records.find(function (r) { return r.id === recordId; });
+      if (rec) {
+        rec.activityLog = rec.activityLog || [];
+        rec.activityLog.unshift(full);
+        crmSave(pool, records);
+      }
+    } catch (e) {}
+
+    // Push a normalized row to the real activity_log table in the
+    // background — this is what actually makes it visible to a
+    // different role or device.
+    d1Fetch('POST', '/api/activity_log', {
+      id: full.id,
+      entity_type: pool,
+      entity_id: recordId,
+      account_id: accountId || (pool === 'accounts' ? recordId : null),
+      user_id: full.who,
+      action: full.icon + ' ' + full.title,
+      detail: full.note,
+      created_at: full.ts,
+    }).catch(function () {});
+
+    return full;
+  }
+
+  async function getTouchpointsForRecord(pool, recordId) {
+    try {
+      var res = await d1Fetch('GET', '/api/activity_log?entity_id=' + encodeURIComponent(recordId) + '&limit=200');
+      if (res.ok && Array.isArray(res.results)) {
+        return res.results.filter(function (r) { return r.entity_type === pool; })
+          .sort(function (a, b) { return (b.created_at || 0) - (a.created_at || 0); });
+      }
+    } catch (e) {}
+    return [];
+  }
+
+  // Pulls in touchpoints logged by other roles/devices and merges them
+  // into the record's local activityLog, without duplicating entries
+  // that are already there — matched by id where present. Splits the
+  // combined "icon title" back into separate fields for local display,
+  // matching the shape Sales Portal's activityLog already expects.
+  async function hydrateTouchpointsIntoRecord(pool, recordId) {
+    var remote = await getTouchpointsForRecord(pool, recordId);
+    if (!remote.length) return { added: 0 };
+
+    var records = crmLoad(pool);
+    var rec = records.find(function (r) { return r.id === recordId; });
+    if (!rec) return { added: 0 };
+    rec.activityLog = rec.activityLog || [];
+    var existingIds = {};
+    rec.activityLog.forEach(function (e) { if (e && e.id) existingIds[e.id] = true; });
+
+    var added = 0;
+    remote.forEach(function (r) {
+      if (existingIds[r.id]) return;
+      var actionText = r.action || '';
+      var firstSpace = actionText.indexOf(' ');
+      var icon = firstSpace > -1 ? actionText.slice(0, firstSpace) : '📝';
+      var title = firstSpace > -1 ? actionText.slice(firstSpace + 1) : actionText;
+      rec.activityLog.push({
+        id: r.id, ts: r.created_at, type: 'synced', icon: icon,
+        title: title, note: r.detail || '', who: r.user_id || '',
+      });
+      added++;
+    });
+
+    if (added) {
+      rec.activityLog.sort(function (a, b) { return (b.ts || 0) - (a.ts || 0); });
+      try { localStorage.setItem('termac_crm_' + pool, JSON.stringify(records)); } catch (e) {}
+    }
+    return { added: added };
   }
 
   // ── WAREHOUSE INVENTORY ── Each warehouse's stock (on-hand quantities +
@@ -418,6 +529,9 @@
     startJobSyncSweep: startJobSyncSweep,
     upsertRepCard: upsertRepCard,
     getRepCard: getRepCard,
+    logTouchpoint: logTouchpoint,
+    getTouchpointsForRecord: getTouchpointsForRecord,
+    hydrateTouchpointsIntoRecord: hydrateTouchpointsIntoRecord,
     uploadRepPhoto: uploadRepPhoto,
     d1NormalizeRecord: d1NormalizeRecord,
     crmSave: crmSave,
