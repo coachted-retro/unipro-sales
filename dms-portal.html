@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <script src="termac-intelligence.js"></script>
+<script src="termac-d1-sync.js"></script>
 <script src="termac-notify.js"></script>
 <script src="termac-lifecycle.js"></script>
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -605,7 +606,21 @@ function dmsEnterPortal(){
   // ── END USER CHIP ───────────────────────────────────────────────────────
   dmsNav('leads');
 
-  dmsUpdateRail();}
+  dmsUpdateRail();
+
+  // Pull in touchpoints logged by other roles (sales visits, dispatch
+  // notes, etc.) for whatever's currently on the call sheet, so a caller
+  // sees relevant history before dialing — not just contributes to it.
+  if (typeof TermacD1Sync !== 'undefined') {
+    (async function(){
+      var rows = crmLoad('dms_coldcall').slice(0, 50);
+      for (var i = 0; i < rows.length; i++) {
+        await TermacD1Sync.hydrateTouchpointsIntoRecord('dms_coldcall', rows[i].id).catch(function(){});
+      }
+      if (typeof dmsRender === 'function') dmsRender('leads');
+    })();
+  }
+}
 
 // ── NAV ──
 function dmsNav(tab){
@@ -845,6 +860,22 @@ function dmsSetOutcome(id, outcome){
   crmSave('dms_coldcall', data);
   dmsToast(outcome ? `Outcome: ${outcome}` : 'Outcome cleared');
 
+  // Log the actual touchpoint — every call outcome becomes real, visible
+  // history on this record, reachable by any other role once hydrated.
+  if (outcome && typeof TermacD1Sync !== 'undefined') {
+    var outcomeLabels = {
+      hot: '🔥 Hot Lead', callback: '📅 Call Back Requested', warm: '☀️ Warm',
+      voicemail: '📬 Left Voicemail', no_answer: '📵 No Answer',
+      not_interested: '👎 Not Interested', do_not_call: '🚫 Do Not Call',
+      wrong_number: '❓ Wrong Number',
+    };
+    TermacD1Sync.logTouchpoint('dms_coldcall', id, {
+      type: 'call', icon: '📞',
+      title: 'DMS Call — ' + (outcomeLabels[outcome] || outcome),
+      who: (typeof _dmsUser !== 'undefined' && _dmsUser?.name) || 'DMS',
+    });
+  }
+
   // Show/hide callback scheduler block in-row without full re-render
   const row = document.getElementById('dmsRow_'+id);
   if(!row) return;
@@ -885,6 +916,12 @@ function dmsSaveNotes(id, notes){
   r.dmsNotes = notes;
   r.updated = Date.now();
   crmSave('dms_coldcall', data);
+  if (notes && notes.trim() && typeof TermacD1Sync !== 'undefined') {
+    TermacD1Sync.logTouchpoint('dms_coldcall', id, {
+      type: 'note', icon: '📝', title: 'DMS Call Notes', note: notes.trim(),
+      who: (typeof _dmsUser !== 'undefined' && _dmsUser?.name) || 'DMS',
+    });
+  }
 }
 
 function dmsSaveField(id, field, value){
