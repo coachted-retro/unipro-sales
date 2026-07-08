@@ -63,6 +63,7 @@ body{font-family:'Barlow',sans-serif;background:#F5F6F8;color:#1A1D21;font-size:
 .field{width:100%;padding:9px 11px;border:1.5px solid #D7DBE0;border-radius:7px;font-size:14px;font-family:'Barlow',sans-serif;box-sizing:border-box}
 textarea.field{resize:vertical}
 </style>
+<script src="termac-d1-sync.js"></script>
 </head>
 <body>
 
@@ -216,7 +217,19 @@ function saveQuoteToItem(itemId, amount, notes){
         entry.quoteNotes = notes;
         entry.quoteSentAt = Date.now();
       }
-      localStorage.setItem('termac_crm_accounts', JSON.stringify(accounts));
+      // crmSave, not a direct localStorage write — this is what actually
+      // triggers D1 sync once the module is loaded; the old direct write
+      // would have silently bypassed it even after adding the script tag.
+      if (typeof crmSave === 'function') { crmSave('accounts', accounts); }
+      else { localStorage.setItem('termac_crm_accounts', JSON.stringify(accounts)); }
+      if (typeof TermacD1Sync !== 'undefined') {
+        TermacD1Sync.logTouchpoint('accounts', acct.id, {
+          type: 'deficiency', icon: '💰',
+          title: 'Deficiency Quote Sent — ' + (item.equipment || 'Equipment'),
+          note: '$' + amount + (notes ? ' — ' + notes : ''),
+          who: 'Deficiency Team',
+        });
+      }
     }
   } else {
     // Came from officeQueue directly
@@ -329,6 +342,26 @@ function render(){
 }
 
 render();
+
+// Pull in activityLog entries logged elsewhere (a tech flagging a
+// deficiency from their own device, for instance) before this page's
+// view of "what needs a quote" is considered current. Without this, a
+// deficiency only shows up here once it happens to already be present in
+// this specific browser's local storage — the exact cross-device gap
+// this whole portal was missing.
+if (typeof TermacD1Sync !== 'undefined') {
+  (async function(){
+    var accounts = crmLoad('accounts').slice(0, 100);
+    var anyAdded = false;
+    for (var i = 0; i < accounts.length; i++) {
+      try {
+        var result = await TermacD1Sync.hydrateTouchpointsIntoRecord('accounts', accounts[i].id);
+        if (result.added > 0) anyAdded = true;
+      } catch (e) {}
+    }
+    if (anyAdded) render();
+  })();
+}
 </script>
 </body>
 </html>
