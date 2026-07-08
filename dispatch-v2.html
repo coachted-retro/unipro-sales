@@ -1313,9 +1313,33 @@ function renderJobList(){
       <div class="job-biz">${j.urgent?'🔴 ':''}${esc(j.biz)}</div>
       <div class="job-meta">⏰ ${j.time} · ${j.hrs||j.duration||'?'}h · ${esc(j.tech||'Unassigned')}</div>
       <div class="job-meta" style="font-size:10px">${esc(j.addr||'')}</div>
-      <div><span class="tag tag-red">${esc(j.service)}</span><span class="tag tag-blue">${esc(j.div)}</span></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-top:4px">
+        <div><span class="tag tag-red">${esc(j.service)}</span><span class="tag tag-blue">${esc(j.div)}</span></div>
+        <button onclick="event.stopPropagation();dispatchLogCall('${j.id}')" style="background:none;border:1px solid var(--line);border-radius:5px;color:var(--soft);font-size:10px;font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:.04em;padding:3px 8px;cursor:pointer;white-space:nowrap">📞 Log Call</button>
+      </div>
     </div>`).join('');
   }).join('');
+}
+
+// General-purpose call logging — any job card, not just emergency
+// dispatch. Reuses the same TermacD1Sync.logTouchpoint pattern already
+// used elsewhere in this file for phone-matched accounts, so this shows
+// up as real, visible history on the job record for any other role once
+// hydrated — consistent with how DMS and Sales already log touchpoints.
+function dispatchLogCall(id){
+  const jobs=loadJobs();
+  const j=jobs.find(x=>x.id===id);
+  if(!j) return;
+  const note=prompt(`Log a call for: ${j.biz}\n\nWhat was discussed?`);
+  if(note===null) return; // cancelled
+  const who=(typeof _currentUser!=='undefined'&&_currentUser?.name)||localStorage.getItem('termac_current_user')||'Dispatch';
+  if (typeof TermacD1Sync !== 'undefined') {
+    TermacD1Sync.logTouchpoint('jobs', id, {
+      type:'call', icon:'📞', title:'Dispatch Call Log',
+      note: note.trim(), who: who,
+    }).catch(function(){});
+  }
+  alert('Call logged.');
 }
 
 function jobAction(id){
