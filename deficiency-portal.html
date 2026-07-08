@@ -15,6 +15,7 @@ body{font-family:'Barlow',sans-serif;background:#F5F6F8;color:#1A1D21;font-size:
 .wrap{max-width:1400px;margin:0 auto;padding:20px 16px 60px}
 .kpi-row{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:22px}
 .kpi{background:#fff;border-radius:10px;padding:14px 16px;box-shadow:0 1px 3px rgba(26,29,33,.08);border-top:3px solid #C8102E}
+.card{background:#fff;border-radius:10px;padding:20px;box-shadow:0 1px 3px rgba(26,29,33,.08)}
 .kpi-val{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:26px}
 .kpi-lbl{font-size:11px;color:#6B7280;text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin-top:2px}
 .board{display:grid;grid-template-columns:1fr 1.3fr 1fr;gap:16px;align-items:start}
@@ -73,22 +74,26 @@ textarea.field{resize:vertical}
 </div>
 
 <div class="wrap">
-  <div class="kpi-row" id="kpiRow"></div>
+  <div id="dashboardView">
+    <div class="kpi-row" id="kpiRow"></div>
 
-  <div class="board">
-    <div>
-      <div class="col-hdr new">🆕 New — Just Arrived <span class="col-count" id="cntNew">0</span></div>
-      <div id="colNew"></div>
-    </div>
-    <div>
-      <div class="col-hdr monitor">📋 Quoted — Monitoring <span class="col-count" id="cntMonitor">0</span></div>
-      <div id="colMonitor"></div>
-    </div>
-    <div>
-      <div class="col-hdr jeopardy">🔴 In Jeopardy <span class="col-count" id="cntJeopardy">0</span></div>
-      <div id="colJeopardy"></div>
+    <div class="board">
+      <div>
+        <div class="col-hdr new">🆕 New — Just Arrived <span class="col-count" id="cntNew">0</span></div>
+        <div id="colNew"></div>
+      </div>
+      <div>
+        <div class="col-hdr monitor">📋 Quoted — Monitoring <span class="col-count" id="cntMonitor">0</span></div>
+        <div id="colMonitor"></div>
+      </div>
+      <div>
+        <div class="col-hdr jeopardy">🔴 In Jeopardy <span class="col-count" id="cntJeopardy">0</span></div>
+        <div id="colJeopardy"></div>
+      </div>
     </div>
   </div>
+
+  <div id="quoteBuilderView" style="display:none"></div>
 </div>
 
 <!-- WRITE QUOTE MODAL -->
@@ -99,6 +104,17 @@ textarea.field{resize:vertical}
       <button class="modal-close" onclick="closeQuoteModal()">✕</button>
     </div>
     <div class="modal-body" id="quoteModalBody"></div>
+  </div>
+</div>
+
+<!-- LOG CONTACT MODAL -->
+<div class="modal-bg" id="contactModal">
+  <div class="modal">
+    <div class="modal-hdr">
+      <div class="modal-title" id="contactModalTitle">📞 Log Contact</div>
+      <button class="modal-close" onclick="closeContactModal()">✕</button>
+    </div>
+    <div class="modal-body" id="contactModalBody"></div>
   </div>
 </div>
 
@@ -149,6 +165,7 @@ function loadDeficiencies(){
               equipment: fakeItem.equipment || 'Equipment', description: entry.note || '',
               severity: entry.title && entry.title.toLowerCase().includes('critical') ? 'critical' : entry.title && entry.title.toLowerCase().includes('major') ? 'critical' : entry.title && entry.title.toLowerCase().includes('moderate') ? 'moderate' : 'minor',
               techName: entry.who || 'Tech', quoteSent: entry.quoteSent || false,
+              quoteAmount: entry.quoteAmount, quoteNotes: entry.quoteNotes, quoteSentAt: entry.quoteSentAt,
               _acctId: acct.id, _locId: loc.id || null, _logTs: entry.ts
             });
           }
@@ -276,14 +293,337 @@ function closeQuoteModal(){
   document.getElementById('quoteModal').classList.remove('open');
   _quoteModalItemId = null;
 }
-function submitQuote(){
-  var amt = parseFloat(document.getElementById('quoteAmt').value) || 0;
-  if (!amt) { alert('Enter a quote amount.'); return; }
-  var notes = document.getElementById('quoteNotes').value.trim();
-  saveQuoteToItem(_quoteModalItemId, amt, notes);
+
+var _contactModalItemId = null;
+function openContactModal(itemId){
+  _contactModalItemId = itemId;
+  var items = loadDeficiencies();
+  var item = items.find(function(i){ return i._id === itemId; });
+  if (!item) return;
+  document.getElementById('contactModalTitle').textContent = '📞 Log Contact — ' + item.account;
+  document.getElementById('contactModalBody').innerHTML =
+    '<div style="font-size:12px;color:#6B7280;margin-bottom:14px">' + escH(item.equipment||'') + '</div>' +
+    '<label class="field-lbl">Contact Type</label>' +
+    '<select class="field" id="contactType">' +
+      '<option value="call">📞 Phone Call</option>' +
+      '<option value="email">✉️ Email</option>' +
+      '<option value="text">💬 Text Message</option>' +
+    '</select>' +
+    '<label class="field-lbl">Notes</label>' +
+    '<textarea class="field" id="contactNotes" rows="3" placeholder="What was discussed, next steps..."></textarea>' +
+    '<div style="display:flex;gap:10px;margin-top:16px">' +
+      '<button class="btn btn-ghost" style="flex:1;padding:10px" onclick="closeContactModal()">Cancel</button>' +
+      '<button class="btn btn-primary" style="flex:1;padding:10px" onclick="submitContact()">Log Contact</button>' +
+    '</div>';
+  document.getElementById('contactModal').classList.add('open');
+}
+function closeContactModal(){
+  document.getElementById('contactModal').classList.remove('open');
+  _contactModalItemId = null;
+}
+function submitContact(){
+  var type = document.getElementById('contactType').value;
+  var notes = document.getElementById('contactNotes').value.trim();
+  var items = loadDeficiencies();
+  var item = items.find(function(i){ return i._id === _contactModalItemId; });
+  if (!item) { closeContactModal(); return; }
+
+  var typeLabel = { call: '📞 Phone Call', email: '✉️ Email', text: '💬 Text Message' }[type] || 'Contact';
+  if (item._acctId && typeof TermacD1Sync !== 'undefined') {
+    TermacD1Sync.logTouchpoint('accounts', item._acctId, {
+      type: 'deficiency', icon: typeLabel.split(' ')[0],
+      title: 'Deficiency Follow-up — ' + typeLabel.replace(/^\S+\s/, ''),
+      note: (item.equipment ? item.equipment + ': ' : '') + notes,
+      who: 'Deficiency Team',
+    });
+  }
+  closeContactModal();
+  toast('Contact logged.');
+}
+function toast(msg){
+  var t = document.createElement('div');
+  t.textContent = msg;
+  t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1A1D21;color:#fff;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:600;z-index:9999';
+  document.body.appendChild(t);
+  setTimeout(function(){ t.remove(); }, 2200);
+}
+// ── QUOTES — real, structured records: job type, assigned services (each
+// tied to an asset/service line/description), and a parts/labor/items
+// table with quantities and a real grand total. Matches the ServiceTrade
+// structure Lexi already knows, rather than a single free-text box.
+var QUOTE_KEY = 'termac_deficiency_quotes';
+var JOB_TYPES = ['Administrative','Inspection','Repair','Installation','Emergency','Other'];
+var SERVICE_LINES = ['UniPro','Quality III','AllPro','Filter Man','GTO','Termac'];
+function loadQuotes(){ try{ return JSON.parse(localStorage.getItem(QUOTE_KEY)||'[]'); }catch(e){ return []; } }
+function saveQuotes(q){ try{ localStorage.setItem(QUOTE_KEY, JSON.stringify(q)); }catch(e){} }
+function nextQuoteNumber(){
+  var quotes = loadQuotes();
+  var max = quotes.reduce(function(m,q){ return Math.max(m, q.quoteNumber||0); }, 4600);
+  return max + 1;
+}
+
+var _quoteBuilderId = null;
+
+function openQuoteModal(itemId){
+  _quoteModalItemId = itemId;
+  var items = loadDeficiencies();
+  var item = items.find(function(i){ return i._id === itemId; });
+  if (!item) return;
+  document.getElementById('quoteModalTitle').textContent = '✍️ New Quote — ' + item.account;
+  var jobOpts = JOB_TYPES.map(function(t){ return '<option>'+t+'</option>'; }).join('');
+  document.getElementById('quoteModalBody').innerHTML =
+    '<label class="field-lbl">Job Type *</label>' +
+    '<select class="field" id="qJobType">' + jobOpts + '</select>' +
+    '<label class="field-lbl">Service Contract</label>' +
+    '<input class="field" id="qContract" placeholder="e.g. Standard Contract - UNIPRO">' +
+    '<label class="field-lbl">Expiration Date</label>' +
+    '<input class="field" id="qExpiry" type="date">' +
+    '<div style="display:flex;gap:10px;margin-top:16px">' +
+      '<button class="btn btn-ghost" style="flex:1;padding:10px" onclick="closeQuoteModal()">Cancel</button>' +
+      '<button class="btn btn-primary" style="flex:1;padding:10px" onclick="createQuoteFromDeficiency()">Create Quote</button>' +
+    '</div>';
+  document.getElementById('quoteModal').classList.add('open');
+}
+function closeQuoteModal(){
+  document.getElementById('quoteModal').classList.remove('open');
+  _quoteModalItemId = null;
+}
+
+function createQuoteFromDeficiency(){
+  var items = loadDeficiencies();
+  var item = items.find(function(i){ return i._id === _quoteModalItemId; });
+  if (!item) return;
+  var quote = {
+    id: 'q' + Date.now(),
+    quoteNumber: nextQuoteNumber(),
+    jobType: document.getElementById('qJobType').value,
+    contract: document.getElementById('qContract').value.trim(),
+    expiry: document.getElementById('qExpiry').value,
+    fromDeficiencyId: item._id,
+    acctId: item._acctId || null,
+    business: item.account, address: item.address || '',
+    assignedTo: 'Deficiency Team', office: (item.severity ? '' : ''),
+    description: '',
+    services: [{
+      id: 's' + Date.now(), fromDeficiency: true,
+      assetName: item.equipment || '', serviceLine: 'UniPro',
+      contract: document.getElementById('qContract').value.trim(),
+      description: item.description || '', preferredTech: item.techName || '',
+      estPrice: 0, estDuration: '', dueWindow: 'No Due Date',
+    }],
+    lineItems: [],
+    detailLevel: 'Line Items with Prices', tax: 'Not Taxable',
+    status: 'draft', createdAt: Date.now(),
+  };
+  var quotes = loadQuotes();
+  quotes.unshift(quote);
+  saveQuotes(quotes);
   closeQuoteModal();
+  openQuoteBuilder(quote.id);
+}
+
+function quoteGrandTotal(quote){
+  return (quote.lineItems||[]).reduce(function(sum, li){ return sum + (Number(li.qty)||0) * (Number(li.unitPrice)||0); }, 0);
+}
+function money2(n){ return '$' + (Number(n)||0).toFixed(2); }
+
+function openQuoteBuilder(quoteId){
+  _quoteBuilderId = quoteId;
+  var quote = loadQuotes().find(function(q){ return q.id === quoteId; });
+  if (!quote) return;
+  document.getElementById('dashboardView').style.display = 'none';
+  var el = document.getElementById('quoteBuilderView');
+  el.style.display = 'block';
+  el.innerHTML = buildQuoteBuilderHtml(quote);
+}
+function closeQuoteBuilder(){
+  document.getElementById('quoteBuilderView').style.display = 'none';
+  document.getElementById('dashboardView').style.display = 'block';
+  _quoteBuilderId = null;
   render();
 }
+
+function buildQuoteBuilderHtml(quote){
+  var total = quoteGrandTotal(quote);
+  var servicesHtml = (quote.services||[]).length
+    ? quote.services.map(function(s, i){
+        return '<div style="border:1px solid #E5E7EB;border-radius:8px;padding:12px;margin-bottom:8px">' +
+          '<div style="display:flex;justify-content:space-between;align-items:flex-start">' +
+            '<div>' +
+              '<div style="font-weight:700;font-size:13px">' + escH(s.serviceLine) + (s.assetName ? ' — ' + escH(s.assetName) : '') + '</div>' +
+              '<div style="font-size:12px;color:#6B7280;margin-top:2px">' + escH(s.description||'') + '</div>' +
+              '<div style="font-size:11px;color:#9CA3AF;margin-top:4px">' +
+                (s.preferredTech ? 'Tech: ' + escH(s.preferredTech) + ' · ' : '') +
+                (s.estPrice ? 'Est. ' + money2(s.estPrice) : 'No estimate') +
+                (s.estDuration ? ' · ' + escH(s.estDuration) + ' hrs' : '') +
+              '</div>' +
+            '</div>' +
+            '<button onclick="removeQuoteService(' + i + ')" style="background:none;border:none;color:#DC2626;cursor:pointer;font-size:12px">✕</button>' +
+          '</div>' +
+        '</div>';
+      }).join('')
+    : '<div style="color:#DC2626;font-size:12px;display:flex;align-items:center;gap:6px;margin-bottom:8px">⚠️ You must have at least one service on this quote</div>';
+
+  var itemRows = (quote.lineItems||[]).map(function(li, i){
+    var amt = (Number(li.qty)||0) * (Number(li.unitPrice)||0);
+    return '<tr>' +
+      '<td><input class="field" style="margin:0" value="' + escH(li.name||'') + '" oninput="updateLineItem(' + i + ',\'name\',this.value)" placeholder="Item name"></td>' +
+      '<td><select class="field" style="margin:0" onchange="updateLineItem(' + i + ',\'serviceLine\',this.value)">' + SERVICE_LINES.map(function(sl){ return '<option ' + (li.serviceLine===sl?'selected':'') + '>' + sl + '</option>'; }).join('') + '</select></td>' +
+      '<td><input class="field" style="margin:0;width:60px" type="number" value="' + (li.qty||1) + '" oninput="updateLineItem(' + i + ',\'qty\',this.value)"></td>' +
+      '<td><input class="field" style="margin:0;width:80px" type="number" step="0.01" value="' + (li.unitPrice||0) + '" oninput="updateLineItem(' + i + ',\'unitPrice\',this.value)"></td>' +
+      '<td style="font-weight:700;white-space:nowrap">' + money2(amt) + '</td>' +
+      '<td><button onclick="removeLineItem(' + i + ')" style="background:none;border:none;color:#DC2626;cursor:pointer">🗑</button></td>' +
+    '</tr>';
+  }).join('');
+
+  return '<button class="btn btn-ghost" onclick="closeQuoteBuilder()" style="margin-bottom:14px">← Back to Dashboard</button>' +
+    '<div class="card">' +
+      '<div style="font-size:20px;font-weight:800">Quote ' + quote.quoteNumber + ' <span style="font-size:13px;font-weight:600;color:#166534">' + escH(quote.jobType) + '</span></div>' +
+      '<div style="font-size:12px;color:#6B7280;margin-top:2px">Assigned to: <b>' + escH(quote.assignedTo) + '</b>' + (quote.contract ? ' · Contract: ' + escH(quote.contract) : '') + '</div>' +
+      '<div style="font-size:14px;font-weight:700;margin-top:10px">' + escH(quote.business) + '</div>' +
+      '<div style="font-size:12px;color:#6B7280">' + escH(quote.address) + '</div>' +
+
+      '<label class="field-lbl" style="margin-top:16px">Quote Description</label>' +
+      '<div style="border:1px solid #E5E7EB;border-radius:8px 8px 0 0;padding:6px;display:flex;gap:4px;background:#F9FAFB">' +
+        '<button onclick="quoteFormat(\'bold\')" style="border:none;background:none;cursor:pointer;font-weight:700;padding:4px 8px">B</button>' +
+        '<button onclick="quoteFormat(\'italic\')" style="border:none;background:none;cursor:pointer;font-style:italic;padding:4px 8px">I</button>' +
+        '<button onclick="quoteFormat(\'insertUnorderedList\')" style="border:none;background:none;cursor:pointer;padding:4px 8px">•≡</button>' +
+        '<button onclick="quoteFormat(\'insertOrderedList\')" style="border:none;background:none;cursor:pointer;padding:4px 8px">1≡</button>' +
+      '</div>' +
+      '<div id="quoteDescEditor" contenteditable="true" oninput="updateQuoteDescription()" style="border:1px solid #E5E7EB;border-top:none;border-radius:0 0 8px 8px;padding:10px;min-height:80px;font-size:13px">' + (quote.description||'') + '</div>' +
+
+      '<div style="font-weight:700;margin-top:20px;margin-bottom:8px">Services</div>' +
+      servicesHtml +
+      '<button class="btn btn-ghost" style="width:100%" onclick="openAddServiceForm()">+ Add Service or Deficiency</button>' +
+
+      '<div style="font-weight:700;margin-top:20px;margin-bottom:8px">Parts, Labor, and Items</div>' +
+      '<table style="width:100%;border-collapse:collapse;font-size:12px">' +
+        '<thead><tr style="color:#6B7280;text-align:left"><th>Item</th><th>Service Line</th><th>Qty</th><th>Unit Price</th><th>Amount</th><th></th></tr></thead>' +
+        '<tbody>' + itemRows + '</tbody>' +
+      '</table>' +
+      '<button class="btn btn-ghost" style="width:100%;margin-top:8px" onclick="addLineItem()">+ Add Quote Item</button>' +
+      '<div style="text-align:right;font-weight:800;font-size:15px;margin-top:10px">Grand Total: ' + money2(total) + '</div>' +
+
+      '<div id="addServiceFormZone"></div>' +
+
+      '<div style="display:flex;gap:10px;margin-top:20px">' +
+        '<button class="btn btn-ghost" style="flex:1;padding:10px" onclick="closeQuoteBuilder()">Save Draft</button>' +
+        '<button class="btn btn-primary" style="flex:1;padding:10px" onclick="sendQuote()">Send Quote</button>' +
+      '</div>' +
+    '</div>';
+}
+
+function getBuilderQuote(){ return loadQuotes().find(function(q){ return q.id === _quoteBuilderId; }); }
+function persistBuilderQuote(quote){
+  var quotes = loadQuotes();
+  var idx = quotes.findIndex(function(q){ return q.id === quote.id; });
+  if (idx > -1) quotes[idx] = quote;
+  saveQuotes(quotes);
+}
+
+function quoteFormat(cmd){ document.execCommand(cmd, false, null); updateQuoteDescription(); }
+function updateQuoteDescription(){
+  var quote = getBuilderQuote(); if (!quote) return;
+  quote.description = document.getElementById('quoteDescEditor').innerHTML;
+  persistBuilderQuote(quote);
+}
+
+function removeQuoteService(i){
+  var quote = getBuilderQuote(); if (!quote) return;
+  quote.services.splice(i, 1);
+  persistBuilderQuote(quote);
+  openQuoteBuilder(quote.id);
+}
+
+function addLineItem(){
+  var quote = getBuilderQuote(); if (!quote) return;
+  quote.lineItems = quote.lineItems || [];
+  quote.lineItems.push({ id: 'li' + Date.now(), name: '', serviceLine: 'UniPro', qty: 1, unitPrice: 0 });
+  persistBuilderQuote(quote);
+  openQuoteBuilder(quote.id);
+}
+function updateLineItem(i, field, value){
+  var quote = getBuilderQuote(); if (!quote) return;
+  if (!quote.lineItems[i]) return;
+  quote.lineItems[i][field] = (field === 'qty' || field === 'unitPrice') ? Number(value) : value;
+  persistBuilderQuote(quote);
+  // Re-render just enough to update the total without losing focus on every keystroke
+  var totalEl = document.querySelector('#quoteBuilderView div[style*="text-align:right"]');
+  if (totalEl) totalEl.textContent = 'Grand Total: ' + money2(quoteGrandTotal(quote));
+  var amtCell = document.querySelectorAll('#quoteBuilderView tbody tr')[i];
+  if (amtCell) {
+    var amt = (Number(quote.lineItems[i].qty)||0) * (Number(quote.lineItems[i].unitPrice)||0);
+    amtCell.children[4].textContent = money2(amt);
+  }
+}
+function removeLineItem(i){
+  var quote = getBuilderQuote(); if (!quote) return;
+  quote.lineItems.splice(i, 1);
+  persistBuilderQuote(quote);
+  openQuoteBuilder(quote.id);
+}
+
+function openAddServiceForm(){
+  var quote = getBuilderQuote(); if (!quote) return;
+  document.getElementById('addServiceFormZone').innerHTML =
+    '<div style="border:1.5px solid #1B5FA8;border-radius:8px;padding:14px;margin-top:8px">' +
+      '<label class="field-lbl">Service Line *</label>' +
+      '<select class="field" id="nsLine">' + SERVICE_LINES.map(function(sl){ return '<option>'+sl+'</option>'; }).join('') + '</select>' +
+      '<label class="field-lbl">Asset / Equipment</label>' +
+      '<input class="field" id="nsAsset" placeholder="e.g. Extinguisher #3, kitchen entrance">' +
+      '<label class="field-lbl">Description *</label>' +
+      '<textarea class="field" id="nsDesc" rows="2" placeholder="Enter a clear description of the work to be completed."></textarea>' +
+      '<label class="field-lbl">Preferred Technician</label>' +
+      '<input class="field" id="nsTech" placeholder="No preference">' +
+      '<div style="display:flex;gap:10px">' +
+        '<div style="flex:1"><label class="field-lbl">Estimated Price</label><input class="field" id="nsPrice" type="number" step="0.01" placeholder="0.00"></div>' +
+        '<div style="flex:1"><label class="field-lbl">Estimated Duration (hrs)</label><input class="field" id="nsDur" type="number" step="0.5"></div>' +
+      '</div>' +
+      '<div style="display:flex;gap:10px;margin-top:10px">' +
+        '<button class="btn btn-ghost" style="flex:1;padding:8px" onclick="document.getElementById(\'addServiceFormZone\').innerHTML=\'\'">Cancel</button>' +
+        '<button class="btn btn-primary" style="flex:1;padding:8px" onclick="saveNewService()">Save</button>' +
+      '</div>' +
+    '</div>';
+}
+function saveNewService(){
+  var desc = document.getElementById('nsDesc').value.trim();
+  if (!desc) { alert('Enter a description for this service.'); return; }
+  var quote = getBuilderQuote(); if (!quote) return;
+  quote.services = quote.services || [];
+  quote.services.push({
+    id: 's' + Date.now(), fromDeficiency: false,
+    serviceLine: document.getElementById('nsLine').value,
+    assetName: document.getElementById('nsAsset').value.trim(),
+    description: desc,
+    preferredTech: document.getElementById('nsTech').value.trim(),
+    estPrice: Number(document.getElementById('nsPrice').value) || 0,
+    estDuration: document.getElementById('nsDur').value.trim(),
+    dueWindow: 'No Due Date',
+  });
+  persistBuilderQuote(quote);
+  openQuoteBuilder(quote.id);
+}
+
+function sendQuote(){
+  var quote = getBuilderQuote(); if (!quote) return;
+  if (!quote.services || !quote.services.length) { alert('You must have at least one service on this quote.'); return; }
+  quote.status = 'sent';
+  quote.sentAt = Date.now();
+  quote.total = quoteGrandTotal(quote);
+  persistBuilderQuote(quote);
+
+  // Link back to the deficiency this came from, same real mechanism the
+  // old single-box flow used — write-through to the account's
+  // activityLog via crmSave, plus a real touchpoint for cross-role
+  // visibility.
+  if (quote.fromDeficiencyId) {
+    saveQuoteToItem(quote.fromDeficiencyId, quote.total, quote.services.map(function(s){ return s.description; }).join('; '));
+  }
+  closeQuoteBuilder();
+  toast('Quote ' + quote.quoteNumber + ' sent — ' + money2(quote.total));
+}
+
+function submitQuote(){}
 
 function buildDefCard(item, jeopardy){
   var days = daysAgo(item.ts);
@@ -302,6 +642,7 @@ function buildDefCard(item, jeopardy){
     '<div class="def-actions">' +
       (item._status === 'needs_quote' ? '<button class="btn btn-primary" onclick="openQuoteModal(\'' + item._id + '\')">✍️ Write Quote</button>' : '') +
       (item._status === 'quote_sent' ? '<button class="btn btn-ghost" onclick="nudgeCustomer(\'' + item._id + '\')">🔔 Nudge Customer</button>' : '') +
+      '<button class="btn btn-ghost" onclick="openContactModal(\'' + item._id + '\')">📞 Log Contact</button>' +
     '</div>' +
   '</div>';
 }
