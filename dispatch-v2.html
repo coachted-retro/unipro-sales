@@ -1587,6 +1587,28 @@ function dispatchEmergency(){
     priority:document.getElementById('emgPriority').value};
   log.unshift(entry);
   localStorage.setItem('dp_emg_log',JSON.stringify(log));
+
+  // Match this dispatch to the real account by phone, so a sales rep
+  // sees it on their own client's record — not just in dispatch's own
+  // emergency log, which nobody outside this portal ever looks at.
+  if (entry.phone && typeof TermacD1Sync !== 'undefined') {
+    var normPhone = String(entry.phone).replace(/\D/g,'');
+    if (normPhone) {
+      var accounts = crmLoad('accounts');
+      var matchedAcct = accounts.find(function(a){
+        return a.phone && String(a.phone).replace(/\D/g,'') === normPhone;
+      });
+      if (matchedAcct) {
+        TermacD1Sync.logTouchpoint('accounts', matchedAcct.id, {
+          type: 'dispatch', icon: '🚨',
+          title: 'Emergency Dispatch — ' + entry.type,
+          note: (entry.details || '') + (tech ? ' Tech: ' + tech.name : ''),
+          who: 'Dispatch',
+        });
+      }
+    }
+  }
+
   const jobs=loadJobs();
   jobs.unshift({id:'ej'+Date.now(),biz,addr,
     contact:entry.contact,phone:entry.phone,
