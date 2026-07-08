@@ -197,6 +197,7 @@ button{cursor:pointer}
 
 </style>
 <script src="termac-notify.js"></script>
+<script src="termac-d1-sync.js"></script>
 <style>body{visibility:hidden}</style>
 <script>document.addEventListener("DOMContentLoaded",function(){document.body.style.visibility="visible"});</script>
 </head>
@@ -719,6 +720,26 @@ function rcpFillFromRecord(r){
   document.getElementById('rcpPhoneDropdown').style.display='none';
 }
 
+// Matches an incoming caller's phone number against existing leads and
+// contacts, so Reception's calls land on the real record instead of only
+// living in Reception's own isolated log. Accounts aren't searched here —
+// their contact info lives on linked locations, not a flat phone field,
+// and guessing at that structure risked a wrong match rather than none.
+function rcpFindRecordByPhone(phone){
+  var normPhone = String(phone).replace(/\D/g,'');
+  if (!normPhone) return null;
+  var pools = ['leads', 'contacts'];
+  for (var i = 0; i < pools.length; i++){
+    var records = crmLoad(pools[i]);
+    var match = records.find(function(r){
+      var candidates = [r.phone, r.contactPhone].filter(Boolean);
+      return candidates.some(function(p){ return String(p).replace(/\D/g,'') === normPhone; });
+    });
+    if (match) return { pool: pools[i], record: match };
+  }
+  return null;
+}
+
 function rcpLogCall(){
   const name    = document.getElementById('rcpCallerName').value.trim();
   const company = document.getElementById('rcpCallerCompany').value.trim();
@@ -744,6 +765,21 @@ function rcpLogCall(){
   const log = JSON.parse(localStorage.getItem('termac_crm_rcp_calls')||'[]');
   log.push(call);
   localStorage.setItem('termac_crm_rcp_calls', JSON.stringify(log));
+
+  // Match this call to an existing lead or contact by phone, so it lands
+  // as real history on that record — not just in Reception's own
+  // isolated call log, invisible to whoever actually owns that account.
+  if (phone && typeof TermacD1Sync !== 'undefined') {
+    var matched = rcpFindRecordByPhone(phone);
+    if (matched) {
+      TermacD1Sync.logTouchpoint(matched.pool, matched.record.id, {
+        type: 'call', icon: '📞',
+        title: 'Reception Call — ' + (type || 'Inbound'),
+        note: notes || (urgency ? 'Urgency: ' + urgency : ''),
+        who: (_rcpUser && _rcpUser.name) || 'Reception',
+      });
+    }
+  }
 
   // complaint escalation email
   if(type==='Complaint'){
@@ -824,6 +860,12 @@ function rcpLogAndCreateLead(){
   const leads = crmLoad('leads');
   leads.unshift(lead);
   crmSave('leads', leads);
+  if (typeof TermacD1Sync !== 'undefined') {
+    TermacD1Sync.logTouchpoint('leads', lead.id, {
+      type: 'call', icon: '📞', title: 'Reception Call — ' + (type || 'Inbound'),
+      note: notes, who: (_rcpUser && _rcpUser.name) || 'Reception',
+    });
+  }
   rcpToast('Lead created and call logged');
   rcpNav('leads');
 }
