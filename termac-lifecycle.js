@@ -243,7 +243,11 @@ function lcNotifyNewLead(lead, source) {
   const addr       = lead.address || lead.zip || '—';
   const services   = (lead.services||[]).join(', ') || lead.company || 'UniPro';
   const score      = lead.score || '—';
-  const notes      = lead.notes || '';
+  // DMS call-sheet notes are saved under dmsNotes, not notes — the two
+  // forms use different field names for what's conceptually the same
+  // thing. Falling back through both means notes actually make it into
+  // the email regardless of which portal the lead came from.
+  const notes      = lead.notes || lead.dmsNotes || '';
 
   const subjectText = `🔥 HOT LEAD — ${biz} · ${source}`;
   const bodyLines = [
