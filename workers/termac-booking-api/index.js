@@ -86,7 +86,7 @@ async function d1Fetch(env, method, path, body) {
     headers: { 'Content-Type': 'application/json', 'X-API-Secret': env.D1_API_SECRET },
   };
   if (body) opts.body = JSON.stringify(body);
-  const res = await fetch(env.D1_API_URL + path, opts);
+  const res = await fetch(env.D1_API_URL + path.replace('/api/', '/db/'), opts);
   return await res.json();
 }
 
