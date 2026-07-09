@@ -25,6 +25,7 @@ const ALLOWED_TABLES = new Set([
   'leads', 'opportunities', 'bids', 'jobs', 'deficiencies',
   'collections', 'scheduler_queue', 'activity_log',
   'notifications', 'messages', 'rep_cards', 'warehouse_inventory', 'dms_coldcall',
+  'allpro_projects', 'allpro_cost_lines',
 ]);
 
 function corsHeaders(origin) {
@@ -63,6 +64,7 @@ const TABLE_PREFIX = {
   jobs: 'JOB', deficiencies: 'DEF', collections: 'COL',
   scheduler_queue: 'SCH', activity_log: 'ACT', notifications: 'NOT',
   messages: 'MSG', rep_cards: 'REP', warehouse_inventory: 'WHI', dms_coldcall: 'DMS',
+  allpro_projects: 'APR', allpro_cost_lines: 'APC',
 };
 
 export default {

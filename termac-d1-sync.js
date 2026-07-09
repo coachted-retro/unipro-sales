@@ -20,7 +20,8 @@
   var D1_API_URL = 'https://unipro-ai-proxy.termac-one.workers.dev';
   var D1_API_SECRET = 'termac2026';
   var D1_SYNC_TABLES = ['accounts', 'leads', 'contacts', 'opportunities', 'bids',
-    'jobs', 'deficiencies', 'collections', 'dms_coldcall'];
+    'jobs', 'deficiencies', 'collections', 'dms_coldcall',
+    'allpro_projects', 'allpro_cost_lines'];
 
   async function d1Fetch(method, path, body) {
     try {
