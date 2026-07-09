@@ -751,11 +751,8 @@ function dmsCallRow(r, today){
 
   const escOpts = [
       {v:'',          l:'Escalate…'},
-      {v:'ted_direct',l:'🔥 Ted Scholl (Direct)'},
       {v:'sales',     l:'Sales (Auto-Route)'},
       {v:'manager',   l:'Manager — Jim Kennedy'},
-      {v:'scheduling',l:'Scheduling'},
-      {v:'dispatch',  l:'Dispatch'},
     ].map(o=>`<option value="${o.v}">${o.l}</option>`).join('');
 
   const cbScheduler = ''; // callback scheduling now via modal popup
@@ -1023,16 +1020,14 @@ function dmsEscalate(id){
   r.dmsEscalatedTs = Date.now();
   r.updated = Date.now();
 
-  if(escVal==='sales' || escVal==='ted_direct'){
+  if(escVal==='sales'){
     r.lifecycleStage = 'lead';
     r.status = 'hot';
 
-    // Assign the correct territory rep by ZIP -- 'ted_direct' always goes
-    // to Ted regardless of territory; 'sales' auto-routes to whoever
-    // actually covers that ZIP (getRepForZip, from termac-lifecycle.js).
-    if (escVal === 'ted_direct') {
-      r.assignedRep = 'Ted Scholl';
-    } else if (typeof getRepForZip === 'function') {
+    // Auto-route to whoever actually covers that ZIP (getRepForZip, from
+    // termac-lifecycle.js) -- keeps this a real sales opportunity instead
+    // of bypassing the assigned territory rep.
+    if (typeof getRepForZip === 'function') {
       r.assignedRep = getRepForZip(r.zip) || 'Unassigned';
     }
 
@@ -1051,12 +1046,9 @@ function dmsEscalate(id){
     dmsToast('🔥 Escalated to ' + (r.assignedRep||'Unassigned') + ' — email opened');
 
   } else {
-    // Manager / Scheduling / Dispatch -- not a sales lead, just needs a
-    // direct heads-up to the right desk.
+    // Manager -- not a sales lead, just needs a direct heads-up.
     const ESCALATION_CONTACTS = {
       manager:    { label:'Manager — Jim Kennedy', emails:['jkennedy@termac.com'] },
-      scheduling: { label:'Scheduling',            emails:['acurran@termac.com','jpaez@termac.com','sholmes@termac.com'] },
-      dispatch:   { label:'Dispatch',               emails:['jkennedy@termac.com'] }, // no dedicated dispatch contact on file yet -- flagged below
     };
     const dest = ESCALATION_CONTACTS[escVal];
     if (dest) {
@@ -1065,8 +1057,7 @@ function dmsEscalate(id){
         _dmsUser.name+' escalated a call to '+dest.label+'.\n\n'+
         'Business: '+(r.business||r.name||'—')+'\n'+
         'Phone: '+(r.phone||'—')+'\n'+
-        'Notes: '+(r.notes||'—')+'\n\n'+
-        (escVal==='dispatch' ? 'NOTE: no dedicated Dispatch contact is configured yet -- routed to Jim Kennedy in the meantime.\n\n' : '')+
+        'Notes: '+(r.notes||r.dmsNotes||'—')+'\n\n'+
         '— Termac One DMS'
       );
       window.open('mailto:'+dest.emails.join(',')+'?subject='+subj+'&body='+body, '_blank');
