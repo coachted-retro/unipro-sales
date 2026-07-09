@@ -17,6 +17,11 @@ const ALLOWED_TABLES = new Set([
   'leads','opportunities','bids','jobs','deficiencies',
   'collections','scheduler_queue','activity_log',
   'notifications','messages','rep_cards','warehouse_inventory','dms_coldcall',
+  // AllPro Project Planner rebuild, added 2026-07-09
+  'allpro_projects','allpro_milestones','allpro_quotes','allpro_quote_lines',
+  'allpro_hood_pricing','allpro_fan_pricing','allpro_hood_designer',
+  'allpro_permits','allpro_bid_lines','allpro_parts_catalog',
+  'townships','quality_complaints',
 ]);
 
 const TABLE_PREFIX = {
