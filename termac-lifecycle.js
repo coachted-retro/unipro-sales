@@ -282,10 +282,7 @@ function lcNotifyNewLead(lead, source) {
 
   // Build TO and CC lists
   const toEmail  = repInfo ? repInfo.email : 'tscholl@termac.com';
-  // lcanfield@termac.com is a best-guess following the standard
-  // first-initial+lastname convention — Lauren Canfield's actual email
-  // isn't on file anywhere in the codebase, please confirm/correct.
-  const ccEmails = ['jkennedy@termac.com','tpittakas@termac.com','tscholl@termac.com','lcanfield@termac.com']
+  const ccEmails = ['jkennedy@termac.com','tpittakas@termac.com','tscholl@termac.com']
     .filter(e => e !== toEmail).join(',');
 
   // Store in-app notification
