@@ -275,6 +275,7 @@ button{cursor:pointer}
     <div class="trn-title" id="trnRoleTitle">DMS Dashboard</div>
     <div class="trn-spacer"></div>
     <button class="trn-btn" onclick="dmsNav('knowledge')" id="dmsNavKnowledge" style="font-size:10px;padding:5px 10px;border-color:#F2B705;color:#F2B705">📚 Company Knowledge</button>
+    <button class="trn-btn" onclick="dmsNav('managerlog')" id="dmsNavManagerLog" style="font-size:10px;padding:5px 10px;border-color:#7C3AED;color:#7C3AED;display:none">📊 Manager Log</button>
     <button class="trn-btn" onclick="window.open('user-manuals.html?role=dms','_blank')" style="font-size:10px;padding:5px 10px">? Help</button>
     <span class="trn-user-chip" id="dmsUserChip" style="display:none"><span class="trn-user-chip-avatar" id="dmsChipInitials" style="background:#C8102E"></span><span><span class="trn-user-chip-name" id="dmsChipName"></span><br><span class="trn-user-chip-role">DMS</span></span></span>
     <button class="trn-btn primary" onclick="sessionStorage.setItem('trnReturnUrl','dms-portal.html');window.location.href='employee-portal.html'">🏠 Employee Portal</button>
@@ -604,6 +605,18 @@ function dmsEnterPortal(){
     if (cn) cn.textContent = name;
   })();
   // ── END USER CHIP ───────────────────────────────────────────────────────
+
+  // Manager Log tab is only for managers, not DMS reps -- checked against
+  // the platform-wide logged-in identity, since managers access this portal
+  // via Employee Portal rather than the DMS staff PIN login.
+  (function checkManagerAccess() {
+    var MANAGER_NAMES = ['Ted Scholl', 'Jim Kennedy'];
+    var name = '';
+    try { name = localStorage.getItem('termac_current_user') || ''; } catch(e) {}
+    var btn = document.getElementById('dmsNavManagerLog');
+    if (btn && MANAGER_NAMES.indexOf(name) !== -1) btn.style.display = '';
+  })();
+
   dmsNav('leads');
 
   dmsUpdateRail();
@@ -636,6 +649,7 @@ function dmsRender(tab){
   if(tab==='leads') dmsRenderCallSheet(el);
   else if(tab==='employee') dmsRenderEmployee(el);
   else if(tab==='knowledge') dmsRenderKnowledge(el);
+  else if(tab==='managerlog') dmsRenderManagerLog(el);
 }
 
 // ── CALL SHEET ──
@@ -2792,6 +2806,121 @@ function dmsRenderKnowledge(el) {
 
   // Init empty history
   _dmsAIHistory = [];
+}
+
+/* ══ MANAGER LOG — day/week/month collapsible view of DMS call notes
+   across all reps. Managers only. Built 2026-07-09 per Ted's request:
+   no single place existed to review coldcall notes across the team. ══ */
+function dmsGetISOWeekStart(d) {
+  var date = new Date(d);
+  var day = date.getDay();
+  var diff = date.getDate() - (day === 0 ? 6 : day - 1); // Monday start
+  date.setDate(diff);
+  date.setHours(0,0,0,0);
+  return date;
+}
+
+function dmsRenderManagerLog(el) {
+  var rows = crmLoad('dms_coldcall').filter(function(r) {
+    var note = r.dmsNotes || r.notes || '';
+    return note.trim().length > 0 && r.updated;
+  });
+
+  if (!rows.length) {
+    el.innerHTML = '<div class="dms-card" style="text-align:center;padding:40px;color:var(--soft)"><div style="font-size:32px;margin-bottom:10px">📊</div>No call notes recorded yet.</div>';
+    return;
+  }
+
+  // Group by day (YYYY-MM-DD, based on last-updated timestamp)
+  var byDay = {};
+  rows.forEach(function(r) {
+    var d = new Date(r.updated);
+    var dayKey = d.toISOString().slice(0,10);
+    if (!byDay[dayKey]) byDay[dayKey] = [];
+    byDay[dayKey].push(r);
+  });
+
+  // Group days into weeks (Monday-start), weeks into months
+  var byMonth = {}; // monthKey -> { weekKey -> { dayKey -> [rows] } }
+  Object.keys(byDay).sort().reverse().forEach(function(dayKey) {
+    var d = new Date(dayKey + 'T00:00:00');
+    var weekStart = dmsGetISOWeekStart(d);
+    var weekKey = weekStart.toISOString().slice(0,10);
+    var monthKey = dayKey.slice(0,7); // YYYY-MM
+    if (!byMonth[monthKey]) byMonth[monthKey] = {};
+    if (!byMonth[monthKey][weekKey]) byMonth[monthKey][weekKey] = {};
+    byMonth[monthKey][weekKey][dayKey] = byDay[dayKey];
+  });
+
+  var monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  var dayNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+
+  var monthKeys = Object.keys(byMonth).sort().reverse();
+  var html = '<div style="margin-bottom:16px"><div style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:18px">📊 Manager Log — DMS Call Notes</div><div style="font-size:12px;color:var(--soft);margin-top:4px">All reps, organized by day. Click a month or week to expand.</div></div>';
+
+  monthKeys.forEach(function(monthKey, mi) {
+    var monthDate = new Date(monthKey + '-01T00:00:00');
+    var monthLabel = monthNames[monthDate.getMonth()] + ' ' + monthDate.getFullYear();
+    var weekKeys = Object.keys(byMonth[monthKey]).sort().reverse();
+    var monthEntryCount = 0;
+    weekKeys.forEach(function(wk) { Object.values(byMonth[monthKey][wk]).forEach(function(arr) { monthEntryCount += arr.length; }); });
+    var monthId = 'mlog_m' + mi;
+
+    html += '<div class="dms-card" style="padding:0;overflow:hidden;margin-bottom:10px">';
+    html += '<div onclick="dmsToggleSection(\'' + monthId + '\')" style="padding:12px 16px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;background:#F3F0FF;border-bottom:1.5px solid #DDD6FE">';
+    html += '<span style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:14px;color:#5B21B6">📅 ' + monthLabel + '</span>';
+    html += '<span style="font-size:11px;color:#7C3AED;font-weight:700">' + monthEntryCount + ' notes <span id="' + monthId + '_arrow">▸</span></span></div>';
+    html += '<div id="' + monthId + '" style="display:none;padding:8px">';
+
+    weekKeys.forEach(function(weekKey, wi) {
+      var weekStart = new Date(weekKey + 'T00:00:00');
+      var weekEnd = new Date(weekStart); weekEnd.setDate(weekEnd.getDate() + 4); // Fri
+      var weekLabel = (weekStart.getMonth()+1) + '/' + weekStart.getDate() + ' – ' + (weekEnd.getMonth()+1) + '/' + weekEnd.getDate();
+      var dayKeys = Object.keys(byMonth[monthKey][weekKey]).sort().reverse();
+      var weekEntryCount = 0;
+      dayKeys.forEach(function(dk) { weekEntryCount += byMonth[monthKey][weekKey][dk].length; });
+      var weekId = monthId + '_w' + wi;
+
+      html += '<div style="margin:6px 0;border:1px solid var(--line);border-radius:8px;overflow:hidden">';
+      html += '<div onclick="dmsToggleSection(\'' + weekId + '\')" style="padding:9px 12px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;background:#F9FAFB">';
+      html += '<span style="font-weight:700;font-size:12px">Week of ' + weekLabel + '</span>';
+      html += '<span style="font-size:11px;color:var(--soft)">' + weekEntryCount + ' notes <span id="' + weekId + '_arrow">▸</span></span></div>';
+      html += '<div id="' + weekId + '" style="display:none;padding:6px 10px">';
+
+      dayKeys.forEach(function(dayKey) {
+        var dayDate = new Date(dayKey + 'T00:00:00');
+        var dayLabel = dayNames[dayDate.getDay()] + ', ' + monthNames[dayDate.getMonth()] + ' ' + dayDate.getDate();
+        var entries = byMonth[monthKey][weekKey][dayKey];
+        html += '<div style="margin:8px 0"><div style="font-size:11px;font-weight:800;color:var(--soft);text-transform:uppercase;letter-spacing:.04em;margin-bottom:5px">' + dayLabel + ' (' + entries.length + ')</div>';
+        entries.forEach(function(r) {
+          var note = escH(r.dmsNotes || r.notes || '');
+          var rep = escH(r.dmsRep || r.assignedRep || 'Unknown rep');
+          var biz = escH(r.business || r.name || 'Unknown business');
+          var time = new Date(r.updated).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+          html += '<div style="background:#fff;border:1px solid var(--line);border-radius:6px;padding:8px 10px;margin-bottom:5px;font-size:12px">';
+          html += '<div style="display:flex;justify-content:space-between;margin-bottom:3px"><strong>' + biz + '</strong><span style="color:var(--soft);font-size:10px">' + time + '</span></div>';
+          html += '<div style="color:var(--soft);font-size:11px;margin-bottom:4px">' + rep + (r.status ? ' · ' + escH(r.status) : '') + '</div>';
+          html += '<div>' + note + '</div></div>';
+        });
+        html += '</div>';
+      });
+
+      html += '</div></div>';
+    });
+
+    html += '</div></div>';
+  });
+
+  el.innerHTML = html;
+}
+
+function dmsToggleSection(id) {
+  var panel = document.getElementById(id);
+  var arrow = document.getElementById(id + '_arrow');
+  if (!panel) return;
+  var open = panel.style.display !== 'none';
+  panel.style.display = open ? 'none' : 'block';
+  if (arrow) arrow.textContent = open ? '▸' : '▾';
 }
 
 function dmsRenderAIMessages() {
