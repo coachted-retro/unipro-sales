@@ -5383,7 +5383,7 @@ function spApptToggleAllDay(checked) {
   if (wrap) wrap.style.display = checked ? 'none' : 'block';
 }
 
-function spSaveAppt() {
+async function spSaveAppt() {
   const mode = _spApptMode;
   const cfg = SP_ENTRY_TYPES[mode] || SP_ENTRY_TYPES.appointment;
   const date = document.getElementById('spApptDate')?.value || '';
@@ -5397,6 +5397,14 @@ function spSaveAppt() {
 
   if (!date) { alert('Please select a date.'); return; }
   if (cfg.linkMode === 'required' && !_spApptLinkedId) { alert('This needs to be linked to a Lead, Contact, Opportunity, or Account.'); return; }
+
+  if (!allDay && time) {
+    const conflicts = await spCheckOverbooking(date, time, timeEnd);
+    if (conflicts.length) {
+      const proceed = confirm('This overlaps with:\n\n- ' + conflicts.join('\n- ') + '\n\nSave anyway?');
+      if (!proceed) return;
+    }
+  }
 
   const dateLabel = new Date(date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
   const linkedId = _spApptLinkedId, linkedTab = _spApptLinkedTab, linkedName = _spApptLinkedName;
@@ -5731,6 +5739,7 @@ function spRenderWeekly() {
 const SP_SCHED_CATS = [
   { id:'calls',     label:'📞 Phone Calls',    color:'#1B5FA8' },
   { id:'emails',    label:'✉️ Emails',          color:'#6D28D9' },
+  { id:'followup',  label:'🔁 Follow-Up',       color:'#0F6E56' },
   { id:'paperwork', label:'📋 Paperwork / Bids', color:'#D8690B' },
   { id:'survey',     label:'🏗️ Site Surveys',    color:'#1E7B3C' },
 ];
@@ -5743,6 +5752,102 @@ const SP_SCHED_SECRET = 'termac2026';
 
 function spScheduleRowId() {
   return 'SCHED-' + (_spRep?.name || 'rep').replace(/\s+/g,'_').toUpperCase();
+}
+
+/* ── Unify My Schedule with real appointments ──────────────────────────
+   The weekly pattern above is just a template. This section overlays
+   this week's actual booked appointments (from the shared, D1-synced
+   appointments store) on top of it, and checks new appointments against
+   both the pattern and existing appointments before they save, so a
+   rep cannot double-book a slot without at least seeing the conflict. */
+function spWeekMonday(d) {
+  const dt = new Date(d);
+  const day = dt.getDay(); // 0=Sun .. 6=Sat
+  const diff = (day === 0 ? -6 : 1) - day;
+  dt.setDate(dt.getDate() + diff);
+  dt.setHours(0,0,0,0);
+  return dt;
+}
+function spCurrentWeekDates() {
+  const mon = spWeekMonday(new Date());
+  const out = {};
+  SP_SCHED_DAYS.forEach((label, i) => {
+    const dt = new Date(mon);
+    dt.setDate(mon.getDate() + i);
+    out[label] = dt.toISOString().slice(0,10);
+  });
+  return out;
+}
+function spMyAppointmentsThisWeek() {
+  const repName = _spRep?.name || '';
+  const weekDates = spCurrentWeekDates();
+  const dateSet = new Set(Object.values(weekDates));
+  const all = crmLoad('appointments') || [];
+  return all.filter(a => a.createdBy === repName && dateSet.has(a.date) && !a.allDay);
+}
+// Maps each real appointment this week onto its Day_Hour grid cell(s).
+// An appointment spanning multiple hours (time -> timeEnd) occupies every
+// hour cell it touches, not just the start hour.
+function spApptGridIndex() {
+  const weekDates = spCurrentWeekDates();
+  const dayByDate = {};
+  Object.keys(weekDates).forEach(k => dayByDate[weekDates[k]] = k);
+  const idx = {};
+  spMyAppointmentsThisWeek().forEach(a => {
+    if (!a.time) return;
+    const dayLabel = dayByDate[a.date];
+    if (!dayLabel) return;
+    const startHour = parseInt(a.time.split(':')[0], 10);
+    const endHour = a.timeEnd ? parseInt(a.timeEnd.split(':')[0], 10) : startHour;
+    for (let h = startHour; h <= Math.max(startHour, endHour); h++) {
+      const key = dayLabel + '_' + h;
+      (idx[key] = idx[key] || []).push(a);
+    }
+  });
+  return idx;
+}
+// Time-range overlap test; treats a missing timeEnd as a 1-hour block.
+function spTimesOverlap(startA, endA, startB, endB) {
+  const toMin = t => { const [h,m] = (t||'00:00').split(':').map(Number); return h*60+(m||0); };
+  const aStart = toMin(startA), aEnd = toMin(endA) > aStart ? toMin(endA) : aStart + 60;
+  const bStart = toMin(startB), bEnd = toMin(endB) > bStart ? toMin(endB) : bStart + 60;
+  return aStart < bEnd && bStart < aEnd;
+}
+// Checks a proposed appointment against both existing appointments and
+// the rep's recurring weekly pattern. Returns an array of plain-language
+// conflict messages (empty array = no conflicts).
+async function spCheckOverbooking(date, time, timeEnd) {
+  const conflicts = [];
+  if (!date || !time) return conflicts;
+  const repName = _spRep?.name || '';
+
+  // 1) Existing appointments same rep, same date, overlapping time
+  (crmLoad('appointments') || []).forEach(a => {
+    if (a.createdBy === repName && a.date === date && a.time && !a.allDay) {
+      if (spTimesOverlap(time, timeEnd, a.time, a.timeEnd)) {
+        conflicts.push((a.title || 'Appointment') + ' at ' + a.time + (a.timeEnd ? '-' + a.timeEnd : ''));
+      }
+    }
+  });
+
+  // 2) Recurring weekly pattern - only meaningful if this date falls in
+  // the current week (the pattern isn't week-specific, so this is a
+  // reasonable-effort check, not a guarantee for future weeks).
+  const weekDates = spCurrentWeekDates();
+  const dayLabel = Object.keys(weekDates).find(k => weekDates[k] === date);
+  if (dayLabel) {
+    const pattern = _spSchedCache !== null ? _spSchedCache : await spLoadScheduleFromD1();
+    const startHour = parseInt(time.split(':')[0], 10);
+    const endHour = timeEnd ? parseInt(timeEnd.split(':')[0], 10) : startHour;
+    for (let h = startHour; h <= Math.max(startHour, endHour); h++) {
+      const catId = pattern[dayLabel + '_' + h];
+      if (catId) {
+        const cat = SP_SCHED_CATS.find(c => c.id === catId);
+        conflicts.push('Blocked as ' + (cat ? cat.label : catId) + ' on your weekly schedule at ' + h + ':00');
+      }
+    }
+  }
+  return conflicts;
 }
 
 async function spLoadScheduleFromD1() {
@@ -5788,6 +5893,7 @@ async function spRenderSchedule() {
     return `<button onclick="spSchedArm('${c.id}')" style="background:${armed ? c.color : '#fff'};color:${armed ? '#fff' : c.color};border:1.5px solid ${c.color};border-radius:8px;padding:9px 16px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12px;letter-spacing:.04em;cursor:pointer;white-space:nowrap">${c.label}</button>`;
   }).join('');
 
+  const apptIdx = spApptGridIndex();
   const gridRows = SP_SCHED_HOURS.map(hour => {
     const timeLabel = (hour % 12 || 12) + (hour < 12 ? ' AM' : ' PM');
     const cells = SP_SCHED_DAYS.map(day => {
@@ -5797,7 +5903,12 @@ async function spRenderSchedule() {
       const bg = cat ? cat.color : '#F8F9FA';
       const textColor = cat ? '#fff' : '#9CA3AF';
       const label = cat ? cat.label.split(' ')[0] : '';
-      return `<td onclick="spSchedPaint('${key}')" style="background:${bg};color:${textColor};text-align:center;font-size:16px;height:38px;border:1px solid #fff;cursor:pointer;user-select:none">${label}</td>`;
+      const appts = apptIdx[key] || [];
+      const hasAppt = appts.length > 0;
+      const title = hasAppt ? appts.map(a => (a.title||'Appointment') + ' ' + a.time).join(' | ') : '';
+      const ring = hasAppt ? 'outline:2.5px solid #C8102E;outline-offset:-2.5px;' : '';
+      const marker = hasAppt ? '<span style="position:absolute;top:1px;right:2px;font-size:9px">📌</span>' : '';
+      return `<td onclick="spSchedPaint('${key}')" title="${escH(title)}" style="position:relative;background:${bg};color:${textColor};${ring}text-align:center;font-size:16px;height:38px;border:1px solid #fff;cursor:pointer;user-select:none">${label}${marker}</td>`;
     }).join('');
     return `<tr><td style="font-size:11px;color:var(--soft);font-weight:700;text-align:right;padding-right:8px;white-space:nowrap">${timeLabel}</td>${cells}</tr>`;
   }).join('');
@@ -5821,7 +5932,8 @@ async function spRenderSchedule() {
       </table>
     </div>
 
-    <div style="margin-top:16px;font-size:11px;color:var(--soft)">Synced to the server — visible across your devices, same as the rest of your CRM data.</div>
+    <div style="margin-top:10px;font-size:11px;color:var(--soft)">📌 with a red outline = a real booked appointment this week, from Set Appointment. Hover a marked cell to see what it is.</div>
+    <div style="margin-top:4px;font-size:11px;color:var(--soft)">Synced to the server — visible across your devices, same as the rest of your CRM data.</div>
   </div>`;
 }
 
