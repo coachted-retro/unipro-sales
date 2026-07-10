@@ -615,6 +615,41 @@
 
   var WAREHOUSE_KEYS = ['wh_termac_v1', 'wh_unipro_v1', 'wh_allpro_v1'];
 
+  // ── HR DATA (2026-07-10) ── hr-manager-v3.html and hr-portal.html both
+  // use a generic hrLoad(key)/hrSave(key, val) helper for 8+ distinct
+  // sub-systems (candidates, certs, conduct, holidays, jobs, reviews,
+  // timeoff, users, onboard_*) that were all raw localStorage with zero
+  // D1 sync. Rather than design 8 separate relational schemas tonight,
+  // this reuses the exact same "one JSON blob per key" pattern already
+  // proven above for warehouse inventory -- one row per hr_key, whole
+  // array/object serialized into data_json. Same accepted tradeoff as
+  // warehouse inventory: last full save wins, hydrate only fills in when
+  // local is genuinely empty (new device). Not a per-record merge, but a
+  // real improvement over zero sync at all.
+  async function d1PushHrData(hrKey, data) {
+    try {
+      var existing = await d1Fetch('GET', '/api/hr_data?hr_key=' + encodeURIComponent(hrKey));
+      var body = { hr_key: hrKey, data_json: JSON.stringify(data) };
+      if (existing.ok && Array.isArray(existing.results) && existing.results.length > 0) {
+        return await d1Fetch('PUT', '/api/hr_data/' + existing.results[0].id, { data_json: body.data_json });
+      } else {
+        return await d1Fetch('POST', '/api/hr_data', body);
+      }
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  }
+
+  async function d1HydrateHrData(hrKey) {
+    try {
+      var res = await d1Fetch('GET', '/api/hr_data?hr_key=' + encodeURIComponent(hrKey));
+      if (res.ok && Array.isArray(res.results) && res.results.length > 0 && res.results[0].data_json) {
+        try { return JSON.parse(res.results[0].data_json); } catch (e) { return null; }
+      }
+    } catch (e) {}
+    return null;
+  }
+
   var _warehouseSweepStarted = false;
   function startWarehouseSyncSweep(intervalMs, onHydrate) {
     if (_warehouseSweepStarted) return;
@@ -756,6 +791,8 @@
     d1PushJobs: d1PushJobs,
     hydrateJobs: hydrateJobs,
     d1PushWarehouseInventory: d1PushWarehouseInventory,
+    d1PushHrData: d1PushHrData,
+    d1HydrateHrData: d1HydrateHrData,
     hydrateWarehouseInventory: hydrateWarehouseInventory,
     startWarehouseSyncSweep: startWarehouseSyncSweep,
     startJobSyncSweep: startJobSyncSweep,

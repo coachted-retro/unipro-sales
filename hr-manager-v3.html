@@ -740,7 +740,14 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--ink);min-h
 
 // ── SHARED DATA HELPERS (same keys as hr-portal.html) ──
 function hrLoad(k){try{return JSON.parse(localStorage.getItem('termac_hr_'+k)||'[]');}catch(e){return[];}}
-function hrSave(k,v){localStorage.setItem('termac_hr_'+k,JSON.stringify(v));}
+function hrSave(k,v){
+  localStorage.setItem('termac_hr_'+k,JSON.stringify(v));
+  // 2026-07-10: fire-and-forget background push to D1. Kept synchronous
+  // above so none of the dozens of existing hrSave() call sites across
+  // this file need to become async -- this just adds a D1 copy behind
+  // the scenes, it never blocks or changes what the caller sees.
+  if (typeof TermacD1Sync !== 'undefined') TermacD1Sync.d1PushHrData('termac_hr_'+k, v).catch(function(){});
+}
 
 // ── COMPANY CALENDAR — holidays & closures ──
 // Stored under termac_hr_holidays so it's reachable by the same hrLoad/
@@ -1440,7 +1447,10 @@ function hmPrintOnboard(uid){
 
 // hrLoadObj / hrSaveObj helpers if not already defined
 function hrLoadObj(key,def){ try{return JSON.parse(localStorage.getItem('termac_hr_'+key)||'null')||def;}catch(e){return def;} }
-function hrSaveObj(key,val){ try{localStorage.setItem('termac_hr_'+key,JSON.stringify(val));}catch(e){} }
+function hrSaveObj(key,val){
+  try{localStorage.setItem('termac_hr_'+key,JSON.stringify(val));}catch(e){}
+  if (typeof TermacD1Sync !== 'undefined') TermacD1Sync.d1PushHrData('termac_hr_'+key, val).catch(function(){});
+}
 
 // ── TALENT ──
 function hmRenderTalent(){
@@ -1530,6 +1540,22 @@ function hmRenderDocVault(){
 
 // ── INIT ──
 document.addEventListener('DOMContentLoaded',function(){
+  // 2026-07-10: pull from D1 on load for a brand-new device/browser where
+  // local storage is genuinely empty for a given key -- same "local wins
+  // if present" tradeoff as the warehouse inventory sync. Deliberately
+  // NOT hydrating onboard_* here since those are per-employee dynamic
+  // keys with no fixed list to enumerate; push-on-save still covers them.
+  if (typeof TermacD1Sync !== 'undefined') {
+    ['candidates','certs','conduct','holidays','jobs','reviews','timeoff','users'].forEach(function(k){
+      var localKey = 'termac_hr_' + k;
+      var hasLocal = localStorage.getItem(localKey) !== null;
+      if (!hasLocal) {
+        TermacD1Sync.d1HydrateHrData(localKey).then(function(data){
+          if (data !== null) { try { localStorage.setItem(localKey, JSON.stringify(data)); } catch(e){} }
+        }).catch(function(){});
+      }
+    });
+  }
   // DEMO MODE: auto-login as Ted — remove before deploy
   const users=hmGetUsers();
   const demo=users.find(u=>u.username==='ted.scholl')||users.find(u=>u.role==='admin')||users.find(u=>u.role==='manager');

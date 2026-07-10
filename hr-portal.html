@@ -120,6 +120,7 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--ink);min-h
 .hr-section-hdr{font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft);margin:20px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--line)}
 @media(max-width:560px){.hr-sidebar{display:none}.hr-main{padding:14px}.hr-grid-2,.hr-grid-3,.hr-grid-4{grid-template-columns:1fr}}
 </style>
+<script src="termac-d1-sync.js"></script>
 </head>
 <body>
 <nav class="hr-topnav">
@@ -214,9 +215,15 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--ink);min-h
 <script>
 /* ═══════════════════ TERMAC ONE — HR PORTAL JS ═══════════════════ */
 function hrLoad(k){try{return JSON.parse(localStorage.getItem('termac_hr_'+k)||'[]');}catch(e){return[];}}
-function hrSave(k,v){localStorage.setItem('termac_hr_'+k,JSON.stringify(v));}
+function hrSave(k,v){
+  localStorage.setItem('termac_hr_'+k,JSON.stringify(v));
+  if (typeof TermacD1Sync !== 'undefined') TermacD1Sync.d1PushHrData('termac_hr_'+k, v).catch(function(){});
+}
 function hrLoadObj(k,d){try{return JSON.parse(localStorage.getItem('termac_hr_'+k)||JSON.stringify(d));}catch(e){return d;}}
-function hrSaveObj(k,v){localStorage.setItem('termac_hr_'+k,JSON.stringify(v));}
+function hrSaveObj(k,v){
+  localStorage.setItem('termac_hr_'+k,JSON.stringify(v));
+  if (typeof TermacD1Sync !== 'undefined') TermacD1Sync.d1PushHrData('termac_hr_'+k, v).catch(function(){});
+}
 function hrId(){return 'hr_'+Date.now()+'_'+Math.random().toString(36).slice(2,7);}
 function escH(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function hrFmtDate(d){if(!d)return '—';return new Date(d+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});}
@@ -729,6 +736,20 @@ function hrRenderDocVault(){document.getElementById('hrDocVaultContent').innerHT
 
 /* ── INIT ── */
 document.addEventListener('DOMContentLoaded',function(){
+  // 2026-07-10: same hydrate-on-load as hr-manager-v3.html -- see that
+  // file's comment for the full reasoning. Both files share the same
+  // termac_hr_* key space, so this keeps them consistent.
+  if (typeof TermacD1Sync !== 'undefined') {
+    ['candidates','certs','conduct','holidays','jobs','reviews','timeoff','users'].forEach(function(k){
+      var localKey = 'termac_hr_' + k;
+      var hasLocal = localStorage.getItem(localKey) !== null;
+      if (!hasLocal) {
+        TermacD1Sync.d1HydrateHrData(localKey).then(function(data){
+          if (data !== null) { try { localStorage.setItem(localKey, JSON.stringify(data)); } catch(e){} }
+        }).catch(function(){});
+      }
+    });
+  }
   // DEMO MODE: Auto-login as Ted Scholl (admin) — remove before deploy
   var users = hrGetUsers();
   var demoUser = users.find(function(u){ return u.username === 'ted.scholl'; }) || users[0];
