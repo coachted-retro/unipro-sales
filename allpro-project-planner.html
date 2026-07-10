@@ -15,6 +15,15 @@
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Barlow',-apple-system,sans-serif;background:var(--bg);color:var(--ink);font-size:14px;padding-bottom:env(safe-area-inset-bottom)}
 .trn{background:var(--navy);border-bottom:3px solid var(--purple);position:sticky;top:0;z-index:99}
+/* 2026-07-10: same tab-bar visual language as sales-portal.html, so this
+   feels like the same platform rather than a bolted-on separate tool --
+   per Ted, the CRM data should feel unified even though the AllPro
+   lifecycle/planning tools genuinely live in their own place. */
+.ap-tabnav{background:#1A1D21;border-bottom:2px solid #2A2E33;flex-shrink:0;position:sticky;top:52px;z-index:98}
+.ap-tabnav-inner{max-width:100%;display:flex;align-items:center;padding:0 16px;height:48px;gap:2px}
+.ap-tab{background:none;border:none;border-bottom:3px solid transparent;color:#9CA3AF;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.10em;text-transform:uppercase;padding:0 14px;height:48px;cursor:pointer;white-space:nowrap;transition:all .1s}
+.ap-tab:hover{color:#fff}
+.ap-tab.active{color:#fff;border-bottom-color:var(--purple)}
 .trn-inner{max-width:1400px;margin:0 auto;display:flex;align-items:center;height:52px;padding:0 16px;gap:12px}
 .trn-logo{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px;letter-spacing:.14em;color:var(--gold);text-transform:uppercase}
 .trn-title{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.10em;color:#BFC4CA;text-transform:uppercase;padding-left:12px;border-left:1px solid rgba(255,255,255,.15)}
@@ -89,12 +98,20 @@ body{font-family:'Barlow',-apple-system,sans-serif;background:var(--bg);color:va
 <div class="trn">
   <div class="trn-inner">
     <span class="trn-logo">Termac One</span>
-    <span class="trn-title">AllPro Project Planner</span>
+    <span class="trn-title">AllPro Dashboard</span>
     <div class="trn-spacer"></div>
     <a class="trn-btn" href="employee-portal.html">Employee Portal</a>
   </div>
 </div>
 
+<div class="ap-tabnav">
+  <div class="ap-tabnav-inner">
+    <button class="ap-tab active" id="apTab-projects" onclick="apNav('projects')">🔩 Projects</button>
+    <button class="ap-tab" id="apTab-contacts" onclick="apNav('contacts')">👤 Contacts</button>
+  </div>
+</div>
+
+<div id="apView-projects">
 <div class="wrap">
 
   <div class="page-hdr">
@@ -112,6 +129,20 @@ body{font-family:'Barlow',-apple-system,sans-serif;background:var(--bg);color:va
 
   <div class="kanban" id="apKanban"></div>
 
+</div>
+</div>
+
+<div id="apView-contacts" style="display:none">
+<div class="wrap">
+  <div class="page-hdr">
+    <div>
+      <h1>AllPro Contacts</h1>
+      <p>Accounts and contacts tied to AllPro work — same CRM data as the sales dashboard, filtered to just AllPro.</p>
+    </div>
+  </div>
+  <input type="text" id="apContactSearch" oninput="renderApContacts()" placeholder="Search name, business, phone…" style="width:100%;max-width:400px;padding:10px 14px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;outline:none;margin-bottom:16px;font-family:'Barlow',sans-serif">
+  <div id="apContactsList"></div>
+</div>
 </div>
 
 <!-- REFERRAL SPIFFS MODAL -->
@@ -341,6 +372,69 @@ function genId(prefix) {
 }
 
 function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+
+// ── TAB NAV (2026-07-10) ──────────────────────────────────────────────
+function apNav(view) {
+  document.querySelectorAll('.ap-tab').forEach(function(t){ t.classList.remove('active'); });
+  document.getElementById('apTab-' + view).classList.add('active');
+  document.getElementById('apView-projects').style.display = view === 'projects' ? 'block' : 'none';
+  document.getElementById('apView-contacts').style.display = view === 'contacts' ? 'block' : 'none';
+  if (view === 'contacts') renderApContacts();
+}
+
+// Same underlying accounts/contacts data every other portal reads --
+// filtered here to just the ones with an actual AllPro project, so reps
+// never see this view (they're not routed here at all) and Dan/Ted see
+// only what's actually relevant to AllPro work, not the whole CRM.
+function renderApContacts() {
+  var search = (document.getElementById('apContactSearch')?.value || '').toLowerCase();
+  var projects = loadProjects();
+  var allProAccountIds = {};
+  projects.forEach(function(p){ if (p.account_id) allProAccountIds[p.account_id] = true; });
+
+  var accounts = (crmLoad('accounts') || []).filter(function(a){ return allProAccountIds[a.id]; });
+  var contacts = (crmLoad('contacts') || []).filter(function(c){ return allProAccountIds[c.accountId] || allProAccountIds[c.account_id]; });
+
+  var rows = accounts.map(function(a){
+    var acctProjects = projects.filter(function(p){ return p.account_id === a.id; });
+    var acctContacts = contacts.filter(function(c){ return (c.accountId||c.account_id) === a.id; });
+    return { account: a, projects: acctProjects, contacts: acctContacts };
+  });
+
+  if (search) {
+    rows = rows.filter(function(r){
+      var blob = ((r.account.business||r.account.name||'') + ' ' + (r.account.phone||'') + ' ' +
+        r.contacts.map(function(c){ return c.name||''; }).join(' ')).toLowerCase();
+      return blob.includes(search);
+    });
+  }
+
+  var el = document.getElementById('apContactsList');
+  if (!rows.length) {
+    el.innerHTML = '<div style="text-align:center;padding:40px;color:var(--soft)">No AllPro contacts yet — they show up here once a lead is forwarded from the field.</div>';
+    return;
+  }
+
+  el.innerHTML = rows.map(function(r) {
+    var a = r.account;
+    var contactLines = r.contacts.length
+      ? r.contacts.map(function(c){ return '<div style="font-size:12px;color:var(--soft)">' + escSp(c.name||'') + (c.phone?' · '+escSp(c.phone):'') + (c.email?' · '+escSp(c.email):'') + '</div>'; }).join('')
+      : '<div style="font-size:12px;color:var(--soft);font-style:italic">No individual contacts on file</div>';
+    var projectLines = r.projects.map(function(p){
+      return '<span style="display:inline-block;background:' + (STAGE_COLORS[p.stage]||'#6B7280') + '22;color:' + (STAGE_COLORS[p.stage]||'#6B7280') + ';border-radius:5px;padding:2px 8px;font-size:11px;font-weight:700;margin-right:6px">' + (STAGE_LABELS[p.stage]||p.stage) + '</span>';
+    }).join('');
+    return '<div style="background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:10px;padding:14px 16px">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">' +
+        '<div>' +
+          '<div style="font-weight:700;font-size:14px">' + escSp(a.business||a.name||'Unknown') + '</div>' +
+          '<div style="font-size:12px;color:var(--soft);margin-top:2px">' + escSp(a.address||'') + (a.phone?' · '+escSp(a.phone):'') + '</div>' +
+        '</div>' +
+        '<div>' + projectLines + '</div>' +
+      '</div>' +
+      '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--line)">' + contactLines + '</div>' +
+    '</div>';
+  }).join('');
+}
 
 // ── REFERRAL SPIFFS (2026-07-10) ──────────────────────────────────────
 // $20 flat per Ted, per AllPro lead a rep forwards, created automatically

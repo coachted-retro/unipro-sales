@@ -5464,8 +5464,30 @@ function spRenderGoals() {
   const el = document.getElementById('spContent');
   const repName = _spRep.name;
 
+  // Mirrors STAGE_LABELS/STAGE_COLORS in allpro-project-planner.html --
+  // kept in sync manually since these are two separate files; if the
+  // AllPro lifecycle stages ever change, update both places.
+  const STAGE_LABELS_MAP = {
+    intake:'Intake', survey_plan_review:'Survey / Plan Review', design_drawings:'Design / Drawings',
+    costing:'Costing', permitting:'Permitting / AHJ', fabrication:'Fabrication',
+    delivery_install:'Delivery / Install', commissioning:'Commissioning', closeout:'Closeout',
+  };
+  const STAGE_COLORS_MAP = {
+    intake:'#5A616B', survey_plan_review:'#1B5FA8', design_drawings:'#6D28D9',
+    costing:'#D97706', permitting:'#C8102E', fabrication:'#1E7B3C',
+    delivery_install:'#0A1628', commissioning:'#B45309', closeout:'#166534',
+  };
+
   // Pull rep's own records
-  const myLeads = crmLoad('leads').filter(r => (r.ownedBy||r.assignedRep||r.createdBy||'') === repName);
+  const myLeadsAll = crmLoad('leads').filter(r => (r.ownedBy||r.assignedRep||r.createdBy||'') === repName);
+  // 2026-07-10: per Ted, AllPro numbers need to stay visibly separate from
+  // everything else even though a single account often combines AllPro
+  // with UniPro/other divisions on one hood+suppression job -- so the
+  // split here is by service tag on the record, not by account. A record
+  // with both 'unipro' and 'allpro' counts toward both sections; that's
+  // intentional, since it genuinely is both kinds of work on one job.
+  const myLeads     = myLeadsAll.filter(r => !(r.services||[]).includes('allpro'));
+  const myAllProLeads = myLeadsAll.filter(r => (r.services||[]).includes('allpro'));
   const myAccts = myLeads.filter(r => ['active','close','onboarding','first_service','renewal'].includes(r.lifecycleStage||''));
   const myOppty = myLeads.filter(r => ['opportunity','site_visit'].includes(r.lifecycleStage||''));
   const myContacts = myLeads.filter(r => (r.lifecycleStage||'lead') === 'contact');
@@ -5493,6 +5515,20 @@ function spRenderGoals() {
   const spiffsPaid = mySpiffs.filter(s => s.status === 'paid');
   const spiffTotal = mySpiffs.reduce((s, x) => s + (Number(x.amount) || 0), 0);
   const commissionPlusSpiffs = commission + spiffTotal;
+
+  // 2026-07-10: AllPro-specific performance, kept fully separate from the
+  // commission number above. Pulls real project economics (sale_price,
+  // stage) from allpro_projects rather than the generic lead-value
+  // estimate, since AllPro tracks its own project lifecycle with real
+  // numbers once a project is underway.
+  const myAllProAcctIds = {};
+  myAllProLeads.forEach(l => { if (l.id) myAllProAcctIds[l.id] = true; if (l.accountId) myAllProAcctIds[l.accountId] = true; });
+  const allProProjects = (typeof crmLoad === 'function' ? crmLoad('allpro_projects') : [])
+    .filter(p => myAllProAcctIds[p.account_id]);
+  const allProClosed = allProProjects.filter(p => p.stage === 'closeout');
+  const allProInProgress = allProProjects.filter(p => p.stage !== 'closeout');
+  const allProRevClosed = allProClosed.reduce((s, p) => s + (Number(p.sale_price) || Number(p.estimated_value) || 0), 0);
+  const allProPipelineValue = allProInProgress.reduce((s, p) => s + (Number(p.estimated_value) || Number(p.sale_price) || 0), 0);
 
   // Activity this week
   const weekStart = new Date(); weekStart.setDate(weekStart.getDate() - weekStart.getDay()); weekStart.setHours(0,0,0,0);
@@ -5561,6 +5597,30 @@ function spRenderGoals() {
       </div>`).join('')}
     </div>` : `<div style="font-size:12px;color:var(--soft);text-align:center;padding-top:6px">No AllPro referral spiffs yet — forward a lead to Dan and it shows up here.</div>`}
   </div>
+
+  ${myAllProLeads.length ? `
+  <!-- My AllPro Performance -->
+  <div class="sp-card" style="border-left:4px solid var(--purple)">
+    <div class="sp-card-title">My AllPro Performance <span style="font-size:10px;font-weight:400;color:var(--soft);text-transform:none;letter-spacing:0">— kept separate from everything above, even on combined UniPro+AllPro jobs</span></div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap">
+      <div style="flex:1;min-width:140px;text-align:center;padding:14px;background:var(--bg);border-radius:8px">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:24px;color:var(--purple)">${myAllProLeads.length}</div>
+        <div style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-top:2px">AllPro Leads/Accounts</div>
+      </div>
+      <div style="flex:1;min-width:140px;text-align:center;padding:14px;background:var(--bg);border-radius:8px">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:24px;color:var(--orange)">$${allProPipelineValue.toLocaleString()}</div>
+        <div style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-top:2px">In Progress (${allProInProgress.length})</div>
+      </div>
+      <div style="flex:1;min-width:140px;text-align:center;padding:14px;background:var(--bg);border-radius:8px">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:24px;color:var(--green)">$${allProRevClosed.toLocaleString()}</div>
+        <div style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-top:2px">Closed (${allProClosed.length})</div>
+      </div>
+    </div>
+    ${allProProjects.length ? `<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line);display:flex;flex-wrap:wrap;gap:6px">
+      ${allProProjects.map(p => `<span style="background:${(STAGE_COLORS_MAP[p.stage]||'#6B7280')}22;color:${(STAGE_COLORS_MAP[p.stage]||'#6B7280')};border-radius:5px;padding:3px 10px;font-size:11px;font-weight:700">${(p.project_name||'Project')} · ${(STAGE_LABELS_MAP[p.stage]||p.stage)}</span>`).join('')}
+    </div>` : `<div style="font-size:12px;color:var(--soft);margin-top:10px">These leads haven't been picked up as AllPro projects yet — check the AllPro Dashboard.</div>`}
+    <a href="allpro-project-planner.html" target="_blank" style="display:inline-block;margin-top:12px;font-size:12px;color:var(--purple);font-weight:700">Open AllPro Dashboard →</a>
+  </div>` : ''}
 
   <!-- Pipeline Breakdown -->
   <div class="sp-card">
