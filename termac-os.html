@@ -20910,6 +20910,8 @@ async function svAPForwardToDan() {
     return;
   }
 
+  // Keep the lightweight per-account blob too, for anything that still
+  // reads survey data generically the way every other division does.
   if (!svState.surveyData['allpro']) svState.surveyData['allpro'] = {};
   const d = svState.surveyData['allpro'];
   d.ap_description = description;
@@ -20921,6 +20923,30 @@ async function svAPForwardToDan() {
   const data = crmLoad('accounts');
   const r = data.find(x => x.id === svState.accountId);
   if (r) { r.surveyData = svState.surveyData; crmSave('accounts', data); }
+
+  // 2026-07-10: also create the real row Dan's dedicated landing page
+  // (allpro-project-planner.html) actually reads from. Before this fix,
+  // AllPro data only ever lived inside the account's generic surveyData
+  // blob, so it never showed up on the project board Dan actually
+  // checks -- he would have had to know to go dig through the specific
+  // account instead. account_id links this project to the same account
+  // as any other division's opportunity for this customer, per Ted's
+  // "separate lifecycle, same account" rule -- not nested underneath it.
+  const projects = (typeof crmLoad === 'function' ? crmLoad('allpro_projects') : []) || [];
+  const newProject = {
+    id: 'APR' + Date.now().toString(36).toUpperCase(),
+    account_id: svState.accountId,
+    project_name: svState.bizName || r?.business || r?.name || 'AllPro Project',
+    project_description: description,
+    site_address: r?.address || '',
+    project_type: 'combined', // Dan/Ted set the real type once reviewed -- 'combined' is the safe default since it's the only type that doesn't hide permitting/commissioning prematurely
+    stage: 'intake',
+    job_notes: measurements ? 'Rough measurements from site visit: ' + measurements : '',
+    created_at: Date.now(),
+    updated_at: Date.now(),
+  };
+  projects.push(newProject);
+  crmSave('allpro_projects', projects);
 
   try {
     await fetch('https://termac-notify.termac-one.workers.dev/notify', {
