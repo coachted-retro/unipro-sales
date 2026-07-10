@@ -35,7 +35,8 @@
   var D1_SYNC_TABLES = ['accounts', 'leads', 'contacts', 'opportunities', 'bids',
     'jobs', 'deficiencies', 'collections', 'dms_coldcall',
     'allpro_projects', 'allpro_cost_lines', 'appointments', 'allpro_design_projects',
-    'broadcasts', 'dispatch_msgs'];
+    'broadcasts', 'dispatch_msgs', 'wh_requisitions', 'wh_ready_handoffs', 'parts_requests',
+    'transfer_requests'];
 
   async function d1Fetch(method, path, body) {
     try {
@@ -111,6 +112,22 @@
     },
     dispatch_msgs: {
       to: 'to_user', from: 'from_user',
+    },
+    wh_requisitions: {
+      jobId: 'job_id', accountId: 'account_id', accountName: 'account_name',
+      techId: 'tech_id', serviceType: 'service_type', jobDate: 'job_date',
+      jobTime: 'job_time', riskFlags: 'risk_flags', estimatedTime: 'estimated_time',
+      aiNotes: 'ai_notes', photosAnalyzed: 'photos_analyzed',
+      kittedBy: 'kitted_by', kittedAt: 'kitted_at', signedOutBy: 'signed_out_by',
+      signedOutAt: 'signed_out_at', signedOutItems: 'signed_out_items',
+      returnedItems: 'returned_items', createdAt: 'created_at',
+    },
+    wh_ready_handoffs: {
+      jobId: 'job_id', reqId: 'req_id', techName: 'tech_name',
+      pulledBy: 'pulled_by', timeStr: 'time_str', techAcknowledged: 'tech_acknowledged',
+    },
+    parts_requests: {
+      requestedBy: 'requested_by',
     },
   };
 
@@ -202,6 +219,18 @@
     broadcasts: ['id', 'ts', 'msg', 'from_user', 'read', 'created_at', 'updated_at'],
     dispatch_msgs: ['id', 'ts', 'to_user', 'from_user', 'msg', 'read',
       'created_at', 'updated_at'],
+    wh_requisitions: ['id', 'job_id', 'account_id', 'account_name', 'tech_id',
+      'service_type', 'job_date', 'job_time', 'items', 'risk_flags',
+      'estimated_time', 'ai_notes', 'photos_analyzed', 'status', 'kitted_by',
+      'kitted_at', 'signed_out_by', 'signed_out_at', 'signed_out_items',
+      'returned_items', 'created_at', 'updated_at'],
+    wh_ready_handoffs: ['id', 'job_id', 'req_id', 'account', 'tech_name',
+      'division', 'items', 'pulled_by', 'ts', 'time_str', 'status',
+      'tech_acknowledged', 'created_at', 'updated_at'],
+    parts_requests: ['id', 'type', 'requested_by', 'division', 'urgency',
+      'items', 'notes', 'status', 'created_at', 'updated_at'],
+    transfer_requests: ['id', 'date', 'ts', 'tech', 'company', 'warehouse',
+      'items', 'notes', 'status', 'created_at', 'updated_at'],
   };
 
   function d1NormalizeRecord(table, record) {

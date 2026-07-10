@@ -1303,8 +1303,8 @@ function switchWHTab(name) {
 }
 
 // ── REQUISITION HELPERS ───────────────────────────────────────────────────
-function loadReqs()    { try{ return JSON.parse(localStorage.getItem(WH_REQ_KEY)||'[]'); }catch(e){return[];} }
-function saveReqs(arr) { try{ localStorage.setItem(WH_REQ_KEY,JSON.stringify(arr)); }catch(e){} }
+function loadReqs()    { return (typeof crmLoad === 'function' ? crmLoad('wh_requisitions') : []) || []; }
+function saveReqs(arr) { if (typeof crmSave === 'function') crmSave('wh_requisitions', arr); }
 
 // ── PARTS REQUESTS QUEUE ────────────────────────────────────────────────────
 function renderPartsRequests() {
@@ -1315,7 +1315,7 @@ function renderPartsRequests() {
   try {
     var fromOfficeQ = JSON.parse(localStorage.getItem('officeQueue') || '[]')
       .filter(function(q){ return q.type === 'supply_request'; });
-    var fromPartsQ  = JSON.parse(localStorage.getItem('termac_parts_requests') || '[]');
+    var fromPartsQ  = (typeof crmLoad === 'function' ? crmLoad('parts_requests') : []) || [];
     var seen = {};
     fromPartsQ.concat(fromOfficeQ).forEach(function(r) {
       if (!seen[r.id]) { seen[r.id] = true; requests.push(r); }
@@ -1392,18 +1392,23 @@ function escWH(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;
 
 
 function fulfillPartsRequest(reqId, newStatus) {
-  // Update in both stores
-  ['termac_parts_requests', 'officeQueue'].forEach(key => {
-    try {
-      const items = JSON.parse(localStorage.getItem(key) || '[]');
-      const updated = items.map(r => r.id === reqId ? Object.assign({}, r, { status: newStatus, fulfilledAt: Date.now(), fulfilledBy: localStorage.getItem('termac_current_user') || 'Warehouse' }) : r);
-      localStorage.setItem(key, JSON.stringify(updated));
-    } catch(e) {}
-  });
+  // parts_requests: now synced via crmSave. officeQueue is a separate,
+  // much broader shared system used by many other features -- left as
+  // raw localStorage here deliberately, out of scope for tonight's audit.
+  try {
+    var partsItems = (typeof crmLoad === 'function' ? crmLoad('parts_requests') : []) || [];
+    var partsUpdated = partsItems.map(function(r){ return r.id === reqId ? Object.assign({}, r, { status: newStatus, fulfilledAt: Date.now(), fulfilledBy: localStorage.getItem('termac_current_user') || 'Warehouse' }) : r; });
+    if (typeof crmSave === 'function') crmSave('parts_requests', partsUpdated);
+  } catch(e) {}
+  try {
+    const items = JSON.parse(localStorage.getItem('officeQueue') || '[]');
+    const updated = items.map(r => r.id === reqId ? Object.assign({}, r, { status: newStatus, fulfilledAt: Date.now(), fulfilledBy: localStorage.getItem('termac_current_user') || 'Warehouse' }) : r);
+    localStorage.setItem('officeQueue', JSON.stringify(updated));
+  } catch(e) {}
 
   // Notify tech via intelligence feed
   try {
-    const items = JSON.parse(localStorage.getItem('termac_parts_requests') || '[]');
+    const items = (typeof crmLoad === 'function' ? crmLoad('parts_requests') : []) || [];
     const req = items.find(r => r.id === reqId);
     if (req) {
       const notifs = JSON.parse(localStorage.getItem('termac_hotlead_notifs') || '[]');
@@ -1540,8 +1545,10 @@ function confirmKit() {
   const pulledItems = (req.items||[]).filter((_,i)=>{const c=document.getElementById('kitChk_'+i); return c&&c.checked;}).map(it=>it.qty+'x '+it.name);
   // Write to shared warehouse_ready store for tech portal to poll
   try {
-    const whReady = JSON.parse(localStorage.getItem('termac_warehouse_ready')||'{}');
-    whReady[req.id] = {
+    var whReadyArr = (typeof crmLoad === 'function' ? crmLoad('wh_ready_handoffs') : []) || [];
+    var whReadyIdx = whReadyArr.findIndex(function(h){ return h.id === req.id; });
+    var whReadyRec = {
+      id:       req.id,
       jobId:    req.jobId || req.id,
       reqId:    req.id,
       account:  req.accountName,
@@ -1554,7 +1561,8 @@ function confirmKit() {
       status:   'ready',
       techAcknowledged: false,
     };
-    localStorage.setItem('termac_warehouse_ready', JSON.stringify(whReady));
+    if (whReadyIdx >= 0) whReadyArr[whReadyIdx] = whReadyRec; else whReadyArr.push(whReadyRec);
+    if (typeof crmSave === 'function') crmSave('wh_ready_handoffs', whReadyArr);
   } catch(e) {}
   // Call notify engine if loaded
   if (typeof notifyWarehousePulled === 'function') {
