@@ -4,17 +4,26 @@
  * The ONLY worker a customer's browser talks to directly when booking an
  * appointment through a rep's Digital Business Card. Deliberately narrow:
  * it can do exactly one thing (accept a booking request), and it never
- * exposes the real termac-d1-api secret to the public — that secret lives
+ * exposes the real D1 API secret to the public — that secret lives
  * only in this worker's own environment, used for a server-to-server call
  * that a browser never sees.
  *
  * Route:
  *   POST /book   — accepts a booking request, writes it as a tagged lead
+ *   GET  /profile — public, read-only rep card lookup
  *
  * A booking becomes a real lead in the CRM (source: "Digital Business
  * Card"), assigned to whichever rep's card the customer scanned, with the
  * requested date/time in notes and set as the follow-up date — so it lands
  * somewhere the rep already looks, rather than a new queue nobody checks.
+ *
+ * IMPORTANT — 2026-07-10: this worker talks to unipro-ai-proxy through a
+ * Service Binding (env.D1_SERVICE), NOT a raw fetch() to its public
+ * *.workers.dev URL. Cloudflare blocks worker-to-worker fetch() calls to
+ * public workers.dev URLs (returns error 1042, a plain-text page, not
+ * JSON) — this was the actual root cause of "Card temporarily
+ * unavailable" errors, not a secret or URL misconfiguration. Do not
+ * revert this to a plain fetch(env.D1_API_URL + ...) call.
  */
 
 const ALLOWED_ORIGINS = [
@@ -80,13 +89,17 @@ function validateBooking(body) {
   return { valid: problems.length === 0, problems, name, phone, email, repId, division, requestedDate, notes };
 }
 
+// Talks to unipro-ai-proxy over the private Service Binding, not a public
+// fetch. env.D1_SERVICE is wired up via a Service Binding named
+// D1_SERVICE pointing at the unipro-ai-proxy worker (set in both the
+// Cloudflare dashboard Bindings tab and this repo's wrangler.toml).
 async function d1Fetch(env, method, path, body) {
   const opts = {
     method,
     headers: { 'Content-Type': 'application/json', 'X-API-Secret': env.D1_API_SECRET },
   };
   if (body) opts.body = JSON.stringify(body);
-  const res = await fetch(env.D1_API_URL + path.replace('/api/', '/db/'), opts);
+  const res = await env.D1_SERVICE.fetch('https://unipro-ai-proxy.termac-one.workers.dev' + path.replace('/api/', '/db/'), opts);
   return await res.json();
 }
 
@@ -177,4 +190,3 @@ export default {
     }
   },
 };
-// redeploy trigger 1783643996
