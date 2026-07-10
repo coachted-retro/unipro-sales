@@ -36,7 +36,7 @@
     'jobs', 'deficiencies', 'collections', 'dms_coldcall',
     'allpro_projects', 'allpro_cost_lines', 'appointments', 'allpro_design_projects',
     'broadcasts', 'dispatch_msgs', 'wh_requisitions', 'wh_ready_handoffs', 'parts_requests',
-    'transfer_requests', 'scheduler_queue'];
+    'transfer_requests', 'scheduler_queue', 'allpro_spiffs'];
 
   async function d1Fetch(method, path, body) {
     try {
@@ -106,6 +106,10 @@
     },
     allpro_design_projects: {
       accountId: 'account_id', projectId: 'project_id', createdAt: 'created_at',
+    },
+    allpro_spiffs: {
+      repName: 'rep_name', accountId: 'account_id', projectId: 'project_id',
+      createdAt: 'created_at', paidAt: 'paid_at',
     },
     broadcasts: {
       from: 'from_user',
@@ -213,6 +217,15 @@
     allpro_design_projects: ['id', 'account_id', 'project_id', 'client', 'site',
       'contact', 'pm', 'division', 'status', 'spec', 'revisions', 'approval',
       'created_at', 'updated_at'],
+    // 2026-07-10: $20 flat referral spiff, per Ted, every time a rep
+    // forwards an AllPro lead to Dan -- created in svAPForwardToDan()
+    // alongside the actual project record, so the rep gets credit that
+    // survives the project moving through the whole lifecycle and
+    // eventually getting reassigned to Ted. Rolled into each rep's
+    // commission tracker (My Goals overlay) as a visible line item, not
+    // silently folded into the percentage-commission number.
+    allpro_spiffs: ['id', 'rep_name', 'account_id', 'project_id', 'business',
+      'amount', 'status', 'created_at', 'paid_at', 'updated_at'],
     // 2026-07-10: localStorage-only audit -- dispatch-status.html's
     // broadcast/direct-message features were write-only, using a raw
     // disconnected key that never reached D1 at all. Note: fixing storage

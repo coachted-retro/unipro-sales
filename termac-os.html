@@ -20951,6 +20951,25 @@ async function svAPForwardToDan() {
   projects.push(newProject);
   crmSave('allpro_projects', projects);
 
+  // 2026-07-10: $20 flat referral spiff per Ted -- credits the rep who
+  // actually forwarded this lead, tied to the project record so it
+  // survives the project moving through the whole lifecycle and
+  // eventually getting reassigned to Ted for the real site survey. Shows
+  // up as a line item in the rep's own commission tracker (My Goals),
+  // and in the AllPro Dashboard's Referral Spiffs view for quarterly payout.
+  const spiffs = (typeof crmLoad === 'function' ? crmLoad('allpro_spiffs') : []) || [];
+  spiffs.push({
+    id: 'SPF' + Date.now().toString(36).toUpperCase(),
+    repName: d.ap_forwarded_by,
+    accountId: svState.accountId,
+    projectId: newProject.id,
+    business: newProject.project_name,
+    amount: 20,
+    status: 'pending',
+    createdAt: Date.now(),
+  });
+  crmSave('allpro_spiffs', spiffs);
+
   try {
     await fetch('https://termac-notify.termac-one.workers.dev/notify', {
       method: 'POST',
@@ -29545,6 +29564,7 @@ window.uvCollectData = uvCollectData;
         <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:26px;color:var(--ink)" id="goalsCommission">$0</div>
         <div style="font-size:10px;color:var(--soft);font-weight:700;text-transform:uppercase;letter-spacing:.08em">Commission Earned</div>
         <div style="font-size:11px;color:var(--soft);margin-top:3px" id="goalsCommRate"></div>
+        <div style="font-size:11px;color:#1E7B3C;margin-top:2px;font-weight:600" id="goalsSpiffLine"></div>
       </div>
       <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;text-align:center">
         <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:26px;color:var(--red)" id="goalsDealsWon">0</div>
@@ -30498,6 +30518,17 @@ function goalsRender() {
   // Commission
   const commission  = Math.round(revClosed * (quota.commRate / 100));
 
+  // 2026-07-10: AllPro referral spiffs -- $20 flat per Ted, credited to
+  // whoever actually forwarded the lead (not whoever it's since been
+  // reassigned to), tracked separately from percentage commission so a
+  // rep can see exactly how many spiffs they've earned, not just a
+  // folded-in total that hides where the money came from.
+  const mySpiffs      = (typeof crmLoad === 'function' ? crmLoad('allpro_spiffs') : []).filter(s => s.repName === rep);
+  const spiffsPending = mySpiffs.filter(s => s.status === 'pending');
+  const spiffsPaid    = mySpiffs.filter(s => s.status === 'paid');
+  const spiffTotal    = mySpiffs.reduce((sum, s) => sum + (Number(s.amount) || 0), 0);
+  const commissionPlusSpiffs = commission + spiffTotal;
+
   // Days left in period
   const daysLeft    = Math.max(0, Math.round((pDates.end - new Date()) / 86400000));
   const daysDone    = pDates.days - daysLeft;
@@ -30545,8 +30576,19 @@ function goalsRender() {
   set('goalsPipelineCount', myLeads.length + ' leads (' + hotLeads.length + ' hot)');
   set('goalsRevForecast', fmt$(forecast));
   set('goalsForecastBasis', winRate + '% win rate × pipeline');
-  set('goalsCommission',  fmt$(commission));
+  set('goalsCommission',  fmt$(commissionPlusSpiffs));
   set('goalsCommRate',    quota.commRate + '% on $' + fmt$(revClosed) + ' closed');
+  {
+    const spiffEl = document.getElementById('goalsSpiffLine');
+    if (spiffEl) {
+      if (mySpiffs.length) {
+        spiffEl.textContent = '+ ' + fmt$(spiffTotal) + ' AllPro spiffs (' + mySpiffs.length + ') · ' +
+          spiffsPaid.length + ' paid, ' + spiffsPending.length + ' pending';
+      } else {
+        spiffEl.textContent = '';
+      }
+    }
+  }
   set('goalsDealsWon',    dealsWon);
   set('goalsWinRate',     winRate + '% win rate');
   set('goalsDaysLeft',    daysLeft);

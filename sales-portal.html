@@ -534,6 +534,7 @@ body.rail-open .rail-overlay{display:block}
         <button class="sp-tab"        id="spTab-opportunities" onclick="spNav('opportunities')">💼 Opportunities</button>
         <button class="sp-tab"        id="spTab-accounts"     onclick="spNav('accounts')">🏢 Accounts</button>
         <button class="sp-tab"        id="spTab-schedule"     onclick="spNav('schedule')">📅 My Schedule</button>
+        <button class="sp-tab"        id="spTab-goals"        onclick="spNav('goals')">🎯 My Goals</button>
       </div>
       <!-- AI Camera — made prominent (solid color, bigger tap target) since
            this gets tapped constantly in the field and was blending in as
@@ -5474,8 +5475,24 @@ function spRenderGoals() {
   const GOALS_QUOTA = 'termac_goals_quotas';
   const now = new Date();
   const qKey = repName + '_q' + Math.ceil((now.getMonth()+1)/3);
-  let quota = { revQuota:50000, acctTarget:12, callTarget:50, visitTarget:10 };
+  let quota = { revQuota:50000, acctTarget:12, callTarget:50, visitTarget:10, commRate:8 };
   try { const all = JSON.parse(localStorage.getItem(GOALS_QUOTA)||'{}'); quota = { ...quota, ...(all[qKey]||{}) }; } catch(e){}
+
+  // 2026-07-10: commission tracker. This existed in termac-os.html's
+  // separate Manager Portal overlay but was never reachable from here --
+  // reps only ever use this file, not that one, so it effectively didn't
+  // exist for them. revClosed is an estimate (sum of estimatedValue
+  // across accounts that have reached active/closed stages) since the
+  // full win/loss revenue ledger lives in a separate tracking system in
+  // termac-os.html not yet ported here -- labeled as an estimate below
+  // rather than presented as exact.
+  const revClosed = myAccts.reduce((s, r) => s + (r.estimatedValue || 0), 0);
+  const commission = Math.round(revClosed * (quota.commRate / 100));
+  const mySpiffs = (typeof crmLoad === 'function' ? crmLoad('allpro_spiffs') : []).filter(s => s.repName === repName);
+  const spiffsPending = mySpiffs.filter(s => s.status === 'pending');
+  const spiffsPaid = mySpiffs.filter(s => s.status === 'paid');
+  const spiffTotal = mySpiffs.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+  const commissionPlusSpiffs = commission + spiffTotal;
 
   // Activity this week
   const weekStart = new Date(); weekStart.setDate(weekStart.getDate() - weekStart.getDay()); weekStart.setHours(0,0,0,0);
@@ -5520,6 +5537,29 @@ function spRenderGoals() {
     ${kpi('$'+pipelineValue.toLocaleString(), 'Pipeline Value', 'Est. from open opportunities', 'var(--ink)')}
     ${kpi(callsThisWeek, 'Calls This Week', 'Target: '+quota.callTarget+'/wk', callsThisWeek>=quota.callTarget?'var(--green)':'var(--red)', Math.round(callsThisWeek/quota.callTarget*100))}
     ${kpi(visitsThisWeek, 'Visits This Week', 'Target: '+quota.visitTarget+'/wk', visitsThisWeek>=quota.visitTarget?'var(--green)':'var(--orange)', Math.round(visitsThisWeek/quota.visitTarget*100))}
+  </div>
+
+  <!-- Commission & Spiffs -->
+  <div class="sp-card">
+    <div class="sp-card-title">My Commission &amp; Spiffs — ${qLabel}</div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:${mySpiffs.length ? '14px' : '0'}">
+      <div style="flex:1;min-width:160px;text-align:center;padding:14px;background:var(--bg);border-radius:8px">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:26px;color:var(--ink)">$${commissionPlusSpiffs.toLocaleString()}</div>
+        <div style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-top:2px">Total Expected</div>
+        <div style="font-size:10px;color:var(--soft);margin-top:4px">${quota.commRate}% commission on ~$${revClosed.toLocaleString()} closed (estimate)</div>
+      </div>
+      ${mySpiffs.length ? `<div style="flex:1;min-width:160px;text-align:center;padding:14px;background:#FFFBEA;border-radius:8px">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:26px;color:var(--orange)">$${spiffTotal.toLocaleString()}</div>
+        <div style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-top:2px">AllPro Referral Spiffs</div>
+        <div style="font-size:10px;color:var(--soft);margin-top:4px">${mySpiffs.length} referral${mySpiffs.length===1?'':'s'} · ${spiffsPaid.length} paid, ${spiffsPending.length} pending</div>
+      </div>` : ''}
+    </div>
+    ${mySpiffs.length ? `<div style="border-top:1px solid var(--line);padding-top:10px">
+      ${mySpiffs.map(s => `<div style="display:flex;justify-content:space-between;padding:5px 0;font-size:12px">
+        <span>${(s.business||'Unknown').replace(/</g,'&lt;')} — ${new Date(s.createdAt||Date.now()).toLocaleDateString('en-US')}</span>
+        <span style="font-weight:700;color:${s.status==='paid'?'var(--green)':'var(--orange)'}">$${s.amount} ${s.status}</span>
+      </div>`).join('')}
+    </div>` : `<div style="font-size:12px;color:var(--soft);text-align:center;padding-top:6px">No AllPro referral spiffs yet — forward a lead to Dan and it shows up here.</div>`}
   </div>
 
   <!-- Pipeline Breakdown -->

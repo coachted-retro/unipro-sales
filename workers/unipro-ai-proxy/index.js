@@ -28,7 +28,7 @@ const ALLOWED_TABLES = new Set([
   'allpro_design_projects',
   // localStorage-only audit, added 2026-07-10
   'broadcasts', 'dispatch_msgs', 'wh_requisitions', 'wh_ready_handoffs', 'parts_requests',
-  'transfer_requests', 'hr_data',
+  'transfer_requests', 'hr_data', 'allpro_spiffs',
 ]);
 
 const TABLE_PREFIX = {
@@ -42,6 +42,7 @@ const TABLE_PREFIX = {
   broadcasts:'BC', dispatch_msgs:'DM', wh_requisitions:'WHR',
   wh_ready_handoffs:'WHH', parts_requests:'PR', transfer_requests:'XFR',
   hr_data:'HRD',
+  allpro_spiffs:'SPF',
 };
 
 function corsHeaders(origin) {
