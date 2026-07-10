@@ -1055,26 +1055,33 @@ function dmsEscalate(id){
     if (typeof TermacLifecycle !== 'undefined') {
       TermacLifecycle.notifyNewLead(r, 'DMS Escalation — ' + _dmsUser.name);
     }
-    dmsToast('🔥 Escalated to ' + (r.assignedRep||'Unassigned') + ' — email opened');
+    dmsToast('🔥 Escalated to ' + (r.assignedRep||'Unassigned') + ' — notification sent');
 
   } else {
     // Manager -- not a sales lead, just needs a direct heads-up.
     const ESCALATION_CONTACTS = {
-      manager:    { label:'Manager — Jim Kennedy', emails:['jkennedy@termac.com'] },
+      manager:    { label:'Manager — Jim Kennedy', name:'Jim Kennedy', emails:['jkennedy@termac.com'] },
     };
     const dest = ESCALATION_CONTACTS[escVal];
     if (dest) {
-      const subj = encodeURIComponent('DMS Escalation — ' + (r.business||r.name||'Caller'));
-      const body = encodeURIComponent(
-        _dmsUser.name+' escalated a call to '+dest.label+'.\n\n'+
-        'Business: '+(r.business||r.name||'—')+'\n'+
-        'Phone: '+(r.phone||'—')+'\n'+
-        'Notes: '+(r.notes||r.dmsNotes||'—')+'\n\n'+
-        '— Termac One DMS'
-      );
-      window.open('mailto:'+dest.emails.join(',')+'?subject='+subj+'&body='+body, '_blank');
+      // 2026-07-10: real send via termac-notify (Resend) instead of a
+      // mailto draft that only opened in whoever's browser triggered it.
+      fetch('https://termac-notify.termac-one.workers.dev/notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          recipientName: dest.name,
+          recipientEmail: dest.emails[0],
+          ccEmails: dest.emails.slice(1),
+          caller: r.business || r.name || 'Caller',
+          phone: r.phone || '',
+          notes: _dmsUser.name + ' escalated a call to ' + dest.label + '. ' + (r.notes || r.dmsNotes || ''),
+          source: 'DMS Escalation',
+          loggedBy: _dmsUser.name,
+        }),
+      }).catch(() => {});
     }
-    dmsToast('🔥 Escalated: ' + (dest?dest.label:escVal) + ' — email opened');
+    dmsToast('🔥 Escalated: ' + (dest?dest.label:escVal) + ' — notification sent');
   }
 
   crmSave('dms_coldcall', data);

@@ -298,10 +298,26 @@ function lcNotifyNewLead(lead, source) {
     });
   }
 
-  // Fire email (mailto now, Brevo at go-live)
-  const subject = encodeURIComponent(subjectText);
-  const body    = encodeURIComponent(bodyText);
-  window.open(`mailto:${toEmail}?cc=${ccEmails}&subject=${subject}&body=${body}`, '_blank');
+  // Fire real email via termac-notify (which sends through Resend) —
+  // 2026-07-10: this used to be window.open('mailto:...'), which only
+  // opened a draft in whoever's browser triggered the escalation and
+  // never actually sent anything on its own. Same subject/body content,
+  // now actually delivered.
+  fetch('https://termac-notify.termac-one.workers.dev/notify', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      recipientName: rep,
+      recipientEmail: toEmail,
+      ccEmails: ccEmails ? ccEmails.split(',') : [],
+      caller: biz,
+      company: services,
+      phone: phone,
+      notes: subjectText + (notes ? ' — ' + notes : ''),
+      source: source,
+      loggedBy: 'termac-lifecycle',
+    }),
+  }).catch(() => {});
 
   // Show toast
   const t = document.createElement('div');

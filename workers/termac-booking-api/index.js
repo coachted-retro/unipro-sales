@@ -30,10 +30,12 @@
  * columns, plus a high ai_score) since a customer reaching out through
  * the card is not something a rep typed in themselves and should jump to
  * the top of their queue immediately. Also fires an in-app notification
- * to the assigned rep via termac-notify the moment a booking lands, so
- * it doesn't sit unseen. This is the reference pattern for any other
- * inbound-lead source added later (harvester, DMS, a future website
- * contact form) — same is_hot/is_new_lead tagging, same notify call.
+ * AND a real email (via termac-notify, which now sends through Resend)
+ * to the assigned rep the moment a booking lands, so it doesn't sit
+ * unseen if they're not watching the app. This is the reference pattern
+ * for any other inbound-lead source added later (harvester, DMS, a
+ * future website contact form) — same is_hot/is_new_lead tagging, same
+ * notify call with a real looked-up email address.
  */
 
 const ALLOWED_ORIGINS = [
@@ -115,17 +117,29 @@ async function d1Fetch(env, method, path, body) {
   return await res.json();
 }
 
-// Fire-and-forget in-app bell notification to the assigned rep. Never
-// allowed to block or fail the booking itself — a booking that saved
-// correctly should never come back as an error just because the
-// notification side-channel had a bad moment.
-async function notifyRep(repName, leadName, notes) {
+// Fire-and-forget in-app bell + real email notification to the assigned
+// rep. Looks up the rep's actual email via rep_cards (same table the
+// digital card's own /profile endpoint reads) so the email isn't just a
+// name with nowhere to send — never allowed to block or fail the
+// booking itself, a booking that saved correctly should never come back
+// as an error just because the notification side-channel had a bad
+// moment.
+async function notifyRep(env, repId, repName, leadName, notes) {
+  let recipientEmail = '';
+  try {
+    const cardResult = await d1Fetch(env, 'GET', '/api/rep_cards?rep_slug=' + encodeURIComponent(repId));
+    if (cardResult.ok && Array.isArray(cardResult.results) && cardResult.results.length > 0) {
+      recipientEmail = cardResult.results[0].email || '';
+    }
+  } catch (e) { /* email lookup failing should never block the notify attempt below */ }
+
   try {
     await fetch(NOTIFY_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         recipientName: repName,
+        recipientEmail: recipientEmail,
         caller: leadName,
         notes: '🔥 New hot lead via Digital Business Card: ' + leadName + (notes ? ' — ' + notes : ''),
         source: 'Digital Business Card',
@@ -222,7 +236,7 @@ export default {
       }
       // Fire the notification after the save succeeds, never before —
       // and never let it hold up the response to the customer.
-      notifyRep(repName, v.name, v.notes);
+      notifyRep(env, v.repId, repName, v.name, v.notes);
       return json({ ok: true, message: 'Booking request received' }, 201, origin);
     } catch (e) {
       return err('Booking service unavailable: ' + e.message, 502, origin);

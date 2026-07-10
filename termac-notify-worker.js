@@ -13,13 +13,15 @@
  *   2. Storage & Databases → KV → Create namespace → name it TERMAC_NOTIFS
  *   3. Back on the Worker → Settings → Bindings → Add → KV Namespace
  *        Variable name: NOTIFS      KV namespace: TERMAC_NOTIFS
- *   4. Deploy again. Done.
+ *   4. Settings → Variables and secrets → Add → Secret
+ *        Name: RESEND_API_KEY      Value: (the real key from resend.com)
+ *   5. Deploy again. Done.
  *
  * Routes:
  *   GET  /health                                  -> { ok: true }
- *   POST /notify        { recipientName, caller, company, phone, notes,
- *                         source, loggedBy, id, ts }
- *                                                 -> { ok: true }
+ *   POST /notify        { recipientName, recipientEmail, ccEmails, caller,
+ *                         company, phone, notes, source, loggedBy, id, ts }
+ *                                                 -> { ok: true, emailSent }
  *   GET  /notify?recipient=NAME&since=TS          -> { notifications: [...] }
  *        Loose recipient match: "Ted Scholl" matches "Ted Scholl (Direct)".
  *
@@ -28,6 +30,16 @@
  * beyond what's already in the CRM; no auth because the data is the same
  * routing info already visible to every logged-in portal user. If that
  * posture changes at Azure go-live, swap in an Entra-validated token here.
+ *
+ * 2026-07-10 UPDATE: every notification now ALSO sends a real email via
+ * Resend when the caller provides a recipientEmail, not just the in-app
+ * bell — per Ted, someone who isn't actively watching the app still
+ * needs to know a hot lead came in. Email sending never blocks or fails
+ * the in-app notification write; if RESEND_API_KEY isn't configured, or
+ * the send fails, or no recipientEmail was given, the in-app side still
+ * completes normally. Sends from mytermac.com (verified in Resend) —
+ * swap FROM_ADDRESS below the day termac.com's own DNS is finally
+ * verified through Altek.
  */
 
 const CORS = {
@@ -35,6 +47,8 @@ const CORS = {
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
 };
+
+const FROM_ADDRESS = 'Termac One Alerts <alerts@mytermac.com>';
 
 // "Ted Scholl (Direct)" and "ted scholl" both normalize to "ted scholl"
 function normName(s) {
@@ -46,6 +60,56 @@ function json(obj, status = 200) {
     status,
     headers: { 'Content-Type': 'application/json', ...CORS },
   });
+}
+
+// Fire-and-forget style, but awaited so we can report success/failure back
+// to the caller — never throws, always resolves to true/false.
+async function sendEmail(env, notif) {
+  if (!env.RESEND_API_KEY) return false;
+  if (!notif.recipientEmail) return false;
+
+  const subject = notif.source === 'Digital Business Card' || notif.notes.indexOf('🔥') === 0
+    ? '🔥 New hot lead: ' + (notif.caller || 'Unknown')
+    : 'Termac One notification: ' + (notif.caller || 'Unknown');
+
+  const lines = [
+    '<p><strong>' + escapeHtml(notif.caller || 'Unknown') + '</strong></p>',
+    notif.company ? '<p>Company: ' + escapeHtml(notif.company) + '</p>' : '',
+    notif.phone ? '<p>Phone: ' + escapeHtml(notif.phone) + '</p>' : '',
+    notif.notes ? '<p>' + escapeHtml(notif.notes) + '</p>' : '',
+    '<p style="color:#6B7280;font-size:13px">Source: ' + escapeHtml(notif.source || 'Termac One') + '</p>',
+    '<p style="color:#6B7280;font-size:13px">Check your dashboard for full details.</p>',
+  ].filter(Boolean).join('');
+
+  const payload = {
+    from: FROM_ADDRESS,
+    to: [notif.recipientEmail],
+    subject: subject,
+    html: lines,
+  };
+  if (Array.isArray(notif.ccEmails) && notif.ccEmails.length) {
+    payload.cc = notif.ccEmails.filter(e => e && e !== notif.recipientEmail);
+  }
+
+  try {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + env.RESEND_API_KEY,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+    return res.ok;
+  } catch (e) {
+    return false;
+  }
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 export default {
@@ -74,6 +138,8 @@ export default {
         const notif = {
           id: body.id || ('HL' + Date.now() + Math.random().toString(36).slice(2, 6)),
           recipientName: body.recipientName || '',
+          recipientEmail: body.recipientEmail || '',
+          ccEmails: Array.isArray(body.ccEmails) ? body.ccEmails : [],
           caller: body.caller || '',
           company: body.company || '',
           phone: body.phone || '',
@@ -85,7 +151,9 @@ export default {
         // Dedupe by id, newest first, cap at 50
         list = [notif, ...list.filter(n => n.id !== notif.id)].slice(0, 50);
         await env.NOTIFS.put(key, JSON.stringify(list), { expirationTtl: 7 * 24 * 3600 });
-        return json({ ok: true, id: notif.id });
+
+        const emailSent = await sendEmail(env, notif);
+        return json({ ok: true, id: notif.id, emailSent });
       }
 
       if (path.endsWith('/notify') && request.method === 'GET') {
