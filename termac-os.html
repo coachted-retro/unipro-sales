@@ -4159,6 +4159,7 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
   <div class="ov-header">
     <h2>📊 Manager Portal</h2>
     <div class="ov-header-btns">
+      <button onclick="forceResyncToD1()" style="background:#1B5FA8;border:1.5px solid #1B5FA8;color:#fff;border-radius:7px;padding:6px 14px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;margin-right:8px" title="Push everything in local storage up to D1, including records that predate the sync fix">☁️ Force Resync to D1</button>
       <button onclick="openResetModal()" style="background:#374151;border:1.5px solid #6B7280;color:#D1D5DB;border-radius:7px;padding:6px 14px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer" title="Wipe all demo/seed data for go-live">⚙️ Reset Data</button>
     </div>
   </div>
@@ -36440,6 +36441,37 @@ function closeAccountTypeGate() {
 
 <script>
 // ── DATA RESET SYSTEM ────────────────────────────────────────────────────────
+// 2026-07-10: pushes everything currently sitting in local storage back
+// through crmSave for every D1-synced table, forcing a fresh D1 write for
+// every record -- including ones that predate tonight's sync fixes and
+// have been sitting local-only this whole time (the ~40 real leads this
+// was built for specifically). Safe to run repeatedly: crmSave always
+// does INSERT OR REPLACE, so re-pushing something already in D1 just
+// overwrites it with the same (or newer, if edited since) data, never
+// duplicates it.
+async function forceResyncToD1() {
+  if (typeof D1_SYNC_TABLES === 'undefined' || typeof crmLoad !== 'function' || typeof crmSave !== 'function') {
+    alert('Sync layer not available on this page.');
+    return;
+  }
+  if (!confirm('This pushes everything currently on this device up to D1, including anything created before tonight\'s sync fixes. It can take a minute for a lot of records. Continue?')) return;
+
+  var counts = {};
+  var totalPushed = 0;
+  for (var i = 0; i < D1_SYNC_TABLES.length; i++) {
+    var table = D1_SYNC_TABLES[i];
+    var records = crmLoad(table);
+    if (records && records.length) {
+      crmSave(table, records);
+      counts[table] = records.length;
+      totalPushed += records.length;
+    }
+  }
+
+  var summary = Object.keys(counts).map(function(k){ return k + ': ' + counts[k]; }).join('\n');
+  alert('Resync started for ' + totalPushed + ' total records across ' + Object.keys(counts).length + ' tables:\n\n' + summary + '\n\nPushes run in the background — give it a minute, then refresh to confirm everything landed.');
+}
+
 function openResetModal() {
   var modal = document.getElementById('resetModal');
   if (!modal) return;
@@ -36448,9 +36480,23 @@ function openResetModal() {
   var list = document.getElementById('resetStoreList');
   if (!list) return;
 
-  var arrayStores = ['termac_crm_accounts','termac_crm_leads',
+  var arrayStores = ['termac_crm_accounts','termac_crm_leads','termac_crm_contacts',
     'unipro_jobs','gto_invoices','filterman_invoices','allpro_invoices',
     'termac_invoices','quality3_invoices','termac_scheduled_jobs'];
+
+  // 2026-07-10: the original _seeded:true check only ever caught the
+  // properly-flagged demo set. A second, more dangerous set (from the
+  // now-disabled seedDemoData function -- Ferraro Ristorante, Wu Dim Sum
+  // Palace, Mario's Kitchen & Bar, St. Mary Medical Center, etc.) was
+  // written directly into real data with NO flag at all, indistinguishable
+  // from a real entry just by looking at it. Those records do have fixed,
+  // known IDs though (acc001-acc008, lead001-lead007, con001-con004),
+  // since they were hardcoded the same way every time the function ran --
+  // matching by exact ID is safe here specifically because a real record
+  // created through the actual app never gets one of these ID shapes.
+  var KNOWN_UNFLAGGED_SEED_IDS = ['acc001','acc002','acc003','acc004','acc005',
+    'acc006','acc007','acc008','lead001','lead002','lead003','lead004',
+    'lead006','lead007','con001','con002','con003','con004'];
 
   var lines = [];
   var totalSeeded = 0, totalReal = 0;
@@ -36459,7 +36505,7 @@ function openResetModal() {
     try {
       var all = JSON.parse(localStorage.getItem(key)||'[]');
       if (!all.length) return;
-      var seeded = all.filter(function(r){ return r._seeded; }).length;
+      var seeded = all.filter(function(r){ return r._seeded || KNOWN_UNFLAGGED_SEED_IDS.indexOf(r.id) !== -1; }).length;
       var real = all.length - seeded;
       totalSeeded += seeded; totalReal += real;
       var label = key.replace('termac_crm_','').replace(/_invoices|_jobs/g,'');
@@ -36506,19 +36552,32 @@ function executeReset() {
 
   var seedRemoved = 0, realKept = 0;
 
-  // Surgical: only remove _seeded:true records from array stores
-  var arrayStores = ['termac_crm_accounts','termac_crm_leads',
+  var KNOWN_UNFLAGGED_SEED_IDS = ['acc001','acc002','acc003','acc004','acc005',
+    'acc006','acc007','acc008','lead001','lead002','lead003','lead004',
+    'lead006','lead007','con001','con002','con003','con004'];
+
+  // Surgical: removes _seeded:true records AND the known unflagged
+  // hardcoded-ID demo records (see openResetModal for why matching by ID
+  // is safe here), from array stores. Everything else is untouched.
+  var arrayStores = ['termac_crm_accounts','termac_crm_leads','termac_crm_contacts',
     'unipro_jobs','gto_invoices','filterman_invoices','allpro_invoices',
     'termac_invoices','quality3_invoices','termac_scheduled_jobs'];
 
   arrayStores.forEach(function(key) {
     try {
       var all  = JSON.parse(localStorage.getItem(key)||'[]');
-      var real   = all.filter(function(r){ return !r._seeded; });
-      var seeded = all.filter(function(r){ return r._seeded; });
+      var isSeed = function(r){ return r._seeded || KNOWN_UNFLAGGED_SEED_IDS.indexOf(r.id) !== -1; };
+      var real   = all.filter(function(r){ return !isSeed(r); });
+      var seeded = all.filter(isSeed);
       seedRemoved += seeded.length;
       realKept    += real.length;
       localStorage.setItem(key, JSON.stringify(real));
+      // Also push the cleaned list to D1 so a demo record removed here
+      // doesn't silently reappear on the next sync sweep from another
+      // device that still has it cached locally.
+      if (typeof crmSave === 'function' && key.indexOf('termac_crm_') === 0) {
+        crmSave(key.replace('termac_crm_',''), real);
+      }
     } catch(e) {}
   });
 
