@@ -34,7 +34,7 @@
   var D1_API_SECRET = 'termac2026';
   var D1_SYNC_TABLES = ['accounts', 'leads', 'contacts', 'opportunities', 'bids',
     'jobs', 'deficiencies', 'collections', 'dms_coldcall',
-    'allpro_projects', 'allpro_cost_lines', 'appointments'];
+    'allpro_projects', 'allpro_cost_lines', 'appointments', 'allpro_design_projects'];
 
   async function d1Fetch(method, path, body) {
     try {
@@ -96,6 +96,9 @@
       accountId: 'account_id', recordId: 'record_id', isFlexStop: 'is_flex_stop',
       createdAt: 'created_at', createdBy: 'created_by',
     },
+    allpro_design_projects: {
+      accountId: 'account_id', projectId: 'project_id', createdAt: 'created_at',
+    },
   };
 
   var VALID = {
@@ -156,6 +159,15 @@
     allpro_cost_lines: ['id', 'project_id', 'line_type', 'description',
       'quantity', 'unit', 'estimated_amount', 'actual_amount',
       'material_status', 'created_at', 'updated_at'],
+    // 2026-07-10: part of the AllPro reconciliation -- design-portal.html
+    // was localStorage-only before this, with no D1 presence at all.
+    // project_id links a design/spec project to its parent allpro_projects
+    // row (added when the sales-side forward-to-Dan flow creates the
+    // project); account_id is kept too since Design Studio can also be
+    // opened standalone, not only from an existing AllPro project.
+    allpro_design_projects: ['id', 'account_id', 'project_id', 'client', 'site',
+      'contact', 'pm', 'division', 'status', 'spec', 'revisions', 'approval',
+      'created_at', 'updated_at'],
   };
 
   function d1NormalizeRecord(table, record) {

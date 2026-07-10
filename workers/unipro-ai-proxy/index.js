@@ -24,6 +24,8 @@ const ALLOWED_TABLES = new Set([
   'townships','quality_complaints','rep_schedule',
   // localStorage-only audit fix, added 2026-07-10
   'appointments',
+  // AllPro reconciliation, added 2026-07-10
+  'allpro_design_projects',
 ]);
 
 const TABLE_PREFIX = {
@@ -33,6 +35,7 @@ const TABLE_PREFIX = {
   scheduler_queue:'SCH', activity_log:'ACT', notifications:'NOT',
   messages:'MSG', rep_cards:'REP', warehouse_inventory:'WHI', dms_coldcall:'DMS',
   appointments:'APT',
+  allpro_design_projects:'ADP',
 };
 
 function corsHeaders(origin) {
