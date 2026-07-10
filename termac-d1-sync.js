@@ -49,15 +49,40 @@
   }
 
   var FIELD_MAP = {
+    // 2026-07-10 FIX: 'business' was previously remapped to 'business_name',
+    // a column that never actually existed on the live D1 leads table (the
+    // real column is just 'business'). Any lead save that included a
+    // business name — i.e. nearly every real lead — was silently failing
+    // to reach D1 entirely because of this single wrong mapping; the local
+    // save always looked fine so this went unnoticed. Also same root
+    // cause for 'score' -> 'ai_score' previously failing (that column
+    // simply didn't exist; it's been added to the table now).
     leads: {
-      business: 'business_name', name: 'contact_name', score: 'ai_score',
+      name: 'contact_name', score: 'ai_score',
       status: 'lifecycle_stage', company: 'division', assignedRep: 'assigned_rep',
       created: 'created_at', followupDate: 'follow_up_date',
+      isHot: 'is_hot', isNewLead: 'is_new_lead',
     },
     accounts: {
-      name: 'business_name', assignedRep: 'assigned_rep', created: 'created_at',
+      // 2026-07-10 FIX: previously mapped name -> 'business_name', a
+      // column that never existed on the real accounts table (real
+      // columns are 'name' and 'business', both already present, no
+      // remapping needed at all). Also added every other real column
+      // alias below — annualValue, nextDue, etc. — none of which were
+      // mapped before, meaning virtually no account field besides id/
+      // status/assigned_rep could ever reach D1.
+      assignedRep: 'assigned_rep', created: 'created_at',
+      annualValue: 'annual_value', nextDue: 'next_due',
+      renewalDate: 'renewal_date', lastService: 'last_service',
+      healthScore: 'health_score', openDeficiencies: 'open_deficiencies',
+      lastCheckin: 'last_checkin', certStatus: 'cert_status',
     },
     contacts: {
+      // 2026-07-10 FIX: previous VALID list for this table (location_id,
+      // company_id, first_name, last_name, is_primary) described a
+      // schema that was never actually created — the real table uses
+      // name/company/title/email/phone/assigned_rep/status directly, no
+      // mapping needed for those, they already match.
       assignedRep: 'assigned_rep', created: 'created_at',
     },
     dms_coldcall: {
@@ -74,17 +99,17 @@
   };
 
   var VALID = {
-    leads: ['id', 'business_name', 'address', 'city', 'state', 'zip', 'phone', 'email',
+    leads: ['id', 'business', 'address', 'city', 'state', 'zip', 'phone', 'email',
       'contact_name', 'contact_title', 'pricing_tier', 'facility_type', 'division',
       'lifecycle_stage', 'ai_score', 'assigned_rep', 'source', 'notes',
       'follow_up_date', 'last_activity', 'converted_at', 'account_id',
-      'created_at', 'updated_at'],
-    accounts: ['id', 'location_id', 'company_id', 'uni_acct_id', 'q3_acct_id',
-      'alp_acct_id', 'flm_acct_id', 'gto_acct_id', 'trm_acct_id',
-      'billing_cadence', 'card_on_file', 'square_ref', 'msa_signed',
-      'msa_signed_at', 'status', 'assigned_rep', 'created_at', 'updated_at'],
-    contacts: ['id', 'location_id', 'company_id', 'first_name', 'last_name',
-      'title', 'email', 'phone', 'is_primary', 'created_at', 'updated_at'],
+      'is_hot', 'is_new_lead', 'created_at', 'updated_at'],
+    accounts: ['id', 'name', 'business', 'status', 'services', 'annual_value',
+      'next_due', 'renewal_date', 'last_service', 'health_score',
+      'assigned_rep', 'open_deficiencies', 'city', 'zip', 'last_checkin',
+      'cert_status', 'onboarding', 'created_at', 'updated_at'],
+    contacts: ['id', 'name', 'company', 'title', 'email', 'phone',
+      'assigned_rep', 'status', 'created_at', 'updated_at'],
     jobs: ['id', 'account_id', 'location_id', 'division', 'service_type', 'tech_id',
       'scheduled_date', 'scheduled_time', 'status', 'notes', 'report_url',
       'square_ref', 'completed_at', 'created_at', 'updated_at'],
@@ -114,7 +139,14 @@
       var col = map[k] || k;
       if (valid.size === 0 || valid.has(col)) {
         var v = record[k];
-        if (Array.isArray(v) || (v !== null && typeof v === 'object')) return;
+        // 2026-07-10 FIX: array/object fields (services, certStatus,
+        // onboarding, etc.) used to be silently dropped here entirely —
+        // they're stored as JSON text now instead, since their D1
+        // columns are plain TEXT and built to hold exactly that.
+        if (Array.isArray(v) || (v !== null && typeof v === 'object')) {
+          try { r[col] = JSON.stringify(v); } catch (e) {}
+          return;
+        }
         r[col] = v;
       }
     });
@@ -135,8 +167,17 @@
     Object.keys(map).forEach(function (camelKey) { inverse[map[camelKey]] = camelKey; });
     var out = Object.assign({}, record);
     Object.keys(record).forEach(function (col) {
+      var v = record[col];
+      // 2026-07-10 FIX: fields stored as JSON text (services, cert_status,
+      // onboarding, etc.) need to come back as real arrays/objects, not
+      // stay as strings, or the UI code that reads them (e.g. array
+      // methods on r.services) breaks.
+      if (typeof v === 'string' && v.length > 1 &&
+          ((v[0] === '[' && v[v.length - 1] === ']') || (v[0] === '{' && v[v.length - 1] === '}'))) {
+        try { out[col] = JSON.parse(v); } catch (e) {}
+      }
       var camelKey = inverse[col];
-      if (camelKey && !(camelKey in out)) out[camelKey] = record[col];
+      if (camelKey && !(camelKey in out)) out[camelKey] = out[col];
     });
     return out;
   }

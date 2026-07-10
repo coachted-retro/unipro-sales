@@ -24,6 +24,16 @@
  * JSON) — this was the actual root cause of "Card temporarily
  * unavailable" errors, not a secret or URL misconfiguration. Do not
  * revert this to a plain fetch(env.D1_API_URL + ...) call.
+ *
+ * IMPORTANT — 2026-07-10 (later same night): every inbound lead this
+ * worker creates is automatically tagged hot + new (is_hot / is_new_lead
+ * columns, plus a high ai_score) since a customer reaching out through
+ * the card is not something a rep typed in themselves and should jump to
+ * the top of their queue immediately. Also fires an in-app notification
+ * to the assigned rep via termac-notify the moment a booking lands, so
+ * it doesn't sit unseen. This is the reference pattern for any other
+ * inbound-lead source added later (harvester, DMS, a future website
+ * contact form) — same is_hot/is_new_lead tagging, same notify call.
  */
 
 const ALLOWED_ORIGINS = [
@@ -31,6 +41,8 @@ const ALLOWED_ORIGINS = [
   'https://my.termac.com',
   'https://coachted-retro.github.io',
 ];
+
+const NOTIFY_URL = 'https://termac-notify.termac-one.workers.dev/notify';
 
 // Real reps and the division(s) they actually sell, per Ted — used to
 // validate that a submitted repId is a real card, not an arbitrary value,
@@ -101,6 +113,26 @@ async function d1Fetch(env, method, path, body) {
   if (body) opts.body = JSON.stringify(body);
   const res = await env.D1_SERVICE.fetch('https://unipro-ai-proxy.termac-one.workers.dev' + path.replace('/api/', '/db/'), opts);
   return await res.json();
+}
+
+// Fire-and-forget in-app bell notification to the assigned rep. Never
+// allowed to block or fail the booking itself — a booking that saved
+// correctly should never come back as an error just because the
+// notification side-channel had a bad moment.
+async function notifyRep(repName, leadName, notes) {
+  try {
+    await fetch(NOTIFY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        recipientName: repName,
+        caller: leadName,
+        notes: '🔥 New hot lead via Digital Business Card: ' + leadName + (notes ? ' — ' + notes : ''),
+        source: 'Digital Business Card',
+        loggedBy: 'termac-booking-api',
+      }),
+    });
+  } catch (e) { /* never block the booking on a notify failure */ }
 }
 
 export default {
@@ -177,6 +209,10 @@ export default {
       notes: fullNotes,
       follow_up_date: v.requestedDate || null,
       lifecycle_stage: 'lead',
+      // Inbound lead, not rep-entered — always hot + new on arrival.
+      ai_score: 9,
+      is_hot: 1,
+      is_new_lead: 1,
     };
 
     try {
@@ -184,6 +220,9 @@ export default {
       if (!result.ok) {
         return err('Could not save booking: ' + (result.error || 'unknown error'), 502, origin);
       }
+      // Fire the notification after the save succeeds, never before —
+      // and never let it hold up the response to the customer.
+      notifyRep(repName, v.name, v.notes);
       return json({ ok: true, message: 'Booking request received' }, 201, origin);
     } catch (e) {
       return err('Booking service unavailable: ' + e.message, 502, origin);

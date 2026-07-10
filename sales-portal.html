@@ -1083,8 +1083,15 @@ function spRenderCRM(tab) {
   if (co) data = data.filter(r => (r.company||'').toLowerCase() === co.toLowerCase());
   if (st) data = data.filter(r => (r.status||'') === st);
 
-  // Sort: most recent first
-  data.sort((a,b) => (b.updated||b.created||0) - (a.updated||a.created||0));
+  // Sort: hot inbound leads first (fire-flagged, newest of those on top),
+  // then everything else by most recent — so a lead a customer sent in
+  // themselves never gets buried under older, cooler records.
+  data.sort((a,b) => {
+    const aHot = (a.isHot || a.is_hot) ? 1 : 0;
+    const bHot = (b.isHot || b.is_hot) ? 1 : 0;
+    if (aHot !== bHot) return bHot - aHot;
+    return (b.updated||b.created||0) - (a.updated||a.created||0);
+  });
 
   // Build HTML
   const isMgr = ['accounts'].includes(tab);
@@ -1141,13 +1148,18 @@ function spRecordCard(r, tab) {
     const c = spSvcColor(s);
     return `<span style="background:${c.bg};color:${c.color};border-radius:4px;padding:2px 7px;font-size:10px;font-weight:700">${spSvcLabel(s)}</span>`;
   }).join('');
-  const borderColor = stage.color;
+  const isHot = !!(r.isHot || r.is_hot);
+  const isNewLead = !!(r.isNewLead || r.is_new_lead);
+  const borderColor = isHot ? '#C8102E' : stage.color;
+  const hotBadge = isHot
+    ? `<span style="background:#FEE2E2;color:#991B1B;border-radius:99px;padding:1px 8px;font-size:10px;font-weight:800;display:inline-flex;align-items:center;gap:3px">🔥 ${isNewLead ? 'NEW HOT LEAD' : 'HOT'}</span>`
+    : '';
   const score = r.score ? `<span style="background:${r.score>=8?'#DCFCE7':r.score>=5?'#FEF3C7':'#FEE2E2'};color:${r.score>=8?'#166534':r.score>=5?'#92400E':'#991B1B'};border-radius:99px;padding:1px 7px;font-size:10px;font-weight:800">${r.score}/10</span>` : '';
 
-  return `<div class="sp-record" style="border-left-color:${borderColor}" data-id="${r.id}" data-tab="${tab}" onclick="spViewRecord('${r.id}','${tab}');spLoadIntelPanel('${r.id}','${tab}')" id="spRec_${r.id}">
+  return `<div class="sp-record" style="border-left-color:${borderColor}${isHot?';border-left-width:4px':''}" data-id="${r.id}" data-tab="${tab}" onclick="spViewRecord('${r.id}','${tab}');spLoadIntelPanel('${r.id}','${tab}')" id="spRec_${r.id}">
     <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:4px">
       <div class="sp-rec-biz">${escH(r.business || r.name || '—')}${window.TermacCredit?TermacCredit.badgeHTML(r.business||r.name):''}</div>
-      ${score}
+      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">${hotBadge}${score}</div>
     </div>
     <div class="sp-rec-name">${escH(r.name || r.contact || '')}${r.role ? ' · ' + escH(r.role) : ''}</div>
     ${r.phone ? `<div class="sp-rec-row">📞 <a href="tel:${escH(r.phone)}" onclick="event.stopPropagation()">${escH(r.phone)}</a></div>` : ''}
@@ -3034,6 +3046,13 @@ function spViewRecord(id, tab) {
     if (r) { foundTab = p; break; }
   }
   if (!r) return;
+  // Clear the "new" flag the moment a rep actually opens a hot inbound
+  // lead — stays hot (still rises to the top, still shows the fire icon)
+  // but the NEW badge specifically is a first-look flag, not permanent.
+  if (foundTab === 'leads' && (r.isNewLead || r.is_new_lead)) {
+    r.isNewLead = false; r.is_new_lead = 0;
+    crmSave('leads', crmLoad('leads'));
+  }
   const rv = JSON.parse(sessionStorage.getItem('sp_recently_viewed') || '[]');
   const newRv = [{ id, tab:foundTab, name:r.name||r.contact||'', business:r.business||'' }, ...rv.filter(x => x.id !== id)].slice(0,8);
   sessionStorage.setItem('sp_recently_viewed', JSON.stringify(newRv));
