@@ -128,6 +128,34 @@
     appointments: ['id', 'account_id', 'record_id', 'tab', 'title', 'business',
       'date', 'time', 'type', 'notes', 'location', 'is_flex_stop', 'rep',
       'created_by', 'division', 'status', 'created_at', 'updated_at'],
+    // 2026-07-10: previously had no explicit entry here at all, which
+    // meant every field on a project record passed through unfiltered
+    // (d1NormalizeRecord treats an empty VALID list as "allow everything").
+    // That's how a second, incompatible schema (QuickBase-import field
+    // names: folder_number, accounting_job_number, project_ntp, etc.)
+    // ended up sharing this table with the real 9-stage planner's own
+    // fields (project_name, estimated_value, fab_status, etc.) without
+    // either side ever erroring — both just silently failed whenever they
+    // used a column the other side hadn't created. The table now has
+    // every column both schemas need; this list is explicit so a future
+    // typo'd field name fails loudly (never reaches D1) instead of
+    // quietly colliding with something else again.
+    allpro_projects: ['id', 'folder_number', 'location_name', 'account_id',
+      'accounting_job_number', 'project_type', 'project_description',
+      'lead_generation_type', 'project_ntp', 'project_start', 'project_completed',
+      'total_quoted_value', 'job_notes', 'stage', 'project_name',
+      'estimated_value', 'sale_price', 'site_address', 'facility_type',
+      'scope_summary', 'survey_mode', 'survey_notes', 'fab_status', 'fab_notes',
+      'delivery_date', 'crane_required', 'final_inspection_date',
+      'final_inspection_result', 'stage_updated_at', 'cross_sell_triggered',
+      'created_at', 'updated_at'],
+    // 2026-07-10: table didn't exist in D1 at all before tonight -- every
+    // GET to it returned a 400, visible repeatedly in console screenshots
+    // all night. Created to match exactly what allpro-project-planner.html
+    // already sends via addCostLine().
+    allpro_cost_lines: ['id', 'project_id', 'line_type', 'description',
+      'quantity', 'unit', 'estimated_amount', 'actual_amount',
+      'material_status', 'created_at', 'updated_at'],
   };
 
   function d1NormalizeRecord(table, record) {
