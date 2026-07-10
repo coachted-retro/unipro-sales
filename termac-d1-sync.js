@@ -34,7 +34,7 @@
   var D1_API_SECRET = 'termac2026';
   var D1_SYNC_TABLES = ['accounts', 'leads', 'contacts', 'opportunities', 'bids',
     'jobs', 'deficiencies', 'collections', 'dms_coldcall',
-    'allpro_projects', 'allpro_cost_lines'];
+    'allpro_projects', 'allpro_cost_lines', 'appointments'];
 
   async function d1Fetch(method, path, body) {
     try {
@@ -67,6 +67,10 @@
       dmEmail: 'dm_email', landlordPhone: 'landlord_phone', landlordEmail: 'landlord_email',
       contractExp: 'contract_exp', updated: 'updated_at',
     },
+    appointments: {
+      accountId: 'account_id', recordId: 'record_id', isFlexStop: 'is_flex_stop',
+      createdAt: 'created_at', createdBy: 'created_by',
+    },
   };
 
   var VALID = {
@@ -96,6 +100,9 @@
       'notes', 'status', 'updated_at', 'created_at'],
     rep_cards: ['id', 'rep_slug', 'name', 'title', 'divisions', 'phone', 'email',
       'linkedin', 'bio', 'service_area', 'years_experience', 'photo_url', 'created_at', 'updated_at'],
+    appointments: ['id', 'account_id', 'record_id', 'tab', 'title', 'business',
+      'date', 'time', 'type', 'notes', 'location', 'is_flex_stop', 'rep',
+      'created_by', 'division', 'status', 'created_at', 'updated_at'],
   };
 
   function d1NormalizeRecord(table, record) {

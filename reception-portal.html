@@ -1129,13 +1129,11 @@ function rcpSubmitEmergency(){
 // row — scans every division's job pool plus appointments for the earliest
 // upcoming visit for that account.
 function rcpNextService(acct){
-  var pools = ['unipro_jobs','gto_invoices','filterman_invoices','termac_scheduled_jobs','termac_appointments'];
+  var pools = ['unipro_jobs','gto_invoices','filterman_invoices','termac_scheduled_jobs'];
   var today = new Date().toISOString().slice(0,10);
   var bizNorm = String(acct.business||acct.bizName||acct.businessName||acct.name||'').toLowerCase().trim();
   var best = null;
-  pools.forEach(function(key){
-    var jobs = [];
-    try { jobs = JSON.parse(localStorage.getItem(key)||'[]'); } catch(e){ return; }
+  function scan(jobs){
     jobs.forEach(function(j){
       var d = j.date || j.scheduledDate || j.apptDate || '';
       if(!d || d < today) return;
@@ -1143,7 +1141,16 @@ function rcpNextService(acct){
         || (bizNorm && String(j.accountName||j.account||j.business||j.bizName||'').toLowerCase().trim() === bizNorm);
       if(matches && (!best || d < best)) best = d;
     });
+  }
+  pools.forEach(function(key){
+    var jobs = [];
+    try { jobs = JSON.parse(localStorage.getItem(key)||'[]'); } catch(e){ return; }
+    scan(jobs);
   });
+  // Appointments now live in the synced crmLoad/crmSave store, not the
+  // old raw 'termac_appointments' key — that key is no longer written
+  // to as of 2026-07-10, so it's read here via the canonical path.
+  try { scan(crmLoad('appointments') || []); } catch(e) {}
   return best;
 }
 

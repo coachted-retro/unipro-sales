@@ -22,6 +22,8 @@ const ALLOWED_TABLES = new Set([
   'allpro_hood_pricing','allpro_fan_pricing','allpro_hood_designer',
   'allpro_permits','allpro_bid_lines','allpro_parts_catalog',
   'townships','quality_complaints','rep_schedule',
+  // localStorage-only audit fix, added 2026-07-10
+  'appointments',
 ]);
 
 const TABLE_PREFIX = {
@@ -30,6 +32,7 @@ const TABLE_PREFIX = {
   jobs:'JOB', deficiencies:'DEF', collections:'COL',
   scheduler_queue:'SCH', activity_log:'ACT', notifications:'NOT',
   messages:'MSG', rep_cards:'REP', warehouse_inventory:'WHI', dms_coldcall:'DMS',
+  appointments:'APT',
 };
 
 function corsHeaders(origin) {

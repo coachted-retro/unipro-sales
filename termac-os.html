@@ -1792,7 +1792,7 @@ crmHydrateBackup();
 // Tables covered: accounts, leads, contacts, opportunities, bids, jobs, deficiencies, collections
 const D1_API_URL = 'https://unipro-ai-proxy.termac-one.workers.dev';
 const D1_API_SECRET = 'termac2026';
-const D1_SYNC_TABLES = ['accounts','leads','contacts','opportunities','bids','jobs','deficiencies','collections'];
+const D1_SYNC_TABLES = ['accounts','leads','contacts','opportunities','bids','jobs','deficiencies','collections','appointments'];
 
 async function d1Fetch(method, path, body) {
   try {
@@ -1821,6 +1821,10 @@ function d1NormalizeRecord(table, record) {
     },
     contacts: {
       assignedRep: 'assigned_rep', created: 'created_at'
+    },
+    appointments: {
+      accountId: 'account_id', recordId: 'record_id', isFlexStop: 'is_flex_stop',
+      createdAt: 'created_at', createdBy: 'created_by'
     }
   };
   var map = FIELD_MAP[table] || {};
@@ -1844,7 +1848,10 @@ function d1NormalizeRecord(table, record) {
                    'equipment_type','severity','status','quoted_amount','quote_ref',
                    'assigned_to','due_date','resolved_at','notes','created_at','updated_at'],
     collections: ['id','account_id','invoice_ref','amount_due','amount_paid',
-                  'due_date','status','last_contact','notes','created_at','updated_at']
+                  'due_date','status','last_contact','notes','created_at','updated_at'],
+    appointments: ['id','account_id','record_id','tab','title','business',
+                   'date','time','type','notes','location','is_flex_stop','rep',
+                   'created_by','division','status','created_at','updated_at']
   };
   var valid = new Set(VALID[table] || []);
   var now = Date.now();
@@ -1889,7 +1896,28 @@ async function d1PushBatch(table, records) {
 // because termac-os.html predates that shared file and was never
 // switched over to use it.
 function d1ReverseMapLocal(table, record) {
-  const map = FIELD_MAP[table] || {};
+  // Own copy of the camelCase<->snake_case alias map — the FIELD_MAP
+  // inside d1NormalizeRecord() above is scoped to that function only
+  // and isn't reachable from here, so this mirrors the same three
+  // table mappings independently rather than reaching across scope.
+  const REVERSE_FIELD_MAP = {
+    leads: {
+      business: 'business_name', name: 'contact_name', score: 'ai_score',
+      status: 'lifecycle_stage', company: 'division', assignedRep: 'assigned_rep',
+      created: 'created_at', followupDate: 'follow_up_date'
+    },
+    accounts: {
+      name: 'business_name', assignedRep: 'assigned_rep', created: 'created_at'
+    },
+    contacts: {
+      assignedRep: 'assigned_rep', created: 'created_at'
+    },
+    appointments: {
+      accountId: 'account_id', recordId: 'record_id', isFlexStop: 'is_flex_stop',
+      createdAt: 'created_at', createdBy: 'created_by'
+    }
+  };
+  const map = REVERSE_FIELD_MAP[table] || {};
   const inverse = {};
   Object.keys(map).forEach(function (camelKey) { inverse[map[camelKey]] = camelKey; });
   const out = Object.assign({}, record);
@@ -25387,7 +25415,7 @@ function saveAppointment() {
 
     // Write to appointments collection as flex stop
     try {
-      const appts = JSON.parse(localStorage.getItem('termac_appointments') || '[]');
+      const appts = crmLoad('appointments') || [];
       appts.push({
         id: 'visit_' + Date.now(),
         recordId: _actRecordId,
@@ -25399,7 +25427,7 @@ function saveAppointment() {
         createdAt: Date.now(),
         createdBy: _currentUser?.name || 'Rep',
       });
-      localStorage.setItem('termac_appointments', JSON.stringify(appts));
+      crmSave('appointments', appts);
     } catch(e) {}
 
     closeActModal('actApptModal');
@@ -26858,7 +26886,7 @@ function renderTedPerf() {
   // ── Pull data from platform ─────────────────────────────────
   var leads     = crmLoad('leads') || [];
   var bids      = JSON.parse(localStorage.getItem('termac_bids') || '[]');
-  var appts     = JSON.parse(localStorage.getItem('termac_appointments') || '[]');
+  var appts     = crmLoad('appointments') || [];
 
   var now  = Date.now();
   var qStart = (function() {
