@@ -533,6 +533,7 @@ body.rail-open .rail-overlay{display:block}
         <button class="sp-tab"        id="spTab-contacts"     onclick="spNav('contacts')">👤 Contacts</button>
         <button class="sp-tab"        id="spTab-opportunities" onclick="spNav('opportunities')">💼 Opportunities</button>
         <button class="sp-tab"        id="spTab-accounts"     onclick="spNav('accounts')">🏢 Accounts</button>
+        <button class="sp-tab"        id="spTab-schedule"     onclick="spNav('schedule')">📅 My Schedule</button>
       </div>
       <!-- AI Camera — made prominent (solid color, bigger tap target) since
            this gets tapped constantly in the field and was blending in as
@@ -901,7 +902,7 @@ function spAutoCloseDrawer() {
 const SP_TITLES = {
   home:'Home', leads:'Leads', contacts:'Contacts', opportunities:'Opportunities',
   accounts:'Accounts', goals:'Goals & Stats', weekly:'Weekly Report',
-  queue:'My Queue', employee:'Employee Portal'
+  queue:'My Queue', employee:'Employee Portal', schedule:'My Schedule'
 };
 
 function spNav(tab) {
@@ -938,6 +939,7 @@ function spRender(tab) {
   else if (tab === 'accounts')      spRenderCRM('accounts');
   else if (tab === 'goals')         spRenderGoals();
   else if (tab === 'weekly')        spRenderWeekly();
+  else if (tab === 'schedule')      spRenderSchedule();
   else if (tab === 'queue')         spRenderQueue();
   else if (tab === 'employee')      spRenderEmployee();
 }
@@ -5594,6 +5596,103 @@ function spRenderWeekly() {
     <textarea id="spWeeklyNotes" rows="6" placeholder="Add your weekly highlights, obstacles, or notes here…" style="width:100%;padding:10px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;resize:vertical">${localStorage.getItem('sp_weekly_notes_'+repName+'_'+weekTs)||''}</textarea>
     <button class="sp-btn sp-btn-blue" style="margin-top:8px" onclick="spSaveWeeklyNotes(${weekTs})">Save Notes</button>
   </div>`;
+}
+
+/* ══ MY SCHEDULE — recurring weekly time-blocking ══════════════════════
+   Personal to each rep, device-local (not synced to D1 — this is a
+   planning tool, not shared CRM data). One recurring weekly pattern,
+   not per-week instances: fill it in once, it applies every week going
+   forward, matching what Ted asked for exactly. Categories: Phone Calls,
+   Emails, Paperwork/Bids, Site Surveys. Tap a category chip to arm it,
+   then tap time slots to paint them; tap an already-painted slot with
+   the same category armed to clear it. */
+const SP_SCHED_CATS = [
+  { id:'calls',     label:'📞 Phone Calls',    color:'#1B5FA8' },
+  { id:'emails',    label:'✉️ Emails',          color:'#6D28D9' },
+  { id:'paperwork', label:'📋 Paperwork / Bids', color:'#D8690B' },
+  { id:'survey',     label:'🏗️ Site Surveys',    color:'#1E7B3C' },
+];
+const SP_SCHED_DAYS = ['Mon','Tue','Wed','Thu','Fri'];
+const SP_SCHED_HOURS = [7,8,9,10,11,12,13,14,15,16,17];
+let _spSchedArmed = null;
+
+function spScheduleKey() {
+  return 'termac_schedule_template_' + (_spRep?.name || 'rep').replace(/\s+/g,'_');
+}
+function spLoadSchedule() {
+  try { return JSON.parse(localStorage.getItem(spScheduleKey()) || '{}'); } catch(e) { return {}; }
+}
+function spSaveScheduleData(data) {
+  try { localStorage.setItem(spScheduleKey(), JSON.stringify(data)); } catch(e) {}
+}
+
+function spRenderSchedule() {
+  const el = document.getElementById('spContent');
+  const data = spLoadSchedule();
+
+  const chipsHtml = SP_SCHED_CATS.map(c => {
+    const armed = _spSchedArmed === c.id;
+    return `<button onclick="spSchedArm('${c.id}')" style="background:${armed ? c.color : '#fff'};color:${armed ? '#fff' : c.color};border:1.5px solid ${c.color};border-radius:8px;padding:9px 16px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12px;letter-spacing:.04em;cursor:pointer;white-space:nowrap">${c.label}</button>`;
+  }).join('');
+
+  const gridRows = SP_SCHED_HOURS.map(hour => {
+    const timeLabel = (hour % 12 || 12) + (hour < 12 ? ' AM' : ' PM');
+    const cells = SP_SCHED_DAYS.map(day => {
+      const key = day + '_' + hour;
+      const catId = data[key];
+      const cat = SP_SCHED_CATS.find(c => c.id === catId);
+      const bg = cat ? cat.color : '#F8F9FA';
+      const textColor = cat ? '#fff' : '#9CA3AF';
+      const label = cat ? cat.label.split(' ')[0] : '';
+      return `<td onclick="spSchedPaint('${key}')" style="background:${bg};color:${textColor};text-align:center;font-size:16px;height:38px;border:1px solid #fff;cursor:pointer;user-select:none">${label}</td>`;
+    }).join('');
+    return `<tr><td style="font-size:11px;color:var(--soft);font-weight:700;text-align:right;padding-right:8px;white-space:nowrap">${timeLabel}</td>${cells}</tr>`;
+  }).join('');
+
+  const dayHeaders = SP_SCHED_DAYS.map(d => `<th style="font-size:11px;color:var(--soft);font-weight:800;text-transform:uppercase;letter-spacing:.04em;padding-bottom:6px">${d}</th>`).join('');
+
+  el.innerHTML = `
+  <div class="sp-card">
+    <div style="font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:20px;margin-bottom:4px">📅 My Schedule</div>
+    <div style="font-size:12px;color:var(--soft);margin-bottom:16px">Your recurring weekly time-block pattern — set it once, it repeats every week. Tap a category below, then tap time slots to paint them. Suggested rhythm: mornings for calls and emails, afternoons for paperwork and site surveys — but it's entirely yours to arrange.</div>
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px">
+      ${chipsHtml}
+      <button onclick="spSchedClear()" style="background:none;border:1.5px solid var(--line);border-radius:8px;color:var(--soft);padding:9px 16px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;cursor:pointer;margin-left:auto">✕ Clear All</button>
+    </div>
+
+    <div style="overflow-x:auto">
+      <table style="border-collapse:collapse;width:100%;min-width:480px">
+        <thead><tr><td></td>${dayHeaders}</tr></thead>
+        <tbody>${gridRows}</tbody>
+      </table>
+    </div>
+
+    <div style="margin-top:16px;font-size:11px;color:var(--soft)">Saved automatically to this device. This is a personal planning tool — it doesn't sync across devices or to the shared calendar yet.</div>
+  </div>`;
+}
+
+function spSchedArm(catId) {
+  _spSchedArmed = (_spSchedArmed === catId) ? null : catId;
+  spRenderSchedule();
+}
+
+function spSchedPaint(key) {
+  const data = spLoadSchedule();
+  if (!_spSchedArmed) { spToast('Tap a category above first'); return; }
+  if (data[key] === _spSchedArmed) {
+    delete data[key]; // tap same category on a filled slot to clear it
+  } else {
+    data[key] = _spSchedArmed;
+  }
+  spSaveScheduleData(data);
+  spRenderSchedule();
+}
+
+function spSchedClear() {
+  if (!confirm('Clear your entire weekly schedule pattern?')) return;
+  spSaveScheduleData({});
+  spRenderSchedule();
 }
 
 function spSaveWeeklyNotes(weekTs) {
