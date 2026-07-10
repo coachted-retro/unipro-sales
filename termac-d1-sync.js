@@ -139,7 +139,7 @@
       'contact_name', 'contact_title', 'pricing_tier', 'facility_type', 'division',
       'lifecycle_stage', 'ai_score', 'assigned_rep', 'source', 'notes',
       'follow_up_date', 'last_activity', 'converted_at', 'account_id',
-      'is_hot', 'is_new_lead', 'created_at', 'updated_at'],
+      'is_hot', 'is_new_lead', 'escalated', 'created_at', 'updated_at'],
     accounts: ['id', 'name', 'business', 'status', 'services', 'annual_value',
       'next_due', 'renewal_date', 'last_service', 'health_score',
       'assigned_rep', 'open_deficiencies', 'city', 'zip', 'last_checkin',
