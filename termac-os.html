@@ -1876,17 +1876,53 @@ async function d1PushBatch(table, records) {
   for (const r of records) { await d1Push(table, r); }
 }
 
+// 2026-07-10 FIX: this used to only pull from D1 the very first time
+// local storage was completely empty ("if local.length > 0, return").
+// Once this device had any cached data, it never checked D1 again for
+// that table — so a record created elsewhere (a different device, or a
+// worker writing straight to D1, like the Digital Business Card booking
+// flow) sat correctly in the database forever but never showed up here.
+// This is now a pure additive merge: anything in D1 with an id not
+// already present locally gets added, existing local records are never
+// touched or overwritten. Matches the identical fix made the same night
+// in the shared termac-d1-sync.js file — this copy exists separately
+// because termac-os.html predates that shared file and was never
+// switched over to use it.
+function d1ReverseMapLocal(table, record) {
+  const map = FIELD_MAP[table] || {};
+  const inverse = {};
+  Object.keys(map).forEach(function (camelKey) { inverse[map[camelKey]] = camelKey; });
+  const out = Object.assign({}, record);
+  Object.keys(record).forEach(function (col) {
+    const camelKey = inverse[col];
+    if (camelKey && !(camelKey in out)) out[camelKey] = record[col];
+  });
+  return out;
+}
+
 async function d1Hydrate(table) {
-  if (!D1_SYNC_TABLES.includes(table)) return;
+  if (!D1_SYNC_TABLES.includes(table)) return { added: 0 };
   const local = crmLoad(table);
-  if (local.length > 0) return; // local data wins
+  const existingIds = {};
+  local.forEach(function (r) { if (r && r.id) existingIds[r.id] = true; });
   try {
     const res = await d1Fetch('GET', '/api/' + table + '?limit=500');
     if (res.ok && Array.isArray(res.results) && res.results.length > 0) {
-      crmSave(table, res.results);
-      if (typeof renderCRMView === 'function') renderCRMView();
+      let added = 0;
+      res.results.forEach(function (rec) {
+        if (!rec || !rec.id || existingIds[rec.id]) return;
+        local.push(d1ReverseMapLocal(table, rec));
+        existingIds[rec.id] = true;
+        added++;
+      });
+      if (added > 0) {
+        try { localStorage.setItem('termac_crm_' + table, JSON.stringify(local)); } catch(e) {}
+        if (typeof renderCRMView === 'function') renderCRMView();
+      }
+      return { added: added };
     }
   } catch(e) {}
+  return { added: 0 };
 }
 
 // Patch crmSave to also push to D1 (override rather than wrap to avoid TDZ)
@@ -1897,10 +1933,14 @@ window.crmSave = crmSave = function(key, val) {
   }
 };
 
-// Hydrate all D1 tables on load (fills empty localStorage from D1)
-(async function d1HydrateAll() {
+// Hydrate all D1 tables on load, then keep checking periodically so
+// records created elsewhere show up during an already-open session too,
+// not only on the next full page reload.
+async function d1HydrateAll() {
   for (const t of D1_SYNC_TABLES) { await d1Hydrate(t); }
-})();
+}
+d1HydrateAll();
+setInterval(d1HydrateAll, 30000);
 
 // Seed demo data if empty
 (function seedCRM(){

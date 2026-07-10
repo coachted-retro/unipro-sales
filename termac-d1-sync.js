@@ -9,9 +9,22 @@
 // depending which device and which portal you happened to open.
 //
 // localStorage remains the synchronous, always-available read path (so
-// the UI never blocks or breaks offline). D1 is written on every save and
-// hydrated on load if localStorage is empty, exactly the pattern already
-// proven in termac-os.html — this file just makes it reusable everywhere.
+// the UI never blocks or breaks offline). D1 is written on every save.
+//
+// 2026-07-10 FIX: previously, D1 was only ever pulled down into local
+// storage the very first time a device loaded with a completely empty
+// local cache ("if local.length > 0, skip"). Once a device had ANY data
+// cached, it never checked D1 again for that table, so any record
+// created somewhere else entirely (a different device, or a different
+// worker writing straight to D1, like the Digital Business Card booking
+// flow) would sit correctly in the database forever but never actually
+// appear anywhere. d1Hydrate/d1HydrateAll now always check D1 and merge
+// in anything with an id not already present locally (pure additive
+// merge, same proven pattern already used by hydrateJobs/
+// hydrateWarehouseInventory below) — existing local records are never
+// overwritten by this, only new ones get added. A periodic sweep
+// (startCrmSyncSweep) also now exists so records show up during an open
+// session, not only on page load.
 // ════════════════════════════════════════════════════════════════════════
 
 (function (global) {
@@ -103,6 +116,24 @@
     return r;
   }
 
+  // Inverse of FIELD_MAP — converts a raw D1 record (snake_case columns)
+  // back into the shape the portal UI already expects (camelCase
+  // aliases like business/name/assignedRep). Keeps the original
+  // snake_case keys too, so nothing that already reads raw column names
+  // directly breaks. Tables with no FIELD_MAP entry pass through
+  // unchanged (their local shape already matches D1 columns directly).
+  function d1ReverseMap(table, record) {
+    var map = FIELD_MAP[table] || {};
+    var inverse = {};
+    Object.keys(map).forEach(function (camelKey) { inverse[map[camelKey]] = camelKey; });
+    var out = Object.assign({}, record);
+    Object.keys(record).forEach(function (col) {
+      var camelKey = inverse[col];
+      if (camelKey && !(camelKey in out)) out[camelKey] = record[col];
+    });
+    return out;
+  }
+
   async function d1Push(table, record) {
     if (!D1_SYNC_TABLES.includes(table)) return;
     if (!record || !record.id) return;
@@ -132,25 +163,61 @@
     }
   }
 
+  // Additive merge, not a full replace. Fetches D1's current rows for a
+  // table and adds any whose id isn't already in local storage — never
+  // overwrites an existing local record, so an active edit on this
+  // device can never be clobbered by this call. Returns how many new
+  // records were merged in, so callers can decide whether to re-render.
   async function d1Hydrate(table) {
-    if (!D1_SYNC_TABLES.includes(table)) return;
+    if (!D1_SYNC_TABLES.includes(table)) return { records: [], added: 0 };
     var local = crmLoad(table);
-    if (local.length > 0) return; // local data wins if present
+    var existingIds = {};
+    local.forEach(function (r) { if (r && r.id) existingIds[r.id] = true; });
     try {
       var res = await d1Fetch('GET', '/api/' + table + '?limit=500');
       if (res.ok && Array.isArray(res.results) && res.results.length > 0) {
-        try { localStorage.setItem('termac_crm_' + table, JSON.stringify(res.results)); } catch (e) {}
-        return res.results;
+        var added = 0;
+        res.results.forEach(function (rec) {
+          if (!rec || !rec.id || existingIds[rec.id]) return;
+          local.push(d1ReverseMap(table, rec));
+          existingIds[rec.id] = true;
+          added++;
+        });
+        if (added > 0) {
+          try { localStorage.setItem('termac_crm_' + table, JSON.stringify(local)); } catch (e) {}
+        }
+        return { records: local, added: added };
       }
     } catch (e) {}
-    return null;
+    return { records: local, added: 0 };
   }
 
   async function d1HydrateAll(onEach) {
+    var totalAdded = 0;
     for (var i = 0; i < D1_SYNC_TABLES.length; i++) {
-      var result = await d1Hydrate(D1_SYNC_TABLES[i]);
-      if (result && typeof onEach === 'function') onEach(D1_SYNC_TABLES[i], result);
+      var table = D1_SYNC_TABLES[i];
+      var result = await d1Hydrate(table);
+      if (result.added > 0) {
+        totalAdded += result.added;
+        if (typeof onEach === 'function') onEach(table, result.added);
+      }
     }
+    return totalAdded;
+  }
+
+  // Periodic sweep so records created elsewhere show up during an
+  // already-open session, not only on the next full page load. Same
+  // interval/pattern as startJobSyncSweep and startWarehouseSyncSweep
+  // below. Safe to call from multiple portals; only starts once per page.
+  var _crmSweepStarted = false;
+  function startCrmSyncSweep(intervalMs, onHydrate) {
+    if (_crmSweepStarted) return;
+    _crmSweepStarted = true;
+    function sweep() {
+      d1HydrateAll(onHydrate).catch(function () {});
+    }
+    sweep(); // run once immediately, then on the interval
+    setInterval(sweep, intervalMs || 30000);
   }
 
   // ── JOBS — separate from the crmSave path above ──────────────────────
@@ -522,6 +589,7 @@
     d1PushBatch: d1PushBatch,
     d1Hydrate: d1Hydrate,
     d1HydrateAll: d1HydrateAll,
+    startCrmSyncSweep: startCrmSyncSweep,
     d1PushJobs: d1PushJobs,
     hydrateJobs: hydrateJobs,
     d1PushWarehouseInventory: d1PushWarehouseInventory,
@@ -535,6 +603,7 @@
     hydrateTouchpointsIntoRecord: hydrateTouchpointsIntoRecord,
     uploadRepPhoto: uploadRepPhoto,
     d1NormalizeRecord: d1NormalizeRecord,
+    d1ReverseMap: d1ReverseMap,
     crmSave: crmSave,
     crmLoad: crmLoad,
     SYNC_TABLES: D1_SYNC_TABLES,
