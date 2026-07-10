@@ -26,6 +26,8 @@ const ALLOWED_TABLES = new Set([
   'appointments',
   // AllPro reconciliation, added 2026-07-10
   'allpro_design_projects',
+  // localStorage-only audit, added 2026-07-10
+  'broadcasts', 'dispatch_msgs',
 ]);
 
 const TABLE_PREFIX = {
@@ -36,6 +38,7 @@ const TABLE_PREFIX = {
   messages:'MSG', rep_cards:'REP', warehouse_inventory:'WHI', dms_coldcall:'DMS',
   appointments:'APT',
   allpro_design_projects:'ADP',
+  broadcasts:'BC', dispatch_msgs:'DM',
 };
 
 function corsHeaders(origin) {

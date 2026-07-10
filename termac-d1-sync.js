@@ -34,7 +34,8 @@
   var D1_API_SECRET = 'termac2026';
   var D1_SYNC_TABLES = ['accounts', 'leads', 'contacts', 'opportunities', 'bids',
     'jobs', 'deficiencies', 'collections', 'dms_coldcall',
-    'allpro_projects', 'allpro_cost_lines', 'appointments', 'allpro_design_projects'];
+    'allpro_projects', 'allpro_cost_lines', 'appointments', 'allpro_design_projects',
+    'broadcasts', 'dispatch_msgs'];
 
   async function d1Fetch(method, path, body) {
     try {
@@ -104,6 +105,12 @@
     },
     allpro_design_projects: {
       accountId: 'account_id', projectId: 'project_id', createdAt: 'created_at',
+    },
+    broadcasts: {
+      from: 'from_user',
+    },
+    dispatch_msgs: {
+      to: 'to_user', from: 'from_user',
     },
   };
 
@@ -185,6 +192,15 @@
     // opened standalone, not only from an existing AllPro project.
     allpro_design_projects: ['id', 'account_id', 'project_id', 'client', 'site',
       'contact', 'pm', 'division', 'status', 'spec', 'revisions', 'approval',
+      'created_at', 'updated_at'],
+    // 2026-07-10: localStorage-only audit -- dispatch-status.html's
+    // broadcast/direct-message features were write-only, using a raw
+    // disconnected key that never reached D1 at all. Note: fixing storage
+    // does not by itself make these reach a tech's screen -- nothing in
+    // any tech portal currently reads either table. That's a separate,
+    // real feature gap (a display/polling UI), not a sync problem.
+    broadcasts: ['id', 'ts', 'msg', 'from_user', 'read', 'created_at', 'updated_at'],
+    dispatch_msgs: ['id', 'ts', 'to_user', 'from_user', 'msg', 'read',
       'created_at', 'updated_at'],
   };
 
