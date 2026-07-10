@@ -36,7 +36,7 @@
     'jobs', 'deficiencies', 'collections', 'dms_coldcall',
     'allpro_projects', 'allpro_cost_lines', 'appointments', 'allpro_design_projects',
     'broadcasts', 'dispatch_msgs', 'wh_requisitions', 'wh_ready_handoffs', 'parts_requests',
-    'transfer_requests'];
+    'transfer_requests', 'scheduler_queue'];
 
   async function d1Fetch(method, path, body) {
     try {
@@ -128,6 +128,9 @@
     },
     parts_requests: {
       requestedBy: 'requested_by',
+    },
+    scheduler_queue: {
+      acceptedAt: 'accepted_at', assignedRep: 'assigned_rep',
     },
   };
 
@@ -231,6 +234,15 @@
       'items', 'notes', 'status', 'created_at', 'updated_at'],
     transfer_requests: ['id', 'date', 'ts', 'tech', 'company', 'warehouse',
       'items', 'notes', 'status', 'created_at', 'updated_at'],
+    // 2026-07-10: was already in unipro-ai-proxy's ALLOWED_TABLES (from the
+    // very start of tonight) but never actually in D1_SYNC_TABLES, so
+    // crmSave never even attempted to push it. Live table also had a
+    // completely different, never-used schema (job_id/tech_id/scheduled_date)
+    // vs what sales-portal.html/termac-os.html/scheduler-v2.html actually
+    // send (business/contact/phone/address/services/acceptedAt/assignedRep) --
+    // added the real columns rather than touch the unused ones.
+    scheduler_queue: ['id', 'business', 'contact', 'phone', 'address',
+      'services', 'accepted_at', 'assigned_rep', 'status', 'created_at', 'updated_at'],
   };
 
   function d1NormalizeRecord(table, record) {

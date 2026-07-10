@@ -464,6 +464,29 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--ink);min-h
           </select>
           <input type="text" id="talentSearch" oninput="hmRenderTalent()" placeholder="Search candidates…" style="padding:6px 10px;border:1.5px solid var(--line);border-radius:6px;font-size:12px;flex:1;min-width:160px;outline:none">
           <span id="talentCount" style="font-size:11px;color:var(--soft);white-space:nowrap"></span>
+          <button onclick="hmOpenBulkReview()" style="background:#374151;border:1.5px solid #6B7280;color:#D1D5DB;border-radius:6px;padding:6px 12px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;white-space:nowrap" title="Review all candidates at once and remove any leftover demo entries">🧹 Bulk Review &amp; Clean</button>
+        </div>
+
+        <!-- 2026-07-10: quick review list so Ted can visually spot and
+             remove leftover demo/test candidates from earlier development
+             sessions. No code-level seed flag exists for candidates (unlike
+             the CRM demo data), so this is a manual review tool, not an
+             automated detector -- checkboxes + delete, nothing guessed. -->
+        <div id="hmBulkReviewModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;align-items:center;justify-content:center;padding:20px">
+          <div style="background:#fff;border-radius:14px;width:min(640px,96vw);max-height:85vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.4)">
+            <div style="background:#1A1D21;border-radius:14px 14px 0 0;padding:16px 20px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0">
+              <div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:15px;color:#fff;letter-spacing:.06em;text-transform:uppercase">🧹 Bulk Review — Talent Pipeline</div>
+              <button onclick="hmCloseBulkReview()" style="background:none;border:1.5px solid #3A3E43;border-radius:6px;color:#9CA3AF;padding:4px 10px;font-size:12px;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:700">✕ Close</button>
+            </div>
+            <div style="padding:16px 20px">
+              <div style="font-size:12px;color:var(--soft);margin-bottom:12px">Check anything that's a leftover demo/test entry, then remove the checked ones. Nothing is pre-selected — this only removes what you check.</div>
+              <div id="hmBulkReviewList"></div>
+              <div style="display:flex;gap:10px;margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
+                <button onclick="hmCloseBulkReview()" style="flex:1;background:#fff;border:1.5px solid var(--line);border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;cursor:pointer">Cancel</button>
+                <button onclick="hmExecuteBulkReview()" style="flex:1;background:#C8102E;color:#fff;border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">Remove Checked</button>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div class="hm-kanban" id="hmTalentKanban"></div>
@@ -4742,6 +4765,52 @@ function hmDeleteCandidate(id) {
   hrSave('candidates', candidates);
   document.getElementById('hmCandidateModal').classList.remove('open');
   hmToast('Candidate removed');
+  hmRenderTalent(); hmUpdateRail();
+}
+
+// ── BULK REVIEW & CLEAN (2026-07-10) ──────────────────────────────────────
+// Manual review tool, not an automated demo-detector -- candidates has no
+// _seeded flag or known hardcoded ID pattern the way the CRM demo data
+// did, so there's no safe way to guess which ones are real. This just
+// lists everything so Ted can check off and remove leftover test entries
+// himself in one pass instead of clicking into each candidate individually.
+function hmOpenBulkReview() {
+  const modal = document.getElementById('hmBulkReviewModal');
+  const list = document.getElementById('hmBulkReviewList');
+  if (!modal || !list) return;
+
+  const candidates = hrLoad('candidates');
+  if (!candidates.length) {
+    list.innerHTML = '<div style="text-align:center;padding:30px;color:var(--soft);font-size:13px">No candidates in the pipeline right now.</div>';
+  } else {
+    list.innerHTML = candidates.map(c => `
+      <label style="display:flex;align-items:center;gap:10px;padding:10px 8px;border-bottom:1px solid var(--line);cursor:pointer">
+        <input type="checkbox" class="hmBulkReviewChk" value="${escH(c.id)}" style="width:16px;height:16px;flex-shrink:0">
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;font-size:13px;color:var(--ink)">${escH(c.name||'Unnamed')}</div>
+          <div style="font-size:11px;color:var(--soft)">${escH(c.role||'')}${c.source?' · '+escH(c.source):''}${c.stage?' · '+escH(c.stage):''}${c.currentEmployer?' · '+escH(c.currentEmployer):''}</div>
+        </div>
+      </label>
+    `).join('');
+  }
+
+  modal.style.display = 'flex';
+}
+
+function hmCloseBulkReview() {
+  const modal = document.getElementById('hmBulkReviewModal');
+  if (modal) modal.style.display = 'none';
+}
+
+function hmExecuteBulkReview() {
+  const checked = Array.from(document.querySelectorAll('.hmBulkReviewChk:checked')).map(el => el.value);
+  if (!checked.length) { hmToast('Nothing checked — nothing removed.'); return; }
+  if (!confirm('Remove ' + checked.length + ' candidate(s)? This cannot be undone.')) return;
+
+  const candidates = hrLoad('candidates').filter(c => checked.indexOf(c.id) === -1);
+  hrSave('candidates', candidates);
+  hmCloseBulkReview();
+  hmToast(checked.length + ' candidate(s) removed');
   hmRenderTalent(); hmUpdateRail();
 }
 
