@@ -12696,7 +12696,7 @@ function rptBuildPnL(filters){
   var pl={}; DIVS.forEach(function(d){ pl[d]={div:d,rev:0,collected:0,cogs:0,opex:0}; });
 
   pnlLoadAR().forEach(function(i){ if(!pl[i.division]) return; if(divFilter&&i.division!==divFilter) return; if(inP(i.date)) pl[i.division].rev+=i.amount; });
-  pnlLS('termac_collections').forEach(function(c){ var d=pnlNormDiv(c.division); if(!d||!pl[d]) return; if(divFilter&&d!==divFilter) return; var t=Number(c.collectedAt||(c.collectedDate?Date.parse(c.collectedDate):0))||0; if(inP(t)) pl[d].collected+=Number(c.amount)||0; });
+  (typeof crmLoad === 'function' ? (crmLoad('collections')||[]) : []).forEach(function(c){ var d=pnlNormDiv(c.division); if(!d||!pl[d]) return; if(divFilter&&d!==divFilter) return; var t=Number(c.collectedAt||(c.collectedDate?Date.parse(c.collectedDate):0))||0; if(inP(t)) pl[d].collected+=Number(c.amount)||0; });
   pnlLS('termac_payables').forEach(function(b){ var d=pnlNormDiv(b.division); if(!d||!pl[d]) return; if(divFilter&&d!==divFilter) return; var t=Number(b.loggedAt||(b.dueDate?Date.parse(b.dueDate):0))||0; if(!inP(t)) return; var a=Number(b.amount)||0; if(pnlIsCOGS(b.category)) pl[d].cogs+=a; else pl[d].opex+=a; });
   pnlLS('termac_expense_reports').forEach(function(e){ var d=pnlNormDiv(e.division); if(!d||!pl[d]) return; if(divFilter&&d!==divFilter) return; var t=Number(e.submittedAt||(e.submittedDate?Date.parse(e.submittedDate):0))||0; if(inP(t)) pl[d].opex+=Number(e.total||e.amount)||0; });
 
@@ -22751,7 +22751,7 @@ function estLogCashCollection() {
   var notes = document.getElementById('pmCashNotes')?.value || '';
   if (!amt) { alert('Enter the cash amount.'); return; }
   // Log to collections system
-  var colls = JSON.parse(localStorage.getItem('termac_collections')||'[]');
+  var colls = (typeof crmLoad === 'function' ? crmLoad('collections') : []) || [];
   var rep = (window._spRep && window._spRep.name) || (window._currentUser && window._currentUser.name) || 'Rep';
   var division = (svState && svState.selectedServices && svState.selectedServices[0]) || 'unipro';
   colls.unshift({
@@ -22762,7 +22762,7 @@ function estLogCashCollection() {
     collectedDate:new Date().toLocaleDateString('en-US'),
     history:[{ts:Date.now(),action:'Collection logged from estimate',by:rep}]
   });
-  localStorage.setItem('termac_collections', JSON.stringify(colls));
+  if (typeof crmSave === 'function') crmSave('collections', colls);
   // Update checklist
   var chk = document.getElementById('ob_chk2');
   if (chk) { chk.checked = true; chk.nextElementSibling.textContent = 'Cash collected — logged to collections queue'; }
@@ -22777,7 +22777,7 @@ function estLogCheckCollection() {
   if (!checkNum) { alert('Enter the check number.'); return; }
   if (!amt) { alert('Enter the check amount.'); return; }
   if (!payable) { alert('Verify and enter who the check is made out to.'); return; }
-  var colls = JSON.parse(localStorage.getItem('termac_collections')||'[]');
+  var colls = (typeof crmLoad === 'function' ? crmLoad('collections') : []) || [];
   var rep = (window._spRep && window._spRep.name) || (window._currentUser && window._currentUser.name) || 'Rep';
   var division = (svState && svState.selectedServices && svState.selectedServices[0]) || 'unipro';
   colls.unshift({
@@ -22788,7 +22788,7 @@ function estLogCheckCollection() {
     collectedDate:new Date().toLocaleDateString('en-US'),
     history:[{ts:Date.now(),action:'Check collection logged from estimate',by:rep}]
   });
-  localStorage.setItem('termac_collections', JSON.stringify(colls));
+  if (typeof crmSave === 'function') crmSave('collections', colls);
   var chk = document.getElementById('ob_chk2');
   if (chk) { chk.checked = true; chk.nextElementSibling.textContent = 'Check #'+checkNum+' collected — logged to collections queue'; }
   estPaymentDone('check');
@@ -25847,7 +25847,7 @@ function saveFollowup() {
 // ── COLLECTIONS OVERDUE ALERT ─────────────────────────────────────────────
 function checkCollectionsOverdue() {
   try {
-    var colls = JSON.parse(localStorage.getItem('termac_collections')||'[]');
+    var colls = (typeof crmLoad === 'function' ? crmLoad('collections') : []) || [];
     var overdue = colls.filter(function(c){
       return c.status === 'collected' && (Date.now()-c.collectedAt) > (48*3600000);
     });
@@ -36674,7 +36674,7 @@ function mgrRenderScorecard(){
     // Collections on-the-road summary — links directly to collections-portal.html
     (function(){
       var colls = [];
-      try { colls = JSON.parse(localStorage.getItem('termac_collections')||'[]'); } catch(e) {}
+      try { colls = (typeof crmLoad === 'function' ? crmLoad('collections') : []) || []; } catch(e) {}
       var pending = colls.filter(function(c){ return c.status === 'collected' || c.status === 'pending'; });
       var totalOut = pending.reduce(function(s,c){ return s + (c.amount||0); }, 0);
       var overdue48 = pending.filter(function(c){ return (Date.now() - (c.collectedAt||0)) > 48*3600000; });

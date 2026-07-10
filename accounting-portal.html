@@ -72,6 +72,7 @@ body{background:var(--bg);color:var(--ink);font-family:Barlow,sans-serif;font-si
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--navy);color:#fff;padding:10px 20px;border-radius:8px;font-weight:600;z-index:9999;opacity:0;transition:opacity .25s;pointer-events:none}
 .toast.show{opacity:1}
 </style>
+<script src="termac-d1-sync.js"></script>
 </head>
 <body>
 <div class="nav">
@@ -239,7 +240,8 @@ function ageStatus(inv){
 }
 
 function loadAP(){ return lsGet(AP_KEY); }
-function loadColls(){ return lsGet(COLL_KEY); }
+function loadColls(){ return (typeof crmLoad === 'function' ? crmLoad('collections') : []) || []; }
+function saveColls(colls){ if (typeof crmSave === 'function') crmSave('collections', colls); }
 function loadExpenses(){ return lsGet(EXP_KEY); }
 
 /* open balance after any partial collections already applied */
@@ -453,7 +455,7 @@ function applyReconcile(coll, invId, source, applied, full){
   else { rec.paidApplied=next; }
   lsSet(source,arr);
   var colls=loadColls(); colls.forEach(function(c){ if(c.id===coll.id){ c.reconciledInvoiceId=invId; c.reconciledSource=source; c.reconciledApplied=applied; c.reconciledAt=Date.now(); c.status='posted'; } });
-  lsSet(COLL_KEY,colls);
+  saveColls(colls);
   toast(full?'Invoice cleared and marked paid.':'Partial '+money(applied)+' applied.');
   renderStats(); renderTab();
 }
@@ -464,10 +466,10 @@ function unlinkColl(collId){
   var arr=lsGet(coll.reconciledSource), rec=null; arr.forEach(function(r){ if((r.id||'')+''===(coll.reconciledInvoiceId+'')) rec=r; });
   if(rec){ var amt=amtOf(rec); var back=Math.max(0,(Number(rec.paidApplied||0))-(coll.reconciledApplied||amt)); rec.paidApplied=back; if(back<amt-0.01){ rec.paymentStatus='unpaid'; rec.invoicePaid=false; rec.paid=false; } lsSet(coll.reconciledSource,arr); }
   coll.reconciledInvoiceId=null; coll.reconciledSource=null; coll.reconciledApplied=null; coll.reconciledAt=null; coll.status='collected';
-  lsSet(COLL_KEY,colls); toast('Reconciliation reversed.'); renderStats(); renderTab();
+  saveColls(colls); toast('Reconciliation reversed.'); renderStats(); renderTab();
 }
-function dismissColl(collId){ var colls=loadColls(); colls.forEach(function(c){ if(c.id===collId){ c.reconciledInvoiceId='none'; c.reconciledAt=Date.now(); } }); lsSet(COLL_KEY,colls); renderStats(); renderTab(); }
-function clearReview(collId){ var colls=loadColls(); colls.forEach(function(c){ if(c.id===collId){ c.reconciledInvoiceId=null; c.reconciledAt=null; } }); lsSet(COLL_KEY,colls); renderStats(); renderTab(); }
+function dismissColl(collId){ var colls=loadColls(); colls.forEach(function(c){ if(c.id===collId){ c.reconciledInvoiceId='none'; c.reconciledAt=Date.now(); } }); saveColls(colls); renderStats(); renderTab(); }
+function clearReview(collId){ var colls=loadColls(); colls.forEach(function(c){ if(c.id===collId){ c.reconciledInvoiceId=null; c.reconciledAt=null; } }); saveColls(colls); renderStats(); renderTab(); }
 
 function renderCollections(){
   var c=loadColls().filter(function(x){ return divMatch(normDiv(x.division)); });

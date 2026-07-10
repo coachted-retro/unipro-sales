@@ -85,6 +85,12 @@
       // mapping needed for those, they already match.
       assignedRep: 'assigned_rep', created: 'created_at',
     },
+    collections: {
+      collectedBy: 'collected_by', accountName: 'account_name',
+      checkNum: 'check_num', payableTo: 'payable_to', invoiceNum: 'invoice_num',
+      photoData: 'photo_data', collectedAt: 'collected_at',
+      collectedDate: 'collected_date',
+    },
     dms_coldcall: {
       contactName: 'contact_name', parentCompany: 'parent_company', bizType: 'biz_type',
       pricingMode: 'pricing_mode', ownerName: 'owner_name', ownerPhone: 'owner_phone',
@@ -119,8 +125,20 @@
     deficiencies: ['id', 'account_id', 'location_id', 'job_id', 'division', 'description',
       'equipment_type', 'severity', 'status', 'quoted_amount', 'quote_ref',
       'assigned_to', 'due_date', 'resolved_at', 'notes', 'created_at', 'updated_at'],
-    collections: ['id', 'account_id', 'invoice_ref', 'amount_due', 'amount_paid',
-      'due_date', 'status', 'last_contact', 'notes', 'created_at', 'updated_at'],
+    // 2026-07-10: previous entry (invoice_ref/amount_paid/due_date/
+    // last_contact) described a hypothetical AR-aging schema that was
+    // never actually built anywhere in the app -- the real feature
+    // (collections-portal.html) is an on-site cash/check collection log:
+    // a rep collects payment, logs who/what/how much/method, office marks
+    // it posted. Also fixed the disconnected raw key bug separately (see
+    // collections-portal.html, ar-portal.html, etc.) -- this table was
+    // never actually written to via crmSave at all before tonight, it was
+    // always a completely different key (termac_collections vs the
+    // termac_crm_collections crmSave/crmLoad actually read/write).
+    collections: ['id', 'collected_by', 'account_name', 'division', 'amount',
+      'method', 'check_num', 'payable_to', 'invoice_num', 'notes',
+      'photo_data', 'status', 'collected_at', 'collected_date', 'history',
+      'created_at', 'updated_at'],
     dms_coldcall: ['id', 'business', 'contact_name', 'phone', 'email', 'parent_company',
       'biz_type', 'pricing_mode', 'address', 'city', 'state', 'zip', 'owner_name',
       'owner_phone', 'owner_email', 'role', 'decision_maker', 'dm_phone', 'dm_email',
