@@ -202,6 +202,17 @@ body{font-family:Barlow,sans-serif;background:var(--bg);color:var(--ink);min-hei
     <!-- LEFT COL: Quick Access + Learning Center -->
     <div class="ep-col">
 
+      <!-- 2026-07-10: populated by JS from the logged-in person's actual
+           granted portal access (see epLoadWorkPortals below) -- not a
+           fixed list. Hidden entirely if they have no portal access
+           checked yet (e.g. a brand new invite before HR sets it up). -->
+      <div class="ep-card" id="epWorkPortalsCard" style="display:none">
+        <div class="ep-card-hdr">
+          <div class="ep-card-title">My Work Portals</div>
+        </div>
+        <div class="ep-tiles" id="epWorkPortalsTiles" style="grid-template-columns:1fr 1fr"></div>
+      </div>
+
       <!-- Quick Access -->
       <div class="ep-card">
         <div class="ep-card-hdr">
@@ -416,6 +427,44 @@ function epGoBack() {
   else window.location.href = 'termac-os.html';
 }
 
+// 2026-07-10: fetches this person's actual granted portal access and
+// renders only those as tiles. PORTAL_META is the single place mapping
+// a portal key to its icon/name/description/URL -- add a new portal
+// here and it's immediately available to grant in HR Manager's Access
+// checkboxes, no other file needs to change.
+var PORTAL_META = {
+  sales_rep: { icon:'📊', name:'Sales Portal', desc:'Leads, pitch tool, accounts', url:'sales-portal.html' },
+  dms:       { icon:'📋', name:'DMS Dashboard', desc:'Cold calling, lead intake', url:'dms-portal.html' },
+  reception: { icon:'📞', name:'Reception', desc:'Check-ins, call routing', url:'reception-portal.html' },
+  scheduler: { icon:'📅', name:'Scheduler', desc:'Job scheduling, new accounts', url:'scheduler-v2.html' },
+  dispatch:  { icon:'🚚', name:'Dispatch', desc:'Field tech coordination', url:'dispatch-v2.html' },
+  tech:      { icon:'🔧', name:'Tech Portal', desc:'Jobs, checklists, collections', url:'tech-portal-unified.html' },
+  warehouse: { icon:'📦', name:'Warehouse', desc:'Requisitions, inventory', url:'warehouse-portal.html' },
+  manager:   { icon:'📈', name:'Manager Portal', desc:'Dashboards, reports, staff', url:'termac-os.html' },
+  admin:     { icon:'⚙️', name:'Admin', desc:'Full platform access', url:'termac-os.html' },
+};
+
+async function epLoadWorkPortals(email) {
+  var card = document.getElementById('epWorkPortalsCard');
+  var tilesEl = document.getElementById('epWorkPortalsTiles');
+  try {
+    var res = await fetch('https://termac-staff-auth.termac-one.workers.dev/my-access?email=' + encodeURIComponent(email));
+    var data = await res.json();
+    if (!data.ok || !data.active || !data.portals || !data.portals.length) return; // card stays hidden
+
+    tilesEl.innerHTML = data.portals.map(function(key) {
+      var meta = PORTAL_META[key];
+      if (!meta) return '';
+      return '<a href="' + meta.url + '" class="ep-tile">'
+        + '<div class="ep-tile-icon">' + meta.icon + '</div>'
+        + '<div class="ep-tile-name">' + meta.name + '</div>'
+        + '<div class="ep-tile-desc">' + meta.desc + '</div>'
+        + '</a>';
+    }).join('');
+    card.style.display = 'block';
+  } catch (e) { /* card stays hidden if the access check fails -- fail closed, not open */ }
+}
+
 function epSetReturnLabel() {
   const ret = sessionStorage.getItem('trnReturnUrl') || '';
   const labels = {
@@ -459,7 +508,19 @@ function epToast(msg) {
 
 /* ── INIT ── */
 document.addEventListener('DOMContentLoaded', function() {
-  // 2026-07-10: this page only reads termac_hr_certs/termac_hr_users
+  // 2026-07-10: real login gate. No valid session -> bounce to
+  // staff-login.html, remembering this page as the return destination
+  // so login lands them right back here instead of somewhere generic.
+  var session = null;
+  try { session = JSON.parse(sessionStorage.getItem('termac_staff_session') || 'null'); } catch(e) {}
+  if (!session || !session.email) {
+    sessionStorage.setItem('termac_staff_return_to', 'employee-portal.html');
+    window.location.href = 'staff-login.html';
+    return;
+  }
+  epLoadWorkPortals(session.email);
+
+  // this page only reads termac_hr_certs/termac_hr_users
   // (read-only, for the "this week's wins" feed), same key space as
   // hr-manager-v3.html/hr-portal.html. Small targeted hydrate rather
   // than the full 8-key list those two files use, since this is the

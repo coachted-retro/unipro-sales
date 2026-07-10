@@ -7,17 +7,31 @@
  * after that. Replaces the placeholder PIN/name-dropdown auth that's been
  * flagged as placeholder-only since the platform's early build.
  *
+ * Access is multi-portal via a checkbox grid in HR Manager's Employee
+ * Directory (the single source of truth -- no separate account list),
+ * not one role = one portal. `portals` is a JSON array of portal keys
+ * per person; employee-portal.html reads it to decide which tiles to
+ * show after login. When HR marks someone Terminated, that same
+ * Directory calls /revoke-by-email so their login dies with their
+ * employment status, not as a separate manual step.
+ *
  * Direct D1 binding (env.DB), not routed through unipro-ai-proxy -- auth
  * needs custom logic (password hashing, constant-time comparison) that
  * doesn't fit the generic REST CRUD pattern the other tables use, and
  * keeping it isolated is a reasonable security boundary on its own.
  *
  * Endpoints:
- *   POST /provision      { email, name, role, provisionedBy }
- *   POST /login           { email, password }
- *   POST /reset-request   { email }
- *   POST /reset-confirm   { email, code, newPassword }
- *   POST /change-password { email, currentPassword, newPassword }
+ *   POST /provision       { email, name, role, portals[], provisionedBy }
+ *   POST /login            { email, password }
+ *   POST /reset-request    { email }
+ *   POST /reset-confirm    { email, code, newPassword }
+ *   POST /change-password  { email, currentPassword, newPassword }
+ *   GET  /list
+ *   POST /revoke           { id }
+ *   POST /reactivate       { id }
+ *   POST /revoke-by-email  { email }
+ *   POST /update-access    { id, portals[], role? }
+ *   GET  /my-access?email=
  *
  * Passwords are never stored in plaintext or logged. Hashed with PBKDF2-
  * SHA256 (100,000 iterations, random 16-byte salt per user) via the
@@ -104,6 +118,7 @@ async function handleProvision(request, env) {
   const email = (body.email || '').trim().toLowerCase();
   const name = (body.name || '').trim();
   const role = (body.role || '').trim();
+  const portals = Array.isArray(body.portals) ? body.portals : [];
   if (!email || !name) return jsonResponse({ ok: false, error: 'Email and name are required.' }, 400);
 
   const existing = await env.DB.prepare('SELECT id FROM staff_auth WHERE email = ?').bind(email).first();
@@ -115,8 +130,8 @@ async function handleProvision(request, env) {
   const id = 'STF_' + Date.now().toString(36).toUpperCase() + '_' + randomHex(3);
 
   await env.DB.prepare(
-    'INSERT INTO staff_auth (id, email, name, role, password_hash, salt, must_reset, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)'
-  ).bind(id, email, name, role, hash, salt, 'active', Date.now(), Date.now()).run();
+    'INSERT INTO staff_auth (id, email, name, role, portals, password_hash, salt, must_reset, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)'
+  ).bind(id, email, name, role, JSON.stringify(portals), hash, salt, 'active', Date.now(), Date.now()).run();
 
   await sendEmail(env, name, email, 'Termac One Account Created',
     'Your Termac One login is ready. Email: ' + email + '. Temporary password: ' + tempPassword +
@@ -141,12 +156,16 @@ async function handleLogin(request, env) {
 
   await env.DB.prepare('UPDATE staff_auth SET last_login_at = ? WHERE id = ?').bind(Date.now(), user.id).run();
 
+  let portals = [];
+  try { portals = JSON.parse(user.portals || '[]'); } catch (e) {}
+
   return jsonResponse({
     ok: true,
     id: user.id,
     name: user.name,
     email: user.email,
     role: user.role,
+    portals: portals,
     mustReset: !!user.must_reset,
   });
 }
@@ -221,6 +240,93 @@ async function handleChangePassword(request, env) {
   return jsonResponse({ ok: true });
 }
 
+// 2026-07-10: dedicated safe list endpoint for the admin provisioning UI.
+// Deliberately NOT routed through unipro-ai-proxy's generic REST CRUD --
+// that proxy returns every column of whatever table it's asked for, and
+// staff_auth has password_hash/salt/reset_code columns that must never
+// reach a browser. This explicitly selects only the safe columns.
+async function handleList(env) {
+  const result = await env.DB.prepare(
+    'SELECT id, email, name, role, portals, must_reset, status, created_at, last_login_at FROM staff_auth ORDER BY created_at DESC'
+  ).all();
+  const rows = (result.results || []).map(r => {
+    let portals = [];
+    try { portals = JSON.parse(r.portals || '[]'); } catch (e) {}
+    return Object.assign({}, r, { portals });
+  });
+  return jsonResponse({ ok: true, results: rows });
+}
+
+async function handleRevoke(request, env) {
+  const body = await request.json();
+  const id = (body.id || '').trim();
+  if (!id) return jsonResponse({ ok: false, error: 'Account id is required.' }, 400);
+  await env.DB.prepare('UPDATE staff_auth SET status = ?, updated_at = ? WHERE id = ?')
+    .bind('revoked', Date.now(), id).run();
+  return jsonResponse({ ok: true });
+}
+
+async function handleReactivate(request, env) {
+  const body = await request.json();
+  const id = (body.id || '').trim();
+  if (!id) return jsonResponse({ ok: false, error: 'Account id is required.' }, 400);
+  await env.DB.prepare('UPDATE staff_auth SET status = ?, updated_at = ? WHERE id = ?')
+    .bind('active', Date.now(), id).run();
+  return jsonResponse({ ok: true });
+}
+
+// 2026-07-10: called by HR Manager's Employee Directory when someone's
+// status changes to Terminated/Inactive. Looks up by email since HR's
+// employee record and this login record are linked by email, not a
+// shared id -- HR doesn't need to know a staff_auth id exists at all.
+// Silently succeeds if no matching login exists (most terminated people
+// may never have had one), so HR's status-change flow never breaks on
+// this call failing.
+async function handleRevokeByEmail(request, env) {
+  const body = await request.json();
+  const email = (body.email || '').trim().toLowerCase();
+  if (!email) return jsonResponse({ ok: false, error: 'Email is required.' }, 400);
+  await env.DB.prepare('UPDATE staff_auth SET status = ?, updated_at = ? WHERE email = ?')
+    .bind('revoked', Date.now(), email).run();
+  return jsonResponse({ ok: true });
+}
+
+// Updates name/role/portals for an existing account -- the checkbox
+// access grid in the Employee Directory calls this every time someone's
+// permissions change. Does not touch password/status.
+async function handleUpdateAccess(request, env) {
+  const body = await request.json();
+  const id = (body.id || '').trim();
+  const portals = Array.isArray(body.portals) ? body.portals : [];
+  const role = body.role !== undefined ? String(body.role).trim() : null;
+  if (!id) return jsonResponse({ ok: false, error: 'Account id is required.' }, 400);
+
+  if (role !== null) {
+    await env.DB.prepare('UPDATE staff_auth SET portals = ?, role = ?, updated_at = ? WHERE id = ?')
+      .bind(JSON.stringify(portals), role, Date.now(), id).run();
+  } else {
+    await env.DB.prepare('UPDATE staff_auth SET portals = ?, updated_at = ? WHERE id = ?')
+      .bind(JSON.stringify(portals), Date.now(), id).run();
+  }
+  return jsonResponse({ ok: true });
+}
+
+// Lightweight lookup for employee-portal.html to decide which tiles to
+// show for the currently logged-in person, without exposing the full
+// account list (handleList) to every employee.
+async function handleMyAccess(request, env) {
+  const url = new URL(request.url);
+  const email = (url.searchParams.get('email') || '').trim().toLowerCase();
+  if (!email) return jsonResponse({ ok: false, error: 'Email is required.' }, 400);
+
+  const user = await env.DB.prepare('SELECT portals, status FROM staff_auth WHERE email = ?').bind(email).first();
+  if (!user || user.status !== 'active') return jsonResponse({ ok: true, portals: [], active: false });
+
+  let portals = [];
+  try { portals = JSON.parse(user.portals || '[]'); } catch (e) {}
+  return jsonResponse({ ok: true, portals: portals, active: true });
+}
+
 export default {
   async fetch(request, env) {
     if (request.method === 'OPTIONS') {
@@ -232,7 +338,9 @@ export default {
         },
       });
     }
-    if (request.method !== 'POST') return jsonResponse({ ok: false, error: 'POST only' }, 405);
+    if (request.method !== 'POST' && request.url.indexOf('/list') === -1 && request.url.indexOf('/my-access') === -1) {
+      return jsonResponse({ ok: false, error: 'POST only' }, 405);
+    }
 
     const url = new URL(request.url);
     try {
@@ -242,6 +350,12 @@ export default {
         case '/reset-request': return await handleResetRequest(request, env);
         case '/reset-confirm': return await handleResetConfirm(request, env);
         case '/change-password': return await handleChangePassword(request, env);
+        case '/list': return await handleList(env);
+        case '/revoke': return await handleRevoke(request, env);
+        case '/reactivate': return await handleReactivate(request, env);
+        case '/revoke-by-email': return await handleRevokeByEmail(request, env);
+        case '/update-access': return await handleUpdateAccess(request, env);
+        case '/my-access': return await handleMyAccess(request, env);
         default: return jsonResponse({ ok: false, error: 'Unknown endpoint.' }, 404);
       }
     } catch (e) {

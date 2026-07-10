@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Termac One — Login</title>
+<link rel="icon" type="image/png" href="termac-one-logo.png">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;700;800;900&family=Barlow:wght@400;500;600;700&display=swap">
+<style>
+:root{--bg:#EEF0F2;--panel:#FFF;--ink:#1A1D21;--soft:#5A616B;--line:#D7DBE0;
+  --red:#C8102E;--yellow:#F2B705;--green:#1E7B3C;--blue:#1B5FA8;--orange:#D8690B;
+  --gray:#6B7280;--radius:10px;--shadow:0 1px 3px rgba(26,29,33,.08),0 4px 14px rgba(26,29,33,.06);}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:linear-gradient(135deg,#1A1D21,#0D0F12);color:var(--ink);font-family:'Barlow',sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.card{background:var(--panel);border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.4);width:min(400px,100%);padding:32px 28px}
+.logo{font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:22px;letter-spacing:.08em;text-align:center;color:var(--ink);margin-bottom:4px}
+.tagline{text-align:center;font-size:12px;color:var(--soft);margin-bottom:24px}
+.fld{margin-bottom:14px}
+.fld label{display:block;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--soft);margin-bottom:5px}
+.fld input{width:100%;padding:11px 13px;border:1.5px solid var(--line);border-radius:8px;font-size:14px;outline:none;font-family:'Barlow',sans-serif}
+.fld input:focus{border-color:var(--blue)}
+.btn{width:100%;padding:12px;border:none;border-radius:8px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:14px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;margin-top:6px}
+.btn-primary{background:var(--red);color:#fff}
+.btn-primary:hover{background:#A50D24}
+.btn-outline{background:#fff;border:1.5px solid var(--line);color:var(--ink)}
+.link{display:block;text-align:center;font-size:12px;color:var(--blue);margin-top:14px;cursor:pointer;text-decoration:none}
+.err{background:#FEE2E2;border:1px solid #C8102E;color:#991B1B;border-radius:8px;padding:10px 12px;font-size:12px;margin-bottom:14px;display:none}
+.ok{background:#F0FAF5;border:1px solid #1E7B3C;color:#1E7B3C;border-radius:8px;padding:10px 12px;font-size:12px;margin-bottom:14px;display:none}
+.step{display:none}
+.step.active{display:block}
+.hint{font-size:11px;color:var(--soft);margin-top:4px;line-height:1.5}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">TERMAC ONE</div>
+  <div class="tagline" id="stepTagline">Sign in to continue</div>
+
+  <div class="err" id="errBox"></div>
+  <div class="ok" id="okBox"></div>
+
+  <!-- ── STEP: LOGIN ── -->
+  <div class="step active" id="stepLogin">
+    <div class="fld"><label>Email</label><input type="email" id="li-email" autocomplete="username" placeholder="you@termac.com"></div>
+    <div class="fld"><label>Password</label><input type="password" id="li-password" autocomplete="current-password" placeholder="Password"></div>
+    <button class="btn btn-primary" onclick="doLogin()">Sign In</button>
+    <a class="link" onclick="showStep('forgot')">Forgot your password?</a>
+  </div>
+
+  <!-- ── STEP: FIRST-LOGIN FORCED RESET ── -->
+  <div class="step" id="stepForceReset">
+    <div class="fld"><label>New Password</label><input type="password" id="fr-new1" autocomplete="new-password" placeholder="At least 8 characters"></div>
+    <div class="fld"><label>Confirm New Password</label><input type="password" id="fr-new2" autocomplete="new-password" placeholder="Repeat it"></div>
+    <button class="btn btn-primary" onclick="doForceReset()">Set Password &amp; Continue</button>
+    <div class="hint">This is your first time logging in with this account — set a password only you know.</div>
+  </div>
+
+  <!-- ── STEP: FORGOT PASSWORD — REQUEST CODE ── -->
+  <div class="step" id="stepForgot">
+    <div class="fld"><label>Email</label><input type="email" id="fg-email" placeholder="you@termac.com"></div>
+    <button class="btn btn-primary" onclick="doResetRequest()">Send Reset Code</button>
+    <a class="link" onclick="showStep('login')">← Back to sign in</a>
+  </div>
+
+  <!-- ── STEP: FORGOT PASSWORD — ENTER CODE + NEW PASSWORD ── -->
+  <div class="step" id="stepResetConfirm">
+    <div class="hint" style="margin-bottom:12px">Check your email for the code, then choose a new password.</div>
+    <div class="fld"><label>6-Digit Code</label><input type="text" id="rc-code" inputmode="numeric" maxlength="6" placeholder="000000"></div>
+    <div class="fld"><label>New Password</label><input type="password" id="rc-new1" autocomplete="new-password" placeholder="At least 8 characters"></div>
+    <div class="fld"><label>Confirm New Password</label><input type="password" id="rc-new2" autocomplete="new-password" placeholder="Repeat it"></div>
+    <button class="btn btn-primary" onclick="doResetConfirm()">Set Password</button>
+    <a class="link" onclick="doResetRequest(true)">Resend code</a>
+    <a class="link" onclick="showStep('login')">← Back to sign in</a>
+  </div>
+</div>
+
+<script>
+var AUTH_API = 'https://termac-staff-auth.termac-one.workers.dev';
+
+var _pendingLoginEmail = null; // held between login (must_reset) and force-reset steps
+
+function showStep(name){
+  document.querySelectorAll('.step').forEach(function(s){ s.classList.remove('active'); });
+  hideMsg();
+  var map = { login:'stepLogin', forceReset:'stepForceReset', forgot:'stepForgot', resetConfirm:'stepResetConfirm' };
+  document.getElementById(map[name]).classList.add('active');
+  var taglines = {
+    login: 'Sign in to continue',
+    forceReset: 'Set your password',
+    forgot: 'Reset your password',
+    resetConfirm: 'Enter your reset code',
+  };
+  document.getElementById('stepTagline').textContent = taglines[name] || '';
+}
+
+function showErr(msg){
+  var el = document.getElementById('errBox');
+  document.getElementById('okBox').style.display = 'none';
+  el.textContent = msg; el.style.display = 'block';
+}
+function showOk(msg){
+  var el = document.getElementById('okBox');
+  document.getElementById('errBox').style.display = 'none';
+  el.textContent = msg; el.style.display = 'block';
+}
+function hideMsg(){
+  document.getElementById('errBox').style.display = 'none';
+  document.getElementById('okBox').style.display = 'none';
+}
+
+function redirectAfterLogin(session){
+  // Session held in sessionStorage (not localStorage) -- cleared when the
+  // browser tab closes, consistent with per-person login rather than a
+  // device staying signed in forever. Reception's shared-station usage
+  // (per Ted) relies on this: next person logs out, next person logs in.
+  sessionStorage.setItem('termac_staff_session', JSON.stringify({
+    id: session.id, name: session.name, email: session.email,
+    role: session.role, loginAt: Date.now(),
+  }));
+  // 2026-07-10: access is multi-portal via checkboxes in HR Manager's
+  // Employee Directory, not one role = one destination -- always land on
+  // employee-portal.html, which reads granted access and shows only the
+  // portals this person actually has. A prior return_to (someone bounced
+  // here from a specific portal because they weren't logged in yet)
+  // still takes priority so they land back where they were headed.
+  var dest = 'employee-portal.html';
+  var returnTo = sessionStorage.getItem('termac_staff_return_to');
+  if (returnTo) { sessionStorage.removeItem('termac_staff_return_to'); dest = returnTo; }
+  window.location.href = dest;
+}
+
+async function doLogin(){
+  hideMsg();
+  var email = document.getElementById('li-email').value.trim();
+  var password = document.getElementById('li-password').value;
+  if (!email || !password) { showErr('Enter your email and password.'); return; }
+
+  try {
+    var res = await fetch(AUTH_API + '/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email, password: password }),
+    });
+    var data = await res.json();
+    if (!data.ok) { showErr(data.error || 'Could not sign in.'); return; }
+
+    if (data.mustReset) {
+      _pendingLoginEmail = email;
+      showStep('forceReset');
+      return;
+    }
+    redirectAfterLogin(data);
+  } catch (e) {
+    showErr('Could not connect. Check your internet connection and try again.');
+  }
+}
+
+async function doForceReset(){
+  hideMsg();
+  var p1 = document.getElementById('fr-new1').value;
+  var p2 = document.getElementById('fr-new2').value;
+  if (p1.length < 8) { showErr('Password must be at least 8 characters.'); return; }
+  if (p1 !== p2) { showErr('Passwords do not match.'); return; }
+
+  try {
+    // First-login reset reuses the same reset-request/confirm pair as
+    // forgot-password -- request a code behind the scenes (the person
+    // already proved they know the temp password via /login, but this
+    // keeps the backend to two flows, not three), then confirm with it.
+    var reqRes = await fetch(AUTH_API + '/reset-request', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: _pendingLoginEmail }),
+    });
+    if (!(await reqRes.json()).ok) { showErr('Could not set your password. Try again.'); return; }
+
+    showErr('');
+    showOk('Check your email for a confirmation code to finish setting your password.');
+    document.getElementById('fg-email').value = _pendingLoginEmail;
+    showStep('resetConfirm');
+    document.getElementById('rc-new1').value = p1;
+    document.getElementById('rc-new2').value = p2;
+  } catch (e) {
+    showErr('Could not connect. Try again.');
+  }
+}
+
+async function doResetRequest(isResend){
+  hideMsg();
+  var email = (document.getElementById('fg-email').value || _pendingLoginEmail || '').trim();
+  if (!email) { showErr('Enter your email.'); return; }
+
+  try {
+    var res = await fetch(AUTH_API + '/reset-request', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email }),
+    });
+    await res.json();
+    _pendingLoginEmail = email;
+    showOk(isResend ? 'Code resent — check your email.' : 'If that email has an account, a reset code has been sent.');
+    showStep('resetConfirm');
+  } catch (e) {
+    showErr('Could not connect. Try again.');
+  }
+}
+
+async function doResetConfirm(){
+  hideMsg();
+  var email = _pendingLoginEmail;
+  var code = document.getElementById('rc-code').value.trim();
+  var p1 = document.getElementById('rc-new1').value;
+  var p2 = document.getElementById('rc-new2').value;
+  if (!email) { showErr('Start over — enter your email again.'); showStep('forgot'); return; }
+  if (!code) { showErr('Enter the code from your email.'); return; }
+  if (p1.length < 8) { showErr('Password must be at least 8 characters.'); return; }
+  if (p1 !== p2) { showErr('Passwords do not match.'); return; }
+
+  try {
+    var res = await fetch(AUTH_API + '/reset-confirm', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email, code: code, newPassword: p1 }),
+    });
+    var data = await res.json();
+    if (!data.ok) { showErr(data.error || 'Could not reset your password.'); return; }
+
+    showOk('Password set. Signing you in…');
+    setTimeout(async function(){
+      var loginRes = await fetch(AUTH_API + '/login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email, password: p1 }),
+      });
+      var loginData = await loginRes.json();
+      if (loginData.ok) redirectAfterLogin(loginData);
+      else showStep('login');
+    }, 900);
+  } catch (e) {
+    showErr('Could not connect. Try again.');
+  }
+}
+
+// Allow Enter key to submit the currently visible step.
+document.addEventListener('keydown', function(e){
+  if (e.key !== 'Enter') return;
+  if (document.getElementById('stepLogin').classList.contains('active')) doLogin();
+  else if (document.getElementById('stepForceReset').classList.contains('active')) doForceReset();
+  else if (document.getElementById('stepForgot').classList.contains('active')) doResetRequest();
+  else if (document.getElementById('stepResetConfirm').classList.contains('active')) doResetConfirm();
+});
+</script>
+</body>
+</html>
