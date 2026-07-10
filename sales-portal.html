@@ -5599,13 +5599,14 @@ function spRenderWeekly() {
 }
 
 /* ══ MY SCHEDULE — recurring weekly time-blocking ══════════════════════
-   Personal to each rep, device-local (not synced to D1 — this is a
-   planning tool, not shared CRM data). One recurring weekly pattern,
-   not per-week instances: fill it in once, it applies every week going
-   forward, matching what Ted asked for exactly. Categories: Phone Calls,
-   Emails, Paperwork/Bids, Site Surveys. Tap a category chip to arm it,
-   then tap time slots to paint them; tap an already-painted slot with
-   the same category armed to clear it. */
+   Personal to each rep, but synced to D1 (rep_schedule table) so it's
+   visible across devices and, eventually, to managers — per Ted's
+   standing rule (2026-07-09): nothing gets built localStorage-only,
+   full stop. One recurring weekly pattern, not per-week instances: fill
+   it in once, it applies every week going forward. Categories: Phone
+   Calls, Emails, Paperwork/Bids, Site Surveys. Tap a category chip to
+   arm it, then tap time slots to paint them; tap an already-painted
+   slot with the same category armed to clear it. */
 const SP_SCHED_CATS = [
   { id:'calls',     label:'📞 Phone Calls',    color:'#1B5FA8' },
   { id:'emails',    label:'✉️ Emails',          color:'#6D28D9' },
@@ -5615,20 +5616,51 @@ const SP_SCHED_CATS = [
 const SP_SCHED_DAYS = ['Mon','Tue','Wed','Thu','Fri'];
 const SP_SCHED_HOURS = [7,8,9,10,11,12,13,14,15,16,17];
 let _spSchedArmed = null;
+let _spSchedCache = null; // in-memory copy once loaded, so painting feels instant
+const SP_SCHED_API = 'https://unipro-ai-proxy.termac-one.workers.dev/db/rep_schedule';
+const SP_SCHED_SECRET = 'termac2026';
 
-function spScheduleKey() {
-  return 'termac_schedule_template_' + (_spRep?.name || 'rep').replace(/\s+/g,'_');
-}
-function spLoadSchedule() {
-  try { return JSON.parse(localStorage.getItem(spScheduleKey()) || '{}'); } catch(e) { return {}; }
-}
-function spSaveScheduleData(data) {
-  try { localStorage.setItem(spScheduleKey(), JSON.stringify(data)); } catch(e) {}
+function spScheduleRowId() {
+  return 'SCHED-' + (_spRep?.name || 'rep').replace(/\s+/g,'_').toUpperCase();
 }
 
-function spRenderSchedule() {
+async function spLoadScheduleFromD1() {
+  try {
+    const res = await fetch(SP_SCHED_API + '?rep_name=' + encodeURIComponent(_spRep?.name || ''), {
+      headers: { 'X-API-Secret': SP_SCHED_SECRET },
+    });
+    const result = await res.json();
+    if (result.ok && result.results && result.results.length) {
+      return JSON.parse(result.results[0].template_json || '{}');
+    }
+  } catch(e) { console.warn('Schedule load error:', e); }
+  return {};
+}
+
+async function spSaveScheduleToD1(data) {
+  const now = Date.now();
+  try {
+    await fetch(SP_SCHED_API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Secret': SP_SCHED_SECRET },
+      body: JSON.stringify({
+        id: spScheduleRowId(),
+        rep_name: _spRep?.name || '',
+        template_json: JSON.stringify(data),
+        created_at: now,
+      }),
+    });
+  } catch(e) { console.warn('Schedule save error:', e); spToast('⚠️ Could not sync to server — will retry'); }
+}
+
+async function spRenderSchedule() {
   const el = document.getElementById('spContent');
-  const data = spLoadSchedule();
+
+  if (_spSchedCache === null) {
+    el.innerHTML = `<div class="sp-card" style="text-align:center;padding:40px;color:var(--soft)">Loading your schedule…</div>`;
+    _spSchedCache = await spLoadScheduleFromD1();
+  }
+  const data = _spSchedCache;
 
   const chipsHtml = SP_SCHED_CATS.map(c => {
     const armed = _spSchedArmed === c.id;
@@ -5668,7 +5700,7 @@ function spRenderSchedule() {
       </table>
     </div>
 
-    <div style="margin-top:16px;font-size:11px;color:var(--soft)">Saved automatically to this device. This is a personal planning tool — it doesn't sync across devices or to the shared calendar yet.</div>
+    <div style="margin-top:16px;font-size:11px;color:var(--soft)">Synced to the server — visible across your devices, same as the rest of your CRM data.</div>
   </div>`;
 }
 
@@ -5678,21 +5710,23 @@ function spSchedArm(catId) {
 }
 
 function spSchedPaint(key) {
-  const data = spLoadSchedule();
   if (!_spSchedArmed) { spToast('Tap a category above first'); return; }
+  const data = _spSchedCache || {};
   if (data[key] === _spSchedArmed) {
     delete data[key]; // tap same category on a filled slot to clear it
   } else {
     data[key] = _spSchedArmed;
   }
-  spSaveScheduleData(data);
+  _spSchedCache = data;
   spRenderSchedule();
+  spSaveScheduleToD1(data); // fire-and-forget; UI already updated from cache
 }
 
 function spSchedClear() {
   if (!confirm('Clear your entire weekly schedule pattern?')) return;
-  spSaveScheduleData({});
+  _spSchedCache = {};
   spRenderSchedule();
+  spSaveScheduleToD1({});
 }
 
 function spSaveWeeklyNotes(weekTs) {

@@ -21,7 +21,7 @@ const ALLOWED_TABLES = new Set([
   'allpro_projects','allpro_milestones','allpro_quotes','allpro_quote_lines',
   'allpro_hood_pricing','allpro_fan_pricing','allpro_hood_designer',
   'allpro_permits','allpro_bid_lines','allpro_parts_catalog',
-  'townships','quality_complaints',
+  'townships','quality_complaints','rep_schedule',
 ]);
 
 const TABLE_PREFIX = {
