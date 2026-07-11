@@ -472,34 +472,10 @@ textarea{resize:vertical;min-height:80px;line-height:1.5;}
         <a class="nfpa-row" href="https://www.nfpa.org/codes-and-standards/nfpa-10-standard-development/10" target="_blank" rel="noopener" style="text-decoration:none;color:inherit;cursor:pointer"><div class="nfpa-code">NFPA 10 ↗</div><div class="nfpa-desc">Extinguishers - annual</div></a>
         <a class="nfpa-row" href="https://www.nfpa.org/codes-and-standards/nfpa-101-standard-development/101" target="_blank" rel="noopener" style="text-decoration:none;color:inherit;cursor:pointer"><div class="nfpa-code">NFPA 101 ↗</div><div class="nfpa-desc">Exit lighting - annual + 90-min test</div></a>
       </div>
-      <div onclick="showSettings()" style="margin-top:10px;padding:8px 10px;background:#252F3B;border-radius:6px;cursor:pointer;display:flex;align-items:center;gap:8px;">
-        <span style="font-size:14px;">⚙️</span>
-        <span style="font-size:11px;color:#AEB6BF;font-weight:600;">Settings / API Key</span>
-      </div>
     </div>
   </div>
 
   <!-- SETTINGS MODAL -->
-  <div id="settingsModal" onclick="if(event.target===this)closeSettings()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:2000;align-items:center;justify-content:center;">
-    <div style="background:#fff;border-radius:12px;padding:28px 32px;width:520px;max-width:92vw;box-shadow:0 8px 40px rgba(0,0,0,.3);">
-      <div style="font-size:20px;font-weight:800;color:#1C2833;margin-bottom:6px;">⚙️ Settings</div>
-      <div style="font-size:12px;color:#566573;margin-bottom:20px;">Configure the AI-powered Generate Summary feature. Your API key is stored locally on this device only - never transmitted except directly to Anthropic.</div>
-
-      <div style="margin-bottom:16px;">
-        <label style="font-size:11px;font-weight:700;color:#566573;text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:6px;">Anthropic API Key</label>
-        <input type="password" id="apiKeyInput" placeholder="sk-ant-api03-..."
-          style="width:100%;padding:10px 12px;border:1.5px solid #DDE4EA;border-radius:8px;font-size:14px;font-family:monospace;box-sizing:border-box;">
-        <div style="font-size:11px;color:#AEB6BF;margin-top:5px;">Get your API key at <strong>console.anthropic.com</strong> → API Keys</div>
-      </div>
-
-      <div id="apiKeyStatus" style="display:none;padding:8px 12px;border-radius:6px;font-size:12px;font-weight:600;margin-bottom:14px;"></div>
-
-      <div style="display:flex;gap:10px;justify-content:flex-end;">
-        <button onclick="closeSettings()" style="padding:9px 20px;border:1.5px solid #DDE4EA;border-radius:8px;background:#fff;cursor:pointer;font-size:13px;font-weight:600;color:#566573;">Close</button>
-        <button onclick="saveApiKey()" style="padding:9px 20px;border:none;border-radius:8px;background:#C0392B;color:#fff;cursor:pointer;font-size:13px;font-weight:700;">Save API Key</button>
-      </div>
-    </div>
-  </div>
 
   <!-- MAIN -->
   <div class="main" id="mainContent">
@@ -4339,28 +4315,10 @@ function recalcContractValue(){
 }
 
 // ── API KEY SETTINGS ─────────────────────────────────────────────────
-function showSettings(){
-  const modal=document.getElementById('settingsModal');
-  modal.style.display='flex';
-  const stored=localStorage.getItem('unipro_api_key')||'';
-  document.getElementById('apiKeyInput').value=stored;
-  const st=document.getElementById('apiKeyStatus');
-  if(stored){
-    st.style.display='block';st.style.background='#F0FAF5';st.style.color='#1A7A4A';
-    st.textContent='✓ API key saved - Generate Summary is ready to use.';
-  } else { st.style.display='none'; }
-}
-function closeSettings(){ document.getElementById('settingsModal').style.display='none'; }
-function saveApiKey(){
-  const val=document.getElementById('apiKeyInput').value.trim();
-  const st=document.getElementById('apiKeyStatus');
-  st.style.display='block';
-  if(!val){ st.style.background='#FDEDEC';st.style.color='#C0392B';st.textContent='Please enter a valid API key.';return; }
-  localStorage.setItem('unipro_api_key',val);
-  st.style.background='#F0FAF5';st.style.color='#1A7A4A';
-  st.textContent='✓ API key saved. Closing...';
-  setTimeout(closeSettings, 1200);
-}
+// Removed 2026-07-11: the AI Findings feature now calls the secure
+// server-side proxy (unipro-ai-proxy.termac-one.workers.dev) directly,
+// so no client-stored API key is needed anymore. showSettings/
+// closeSettings/saveApiKey and the settings modal were deleted.
 
 // ── AI FINDINGS GENERATOR ────────────────────
 async function generateAIFindings(){
@@ -4435,27 +4393,11 @@ If there are no items for a category, write "No immediate action required." or s
   status.textContent = 'Analyzing inspection results and generating summary...';
 
   try {
-    // Get API key from localStorage
-    const apiKey = localStorage.getItem('unipro_api_key')||'';
-    if(!apiKey){
-      status.style.display='block';
-      status.style.background='#FEF9E7';
-      status.style.borderColor='#E67E22';
-      status.style.color='#E67E22';
-      status.textContent='API key not set. Tap the ⚙ Settings button in the sidebar to add your Anthropic API key.';
-      btn.disabled=false; btn.style.opacity='1'; btn.textContent='⚡ Generate Summary';
-      return;
-    }
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    const response = await fetch('https://unipro-ai-proxy.termac-one.workers.dev/', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-5',
+        model: 'claude-sonnet-4-6',
         max_tokens: 1000,
         messages: [{ role: 'user', content: prompt }]
       })
