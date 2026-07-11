@@ -43,6 +43,10 @@ const ALLOWED_TABLES = new Set([
   // Daily digest, added 2026-07-11 - written by the cron trigger below,
   // read by the client on Home to show what the scheduled job prepared.
   'daily_digests',
+  // Real per-rep call/visit targets, added 2026-07-11 - the cron job has
+  // no access to localStorage at all, so this closes the gap that made
+  // the digest fall back to defaults instead of each rep's real targets.
+  'rep_targets',
 ]);
 
 const TABLE_PREFIX = {
@@ -60,6 +64,7 @@ const TABLE_PREFIX = {
   crm_tombstones:'TMB',
   allpro_cost_lines:'ACL',
   daily_digests:'DIG',
+  rep_targets:'TGT',
 };
 
 function corsHeaders(origin) {
@@ -231,9 +236,9 @@ export default {
   // and real hot leads straight from D1, writes one row per rep plus a
   // team rollup for managers, so it's there waiting the moment anyone
   // opens the app - not recomputed live, genuinely prepared ahead of
-  // time. Quota targets aren't in D1 yet (still per-device localStorage),
-  // so this uses the same sensible defaults the client falls back to
-  // until quotas move server-side too.
+  // time. Reads each rep's real call/visit targets from rep_targets
+  // where they exist, falling back to sensible defaults only for reps
+  // who haven't had targets set through the Quota Builder yet.
   async scheduled(event, env, ctx) {
     ctx.waitUntil(runDailyDigest(env));
   },
@@ -254,6 +259,19 @@ async function runDailyDigest(env) {
     let teamHotCount = 0, teamRepCount = 0;
 
     for (const repName of repNames) {
+      let callTarget = DEFAULT_CALL_TARGET, visitTarget = DEFAULT_VISIT_TARGET;
+      try {
+        const tgtResult = await env.DB.prepare(
+          `SELECT call_target, visit_target FROM rep_targets WHERE rep_name = ?`
+        ).bind(repName).first();
+        if (tgtResult) {
+          // Stored values are weekly (matching the Quota Builder); the
+          // digest works in daily terms, same /5 conversion the client uses.
+          if (tgtResult.call_target) callTarget = Math.max(1, Math.round(tgtResult.call_target / 5));
+          if (tgtResult.visit_target) visitTarget = Math.max(1, Math.round(tgtResult.visit_target / 5));
+        }
+      } catch (e) { /* fall through to defaults */ }
+
       const hotResult = await env.DB.prepare(
         `SELECT id, business, ai_score FROM leads WHERE assigned_rep = ? AND (ai_score >= 7 OR is_hot = 1) ORDER BY ai_score DESC LIMIT 3`
       ).bind(repName).all();
@@ -269,7 +287,7 @@ async function runDailyDigest(env) {
         `INSERT OR REPLACE INTO daily_digests (id, rep_name, digest_date, call_target, visit_target, hot_lead_count, hot_leads_json, message, created_at) VALUES (?,?,?,?,?,?,?,?,?)`
       ).bind(
         'DIG-' + repName.replace(/\s+/g,'') + '-' + today,
-        repName, today, DEFAULT_CALL_TARGET, DEFAULT_VISIT_TARGET,
+        repName, today, callTarget, visitTarget,
         hotLeads.length, JSON.stringify(hotLeads), message, now
       ).run();
     }
