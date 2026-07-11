@@ -328,6 +328,52 @@
     catch (e) { return []; }
   }
 
+  // Removes a single record by id: locally right away, then against D1
+  // (both the real row and a tombstone), so the deletion actually
+  // reaches every other device instead of only ever un-deleting itself
+  // the next time hydration runs. crmSave alone could never do this -
+  // it only ever adds/updates, so a locally-deleted record with no
+  // tombstone just gets silently re-added by the next hydrate.
+  async function crmDelete(table, id) {
+    if (!id) return;
+    var local = crmLoad(table);
+    var next = local.filter(function (r) { return r && r.id !== id; });
+    try { localStorage.setItem('termac_crm_' + table, JSON.stringify(next)); } catch (e) {}
+    if (!D1_SYNC_TABLES.includes(table)) return next;
+    try {
+      await d1Fetch('DELETE', '/api/' + table + '/' + id);
+      await d1Fetch('POST', '/api/crm_tombstones', {
+        table_name: table, record_id: id, deleted_at: Date.now(),
+      });
+    } catch (e) {}
+    return next;
+  }
+
+  // Tombstones deleted within the lookback window get purged from local
+  // cache here. 30 days is generous - long enough that a device offline
+  // for weeks still catches up, short enough the tombstones table itself
+  // doesn't grow forever.
+  var TOMBSTONE_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
+  async function d1PurgeTombstoned(table) {
+    try {
+      var res = await d1Fetch('GET', '/api/crm_tombstones?table_name=' + encodeURIComponent(table) + '&limit=500');
+      if (!res.ok || !Array.isArray(res.results) || !res.results.length) return 0;
+      var cutoff = Date.now() - TOMBSTONE_LOOKBACK_MS;
+      var deadIds = {};
+      res.results.forEach(function (t) {
+        if (t && t.record_id && (t.deleted_at || 0) >= cutoff) deadIds[t.record_id] = true;
+      });
+      if (!Object.keys(deadIds).length) return 0;
+      var local = crmLoad(table);
+      var before = local.length;
+      var next = local.filter(function (r) { return !(r && deadIds[r.id]); });
+      if (next.length !== before) {
+        try { localStorage.setItem('termac_crm_' + table, JSON.stringify(next)); } catch (e) {}
+      }
+      return before - next.length;
+    } catch (e) { return 0; }
+  }
+
   // Patched crmSave — writes local immediately (synchronous, always works),
   // then fires the D1 push in the background. A push failure never blocks
   // or breaks the local save; it just means that one record stays
@@ -345,7 +391,8 @@
   // device can never be clobbered by this call. Returns how many new
   // records were merged in, so callers can decide whether to re-render.
   async function d1Hydrate(table) {
-    if (!D1_SYNC_TABLES.includes(table)) return { records: [], added: 0 };
+    if (!D1_SYNC_TABLES.includes(table)) return { records: [], added: 0, removed: 0 };
+    var removed = await d1PurgeTombstoned(table);
     var local = crmLoad(table);
     var existingIds = {};
     local.forEach(function (r) { if (r && r.id) existingIds[r.id] = true; });
@@ -362,10 +409,10 @@
         if (added > 0) {
           try { localStorage.setItem('termac_crm_' + table, JSON.stringify(local)); } catch (e) {}
         }
-        return { records: local, added: added };
+        return { records: local, added: added, removed: removed };
       }
     } catch (e) {}
-    return { records: local, added: 0 };
+    return { records: local, added: 0, removed: removed };
   }
 
   async function d1HydrateAll(onEach) {
@@ -373,9 +420,9 @@
     for (var i = 0; i < D1_SYNC_TABLES.length; i++) {
       var table = D1_SYNC_TABLES[i];
       var result = await d1Hydrate(table);
-      if (result.added > 0) {
+      if (result.added > 0 || result.removed > 0) {
         totalAdded += result.added;
-        if (typeof onEach === 'function') onEach(table, result.added);
+        if (typeof onEach === 'function') onEach(table, result.added, result.removed);
       }
     }
     return totalAdded;
@@ -819,13 +866,15 @@
     d1ReverseMap: d1ReverseMap,
     crmSave: crmSave,
     crmLoad: crmLoad,
+    crmDelete: crmDelete,
     SYNC_TABLES: D1_SYNC_TABLES,
     JOB_DIVISION_KEYS: JOB_DIVISION_KEYS,
   };
 
-  // Also expose crmSave/crmLoad as plain globals if the page doesn't
-  // already define its own — most portals call crmSave()/crmLoad() as
-  // bare functions rather than through a namespace.
+  // Also expose crmSave/crmLoad/crmDelete as plain globals if the page
+  // doesn't already define its own - most portals call these as bare
+  // functions rather than through a namespace.
   if (typeof global.crmSave !== 'function') global.crmSave = crmSave;
   if (typeof global.crmLoad !== 'function') global.crmLoad = crmLoad;
+  if (typeof global.crmDelete !== 'function') global.crmDelete = crmDelete;
 })(window);

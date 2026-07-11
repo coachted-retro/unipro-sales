@@ -29,6 +29,12 @@ const ALLOWED_TABLES = new Set([
   // localStorage-only audit, added 2026-07-10
   'broadcasts', 'dispatch_msgs', 'wh_requisitions', 'wh_ready_handoffs', 'parts_requests',
   'transfer_requests', 'hr_data', 'allpro_spiffs',
+  // Delete-propagation fix, added 2026-07-11 - local-first sync only ever
+  // added new records found in D1, never removed ones deleted server-side,
+  // so a deletion never actually reached other devices. Tombstones close
+  // that gap: crmDelete writes one here alongside the real DELETE, and
+  // hydration checks this table to purge matching local records too.
+  'crm_tombstones',
 ]);
 
 const TABLE_PREFIX = {
@@ -43,6 +49,7 @@ const TABLE_PREFIX = {
   wh_ready_handoffs:'WHH', parts_requests:'PR', transfer_requests:'XFR',
   hr_data:'HRD',
   allpro_spiffs:'SPF',
+  crm_tombstones:'TMB',
 };
 
 function corsHeaders(origin) {
