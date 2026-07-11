@@ -2112,6 +2112,7 @@ function spRenderTodayAgenda() {
         + '<button onclick="event.stopPropagation();spOpenCollLog(this)" data-acctid="' + escH(item.accountId||'') + '" data-title="' + escH(item.title) + '" style="background:#1E7B3C;color:#fff;border:none;border-radius:7px;padding:9px 10px;font-size:13px;cursor:pointer" title="Log cash/check collection">💵</button>'
         + '<button onclick="event.stopPropagation();spCompleteStop(\'' + item.id + '\',\'' + (item.accountId||'') + '\')" style="background:rgba(0,0,0,.06);border:none;border-radius:7px;padding:9px 10px;font-size:13px;cursor:pointer;color:var(--soft)" title="Mark complete - leaving this stop">✅</button>'
         + (!item.accountType ? '<button onclick="event.stopPropagation();spSetStopAccountType(\'' + item.id + '\',\'' + (item.accountId||'') + '\')" style="background:rgba(0,0,0,.06);border:none;border-radius:7px;padding:9px 10px;font-size:10px;cursor:pointer;color:var(--soft)" title="Set business type">🏷️</button>' : '')
+        + '<button onclick="event.stopPropagation();spOpenIntroScript(\'' + (item.accountId||'') + '\',\'' + (item.action === 'visit' ? 'accounts' : 'leads') + '\',' + JSON.stringify(item.title) + ',' + JSON.stringify(item.address||'') + ')" style="background:rgba(0,0,0,.06);border:none;border-radius:7px;padding:9px 10px;font-size:10px;cursor:pointer;color:var(--soft)" title="AI intro script + violation check">🎤</button>'
       + '</div>'
     + '</div>';
   }).join('');
@@ -8996,6 +8997,108 @@ async function spRunAI(r, tab) {
   } catch(e) {
     const summaryEl = document.getElementById('siAiSummary');
     if(summaryEl){ summaryEl.style.color='#6B7280'; summaryEl.textContent='AI analysis unavailable'; }
+  }
+}
+
+// ══════════════════════════════════════════════════════
+//  AI INTRO SCRIPT + VIOLATION LOOKUP
+//  Cross-references public fire marshal / health dept
+//  records for the stop, then generates a walk-in script
+//  that uses any real finding as a soft leverage point
+//  without ever stating "you have a violation" outright.
+// ══════════════════════════════════════════════════════
+function spOpenIntroScript(accountId, tab, title, address) {
+  var old = document.getElementById('spIntroScriptModal');
+  if (old) old.remove();
+
+  var modal = document.createElement('div');
+  modal.id = 'spIntroScriptModal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:6200;display:flex;align-items:flex-start;justify-content:center;padding:40px 16px 20px;overflow-y:auto';
+  modal.innerHTML = '<div style="background:#12151A;border-radius:14px;width:min(480px,96vw);box-shadow:0 20px 60px rgba(0,0,0,.4);overflow:hidden;margin-bottom:20px">'
+    + '<div style="background:#1A1D21;padding:16px 20px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #2A2E34">'
+      + '<div>'
+        + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:15px;color:#fff;letter-spacing:.06em;text-transform:uppercase">🎤 Intro Script</div>'
+        + '<div style="font-size:11px;color:#9CA3AF;margin-top:2px">' + escH(title) + '</div>'
+      + '</div>'
+      + '<button onclick="document.getElementById(\'spIntroScriptModal\').remove()" style="background:none;border:1.5px solid #3A3E43;border-radius:6px;color:#9CA3AF;padding:4px 10px;font-size:12px;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:700">✕</button>'
+    + '</div>'
+    + '<div id="spIntroScriptBody" style="padding:18px 20px;display:flex;flex-direction:column;gap:10px">'
+      + '<div style="text-align:center;padding:30px 0;color:#9CA3AF;font-size:12px">🔍 Checking fire marshal &amp; health dept records, then building your script...</div>'
+    + '</div>'
+  + '</div>';
+  document.body.appendChild(modal);
+
+  spRunIntroScript(accountId, tab, title, address);
+}
+
+async function spRunIntroScript(accountId, tab, title, address) {
+  var body = document.getElementById('spIntroScriptBody');
+  var r = accountId ? (crmLoad(tab || 'leads') || []).concat(crmLoad('accounts') || []).find(function(x){ return x.id === accountId; }) : null;
+
+  var services = (r && r.services || []).join(', ') || 'None on file';
+  var notes = (r && (r.notes || r.siteNotes)) || 'None';
+  var bizType = (r && (r.role || r.industry || r.businessType)) || 'Unknown — infer from name/address';
+
+  var prompt = 'You are a B2B sales intelligence assistant for Termac, a fire protection and commercial kitchen services company (divisions: UniPro, GTO, AllPro, Filter Man, Quality III) serving PA/NJ/DE/MD/DC.\n\n'
+    + 'STEP 1 — RESEARCH: Use web search to look for PUBLIC fire marshal, fire department, or health department inspection/violation records specifically for this business at this exact address. Check likely sources: state/county fire marshal portals, municipal code enforcement, health department inspection databases, local news of citations/closures. Only report a finding if it is clearly tied to THIS business at THIS address — never guess, never attribute a violation found for a different business with a similar name, and say so plainly if nothing specific turns up or if you cannot verify.\n\n'
+    + 'STEP 2 — SCRIPT: Whether or not anything was found, write a short walk-in / cold-open script for a field rep. If a real, verifiable issue was found, the rep must NEVER say "I know you have a violation" or anything that sounds like an accusation, a gotcha, or that the rep has been investigating them. Instead frame it around routine proactive service: mention doing rounds in the area ahead of an inspection cycle, checking that documentation/certs are current, or the seasonal timing of fire marshal sweeps — something that gives the rep a natural, low-pressure reason to ask about their current setup. The violation knowledge should only ever surface as things the REP privately knows to steer toward, never as something said out loud.\n\n'
+    + 'BUSINESS:\nName: ' + (title || 'Unknown')
+    + '\nAddress: ' + (address || 'Unknown')
+    + '\nType: ' + bizType
+    + '\nCurrent Termac services: ' + services
+    + '\nNotes on file: ' + notes
+    + '\n\nRespond ONLY with valid JSON, no markdown fences:\n{\n'
+    + '  "violations_found": true or false,\n'
+    + '  "violation_summary": "factual 1-2 sentence summary of what was found incl. approx date if known, or empty string if nothing found/verifiable",\n'
+    + '  "source_note": "brief source description e.g. \'NJ DCA fire inspection portal\' or empty string",\n'
+    + '  "confidence": "high, medium, or low - how confident the match is to this exact business",\n'
+    + '  "rep_only_angle": "private 1-sentence note to the rep on how to use this, never spoken aloud",\n'
+    + '  "opening_line": "the literal first line the rep says walking in - natural, no mention of any violation",\n'
+    + '  "follow_up_lines": ["2-3 short natural follow-up lines that steer the conversation toward the pain point without naming it"],\n'
+    + '  "if_pushback": "one line to use if the customer asks directly whether something is wrong - still no accusation, redirects to a helpful frame"\n'
+    + '}';
+
+  try {
+    var resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 1200,
+        messages: [{ role: 'user', content: prompt }],
+        tools: [{ type: 'web_search_20250305', name: 'web_search' }]
+      })
+    });
+    var data = await resp.json();
+    var textBlocks = (data.content || []).filter(function(b){ return b.type === 'text'; }).map(function(b){ return b.text; });
+    var text = textBlocks.join('\n');
+    var clean = text.replace(/```json|```/g, '').trim();
+    var ai = JSON.parse(clean);
+
+    var violHtml = ai.violations_found
+      ? '<div style="background:#2A1414;border:1px solid #7F1D1D;border-radius:8px;padding:10px 12px">'
+        + '<div style="font-size:9px;font-weight:700;color:#FCA5A5;text-transform:uppercase;letter-spacing:.08em;margin-bottom:5px">⚠️ Found — Confidence: ' + escH(ai.confidence||'unknown') + '</div>'
+        + '<div style="font-size:12px;color:#FEE2E2;line-height:1.5;margin-bottom:4px">' + escH(ai.violation_summary||'') + '</div>'
+        + (ai.source_note ? '<div style="font-size:10px;color:#9CA3AF">Source: ' + escH(ai.source_note) + '</div>' : '')
+      + '</div>'
+      : '<div style="background:#0F1B0F;border:1px solid #1E7B3C;border-radius:8px;padding:10px 12px;font-size:12px;color:#D1FAE5">✅ No verifiable fire/health violations found for this business — script below uses standard proactive framing.</div>';
+
+    var repOnly = ai.rep_only_angle
+      ? '<div style="background:#1A1D21;border-left:3px solid #F59E0B;padding:8px 10px;border-radius:6px"><div style="font-size:9px;font-weight:700;color:#F59E0B;text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px">🔒 For You Only — Don\'t Say This Part</div><div style="font-size:11px;color:#D1D5DB">' + escH(ai.rep_only_angle) + '</div></div>'
+      : '';
+
+    var followUps = (ai.follow_up_lines||[]).map(function(l){ return '<div style="font-size:12px;color:#D1D5DB;padding:4px 0;border-bottom:1px solid #1F2937">· ' + escH(l) + '</div>'; }).join('');
+
+    body.innerHTML = violHtml
+      + repOnly
+      + '<div>'
+        + '<div style="font-size:9px;font-weight:700;color:#60A5FA;text-transform:uppercase;letter-spacing:.08em;margin-bottom:5px">💬 Opening Line</div>'
+        + '<div style="font-size:13px;color:#fff;font-weight:600;background:#151A2E;border-radius:7px;padding:10px 12px;line-height:1.5">"' + escH(ai.opening_line||'') + '"</div>'
+      + '</div>'
+      + (followUps ? '<div><div style="font-size:9px;font-weight:700;color:#60A5FA;text-transform:uppercase;letter-spacing:.08em;margin-bottom:5px">➡️ Follow-Up</div>' + followUps + '</div>' : '')
+      + (ai.if_pushback ? '<div><div style="font-size:9px;font-weight:700;color:#F59E0B;text-transform:uppercase;letter-spacing:.08em;margin-bottom:5px">🛡️ If They Push Back</div><div style="font-size:12px;color:#D1D5DB;font-style:italic">"' + escH(ai.if_pushback) + '"</div></div>' : '');
+  } catch (e) {
+    body.innerHTML = '<div style="text-align:center;padding:20px;color:#EF4444;font-size:12px">Couldn\'t generate a script right now. Try again in a moment.</div>';
   }
 }
 
