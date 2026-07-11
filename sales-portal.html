@@ -3295,6 +3295,19 @@ function spViewApptDetail(apptId) {
   if (!a) return;
   const typeLabel = a.type === 'appointment' ? '📅 Appointment' : '🗺️ Site Visit';
   const dateLabel = a.date ? new Date(a.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'}) : '';
+
+  // The appointment row itself only stores business/location/record_id/division —
+  // it does not carry a contact name/phone. Look up the linked account or lead
+  // (via record_id) to surface who to actually ask for on site.
+  const linked = a.recordId
+    ? (crmLoad('accounts') || []).concat(crmLoad('leads') || []).find(function(r){ return r.id === a.recordId; })
+    : null;
+  const contactName = a.contact || (linked && linked.contactName) || '';
+  const phone       = a.phone   || (linked && linked.phone) || '';
+  const location     = a.location || a.address || (linked && linked.address) || '';
+  const business      = a.business || (linked && (linked.name || linked.business)) || '';
+  const division      = a.division || (linked && linked.division) || '';
+
   var old = document.getElementById('spApptDetailModal');
   if (old) old.remove();
   var wrap = document.createElement('div');
@@ -3302,15 +3315,23 @@ function spViewApptDetail(apptId) {
   wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9600;display:flex;align-items:center;justify-content:center;padding:20px';
   wrap.innerHTML = '<div style="background:#fff;border-radius:14px;width:min(420px,94vw);box-shadow:0 20px 60px rgba(0,0,0,.3);overflow:hidden">'
     + '<div style="background:#1B5FA8;padding:16px 20px;display:flex;align-items:center;justify-content:space-between">'
-      + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:15px;color:#fff;letter-spacing:.05em;text-transform:uppercase">' + typeLabel + '</div>'
+      + '<div style="display:flex;align-items:center;gap:8px">'
+        + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:15px;color:#fff;letter-spacing:.05em;text-transform:uppercase">' + typeLabel + '</div>'
+        + (division ? '<span style="background:rgba(255,255,255,.2);color:#fff;border-radius:4px;padding:2px 7px;font-size:10px;font-weight:700">' + escH(division) + '</span>' : '')
+      + '</div>'
       + '<button onclick="document.getElementById(\'spApptDetailModal\').remove()" style="background:none;border:none;color:rgba(255,255,255,.7);font-size:20px;cursor:pointer;line-height:1">✕</button>'
     + '</div>'
     + '<div style="padding:20px;display:flex;flex-direction:column;gap:12px">'
-      + '<div><div style="font-size:17px;font-weight:800;color:var(--ink)">' + escH(a.title||'Appointment') + '</div>'
-        + '<div style="font-size:13px;color:var(--soft);margin-top:2px">' + escH(dateLabel) + (a.time?' · '+escH(a.time):'') + '</div></div>'
-      + (a.address ? '<div style="font-size:13px;color:var(--ink)">📍 ' + escH(a.address) + '</div>' : '')
-      + (a.contact ? '<div style="font-size:13px;color:var(--ink)">👤 ' + escH(a.contact) + '</div>' : '')
+      + '<div>'
+        + (business ? '<div style="font-size:18px;font-weight:900;color:var(--ink);margin-bottom:3px">' + escH(business) + '</div>' : '<div style="font-size:13px;font-weight:700;color:#EF4444;margin-bottom:3px">⚠️ No account linked to this stop</div>')
+        + '<div style="font-size:13px;color:var(--soft)">' + escH(a.title||'Appointment') + '</div>'
+        + '<div style="font-size:12px;color:var(--soft);margin-top:4px">' + escH(dateLabel) + (a.time?' · '+escH(a.time):'') + '</div>'
+      + '</div>'
+      + (location ? '<div style="font-size:13px;color:var(--ink)"><a href="https://maps.google.com/?q=' + encodeURIComponent(location) + '" target="_blank" style="color:inherit;text-decoration:none">📍 ' + escH(location) + '</a></div>' : '')
+      + (contactName ? '<div style="font-size:13px;color:var(--ink)">👤 ' + escH(contactName) + '</div>' : '')
+      + (phone ? '<div style="font-size:13px;color:var(--ink)">📞 <a href="tel:' + escH(phone) + '" style="color:var(--blue)">' + escH(phone) + '</a></div>' : '')
       + (a.notes ? '<div style="font-size:13px;color:var(--soft);background:#F8F9FA;border-radius:8px;padding:10px 12px;white-space:pre-wrap">' + escH(a.notes) + '</div>' : '')
+      + (a.recordId ? '<button onclick="document.getElementById(\'spApptDetailModal\').remove();spViewRecord(\'' + a.recordId + '\',\'' + (a.tab || 'accounts') + '\')" style="background:#1B5FA8;color:#fff;border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;cursor:pointer;letter-spacing:.05em;text-transform:uppercase">View Full Account →</button>' : '')
       + '<button onclick="document.getElementById(\'spApptDetailModal\').remove()" style="background:#F3F4F6;color:#6B7280;border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;cursor:pointer;letter-spacing:.05em;text-transform:uppercase;margin-top:4px">Close</button>'
     + '</div>'
   + '</div>';
