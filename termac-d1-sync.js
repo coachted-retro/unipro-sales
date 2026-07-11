@@ -79,6 +79,7 @@
       healthScore: 'health_score', openDeficiencies: 'open_deficiencies',
       lastCheckin: 'last_checkin', certStatus: 'cert_status',
       statusFlag: 'status_flag', lastStatusCheckAt: 'last_status_check_at',
+      confirmationStatus: 'confirmation_status',
     },
     contacts: {
       // 2026-07-10 FIX: previous VALID list for this table (location_id,
@@ -151,7 +152,7 @@
       'cert_status', 'onboarding', 'created_at', 'updated_at', 'source',
       'address', 'state', 'phone', 'contact_name', 'contact_email',
       'billing_cycle', 'territory', 'division', 'cust_num', 'attention_status',
-      'status_flag', 'last_status_check_at'],
+      'status_flag', 'last_status_check_at', 'confirmation_status'],
     contacts: ['id', 'name', 'company', 'title', 'email', 'phone',
       'assigned_rep', 'status', 'created_at', 'updated_at'],
     jobs: ['id', 'account_id', 'location_id', 'division', 'service_type', 'tech_id',

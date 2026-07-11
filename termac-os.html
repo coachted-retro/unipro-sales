@@ -1849,7 +1849,8 @@ function d1NormalizeRecord(table, record) {
       renewalDate: 'renewal_date', lastService: 'last_service',
       healthScore: 'health_score', openDeficiencies: 'open_deficiencies',
       lastCheckin: 'last_checkin', certStatus: 'cert_status',
-      statusFlag: 'status_flag', lastStatusCheckAt: 'last_status_check_at'
+      statusFlag: 'status_flag', lastStatusCheckAt: 'last_status_check_at',
+      confirmationStatus: 'confirmation_status'
     },
     contacts: {
       assignedRep: 'assigned_rep', created: 'created_at'
@@ -1873,7 +1874,7 @@ function d1NormalizeRecord(table, record) {
                'cert_status','onboarding','created_at','updated_at','source',
                'address','state','phone','contact_name','contact_email',
                'billing_cycle','territory','division','cust_num','attention_status',
-               'status_flag','last_status_check_at'],
+               'status_flag','last_status_check_at','confirmation_status'],
     contacts: ['id','name','company','title','email','phone',
                'assigned_rep','status','created_at','updated_at'],
     jobs: ['id','account_id','location_id','division','service_type','tech_id',
@@ -1924,6 +1925,23 @@ async function d1PushBatch(table, records) {
   for (const r of records) { await d1Push(table, r); }
 }
 
+// Click-to-confirm for accounts pulled from a ServiceTrade screenshot/list
+// where real, verified services weren't yet visible at import time (e.g. a
+// general zip-code prospecting list, vs. a screenshot that clearly showed
+// active service line items with due dates). Confirmed accounts are treated
+// as real active customers everywhere (Accounts to Watch, churn-risk alerts,
+// stats); unconfirmed ones are excluded from those until Ted verifies.
+function confirmServiceTradeAccount(id) {
+  var accounts = crmLoad('accounts');
+  var acct = accounts.find(function(a){ return a.id === id; });
+  if (!acct) return;
+  if (!confirm('Confirm ' + (acct.name || acct.business || 'this account') + ' as a real active customer with verified services in ServiceTrade?')) return;
+  acct.confirmation_status = 'confirmed';
+  crmSave('accounts', accounts);
+  if (typeof d1Push === 'function') d1Push('accounts', acct);
+  if (typeof renderCRMView === 'function') renderCRMView();
+}
+
 // Click-to-cycle priority dot on ServiceTrade manual-import accounts.
 // red = needs contact, yellow = contacted / working on scheduling, green = scheduled.
 // Green accounts drop out of the pinned-to-top priority sort in renderCRMView.
@@ -1969,7 +1987,8 @@ function d1ReverseMapLocal(table, record) {
       renewalDate: 'renewal_date', lastService: 'last_service',
       healthScore: 'health_score', openDeficiencies: 'open_deficiencies',
       lastCheckin: 'last_checkin', certStatus: 'cert_status',
-      statusFlag: 'status_flag', lastStatusCheckAt: 'last_status_check_at'
+      statusFlag: 'status_flag', lastStatusCheckAt: 'last_status_check_at',
+      confirmationStatus: 'confirmation_status'
     },
     contacts: {
       assignedRep: 'assigned_rep', created: 'created_at'
@@ -3358,7 +3377,7 @@ function renderCard(tab,r){
   return `<div class="crm-card" onclick="viewRecord('${tab}','${r.id}')">
     <div class="crm-card-header">
       <div style="flex:1;min-width:0">
-        <div class="crm-card-name">${(tab==='accounts' && r.source==='servicetrade_manual') ? `<span onclick="event.stopPropagation();cycleAttentionStatus('${r.id}')" title="ServiceTrade import — click to update (red=needs contact, yellow=in progress, green=scheduled)" style="display:inline-block;width:11px;height:11px;border-radius:50%;margin-right:6px;cursor:pointer;vertical-align:middle;border:1px solid rgba(0,0,0,.15);background:${r.attention_status==='green'?'#16A34A':r.attention_status==='yellow'?'#F2B705':'#DC2626'}"></span>` : ''}${escH(r.name)}${r.role?` <span style="font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:9px;letter-spacing:.06em;background:#F3F4F6;color:#6B7280;border-radius:3px;padding:1px 5px;vertical-align:middle;text-transform:uppercase">${escH(r.role==='Other'&&r.roleCustom?r.roleCustom:r.role)}</span>`:''}</div>
+        <div class="crm-card-name">${(tab==='accounts' && r.source==='servicetrade_manual') ? `<span onclick="event.stopPropagation();cycleAttentionStatus('${r.id}')" title="ServiceTrade import — click to update (red=needs contact, yellow=in progress, green=scheduled)" style="display:inline-block;width:11px;height:11px;border-radius:50%;margin-right:6px;cursor:pointer;vertical-align:middle;border:1px solid rgba(0,0,0,.15);background:${r.attention_status==='green'?'#16A34A':r.attention_status==='yellow'?'#F2B705':'#DC2626'}"></span>` : ''}${escH(r.name)}${r.role?` <span style="font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:9px;letter-spacing:.06em;background:#F3F4F6;color:#6B7280;border-radius:3px;padding:1px 5px;vertical-align:middle;text-transform:uppercase">${escH(r.role==='Other'&&r.roleCustom?r.roleCustom:r.role)}</span>`:''}${(tab==='accounts' && r.source==='servicetrade_manual' && r.confirmation_status==='unconfirmed') ? ` <span onclick="event.stopPropagation();confirmServiceTradeAccount('${r.id}')" title="Not yet confirmed as an active customer with real services on file — click once you've verified this in ServiceTrade" style="font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:9px;letter-spacing:.06em;background:#FEF3C7;color:#92400E;border:1px solid #F2B705;border-radius:3px;padding:1px 6px;vertical-align:middle;text-transform:uppercase;cursor:pointer">🔍 Unconfirmed — click to confirm</span>` : ''}</div>
         <div class="crm-card-sub">${escH(r.business||r.contact||'')}</div>
         <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">${pipelineBadge}${ownerBadge}</div>
       </div>

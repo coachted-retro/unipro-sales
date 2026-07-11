@@ -66,7 +66,9 @@ body{font-family:'Barlow',-apple-system,sans-serif;background:var(--bg);color:va
 .ap-list-table tr.ap-list-row:hover{background:var(--bg)}
 .ap-list-stage-badge{display:inline-block;border-radius:5px;padding:3px 9px;font-size:10px;font-weight:700;color:#fff}
 .ap-list-overdue{color:var(--red);font-weight:700}
-.pj-card{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 11px;margin-bottom:8px;cursor:pointer;border-left:4px solid var(--purple)}
+.pj-card{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 11px;margin-bottom:8px;cursor:grab;border-left:4px solid var(--purple)}
+.pj-card:active{cursor:grabbing}
+.kanban-body-dragover{background:#EBF2FD;outline:2px dashed var(--blue);outline-offset:-2px;border-radius:6px}
 .pj-card:hover{border-color:var(--purple)}
 .pj-card-name{font-weight:700;font-size:13px}
 .pj-card-acc{font-size:11px;color:var(--soft);margin-top:2px}
@@ -468,7 +470,16 @@ var currentTab = 'overview';
 var typeFilter = 'all';
 
 function loadProjects() { return crmLoad('allpro_projects'); }
-function saveProjects(arr) { crmSave('allpro_projects', arr); }
+function saveProjects(arr) {
+  crmSave('allpro_projects', arr);
+  // Was localStorage-only before this fix -- allpro_projects is already a
+  // registered D1 sync table (termac-d1-sync.js), just never actually
+  // pushed. Fire-and-forget batch push so a save on one device shows up
+  // for everyone else, not just this browser.
+  if (window.TermacD1Sync && typeof window.TermacD1Sync.d1PushBatch === 'function') {
+    window.TermacD1Sync.d1PushBatch('allpro_projects', arr).catch(function(){});
+  }
+}
 function loadCostLines() { return crmLoad('allpro_cost_lines'); }
 function saveCostLines(arr) { crmSave('allpro_cost_lines', arr); }
 
@@ -942,10 +953,13 @@ function renderKanban(projects) {
     var stageProjects = filtered.filter(function(p){ return p.stage === stage; });
     var cards = stageProjects.map(function(p) {
       var typeColor = TYPE_COLORS[p.project_type] || 'var(--soft)';
-      var overdueFlag = '';
-      return '<div class="pj-card" onclick="openDetail(\''+p.id+'\')">' +
+      var days = p.stage_updated_at ? Math.floor((Date.now() - p.stage_updated_at) / 86400000) : 0;
+      var overdueFlag = days > 14
+        ? '<div class="ap-list-overdue" style="margin-top:6px;font-size:10px;font-weight:700">⚠️ ' + days + 'd in this stage</div>'
+        : '<div style="margin-top:6px;font-size:10px;color:var(--soft)">' + days + 'd in stage</div>';
+      return '<div class="pj-card" draggable="true" ondragstart="handleCardDragStart(event,\''+p.id+'\')" onclick="openDetail(\''+p.id+'\')">' +
         '<div class="pj-card-name">'+p.project_name+'</div>' +
-        '<div class="pj-card-acc">'+accName(p.account_id)+'</div>' +
+        '<div class="pj-card-acc" onclick="event.stopPropagation();window.open(\'termac-os.html?open=accounts&id=\'+encodeURIComponent(\''+p.account_id+'\'),\'_blank\')" style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted" title="Open this account\'s live record">'+accName(p.account_id)+' ↗</div>' +
         '<div class="pj-card-meta">' +
           '<span class="pj-type-badge" style="background:'+typeColor+'22;color:'+typeColor+'">'+TYPE_LABELS[p.project_type]+'</span>' +
           '<span class="pj-value">$'+Math.round((p.estimated_value||p.sale_price||0)/1000)+'K</span>' +
@@ -955,7 +969,7 @@ function renderKanban(projects) {
 
     return '<div class="kanban-col">' +
       '<div class="kanban-hdr" style="background:'+STAGE_COLORS[stage]+'"><span>'+STAGE_LABELS[stage]+'</span><span>'+stageProjects.length+'</span></div>' +
-      '<div class="kanban-body">'+cards+'</div>' +
+      '<div class="kanban-body" ondragover="handleColDragOver(event,\''+stage+'\')" ondragleave="handleColDragLeave(event)" ondrop="handleColDrop(event,\''+stage+'\')">'+cards+'</div>' +
     '</div>';
   }).join('');
 }
@@ -1180,9 +1194,21 @@ function updateProjectField(field, value) {
 
 function updateProjectStage() {
   var newStage = document.getElementById('detStage').value;
+  setProjectStage(currentProjectId, newStage);
+  openDetail(currentProjectId);
+}
+
+// Shared by the dropdown (above) and Kanban drag-and-drop (below) so stage
+// changes always go through one path — same cross-sell trigger, same D1 sync,
+// no matter how the change was made.
+function setProjectStage(id, newStage) {
   var all = loadProjects();
-  var p = all.filter(function(x){return x.id===currentProjectId;})[0];
-  if (!p) return;
+  var p = all.filter(function(x){return x.id===id;})[0];
+  if (!p) return false;
+  if (stagesForType(p.project_type).indexOf(newStage) === -1) {
+    alert((TYPE_LABELS[p.project_type]||'This project type') + ' projects don\'t use the "' + (STAGE_LABELS[newStage]||newStage) + '" stage.');
+    return false;
+  }
   p.stage = newStage;
   p.stage_updated_at = Date.now();
   p.updated_at = Date.now();
@@ -1202,8 +1228,37 @@ function updateProjectStage() {
     crmSave('leads', leads);
   }
   saveProjects(all);
-  openDetail(currentProjectId);
   renderAll();
+  return true;
+}
+
+// ── KANBAN DRAG-AND-DROP ──
+var _dragProjectId = null;
+
+function handleCardDragStart(ev, id) {
+  _dragProjectId = id;
+  ev.dataTransfer.effectAllowed = 'move';
+  // Firefox requires setData to be called for drag to actually start
+  try { ev.dataTransfer.setData('text/plain', id); } catch (e) {}
+}
+
+function handleColDragOver(ev, stage) {
+  ev.preventDefault();
+  ev.dataTransfer.dropEffect = 'move';
+  ev.currentTarget.classList.add('kanban-body-dragover');
+}
+
+function handleColDragLeave(ev) {
+  ev.currentTarget.classList.remove('kanban-body-dragover');
+}
+
+function handleColDrop(ev, stage) {
+  ev.preventDefault();
+  ev.currentTarget.classList.remove('kanban-body-dragover');
+  var id = _dragProjectId || ev.dataTransfer.getData('text/plain');
+  _dragProjectId = null;
+  if (!id) return;
+  setProjectStage(id, stage);
 }
 
 // ── LIDAR / DUCT RUN ──
