@@ -51,6 +51,21 @@ body{font-family:'Barlow',-apple-system,sans-serif;background:var(--bg);color:va
 .kanban-col{min-width:230px;max-width:250px;flex-shrink:0}
 .kanban-hdr{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;padding:9px 12px;border-radius:8px 8px 0 0;display:flex;justify-content:space-between;align-items:center;color:#fff}
 .kanban-body{background:var(--panel);border:1px solid var(--line);border-top:none;border-radius:0 0 8px 8px;min-height:140px;padding:8px;max-height:70vh;overflow-y:auto}
+.ap-stage-chart{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px 18px;margin-bottom:16px}
+.ap-stage-chart-title{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--soft);margin-bottom:10px}
+.ap-stage-bar-row{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.ap-stage-bar-lbl{width:150px;flex-shrink:0;font-size:11px;font-weight:700;color:var(--ink)}
+.ap-stage-bar-track{flex:1;height:18px;background:var(--bg);border-radius:4px;overflow:hidden}
+.ap-stage-bar-fill{height:100%;border-radius:4px;transition:width .2s}
+.ap-stage-bar-count{width:26px;text-align:right;flex-shrink:0;font-size:12px;font-weight:800;color:var(--ink)}
+.ap-list-table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+.ap-list-table th{text-align:left;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--soft);padding:10px 12px;border-bottom:2px solid var(--line);background:var(--bg)}
+.ap-list-table td{padding:10px 12px;border-bottom:1px solid var(--line);font-size:12px}
+.ap-list-table tr:last-child td{border-bottom:none}
+.ap-list-table tr.ap-list-row{cursor:pointer}
+.ap-list-table tr.ap-list-row:hover{background:var(--bg)}
+.ap-list-stage-badge{display:inline-block;border-radius:5px;padding:3px 9px;font-size:10px;font-weight:700;color:#fff}
+.ap-list-overdue{color:var(--red);font-weight:700}
 .pj-card{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 11px;margin-bottom:8px;cursor:pointer;border-left:4px solid var(--purple)}
 .pj-card:hover{border-color:var(--purple)}
 .pj-card-name{font-weight:700;font-size:13px}
@@ -108,6 +123,7 @@ body{font-family:'Barlow',-apple-system,sans-serif;background:var(--bg);color:va
   <div class="ap-tabnav-inner">
     <button class="ap-tab active" id="apTab-projects" onclick="apNav('projects')">🔩 Projects</button>
     <button class="ap-tab" id="apTab-contacts" onclick="apNav('contacts')">👤 Contacts</button>
+    <button class="ap-tab" id="apTab-financials" onclick="apNav('financials')">📊 Financials</button>
   </div>
 </div>
 
@@ -125,9 +141,17 @@ body{font-family:'Barlow',-apple-system,sans-serif;background:var(--bg);color:va
 
   <div class="kpi-row" id="apKPIs"></div>
 
+  <div class="ap-stage-chart" id="apStageChart"></div>
+
   <div class="filter-row" id="apTypeFilters"></div>
 
+  <div style="display:flex;gap:6px;margin-bottom:12px">
+    <button class="btn" id="apViewBtn-board" onclick="setProjectView('board')" style="background:var(--ink);color:#fff">🗂 Board</button>
+    <button class="btn" id="apViewBtn-list" onclick="setProjectView('list')" style="background:#fff;border:1.5px solid var(--line);color:var(--ink)">📋 List</button>
+  </div>
+
   <div class="kanban" id="apKanban"></div>
+  <div id="apProjectList" style="display:none"></div>
 
 </div>
 </div>
@@ -142,6 +166,18 @@ body{font-family:'Barlow',-apple-system,sans-serif;background:var(--bg);color:va
   </div>
   <input type="text" id="apContactSearch" oninput="renderApContacts()" placeholder="Search name, business, phone…" style="width:100%;max-width:400px;padding:10px 14px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;outline:none;margin-bottom:16px;font-family:'Barlow',sans-serif">
   <div id="apContactsList"></div>
+</div>
+</div>
+
+<div id="apView-financials" style="display:none">
+<div class="wrap">
+  <div class="page-hdr">
+    <div>
+      <h1>AllPro Financials</h1>
+      <p>Where the money's actually going - margin, cost variance, and sizing accuracy across the whole book of business.</p>
+    </div>
+  </div>
+  <div id="apFinancialsBody"></div>
 </div>
 </div>
 
@@ -253,6 +289,15 @@ body{font-family:'Barlow',-apple-system,sans-serif;background:var(--bg);color:va
         </div>
         <div class="form-field"><label>Project Contacts (GC / Architect / Owner)</label><textarea id="detContacts" rows="3" onchange="updateProjectField('project_contacts_json', JSON.stringify(this.value.split(chr10).map(function(l){return {note:l};})))"></textarea></div>
         <div class="form-field"><label>Scope Summary</label><textarea id="detScope" rows="2" onchange="updateProjectField('scope_summary', this.value)"></textarea></div>
+        <div class="form-row" style="align-items:center;margin-top:14px;padding-top:14px;border-top:1px solid var(--line)">
+          <div class="form-field" style="margin-bottom:0;display:flex;align-items:center;gap:8px">
+            <input type="checkbox" id="detNeedsUnipro" style="width:16px;height:16px;cursor:pointer" onchange="toggleNeedsUnipro(this.checked)">
+            <label style="margin-bottom:0;cursor:pointer" for="detNeedsUnipro">Requires UniPro Suppression Install</label>
+          </div>
+        </div>
+        <div id="detUniproRefWrap" style="display:none">
+          <div class="form-field"><label>UniPro Job Reference</label><input id="detUniproRef" placeholder="Job # or scheduled date, once Paul has it on the calendar" onchange="updateProjectField('unipro_job_ref', this.value)"></div>
+        </div>
       </div>
 
       <div class="pj-tab-panel" id="panel-survey">
@@ -264,6 +309,11 @@ body{font-family:'Barlow',-apple-system,sans-serif;background:var(--bg);color:va
           </select>
         </div>
         <div class="form-field"><label>Survey Notes</label><textarea id="detSurveyNotes" rows="3" onchange="updateProjectField('survey_notes', this.value)"></textarea></div>
+        <div class="form-row" style="margin-top:14px">
+          <div class="form-field" style="margin-bottom:0"><label>Estimated Duct Run (ft)</label><input id="detEstDuctFt" type="number" onchange="updateProjectField('estimated_duct_ft', Number(this.value))"></div>
+          <div class="form-field" style="margin-bottom:0"><label>Actual Duct Run (ft)</label><input id="detActDuctFt" type="number" onchange="updateProjectField('actual_duct_ft', Number(this.value))"></div>
+        </div>
+        <div style="font-size:11px;color:var(--soft);margin-top:6px">Actual gets filled in once fabrication/install measures the real run - variance shows up on the Financials tab so field sizing stays tight over time.</div>
         <div id="detLidarBlock"></div>
       </div>
 
@@ -298,6 +348,12 @@ body{font-family:'Barlow',-apple-system,sans-serif;background:var(--bg);color:va
         <div class="form-field"><label>Fab Notes</label><textarea id="detFabNotes" rows="2" onchange="updateProjectField('fab_notes', this.value)"></textarea></div>
         <a class="warehouse-link" href="warehouse-portal.html" target="_blank">Open AllPro Warehouse — draw material for this project</a>
         <p class="stage-locked-note" style="margin-top:10px">Material lines marked as drawn in Costing reserve stock in the AllPro warehouse. Actual costs update here as the warehouse confirms draws.</p>
+      </div>
+
+      <div class="pj-tab-panel" id="panel-subcontractors">
+        <p style="font-size:12px;color:var(--soft);margin-bottom:12px">Anyone subbing under Termac as general contractor on this job - HVAC for exhaust ductwork, electricians, whoever's not on our own crew.</p>
+        <div id="detSubsList"></div>
+        <button class="btn btn-ghost btn-sm" onclick="addSubcontractor()">+ Add Subcontractor</button>
       </div>
 
       <div class="pj-tab-panel" id="panel-delivery">
@@ -379,7 +435,9 @@ function apNav(view) {
   document.getElementById('apTab-' + view).classList.add('active');
   document.getElementById('apView-projects').style.display = view === 'projects' ? 'block' : 'none';
   document.getElementById('apView-contacts').style.display = view === 'contacts' ? 'block' : 'none';
+  document.getElementById('apView-financials').style.display = view === 'financials' ? 'block' : 'none';
   if (view === 'contacts') renderApContacts();
+  if (view === 'financials') renderFinancials();
 }
 
 // Same underlying accounts/contacts data every other portal reads --
@@ -540,11 +598,208 @@ function createProject() {
 }
 
 // ── KANBAN + KPI ──
+// -- FINANCIALS -- company-wide margin and sizing-accuracy roll-up. Uses
+// the same estimated_cost/actual_cost/sale_price fields renderCostTable
+// already saves per project (nothing new there), plus the duct-run
+// estimate/actual fields added on the Survey tab for measurement
+// variance. Threshold: 20% margin (matches the per-project margin-good/
+// margin-bad coloring), 10% duct-run variance. ──
+function renderFinancials() {
+  var projects = loadProjects();
+  var active = projects.filter(function(p){ return p.stage !== 'closeout'; });
+
+  var totalSale = 0, totalEstCost = 0, totalActCost = 0;
+  var underMargin = [];
+  active.forEach(function(p) {
+    var sale = p.sale_price || p.estimated_value || 0;
+    var estCost = p.estimated_cost || 0;
+    var actCost = p.actual_cost || 0;
+    totalSale += sale;
+    totalEstCost += estCost;
+    totalActCost += actCost;
+    var costForCheck = actCost || estCost;
+    if (sale && costForCheck) {
+      var m = ((sale - costForCheck) / sale) * 100;
+      if (m < 20) underMargin.push({ p: p, margin: m });
+    }
+  });
+  var blendedEstMargin = totalSale ? (((totalSale - totalEstCost) / totalSale) * 100).toFixed(1) : 'N/A';
+  var blendedActMargin = totalSale && totalActCost ? (((totalSale - totalActCost) / totalSale) * 100).toFixed(1) : 'N/A';
+  underMargin.sort(function(a,b){ return a.margin - b.margin; });
+
+  var measured = projects.filter(function(p){ return p.estimated_duct_ft && p.actual_duct_ft; });
+  var variances = measured.map(function(p) {
+    var v = ((p.actual_duct_ft - p.estimated_duct_ft) / p.estimated_duct_ft) * 100;
+    return { p: p, variance: v };
+  });
+  var avgVariance = variances.length
+    ? (variances.reduce(function(s,v){ return s + Math.abs(v.variance); }, 0) / variances.length).toFixed(1)
+    : 'N/A';
+  var overVariance = variances.filter(function(v){ return Math.abs(v.variance) > 10; })
+    .sort(function(a,b){ return Math.abs(b.variance) - Math.abs(a.variance); });
+
+  var accounts = crmLoad('accounts');
+  function accName(id) { var a = accounts.filter(function(x){return x.id===id;})[0]; return a ? (a.business||a.name) : 'Unknown Account'; }
+
+  var subFlags = [];
+  active.forEach(function(p) {
+    var subs = p.subcontractors_json ? JSON.parse(p.subcontractors_json) : [];
+    subs.forEach(function(s) {
+      if (!s.company) return;
+      var coiExpired = s.coi_expiration && new Date(s.coi_expiration).getTime() < Date.now();
+      var coiSoon = s.coi_expiration && !coiExpired && (new Date(s.coi_expiration).getTime() - Date.now()) < (30*86400000);
+      if (!s.coi_on_file || coiExpired || coiSoon || !s.w9_on_file) {
+        subFlags.push({ p: p, sub: s, coiExpired: coiExpired, coiSoon: coiSoon });
+      }
+    });
+  });
+
+  document.getElementById('apFinancialsBody').innerHTML =
+    '<div class="kpi-row">' +
+      '<div class="kpi"><div class="kpi-val" style="color:var(--green)">$' + Math.round(totalSale/1000) + 'K</div><div class="kpi-lbl">Active Sale Value</div></div>' +
+      '<div class="kpi"><div class="kpi-val" style="color:' + (blendedEstMargin!=='N/A'&&blendedEstMargin>=20?'var(--green)':'var(--red)') + '">' + blendedEstMargin + '%</div><div class="kpi-lbl">Blended Est. Margin</div></div>' +
+      '<div class="kpi"><div class="kpi-val" style="color:' + (blendedActMargin!=='N/A'&&blendedActMargin>=20?'var(--green)':'var(--red)') + '">' + blendedActMargin + '%</div><div class="kpi-lbl">Blended Actual Margin</div></div>' +
+      '<div class="kpi"><div class="kpi-val" style="color:var(--purple)">' + avgVariance + (avgVariance!=='N/A'?'%':'') + '</div><div class="kpi-lbl">Avg. Duct-Run Variance</div></div>' +
+    '</div>' +
+
+    '<div class="ap-stage-chart" style="margin-top:4px">' +
+      '<div class="ap-stage-chart-title">Projects Under 20% Margin - where the leak is</div>' +
+      (underMargin.length
+        ? '<table class="ap-list-table"><thead><tr><th>Project</th><th>Account</th><th>Stage</th><th>Margin</th></tr></thead><tbody>' +
+          underMargin.map(function(x) {
+            return '<tr class="ap-list-row" onclick="openDetail(\'' + x.p.id + '\')">' +
+              '<td><b>' + x.p.project_name + '</b></td>' +
+              '<td>' + accName(x.p.account_id) + '</td>' +
+              '<td><span class="ap-list-stage-badge" style="background:' + STAGE_COLORS[x.p.stage] + '">' + STAGE_LABELS[x.p.stage] + '</span></td>' +
+              '<td class="' + (x.margin>=20?'margin-good':'margin-bad') + '">' + x.margin.toFixed(1) + '%</td>' +
+            '</tr>';
+          }).join('') + '</tbody></table>'
+        : '<div style="font-size:12px;color:var(--soft)">Nothing under 20% margin right now - clean.</div>') +
+    '</div>' +
+
+    '<div class="ap-stage-chart">' +
+      '<div class="ap-stage-chart-title">Sizing Accuracy - duct-run variance over 10%</div>' +
+      (overVariance.length
+        ? '<table class="ap-list-table"><thead><tr><th>Project</th><th>Account</th><th>Estimated</th><th>Actual</th><th>Variance</th></tr></thead><tbody>' +
+          overVariance.map(function(x) {
+            return '<tr class="ap-list-row" onclick="openDetail(\'' + x.p.id + '\')">' +
+              '<td><b>' + x.p.project_name + '</b></td>' +
+              '<td>' + accName(x.p.account_id) + '</td>' +
+              '<td>' + x.p.estimated_duct_ft + ' ft</td>' +
+              '<td>' + x.p.actual_duct_ft + ' ft</td>' +
+              '<td class="' + (Math.abs(x.variance)>10?'margin-bad':'margin-good') + '">' + (x.variance>0?'+':'') + x.variance.toFixed(1) + '%</td>' +
+            '</tr>';
+          }).join('') + '</tbody></table>'
+        : (measured.length
+            ? '<div style="font-size:12px;color:var(--soft)">All measured projects are within 10% of estimate - sizing is tight.</div>'
+            : '<div style="font-size:12px;color:var(--soft)">No projects have both an estimated and actual duct-run measurement yet - fill those in on the Survey & Drawings tab as jobs get measured in the field.</div>')) +
+    '</div>' +
+
+    '<div class="ap-stage-chart">' +
+      '<div class="ap-stage-chart-title">Subcontractor Compliance - missing COI, expiring COI, or no W9</div>' +
+      (subFlags.length
+        ? '<table class="ap-list-table"><thead><tr><th>Subcontractor</th><th>Project</th><th>Account</th><th>Issue</th></tr></thead><tbody>' +
+          subFlags.map(function(x) {
+            var issues = [];
+            if (!x.sub.coi_on_file) issues.push('No COI on file');
+            else if (x.coiExpired) issues.push('COI expired');
+            else if (x.coiSoon) issues.push('COI expires within 30 days');
+            if (!x.sub.w9_on_file) issues.push('No W9 on file');
+            return '<tr class="ap-list-row" onclick="openDetail(\'' + x.p.id + '\')">' +
+              '<td><b>' + x.sub.company + '</b></td>' +
+              '<td>' + x.p.project_name + '</td>' +
+              '<td>' + accName(x.p.account_id) + '</td>' +
+              '<td class="margin-bad">' + issues.join(', ') + '</td>' +
+            '</tr>';
+          }).join('') + '</tbody></table>'
+        : '<div style="font-size:12px;color:var(--soft)">No subcontractor compliance issues right now.</div>') +
+    '</div>';
+}
+
 function renderAll() {
   var projects = loadProjects();
   renderKPIs(projects);
+  renderStageChart(projects);
   renderTypeFilters();
-  renderKanban(projects);
+  if (projectView === 'list') renderProjectList(projects);
+  else renderKanban(projects);
+}
+
+// -- STAGE DISTRIBUTION CHART -- at-a-glance count of active projects per
+// lifecycle stage, so Ted/Dan can see where the whole book of business
+// sits without opening a single card. Closeout excluded (it's "done",
+// not a bottleneck to watch), bar width relative to the busiest stage. ──
+function renderStageChart(projects) {
+  var active = projects.filter(function(p){ return p.stage !== 'closeout'; });
+  var counts = STAGE_ORDER.filter(function(s){ return s !== 'closeout'; }).map(function(s){
+    return { stage: s, count: active.filter(function(p){ return p.stage === s; }).length };
+  });
+  var max = Math.max(1, counts.reduce(function(m,c){ return Math.max(m, c.count); }, 0));
+  document.getElementById('apStageChart').innerHTML =
+    '<div class="ap-stage-chart-title">Where Every Active Project Stands</div>' +
+    counts.map(function(c) {
+      var pct = Math.round((c.count / max) * 100);
+      return '<div class="ap-stage-bar-row">' +
+        '<div class="ap-stage-bar-lbl">' + STAGE_LABELS[c.stage] + '</div>' +
+        '<div class="ap-stage-bar-track"><div class="ap-stage-bar-fill" style="width:' + pct + '%;background:' + STAGE_COLORS[c.stage] + '"></div></div>' +
+        '<div class="ap-stage-bar-count">' + c.count + '</div>' +
+      '</div>';
+    }).join('');
+}
+
+// ── BOARD / LIST TOGGLE ──────────────────────────────────────────────
+var projectView = 'board';
+function setProjectView(mode) {
+  projectView = mode;
+  document.getElementById('apViewBtn-board').style.background = mode === 'board' ? 'var(--ink)' : '#fff';
+  document.getElementById('apViewBtn-board').style.color = mode === 'board' ? '#fff' : 'var(--ink)';
+  document.getElementById('apViewBtn-list').style.background = mode === 'list' ? 'var(--ink)' : '#fff';
+  document.getElementById('apViewBtn-list').style.color = mode === 'list' ? '#fff' : 'var(--ink)';
+  document.getElementById('apKanban').style.display = mode === 'board' ? 'flex' : 'none';
+  document.getElementById('apProjectList').style.display = mode === 'list' ? 'block' : 'none';
+  var projects = loadProjects();
+  if (mode === 'list') renderProjectList(projects);
+  else renderKanban(projects);
+}
+
+// -- LIST / AGENDA VIEW -- same data as the board, laid out as a scannable
+// table instead of columns, sorted by stage order then longest-sitting
+// first within a stage (the ones most likely to need a nudge float up). ──
+function renderProjectList(projects) {
+  var accounts = crmLoad('accounts');
+  function accName(id) { var a = accounts.filter(function(x){return x.id===id;})[0]; return a ? (a.business||a.name) : 'Unknown Account'; }
+
+  var filtered = typeFilter === 'all' ? projects : projects.filter(function(p){ return p.project_type === typeFilter; });
+  var stageRank = {};
+  STAGE_ORDER.forEach(function(s, i){ stageRank[s] = i; });
+  filtered = filtered.slice().sort(function(a,b) {
+    var r = (stageRank[a.stage]||0) - (stageRank[b.stage]||0);
+    if (r !== 0) return r;
+    return (a.stage_updated_at||0) - (b.stage_updated_at||0);
+  });
+
+  if (!filtered.length) {
+    document.getElementById('apProjectList').innerHTML = '<div style="text-align:center;padding:40px;color:var(--soft)">No projects yet.</div>';
+    return;
+  }
+
+  var rows = filtered.map(function(p) {
+    var days = p.stage_updated_at ? Math.floor((Date.now() - p.stage_updated_at) / 86400000) : 0;
+    var daysCell = days > 14 ? '<span class="ap-list-overdue">' + days + 'd</span>' : days + 'd';
+    return '<tr class="ap-list-row" onclick="openDetail(\'' + p.id + '\')">' +
+      '<td><b>' + p.project_name + '</b></td>' +
+      '<td>' + accName(p.account_id) + '</td>' +
+      '<td><span class="ap-list-stage-badge" style="background:' + STAGE_COLORS[p.stage] + '">' + STAGE_LABELS[p.stage] + '</span></td>' +
+      '<td>' + (TYPE_LABELS[p.project_type]||p.project_type) + '</td>' +
+      '<td>' + daysCell + '</td>' +
+      '<td>$' + Math.round((p.estimated_value||p.sale_price||0)/1000) + 'K</td>' +
+    '</tr>';
+  }).join('');
+
+  document.getElementById('apProjectList').innerHTML =
+    '<table class="ap-list-table"><thead><tr>' +
+      '<th>Project</th><th>Account</th><th>Stage</th><th>Type</th><th>Days in Stage</th><th>Value</th>' +
+    '</tr></thead><tbody>' + rows + '</tbody></table>';
 }
 
 function renderKPIs(projects) {
@@ -603,6 +858,7 @@ var TAB_DEFS = [
   {key:'costing', label:'Costing'},
   {key:'permitting', label:'Permitting'},
   {key:'fabrication', label:'Fabrication'},
+  {key:'subcontractors', label:'Subcontractors'},
   {key:'delivery', label:'Delivery / Install'},
   {key:'commissioning', label:'Commissioning'},
   {key:'closeout', label:'Closeout'}
@@ -643,6 +899,8 @@ function openDetail(id) {
   document.getElementById('detScope').value = p.scope_summary || '';
   document.getElementById('detSurveyMode').value = p.survey_mode || 'site_survey';
   document.getElementById('detSurveyNotes').value = p.survey_notes || '';
+  document.getElementById('detEstDuctFt').value = p.estimated_duct_ft || '';
+  document.getElementById('detActDuctFt').value = p.actual_duct_ft || '';
   document.getElementById('detSalePrice').value = p.sale_price || '';
   document.getElementById('detEstValue').value = p.estimated_value || '';
   document.getElementById('detFabStatus').value = p.fab_status || 'material_ordered';
@@ -651,6 +909,9 @@ function openDetail(id) {
   document.getElementById('detCrane').value = p.crane_required ? '1' : '0';
   document.getElementById('detFinalInspDate').value = p.final_inspection_date || '';
   document.getElementById('detFinalInspResult').value = p.final_inspection_result || '';
+  document.getElementById('detNeedsUnipro').checked = !!p.needs_unipro;
+  document.getElementById('detUniproRefWrap').style.display = p.needs_unipro ? 'block' : 'none';
+  document.getElementById('detUniproRef').value = p.unipro_job_ref || '';
 
   renderLidarBlock(p);
   renderCostTable(p);
@@ -658,6 +919,7 @@ function openDetail(id) {
   renderComplianceBlock(p);
   renderCommissioningBlock(p);
   renderPunchList(p);
+  renderSubcontractors(p);
 
   switchTab('overview');
   document.getElementById('detailModal').style.display = 'flex';
@@ -671,6 +933,11 @@ function switchTab(key) {
     var panel = document.getElementById('panel-'+t.key);
     if (panel) panel.classList.toggle('active', t.key === key);
   });
+}
+
+function toggleNeedsUnipro(checked) {
+  updateProjectField('needs_unipro', checked);
+  document.getElementById('detUniproRefWrap').style.display = checked ? 'block' : 'none';
 }
 
 function updateProjectField(field, value) {
@@ -797,6 +1064,65 @@ function renderAhjBlock(p) {
       '<span class="ahj-status" style="background:'+(statusColors[s.status]||'var(--soft)')+'22;color:'+(statusColors[s.status]||'var(--soft)')+'">'+(s.status||'submitted').replace('_',' ')+'</span></div>';
   }).join('') : '<div class="stage-locked-note">No AHJ submittals logged yet.</div>';
 }
+// -- SUBCONTRACTORS -- anyone subbing under Termac as GC on this job.
+// Tracks the same permit-status pattern as AHJ submittals, plus COI
+// (insurance) and W9 on file since that's the real GC liability/1099
+// exposure - feeds the COI-expiring flag on the Financials tab.
+function renderSubcontractors(p) {
+  var subs = p.subcontractors_json ? JSON.parse(p.subcontractors_json) : [];
+  var el = document.getElementById('detSubsList');
+  if (!subs.length) {
+    el.innerHTML = '<div class="stage-locked-note">No subcontractors on this job yet.</div>';
+    return;
+  }
+  el.innerHTML = subs.map(function(s, i) {
+    var coiExpired = s.coi_expiration && new Date(s.coi_expiration).getTime() < Date.now();
+    return '<div class="ahj-row" style="flex-direction:column;align-items:stretch;gap:8px">' +
+      '<div class="form-row" style="margin-bottom:0">' +
+        '<div class="form-field" style="margin-bottom:0"><label>Company</label><input value="' + (s.company||'').replace(/"/g,'&quot;') + '" onchange="updateSubField(' + i + ',\'company\',this.value)"></div>' +
+        '<div class="form-field" style="margin-bottom:0"><label>Contact</label><input value="' + (s.contact||'').replace(/"/g,'&quot;') + '" onchange="updateSubField(' + i + ',\'contact\',this.value)"></div>' +
+      '</div>' +
+      '<div class="form-field" style="margin-bottom:0"><label>Scope of Work</label><input value="' + (s.scope||'').replace(/"/g,'&quot;') + '" onchange="updateSubField(' + i + ',\'scope\',this.value)"></div>' +
+      '<div class="form-row" style="margin-bottom:0">' +
+        '<div class="form-field" style="margin-bottom:0"><label>Scheduled Date</label><input type="date" value="' + (s.scheduled_date||'') + '" onchange="updateSubField(' + i + ',\'scheduled_date\',this.value)"></div>' +
+        '<div class="form-field" style="margin-bottom:0"><label>Permit Status</label><select onchange="updateSubField(' + i + ',\'permit_status\',this.value)">' +
+          ['not_needed','needed','pulled','approved'].map(function(v){ return '<option value="' + v + '"' + (s.permit_status===v?' selected':'') + '>' + v.replace('_',' ') + '</option>'; }).join('') +
+        '</select></div>' +
+      '</div>' +
+      '<div class="form-row" style="margin-bottom:0;align-items:center">' +
+        '<div class="form-field" style="margin-bottom:0;display:flex;align-items:center;gap:6px"><input type="checkbox" ' + (s.coi_on_file?'checked':'') + ' onchange="updateSubField(' + i + ',\'coi_on_file\',this.checked)" style="width:15px;height:15px"><label style="margin-bottom:0">COI on File</label></div>' +
+        '<div class="form-field" style="margin-bottom:0"><label' + (coiExpired?' style="color:var(--red)"':'') + '>COI Expiration' + (coiExpired?' - EXPIRED':'') + '</label><input type="date" value="' + (s.coi_expiration||'') + '" onchange="updateSubField(' + i + ',\'coi_expiration\',this.value)"></div>' +
+      '</div>' +
+      '<div class="form-field" style="margin-bottom:0;display:flex;align-items:center;gap:6px"><input type="checkbox" ' + (s.w9_on_file?'checked':'') + ' onchange="updateSubField(' + i + ',\'w9_on_file\',this.checked)" style="width:15px;height:15px"><label style="margin-bottom:0">W9 on File</label></div>' +
+      '<button class="btn btn-ghost btn-sm" onclick="deleteSubcontractor(' + i + ')" style="align-self:flex-end">✕ Remove</button>' +
+    '</div>';
+  }).join('');
+}
+
+function addSubcontractor() {
+  var p = getProject(currentProjectId);
+  var subs = p.subcontractors_json ? JSON.parse(p.subcontractors_json) : [];
+  subs.push({company:'', contact:'', scope:'', scheduled_date:'', permit_status:'not_needed', coi_on_file:false, coi_expiration:'', w9_on_file:false});
+  updateProjectField('subcontractors_json', JSON.stringify(subs));
+  renderSubcontractors(getProject(currentProjectId));
+}
+
+function updateSubField(i, field, value) {
+  var p = getProject(currentProjectId);
+  var subs = p.subcontractors_json ? JSON.parse(p.subcontractors_json) : [];
+  if (!subs[i]) return;
+  subs[i][field] = value;
+  updateProjectField('subcontractors_json', JSON.stringify(subs));
+}
+
+function deleteSubcontractor(i) {
+  var p = getProject(currentProjectId);
+  var subs = p.subcontractors_json ? JSON.parse(p.subcontractors_json) : [];
+  subs.splice(i, 1);
+  updateProjectField('subcontractors_json', JSON.stringify(subs));
+  renderSubcontractors(getProject(currentProjectId));
+}
+
 function addAhjSubmittal() {
   var dept = prompt('Department (building / fire_marshal / health):', 'building');
   if (!dept) return;
