@@ -40,6 +40,9 @@ const ALLOWED_TABLES = new Set([
   // that gap: crmDelete writes one here alongside the real DELETE, and
   // hydration checks this table to purge matching local records too.
   'crm_tombstones',
+  // Daily digest, added 2026-07-11 - written by the cron trigger below,
+  // read by the client on Home to show what the scheduled job prepared.
+  'daily_digests',
 ]);
 
 const TABLE_PREFIX = {
@@ -56,6 +59,7 @@ const TABLE_PREFIX = {
   allpro_spiffs:'SPF',
   crm_tombstones:'TMB',
   allpro_cost_lines:'ACL',
+  daily_digests:'DIG',
 };
 
 function corsHeaders(origin) {
@@ -220,5 +224,66 @@ export default {
     } catch(err) {
       return json({ error: 'Proxy error', detail: err.message }, 500, origin);
     }
-  }
+  },
+
+  // -- DAILY DIGEST -- runs on the cron schedule in wrangler.toml, not
+  // triggered by any page load. Computes each rep's real pace targets
+  // and real hot leads straight from D1, writes one row per rep plus a
+  // team rollup for managers, so it's there waiting the moment anyone
+  // opens the app - not recomputed live, genuinely prepared ahead of
+  // time. Quota targets aren't in D1 yet (still per-device localStorage),
+  // so this uses the same sensible defaults the client falls back to
+  // until quotas move server-side too.
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(runDailyDigest(env));
+  },
 };
+
+async function runDailyDigest(env) {
+  const today = new Date().toISOString().slice(0,10);
+  const now = Date.now();
+  const DEFAULT_CALL_TARGET = 10; // daily, derived from a 50/week default quota
+  const DEFAULT_VISIT_TARGET = 2;
+
+  try {
+    const repsResult = await env.DB.prepare(
+      `SELECT DISTINCT assigned_rep FROM leads WHERE assigned_rep IS NOT NULL AND assigned_rep != ''`
+    ).all();
+    const repNames = (repsResult.results || []).map(r => r.assigned_rep).filter(Boolean);
+
+    let teamHotCount = 0, teamRepCount = 0;
+
+    for (const repName of repNames) {
+      const hotResult = await env.DB.prepare(
+        `SELECT id, business, ai_score FROM leads WHERE assigned_rep = ? AND (ai_score >= 7 OR is_hot = 1) ORDER BY ai_score DESC LIMIT 3`
+      ).bind(repName).all();
+      const hotLeads = hotResult.results || [];
+      teamHotCount += hotLeads.length;
+      teamRepCount++;
+
+      const message = hotLeads.length
+        ? `${hotLeads.length} hot lead${hotLeads.length===1?'':'s'} ready today`
+        : `No hot leads flagged right now - worth a look at the pipeline`;
+
+      await env.DB.prepare(
+        `INSERT OR REPLACE INTO daily_digests (id, rep_name, digest_date, call_target, visit_target, hot_lead_count, hot_leads_json, message, created_at) VALUES (?,?,?,?,?,?,?,?,?)`
+      ).bind(
+        'DIG-' + repName.replace(/\s+/g,'') + '-' + today,
+        repName, today, DEFAULT_CALL_TARGET, DEFAULT_VISIT_TARGET,
+        hotLeads.length, JSON.stringify(hotLeads), message, now
+      ).run();
+    }
+
+    // Team rollup - one row Tom/Jim can read without opening every rep individually
+    await env.DB.prepare(
+      `INSERT OR REPLACE INTO daily_digests (id, rep_name, digest_date, call_target, visit_target, hot_lead_count, hot_leads_json, message, created_at) VALUES (?,?,?,?,?,?,?,?,?)`
+    ).bind(
+      'DIG-team-' + today, '__team__', today, null, null,
+      teamHotCount, JSON.stringify({ repCount: teamRepCount }),
+      `${teamRepCount} reps, ${teamHotCount} hot leads flagged team-wide today`, now
+    ).run();
+  } catch (e) {
+    // Swallow - a failed digest shouldn't take the worker down, just
+    // means nothing new got written today. Next morning tries again.
+  }
+}

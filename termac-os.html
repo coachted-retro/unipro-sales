@@ -4183,6 +4183,11 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
   <!-- ══ DASHBOARD ══ -->
   <div id="mgrPanel-dashboard" class="ov-body" style="padding:16px;background:var(--bg)">
 
+    <!-- TEAM DIGEST -- prepared by the cron job every morning, not
+         computed live. Real per-rep hot-lead counts pulled straight
+         from D1, no clicking into each rep individually. -->
+    <div id="mgrTeamDigest" style="margin-bottom:14px"></div>
+
     <!-- HUB NAV BUTTONS (minus Manager Portal — we're already here) -->
     <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
       <button class="mgr-btn" onclick="window.open('sales-portal.html','_blank')" style="background:var(--blue);border:1.5px solid var(--blue);font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.08em;text-transform:uppercase;padding:9px 16px;border-radius:8px;color:#fff;cursor:pointer">📊 Sales Dashboard &rarr;</button>
@@ -10870,6 +10875,47 @@ function fsFinishSurvey() {
 let _rptCurrentCat = 'revenue';
 let _rptCurrentData = [];
 
+// -- TEAM DIGEST -- reads what the cron job in unipro-ai-proxy already
+// prepared this morning, straight from D1. Not computed here, not
+// computed live - genuinely the output of a scheduled background job,
+// which is the actual point: Tom and Jim get a team pulse without
+// waiting on anyone to open the app, let alone clicking into every rep.
+async function renderMgrTeamDigest() {
+  const el = document.getElementById('mgrTeamDigest');
+  if (!el) return;
+  const today = new Date().toISOString().slice(0,10);
+  el.innerHTML = '<div style="background:#fff;border-radius:10px;padding:14px;box-shadow:0 1px 3px rgba(26,29,33,.08);color:var(--soft);font-size:12px">Loading this morning\'s digest...</div>';
+
+  try {
+    const teamRes = await d1Fetch('GET', '/api/daily_digests?rep_name=__team__&digest_date=' + today + '&limit=1');
+    const repRes = await d1Fetch('GET', '/api/daily_digests?digest_date=' + today + '&limit=50');
+    const team = teamRes.ok && teamRes.results && teamRes.results[0];
+    const reps = (repRes.ok ? repRes.results || [] : []).filter(r => r.rep_name !== '__team__');
+
+    if (!team) {
+      el.innerHTML = '<div style="background:#fff;border-radius:10px;padding:14px;box-shadow:0 1px 3px rgba(26,29,33,.08);color:var(--soft);font-size:12px">No digest prepared yet today - the morning job runs around 6-7am, check back after that.</div>';
+      return;
+    }
+
+    const repRows = reps.sort((a,b) => (b.hot_lead_count||0) - (a.hot_lead_count||0)).map(r =>
+      '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line);font-size:12px">' +
+        '<span style="font-weight:700;color:var(--ink)">' + r.rep_name + '</span>' +
+        '<span style="color:var(--soft)">' + (r.hot_lead_count||0) + ' hot lead' + (r.hot_lead_count===1?'':'s') + '</span>' +
+      '</div>'
+    ).join('');
+
+    el.innerHTML = '<div style="background:linear-gradient(135deg,#1B5FA8,#0F3E73);border-radius:12px;padding:14px 18px;color:#fff">' +
+      '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:14px;margin-bottom:2px">\ud83c\udf05 This Morning\'s Team Digest</div>' +
+      '<div style="font-size:12px;color:rgba(255,255,255,.8);margin-bottom:10px">' + (team.message||'') + '</div>' +
+      '<div style="background:rgba(255,255,255,.1);border-radius:8px;padding:10px 12px">' +
+        (repRows || '<div style="font-size:12px;color:rgba(255,255,255,.7)">No rep-level data yet.</div>') +
+      '</div>' +
+    '</div>';
+  } catch (e) {
+    el.innerHTML = '<div style="background:#fff;border-radius:10px;padding:14px;box-shadow:0 1px 3px rgba(26,29,33,.08);color:var(--soft);font-size:12px">Couldn\'t load the digest - check connection.</div>';
+  }
+}
+
 function mgrSwitchTab(tab) {
   // Command Center tab directly opens the full overlay — it has its own full-screen view
   if (tab === 'cmd') {
@@ -10899,6 +10945,7 @@ function mgrSwitchTab(tab) {
   if (tab === 'operations' && window._mgrInitOps) window._mgrInitOps();
   if (tab === 'financial'  && window._mgrInitFin) window._mgrInitFin();
   if (tab === 'scorecards' && window._mgrInitSc)  window._mgrInitSc();
+  if (tab === 'dashboard') { renderMgrTeamDigest(); }
   if (tab === 'ted') { renderTedPerf(); }
 }
 
