@@ -29,6 +29,11 @@ const ALLOWED_TABLES = new Set([
   // localStorage-only audit, added 2026-07-10
   'broadcasts', 'dispatch_msgs', 'wh_requisitions', 'wh_ready_handoffs', 'parts_requests',
   'transfer_requests', 'hr_data', 'allpro_spiffs',
+  // Fixed 2026-07-11 - allpro_cost_lines was already in the client's
+  // D1_SYNC_TABLES list (termac-d1-sync.js) and being pushed to/read
+  // from constantly by the AllPro Costing tab and Financials dashboard,
+  // but was never added here - every request for it 400'd silently.
+  'allpro_cost_lines',
   // Delete-propagation fix, added 2026-07-11 - local-first sync only ever
   // added new records found in D1, never removed ones deleted server-side,
   // so a deletion never actually reached other devices. Tombstones close
@@ -50,6 +55,7 @@ const TABLE_PREFIX = {
   hr_data:'HRD',
   allpro_spiffs:'SPF',
   crm_tombstones:'TMB',
+  allpro_cost_lines:'ACL',
 };
 
 function corsHeaders(origin) {
