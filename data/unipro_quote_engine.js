@@ -36,6 +36,39 @@ function createQuoteEngine(referenceData) {
   const boilerplate = referenceData.boilerplate_text_blocks;
   const taxRates = referenceData.tax_rates_by_jurisdiction;
   const laborRates = referenceData.labor_rates;
+
+  // -------------------------------------------------------------------------
+  // 1b. DIVISION-AWARE CODE RESOLUTION
+  // -------------------------------------------------------------------------
+  // Price book entries now carry a `division` field: 'UniPro' (UP-prefixed
+  // codes), 'Capital' (CP-prefixed codes), or 'GTO' (GT-prefixed codes).
+  // Quality III has no code prefix of its own -- per Ted, Quality III pricing
+  // is identical to UniPro pricing, so Quality III quotes should always
+  // resolve against division: 'UniPro'.
+  //
+  // Capital only has CP codes for inspections/labor/compliance fees, not for
+  // individual parts (nozzles, links, brackets, manufacturer-specific
+  // cylinders, etc.) -- those only exist under UP codes. So when a Capital
+  // quote needs a part-level code that has no CP equivalent, this resolver
+  // falls back to the UniPro (UP) price and raises a flag rather than
+  // silently mispricing or omitting the line.
+  function resolveCodeForDivision(baseUpCode, division) {
+    const targetDivision = division === "Quality III" ? "UniPro" : (division || "UniPro");
+    if (targetDivision === "UniPro") {
+      return { entry: priceBook.find((p) => p.code === baseUpCode && p.division === "UniPro") || priceBook.find((p) => p.code === baseUpCode), fallback: false };
+    }
+    if (targetDivision === "Capital") {
+      const capitalCode = baseUpCode.replace(/^UP/, "CP");
+      const capitalEntry = priceBook.find((p) => p.code === capitalCode && p.division === "Capital");
+      if (capitalEntry) return { entry: capitalEntry, fallback: false };
+      const upEntry = priceBook.find((p) => p.code === baseUpCode && p.division === "UniPro") || priceBook.find((p) => p.code === baseUpCode);
+      return { entry: upEntry, fallback: true };
+    }
+    // GTO or anything else: this engine is fire-suppression/extinguisher
+    // scoped, GTO deficiencies (grease trap) don't route through here today.
+    const upEntry = priceBook.find((p) => p.code === baseUpCode && p.division === "UniPro") || priceBook.find((p) => p.code === baseUpCode);
+    return { entry: upEntry, fallback: true };
+  }
  
   // -------------------------------------------------------------------------
   // 2. JURISDICTION / TAX LOOKUP
@@ -175,7 +208,8 @@ function createQuoteEngine(referenceData) {
       preparedBy = "",
       customer = {},
       laborHours = 2,
-      emergencyDispatch = false
+      emergencyDispatch = false,
+      division = "UniPro"
     } = input;
  
     const matches = matchDeficiencyCategories(freeTextDeficiency || "");
@@ -213,16 +247,22 @@ function createQuoteEngine(referenceData) {
  
     // Fusible link / detector bracket line items
     if (quantities.links) {
-      const linkPart = priceBook.find((p) => p.code === "UP7020");
+      const { entry: linkPart, fallback: linkFallback } = resolveCodeForDivision("UP7020", division);
       lineItems.push(buildLineItem(linkPart.code, linkPart.description, quantities.links, linkPart.price, taxRate));
+      if (linkFallback) {
+        flags.push({ type: "DIVISION_PRICE_FALLBACK", line: "fusible link", division, message: `No ${division} part code on file -- used UniPro pricing (${linkPart.code}).` });
+      }
     }
     if (quantities.brackets) {
-      const bracketPart =
-        priceBook.find((p) => p.code === "UP7348") || priceBook.find((p) => (p.description || "").includes("BRACKET"));
-      if (bracketPart) {
+      const { entry: bracketPart, fallback: bracketFallback } = resolveCodeForDivision("UP7348", division);
+      const resolvedBracket = bracketPart || priceBook.find((p) => (p.description || "").includes("BRACKET"));
+      if (resolvedBracket) {
         lineItems.push(
-          buildLineItem(bracketPart.code, bracketPart.description, quantities.brackets, bracketPart.price, taxRate)
+          buildLineItem(resolvedBracket.code, resolvedBracket.description, quantities.brackets, resolvedBracket.price, taxRate)
         );
+        if (bracketFallback) {
+          flags.push({ type: "DIVISION_PRICE_FALLBACK", line: "bracket", division, message: `No ${division} part code on file -- used UniPro pricing (${resolvedBracket.code}).` });
+        }
       }
     }
  

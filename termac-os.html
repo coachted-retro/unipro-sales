@@ -1869,12 +1869,15 @@ function d1NormalizeRecord(table, record) {
     accounts: ['id','name','business','status','services','annual_value',
                'next_due','renewal_date','last_service','health_score',
                'assigned_rep','open_deficiencies','city','zip','last_checkin',
-               'cert_status','onboarding','created_at','updated_at'],
+               'cert_status','onboarding','created_at','updated_at','source',
+               'address','state','phone','contact_name','contact_email',
+               'billing_cycle','territory','division','cust_num','attention_status'],
     contacts: ['id','name','company','title','email','phone',
                'assigned_rep','status','created_at','updated_at'],
     jobs: ['id','account_id','location_id','division','service_type','tech_id',
            'scheduled_date','scheduled_time','status','notes','report_url',
-           'square_ref','completed_at','created_at','updated_at'],
+           'square_ref','completed_at','created_at','updated_at',
+           'due_date','source'],
     deficiencies: ['id','account_id','location_id','job_id','division','description',
                    'equipment_type','severity','status','quoted_amount','quote_ref',
                    'assigned_to','due_date','resolved_at','notes','created_at','updated_at'],
@@ -1917,6 +1920,21 @@ async function d1Push(table, record) {
 async function d1PushBatch(table, records) {
   if (!D1_SYNC_TABLES.includes(table) || !Array.isArray(records)) return;
   for (const r of records) { await d1Push(table, r); }
+}
+
+// Click-to-cycle priority dot on ServiceTrade manual-import accounts.
+// red = needs contact, yellow = contacted / working on scheduling, green = scheduled.
+// Green accounts drop out of the pinned-to-top priority sort in renderCRMView.
+function cycleAttentionStatus(id) {
+  var accounts = crmLoad('accounts');
+  var acct = accounts.find(function(a){ return a.id === id; });
+  if (!acct) return;
+  var order = ['red','yellow','green'];
+  var cur = order.indexOf(acct.attention_status || 'red');
+  acct.attention_status = order[(cur + 1) % order.length];
+  crmSave('accounts', accounts);
+  if (typeof d1Push === 'function') d1Push('accounts', acct);
+  if (typeof renderCRMView === 'function') renderCRMView();
 }
 
 // 2026-07-10 FIX: this used to only pull from D1 the very first time
@@ -2665,9 +2683,32 @@ function renderCRMView(){
       return (b.created||0)-(a.created||0);
     });
   }
+  // Accounts tab: ServiceTrade manual-import accounts still needing attention
+  // (attention_status !== 'green') always float to the very top, worst-overdue
+  // first — this is a deliberate bypass of the normal recency/renewal sort so
+  // nothing gets dropped while the ServiceTrade API isn't live yet.
+  if (tab === 'accounts') {
+    data.sort((a,b)=>{
+      const aFlag = a.source==='servicetrade_manual' && a.attention_status!=='green';
+      const bFlag = b.source==='servicetrade_manual' && b.attention_status!=='green';
+      if (aFlag && !bFlag) return -1;
+      if (bFlag && !aFlag) return 1;
+      if (aFlag && bFlag) {
+        const aDue = a.nextDue ? new Date(a.nextDue).getTime() : Infinity;
+        const bDue = b.nextDue ? new Date(b.nextDue).getTime() : Infinity;
+        return aDue - bDue; // most overdue (oldest date) first
+      }
+      return 0; // fall through to recency sort below for everyone else
+    });
+  }
   // Sort: pinned recently viewed at top, then everything else by most recent.
   const recent=getRecent(tab).map(r=>r.id);
   data.sort((a,b)=>{
+    if (tab === 'accounts') {
+      const aFlag = a.source==='servicetrade_manual' && a.attention_status!=='green';
+      const bFlag = b.source==='servicetrade_manual' && b.attention_status!=='green';
+      if (aFlag || bFlag) return 0; // keep the priority ordering set above untouched
+    }
     const ai=recent.indexOf(a.id), bi=recent.indexOf(b.id);
     if(ai>-1 && bi===-1) return -1;
     if(bi>-1 && ai===-1) return 1;
@@ -3314,7 +3355,7 @@ function renderCard(tab,r){
   return `<div class="crm-card" onclick="viewRecord('${tab}','${r.id}')">
     <div class="crm-card-header">
       <div style="flex:1;min-width:0">
-        <div class="crm-card-name">${escH(r.name)}${r.role?` <span style="font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:9px;letter-spacing:.06em;background:#F3F4F6;color:#6B7280;border-radius:3px;padding:1px 5px;vertical-align:middle;text-transform:uppercase">${escH(r.role==='Other'&&r.roleCustom?r.roleCustom:r.role)}</span>`:''}</div>
+        <div class="crm-card-name">${(tab==='accounts' && r.source==='servicetrade_manual') ? `<span onclick="event.stopPropagation();cycleAttentionStatus('${r.id}')" title="ServiceTrade import — click to update (red=needs contact, yellow=in progress, green=scheduled)" style="display:inline-block;width:11px;height:11px;border-radius:50%;margin-right:6px;cursor:pointer;vertical-align:middle;border:1px solid rgba(0,0,0,.15);background:${r.attention_status==='green'?'#16A34A':r.attention_status==='yellow'?'#F2B705':'#DC2626'}"></span>` : ''}${escH(r.name)}${r.role?` <span style="font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:9px;letter-spacing:.06em;background:#F3F4F6;color:#6B7280;border-radius:3px;padding:1px 5px;vertical-align:middle;text-transform:uppercase">${escH(r.role==='Other'&&r.roleCustom?r.roleCustom:r.role)}</span>`:''}</div>
         <div class="crm-card-sub">${escH(r.business||r.contact||'')}</div>
         <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">${pipelineBadge}${ownerBadge}</div>
       </div>
@@ -12920,16 +12961,22 @@ function rptBuildOperations(filters) {
     </div>
 
     ${overdue.length ? `<div class="rpt-card">
-      <div class="rpt-card-hdr" style="background:#991B1B"><span class="rpt-card-title">⚠️ Overdue Service — Compliance Risk</span><span class="rpt-card-sub">${overdue.length} accounts</span></div>
+      <div class="rpt-card-hdr" style="background:#991B1B"><span class="rpt-card-title">⚠️ Overdue Service — Compliance Risk</span><span class="rpt-card-sub">${overdue.length} accounts &middot; sorted most overdue first</span></div>
       <table class="rpt-table">
-        <thead><tr><th>Account</th><th>Services</th><th>Was Due</th><th>Annual Value</th><th>Rep</th><th>Health</th></tr></thead>
-        <tbody>${overdue.sort((a,b)=>new Date(a.nextDue)-new Date(b.nextDue)).map(a=>`
-          <tr><td><strong>${a.name||a.business||'—'}</strong></td>
+        <thead><tr><th>Account</th><th>Services</th><th>Was Due</th><th>Days Overdue</th><th>Annual Value</th><th>Rep</th><th>Health</th></tr></thead>
+        <tbody>${overdue.sort((a,b)=>new Date(a.nextDue)-new Date(b.nextDue)).map(a=>{
+          const daysOD = Math.floor((Date.now()-new Date(a.nextDue).getTime())/86400000);
+          const sevTier = daysOD>=90?'red':daysOD>=30?'amber':'amber';
+          const sevLabel = daysOD>=90?'🔴 URGENT — Site Visit':daysOD>=30?'🟠 Priority Follow-up':'Overdue';
+          const stBadge = a.source==='servicetrade_manual'?' <span title="Manually entered from a ServiceTrade snapshot" style="font-size:10px;background:#1F3A8A;color:#fff;padding:1px 6px;border-radius:8px;margin-left:6px">ServiceTrade</span>':'';
+          return `<tr>
+          <td><strong>${a.name||a.business||'—'}</strong>${stBadge}</td>
           <td>${(a.services||[]).join(', ')||'—'}</td>
           <td style="color:var(--red);font-weight:700">${a.nextDue||'—'}</td>
+          <td>${rptBadge(daysOD+'d — '+sevLabel, sevTier)}</td>
           <td>${rptFmt$(parseFloat(a.annualValue||0))}</td>
           <td>${a.assignedRep||'—'}</td>
-          <td>${rptBadge((a.healthScore||'?')+'/5',a.healthScore>=4?'green':a.healthScore>=3?'amber':'red')}</td></tr>`).join('')}
+          <td>${rptBadge((a.healthScore||'?')+'/5',a.healthScore>=4?'green':a.healthScore>=3?'amber':'red')}</td></tr>`;}).join('')}
         </tbody>
       </table>
     </div>` : ''}
