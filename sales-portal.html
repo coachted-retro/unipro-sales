@@ -1617,6 +1617,8 @@ function spRenderHome() {
   ${spRecentlyViewed()}
   ${spPlanMyDay()}
   ${spRenderTodaysPace()}
+  ${spRenderPaceInsight()}
+  ${spRenderTimeEfficiency()}
   ${spRenderTodayAgenda()}
   ${spRenderAccountsToWatch()}
   ${spRenderWinBack()}
@@ -1774,6 +1776,113 @@ function spRenderIdlePanel() {
 // ── TODAY'S PACE ── Calls/visits made today vs. a per-day target derived
 // from the same weekly quota used on Goals & Stats, so the numbers agree
 // wherever a rep looks. Answers "am I on track right now" at a glance.
+// -- TIME EFFICIENCY -- the actual question behind "I'm running in
+// circles all day": how much of today was spent with a customer versus
+// driving between stops. Real, not estimated - built entirely from
+// arrivedAt (set on arrival) and completedAt (set by the new checkmark
+// button), so it only ever shows what genuinely happened. Needs at
+// least two completed stops the same day to say anything meaningful -
+// below that it says so honestly instead of guessing.
+function spRenderTimeEfficiency() {
+  const repName = _spRep.name;
+  const todayStr = new Date().toISOString().slice(0,10);
+  const stops = (crmLoad('appointments') || [])
+    .filter(a => a.createdBy === repName && a.date === todayStr && a.arrivedAt)
+    .sort((a,b) => a.arrivedAt - b.arrivedAt);
+
+  const completed = stops.filter(a => a.completedAt && a.completedAt > a.arrivedAt);
+  if (completed.length < 2) {
+    return ''; // not enough real data yet today - say nothing rather than guess
+  }
+
+  let onSiteMs = 0, driveMs = 0;
+  completed.forEach((a, i) => {
+    onSiteMs += (a.completedAt - a.arrivedAt);
+    if (i > 0) {
+      const prevDone = completed[i-1].completedAt;
+      const gap = a.arrivedAt - prevDone;
+      if (gap > 0) driveMs += gap;
+    }
+  });
+  const totalMs = onSiteMs + driveMs;
+  if (totalMs <= 0) return '';
+  const sellPct = Math.round((onSiteMs / totalMs) * 100);
+  const drivePct = 100 - sellPct;
+  const sellHrs = (onSiteMs / 3600000).toFixed(1);
+  const driveHrs = (driveMs / 3600000).toFixed(1);
+  const color = sellPct >= 60 ? 'var(--green)' : sellPct >= 40 ? '#D97706' : 'var(--red)';
+
+  return `<div class="sp-card" style="margin-bottom:14px">
+    <div class="sp-card-title" style="margin-bottom:10px">\u23f1\ufe0f Today's Time Split</div>
+    <div style="display:flex;height:14px;border-radius:7px;overflow:hidden;margin-bottom:8px">
+      <div style="width:${sellPct}%;background:${color}"></div>
+      <div style="width:${drivePct}%;background:#D1D5DB"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:12px">
+      <span style="color:${color};font-weight:700">${sellPct}% Selling (${sellHrs}h)</span>
+      <span style="color:var(--soft)">${drivePct}% Driving (${driveHrs}h)</span>
+    </div>
+  </div>`;
+}
+
+// -- PACE INSIGHT -- the actual "tells me where I'm at and what closes
+// the gap" ask, not just a status readout. Reuses the exact same real
+// numbers as Today's Pace (same targets, same activity counts) so the
+// two can never disagree, then turns the gap into a specific, real
+// action instead of leaving the rep to figure out what to do about it.
+// Says nothing if there's nothing useful to say - no filler, no fake
+// urgency when the rep is already on pace with no gap to close.
+function spRenderPaceInsight() {
+  const repName = _spRep.name;
+  const myLeads = crmLoad('leads').filter(r => (r.ownedBy||r.assignedRep||r.createdBy||'') === repName);
+  let quota = { callTarget:50, visitTarget:10 };
+  try {
+    const now = new Date();
+    const qKey = repName + '_q' + Math.ceil((now.getMonth()+1)/3);
+    const all = JSON.parse(localStorage.getItem('termac_goals_quotas')||'{}');
+    quota = { ...quota, ...(all[qKey]||{}) };
+  } catch(e) {}
+  const dayStart = new Date(); dayStart.setHours(0,0,0,0);
+  let callsToday = 0, visitsToday = 0;
+  myLeads.forEach(r => (r.activityLog||[]).forEach(a => {
+    if ((a.ts||0) < dayStart.getTime()) return;
+    if (a.type === 'call' || (a.title||'').toLowerCase().includes('call')) callsToday++;
+    if (a.type === 'visit' || (a.title||'').toLowerCase().includes('visit')) visitsToday++;
+  }));
+  const dailyCallTarget = Math.max(1, Math.round((quota.callTarget||50) / 5));
+  const dailyVisitTarget = Math.max(1, Math.round((quota.visitTarget||10) / 5));
+  const callGap = Math.max(0, dailyCallTarget - callsToday);
+  const visitGap = Math.max(0, dailyVisitTarget - visitsToday);
+
+  const agendaAcctIds = new Set(spBuildAgenda().map(s => s.accountId).filter(Boolean));
+  const hotLeads = myLeads
+    .filter(r => !agendaAcctIds.has(r.id) && ((r.score||0) >= 7 || r.status === 'hot'))
+    .sort((a,b) => (b.score||0) - (a.score||0));
+
+  if (callGap <= 0 && visitGap <= 0) {
+    if (callsToday > 0 || visitsToday > 0) {
+      return `<div class="sp-card" style="margin-bottom:14px;border-left:4px solid var(--green)">
+        <div style="font-size:13px;color:var(--ink)">\u2705 <b>On pace for today</b> \u2014 ${callsToday} calls, ${visitsToday} visits logged. Keep it up.</div>
+      </div>`;
+    }
+    return '';
+  }
+  if (!hotLeads.length) return '';
+
+  const suggestion = hotLeads.slice(0, Math.min(2, hotLeads.length));
+  const gapParts = [];
+  if (callGap > 0) gapParts.push(callGap + ' call' + (callGap===1?'':'s'));
+  if (visitGap > 0) gapParts.push(visitGap + ' visit' + (visitGap===1?'':'s'));
+
+  return `<div class="sp-card" style="margin-bottom:14px;border-left:4px solid var(--orange)">
+    <div style="font-size:13px;color:var(--ink);margin-bottom:8px">\ud83d\udca1 <b>${gapParts.join(' and ')} would get you to today's pace</b> \u2014 these are sitting ready:</div>
+    ${suggestion.map(r => `<div onclick="spViewRecord('${r.id}','leads')" style="display:flex;align-items:center;justify-content:space-between;padding:8px 10px;background:var(--bg);border-radius:7px;margin-bottom:6px;cursor:pointer">
+      <span style="font-size:12px;font-weight:700;color:var(--ink)">${escH(r.business||r.name||'Lead')}</span>
+      <span style="font-size:11px;color:var(--soft)">${r.score ? '\u2b50 '+r.score+'/10' : ''}</span>
+    </div>`).join('')}
+  </div>`;
+}
+
 function spRenderTodaysPace() {
   const repName = _spRep.name;
   const myLeads = crmLoad('leads').filter(r => (r.ownedBy||r.assignedRep||r.createdBy||'') === repName);
@@ -1975,6 +2084,7 @@ function spRenderTodayAgenda() {
           + actionLabel
         + '</button>'
         + '<button onclick="event.stopPropagation();spOpenCollLog(this)" data-acctid="' + escH(item.accountId||'') + '" data-title="' + escH(item.title) + '" style="background:#1E7B3C;color:#fff;border:none;border-radius:7px;padding:9px 10px;font-size:13px;cursor:pointer" title="Log cash/check collection">💵</button>'
+        + '<button onclick="event.stopPropagation();spCompleteStop(\'' + item.id + '\',\'' + (item.accountId||'') + '\')" style="background:rgba(0,0,0,.06);border:none;border-radius:7px;padding:9px 10px;font-size:13px;cursor:pointer;color:var(--soft)" title="Mark complete - leaving this stop">✅</button>'
         + (!item.accountType ? '<button onclick="event.stopPropagation();spSetStopAccountType(\'' + item.id + '\',\'' + (item.accountId||'') + '\')" style="background:rgba(0,0,0,.06);border:none;border-radius:7px;padding:9px 10px;font-size:10px;cursor:pointer;color:var(--soft)" title="Set business type">🏷️</button>' : '')
       + '</div>'
     + '</div>';
@@ -2368,6 +2478,29 @@ function spGenerateDay() {
 }
 
 // ── ARRIVAL HANDLERS ─────────────────────────────────────────────────────────
+// Captures when a rep leaves a stop, paired with arrivedAt (set on
+// arrival) to compute real time-on-site - the actual prerequisite for
+// telling drive time apart from selling time, which nothing tracked
+// before this. Matches by the agenda item's id first (real appointment
+// record), falling back to accountId for older records saved before
+// recordId became the standard field.
+function spCompleteStop(agendaId, accountId) {
+  var appts = crmLoad('appointments') || [];
+  var matched = false;
+  appts = appts.map(function(a) {
+    if (a.id === agendaId || (accountId && a.recordId === accountId)) {
+      a.completedAt = Date.now();
+      a.status = 'complete';
+      matched = true;
+    }
+    return a;
+  });
+  if (matched) crmSave('appointments', appts);
+  if (agendaId) spMarkStopDone(agendaId);
+  spToast(matched ? '✅ Marked complete' : '✅ Done for today');
+  spRenderHome();
+}
+
 function spAgendaArriveSurvey(accountId, agendaId) {
   // Mark stop done in persisted agenda
   if (agendaId) spMarkStopDone(agendaId);
@@ -2659,6 +2792,7 @@ function spPlanMyDay() {
     + '<div style="display:flex;gap:8px;flex-wrap:wrap">'
       + '<button onclick="spOpenMyCardModal()" style="background:rgba(255,255,255,.15);color:#fff;border:1.5px solid rgba(255,255,255,.3);border-radius:7px;padding:8px 16px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;white-space:nowrap">📇 My Card</button>'
       + '<button onclick="spOpenCalendarModal()" style="background:rgba(255,255,255,.15);color:#fff;border:1.5px solid rgba(255,255,255,.3);border-radius:7px;padding:8px 16px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;white-space:nowrap">📅 My Calendar</button>'
+      + '<button onclick="spOpenWeekPlanModal()" style="background:rgba(255,255,255,.15);color:#fff;border:1.5px solid rgba(255,255,255,.3);border-radius:7px;padding:8px 16px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;white-space:nowrap">📆 Plan My Week</button>'
       + '<button onclick="spOpenRouteMap()" style="background:rgba(255,255,255,.15);color:#fff;border:1.5px solid rgba(255,255,255,.3);border-radius:7px;padding:8px 16px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">Route Map →</button>'
     + '</div>'
   + '</div>';
@@ -2959,6 +3093,173 @@ function spRenderCalDayPanel() {
 // ── Read-only detail view for a single appointment, opened by tapping it
 // in the calendar day panel. This is a view, not an edit — full edit/save
 // against existing appointment records isn't wired up yet.
+// -- PLAN MY WEEK -- takes the rep's recurring time-block pattern (My
+// Schedule) and turns it into an actual day-by-day plan for a chosen
+// week: real appointments already booked show as fixed, and any open
+// Site Survey block gets filled with a real suggested stop (hot lead,
+// nearby lead, or an account due for check-in) - not a guess, the same
+// scoring already used for Today's Agenda's nearby-lead logic, just
+// spread across a whole week instead of just today. One tap commits a
+// suggestion as a real dated appointment, so it shows up everywhere
+// else too (My Schedule, the Manager Dashboard's Rep Planning Calendar,
+// and Today's Agenda once that day arrives).
+let _spWeekPlanMonday = null; // Date object, Monday of the currently viewed week
+
+function spWeekPlanDefaultMonday() {
+  const d = spWeekMonday(new Date());
+  d.setDate(d.getDate() + 7); // default to NEXT week, not this one
+  return d;
+}
+
+async function spOpenWeekPlanModal() {
+  if (!_spWeekPlanMonday) _spWeekPlanMonday = spWeekPlanDefaultMonday();
+  if (_spSchedCache === null) _spSchedCache = await spLoadScheduleFromD1();
+
+  var old = document.getElementById('spWeekPlanModal');
+  if (old) old.remove();
+  var wrap = document.createElement('div');
+  wrap.id = 'spWeekPlanModal';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9500;display:flex;align-items:center;justify-content:center;padding:16px';
+  wrap.innerHTML = '<div style="background:#fff;border-radius:14px;width:min(1240px,98vw);height:min(92vh,900px);box-shadow:0 24px 70px rgba(0,0,0,.35);display:flex;flex-direction:column;overflow:hidden">'
+    + '<div style="background:#1A1D21;padding:18px 24px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0">'
+      + '<div>'
+        + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:19px;color:#fff;letter-spacing:.06em;text-transform:uppercase">📆 Plan My Week</div>'
+        + '<div style="font-size:11px;color:#9CA3AF;margin-top:2px">Built from your recurring time blocks - open Site Survey slots get a suggested stop, you decide what sticks</div>'
+      + '</div>'
+      + '<button onclick="spCloseWeekPlanModal()" style="background:none;border:1.5px solid #3A3E43;border-radius:8px;color:#9CA3AF;padding:9px 18px;font-size:15px;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:700">✕ Close</button>'
+    + '</div>'
+    + '<div style="padding:14px 24px;display:flex;align-items:center;justify-content:center;gap:16px;border-bottom:1px solid var(--line);flex-shrink:0">'
+      + '<button onclick="spWeekPlanNav(-1)" style="background:none;border:1.5px solid var(--line);border-radius:8px;padding:8px 16px;cursor:pointer;font-size:15px">←</button>'
+      + '<div id="spWeekPlanLabel" style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:16px;color:var(--ink);min-width:220px;text-align:center"></div>'
+      + '<button onclick="spWeekPlanNav(1)" style="background:none;border:1.5px solid var(--line);border-radius:8px;padding:8px 16px;cursor:pointer;font-size:15px">→</button>'
+    + '</div>'
+    + '<div style="flex:1;overflow-y:auto;padding:18px 24px" id="spWeekPlanBody"></div>'
+  + '</div>';
+  document.body.appendChild(wrap);
+  spRenderWeekPlanBody();
+}
+function spCloseWeekPlanModal() {
+  var m = document.getElementById('spWeekPlanModal');
+  if (m) m.remove();
+}
+function spWeekPlanNav(deltaWeeks) {
+  _spWeekPlanMonday.setDate(_spWeekPlanMonday.getDate() + (7 * deltaWeeks));
+  spRenderWeekPlanBody();
+}
+
+// Every real appointment already sitting anywhere in the visible week,
+// so suggestions never double-book a lead that's already scheduled.
+function spWeekPlanScheduledIds(weekDates) {
+  var dateSet = new Set(Object.values(weekDates));
+  var repName = _spRep?.name || '';
+  var ids = new Set();
+  (crmLoad('appointments') || []).forEach(function(a) {
+    if (a.createdBy === repName && dateSet.has(a.date) && a.recordId) ids.add(a.recordId);
+  });
+  return ids;
+}
+
+// Candidates for filling open Site Survey blocks: hot/high-score leads
+// and accounts overdue for check-in, same signals Today's Agenda already
+// trusts - just not already scheduled anywhere this week.
+function spWeekPlanCandidates(alreadyScheduledIds) {
+  var repName = _spRep?.name || '';
+  var out = [];
+  (crmLoad('leads') || []).filter(function(r) {
+    var isRep = !r.assignedRep || r.assignedRep === repName || r.ownedBy === repName;
+    var stage = r.lifecycleStage || 'lead';
+    return isRep && ['lead','contact'].includes(stage) && (r.score >= 7 || r.status === 'hot') && !alreadyScheduledIds.has(r.id);
+  }).forEach(function(r) {
+    out.push({ id: r.id, tab: 'leads', title: r.business || r.name || 'Lead', address: r.address || '', score: r.score || 0, reason: 'Hot lead' });
+  });
+  (crmLoad('accounts') || []).filter(function(a) {
+    var isRep = !a.assignedRep || a.assignedRep === repName || a.ownedBy === repName;
+    var cutoff = Date.now() - (spCheckinDaysFor(a) * 86400000);
+    return isRep && a.status === 'active' && (!a.lastCheckin || a.lastCheckin < cutoff) && !alreadyScheduledIds.has(a.id);
+  }).forEach(function(a) {
+    out.push({ id: a.id, tab: 'accounts', title: a.name || a.business || 'Account', address: a.address || '', score: 5, reason: 'Check-in due' });
+  });
+  return out.sort(function(x,y){ return y.score - x.score; });
+}
+
+async function spWeekPlanCommitSuggestion(candId, candTab, candTitle, candAddress, dateStr, hour) {
+  var appts = crmLoad('appointments') || [];
+  var time = String(hour).padStart(2,'0') + ':00';
+  appts.push({
+    id: 'wk_' + Date.now(), recordId: candId, tab: candTab, type: 'site_visit',
+    date: dateStr, time: time, timeEnd: '', address: candAddress, notes: 'Added from Plan My Week',
+    title: candTitle, allDay: false, recurring: false, recurFreq: null,
+    isFlexStop: true, createdAt: Date.now(), createdBy: _spRep?.name || '',
+  });
+  crmSave('appointments', appts);
+  spToast('✅ Added to your week');
+  spRenderWeekPlanBody();
+}
+
+function spRenderWeekPlanBody() {
+  const label = document.getElementById('spWeekPlanLabel');
+  const body = document.getElementById('spWeekPlanBody');
+  if (!body) return;
+
+  const mon = new Date(_spWeekPlanMonday);
+  const weekDates = {};
+  SP_SCHED_DAYS.forEach(function(d, i) {
+    const dt = new Date(mon); dt.setDate(mon.getDate() + i);
+    weekDates[d] = dt.toISOString().slice(0,10);
+  });
+  const fmt = new Date(weekDates.Mon + 'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'});
+  const fmtEnd = new Date(weekDates.Fri + 'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'});
+  if (label) label.textContent = fmt + ' \u2013 ' + fmtEnd;
+
+  const repName = _spRep?.name || '';
+  const appts = crmLoad('appointments') || [];
+  const scheduledIds = spWeekPlanScheduledIds(weekDates);
+  const candidates = spWeekPlanCandidates(scheduledIds);
+  let candIdx = 0;
+
+  body.innerHTML = '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px">'
+    + SP_SCHED_DAYS.map(function(day) {
+        const dateStr = weekDates[day];
+        const dayLabel = new Date(dateStr + 'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
+        const dayAppts = appts.filter(function(a){ return a.createdBy === repName && a.date === dateStr; })
+          .sort(function(a,b){ return (a.time||'99').localeCompare(b.time||'99'); });
+        const bookedHours = {};
+        dayAppts.forEach(function(a){ if (a.time) bookedHours[parseInt(a.time.split(':')[0],10)] = true; });
+
+        const blocks = SP_SCHED_HOURS.map(function(hour) {
+          const catId = _spSchedCache[day + '_' + hour];
+          if (!catId) return '';
+          const cat = SP_SCHED_CATS.find(function(c){ return c.id === catId; });
+          if (!cat) return '';
+          const timeLbl = (hour % 12 || 12) + (hour < 12 ? 'am' : 'pm');
+          const apptHere = dayAppts.find(function(a){ return a.time && parseInt(a.time.split(':')[0],10) === hour; });
+
+          if (apptHere) {
+            return '<div onclick="spViewApptDetail(\'' + apptHere.id + '\')" style="background:#EFF6FF;border-left:3px solid #1B5FA8;border-radius:6px;padding:7px 9px;margin-bottom:6px;cursor:pointer;font-size:11px">'
+              + '<div style="font-weight:700;color:var(--ink)">' + timeLbl + ' \u2014 ' + escH(apptHere.title||'Appointment') + '</div>'
+              + '<div style="color:var(--soft);font-size:10px">Booked</div>'
+            + '</div>';
+          }
+          if (catId === 'survey' && !bookedHours[hour] && candIdx < candidates.length) {
+            const cand = candidates[candIdx++];
+            return '<div style="background:' + cat.color + '11;border-left:3px solid ' + cat.color + ';border-radius:6px;padding:7px 9px;margin-bottom:6px;font-size:11px">'
+              + '<div style="font-weight:700;color:var(--ink)">' + timeLbl + ' \u2014 ' + escH(cand.title) + '</div>'
+              + '<div style="color:var(--soft);font-size:10px;margin-bottom:5px">💡 Suggested \u00b7 ' + cand.reason + '</div>'
+              + '<button onclick="spWeekPlanCommitSuggestion(\'' + cand.id + '\',\'' + cand.tab + '\',' + JSON.stringify(cand.title) + ',' + JSON.stringify(cand.address) + ',\'' + dateStr + '\',' + hour + ')" style="background:' + cat.color + ';color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:10px;font-weight:700;cursor:pointer;text-transform:uppercase;letter-spacing:.04em">+ Add</button>'
+            + '</div>';
+          }
+          return '<div style="background:' + cat.color + '11;border-left:3px solid ' + cat.color + ';border-radius:6px;padding:6px 9px;margin-bottom:6px;font-size:10px;color:var(--soft)">' + timeLbl + ' \u00b7 ' + cat.label + '</div>';
+        }).join('');
+
+        return '<div style="border:1px solid var(--line);border-radius:9px;padding:10px;min-height:200px">'
+          + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;color:var(--ink);margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--line)">' + dayLabel + '</div>'
+          + (blocks || '<div style="font-size:11px;color:var(--soft);text-align:center;padding:16px 0">No time blocks painted for this day yet \u2014 set them in My Schedule</div>')
+          + '<button onclick="spOpenApptModal(null,null,\'appointment\',\'' + dateStr + '\')" style="width:100%;background:none;border:1.5px dashed var(--line);border-radius:6px;padding:7px;font-size:10px;font-weight:700;color:var(--soft);cursor:pointer;text-transform:uppercase;letter-spacing:.04em;margin-top:4px">+ Add Stop</button>'
+        + '</div>';
+      }).join('')
+    + '</div>';
+}
+
 function spViewApptDetail(apptId) {
   const a = (crmLoad('appointments') || []).find(function(x){ return x.id === apptId; });
   if (!a) return;
@@ -5392,6 +5693,74 @@ function spApptToggleAllDay(checked) {
 }
 
 async function spSaveAppt() {
+  const date = document.getElementById('spApptDate')?.value || '';
+  const allDay = document.getElementById('spApptAllDay')?.checked || false;
+  const time = allDay ? '' : (document.getElementById('spApptTime')?.value || '');
+  const timeEnd = document.getElementById('spApptTimeEnd')?.value || '';
+
+  if (!date) { alert('Please select a date.'); return; }
+  const cfg = SP_ENTRY_TYPES[_spApptMode] || SP_ENTRY_TYPES.appointment;
+  if (cfg.linkMode === 'required' && !_spApptLinkedId) { alert('This needs to be linked to a Lead, Contact, Opportunity, or Account.'); return; }
+
+  if (!allDay && time) {
+    const conflicts = await spCheckOverbooking(date, time, timeEnd);
+    if (conflicts.length) {
+      spShowApptConflictModal(conflicts, date, time);
+      return; // rep decides in the modal - spCommitAppt runs from there
+    }
+  }
+  await spCommitAppt([]);
+}
+
+// Real decision, not just a warning: clear the blocked time and go ahead,
+// get bumped to the next open slot that day, or back out and adjust by
+// hand. The rep's actual appointment always wins over an abstract time
+// block - the block is a suggestion for open time, not a lock.
+function spShowApptConflictModal(conflicts, date, time) {
+  const old = document.getElementById('spConflictModal');
+  if (old) old.remove();
+
+  const patternKeys = conflicts.filter(c => c.type === 'pattern').map(c => c.key);
+  const wrap = document.createElement('div');
+  wrap.id = 'spConflictModal';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9600;display:flex;align-items:center;justify-content:center;padding:16px';
+  wrap.innerHTML = '<div style="background:#fff;border-radius:14px;width:min(460px,94vw);box-shadow:0 24px 70px rgba(0,0,0,.35);padding:24px">'
+    + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:17px;color:var(--ink);margin-bottom:10px">This overlaps with something</div>'
+    + '<div style="margin-bottom:16px">' + conflicts.map(c =>
+        '<div style="font-size:12px;color:var(--soft);padding:8px 10px;background:var(--bg);border-radius:7px;margin-bottom:6px">' + escH(c.message) + '</div>'
+      ).join('') + '</div>'
+    + '<button onclick="spResolveConflictClearAndSave(' + JSON.stringify(patternKeys) + ')" style="width:100%;background:var(--red);color:#fff;border:none;border-radius:9px;padding:12px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.05em;text-transform:uppercase;cursor:pointer;margin-bottom:8px">'
+      + (patternKeys.length ? 'Schedule Anyway \u2014 Clear the Time Block' : 'Schedule Anyway')
+    + '</button>'
+    + '<button onclick="spResolveConflictFindAnotherTime(\'' + date + '\',\'' + time + '\')" style="width:100%;background:#fff;border:1.5px solid var(--line);color:var(--ink);border-radius:9px;padding:12px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.05em;text-transform:uppercase;cursor:pointer;margin-bottom:8px">📆 Find Me Another Time</button>'
+    + '<button onclick="document.getElementById(\'spConflictModal\').remove()" style="width:100%;background:none;border:none;color:var(--soft);padding:8px;font-size:12px;cursor:pointer">Never mind, let me adjust it myself</button>'
+  + '</div>';
+  document.body.appendChild(wrap);
+}
+
+async function spResolveConflictClearAndSave(patternKeys) {
+  document.getElementById('spConflictModal')?.remove();
+  await spCommitAppt(patternKeys || []);
+}
+
+async function spResolveConflictFindAnotherTime(date, fromTime) {
+  document.getElementById('spConflictModal')?.remove();
+  const fromHour = parseInt(fromTime.split(':')[0], 10);
+  const nextHour = await spFindNextOpenSlot(date, fromHour);
+  if (nextHour === null) {
+    spToast('Nothing open the rest of that day \u2014 try a different date');
+    return;
+  }
+  const timeField = document.getElementById('spApptTime');
+  if (timeField) timeField.value = String(nextHour).padStart(2,'0') + ':00';
+  spToast('Moved to ' + ((nextHour % 12) || 12) + (nextHour < 12 ? 'am' : 'pm') + ' \u2014 review and hit Save again');
+}
+
+// The actual save, unchanged from before except it now also clears any
+// pattern cells the rep chose to override (patternKeysToClear), and reads
+// the appointment form fresh since the conflict modal may have sat on
+// top of it for a moment.
+async function spCommitAppt(patternKeysToClear) {
   const mode = _spApptMode;
   const cfg = SP_ENTRY_TYPES[mode] || SP_ENTRY_TYPES.appointment;
   const date = document.getElementById('spApptDate')?.value || '';
@@ -5403,15 +5772,11 @@ async function spSaveAppt() {
   const recurFreq = recurring ? (document.getElementById('spApptRecurFreq')?.value || 'weekly') : null;
   const location = cfg.hasLocation ? (document.getElementById('spApptLocation')?.value.trim() || '') : '';
 
-  if (!date) { alert('Please select a date.'); return; }
-  if (cfg.linkMode === 'required' && !_spApptLinkedId) { alert('This needs to be linked to a Lead, Contact, Opportunity, or Account.'); return; }
-
-  if (!allDay && time) {
-    const conflicts = await spCheckOverbooking(date, time, timeEnd);
-    if (conflicts.length) {
-      const proceed = confirm('This overlaps with:\n\n- ' + conflicts.join('\n- ') + '\n\nSave anyway?');
-      if (!proceed) return;
-    }
+  if ((patternKeysToClear || []).length) {
+    const pattern = _spSchedCache || {};
+    patternKeysToClear.forEach(k => delete pattern[k]);
+    _spSchedCache = pattern;
+    spSaveScheduleToD1(pattern); // fire-and-forget, same as the grid's own paint/erase
   }
 
   const dateLabel = new Date(date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
@@ -5423,7 +5788,7 @@ async function spSaveAppt() {
     const r = data.find(x => x.id === linkedId);
     if (r) {
       if (!r.activityLog) r.activityLog = [];
-      r.activityLog.push({ ts:Date.now(), type:'rep', icon:cfg.label.split(' ')[0], title:cfg.label.replace(/^\S+\s/,'') + ' — ' + dateLabel, note:notes||null, who:_spRep.name });
+      r.activityLog.push({ ts:Date.now(), type:'rep', icon:cfg.label.split(' ')[0], title:cfg.label.replace(/^\S+\s/,'') + ' - ' + dateLabel, note:notes||null, who:_spRep.name });
       if (mode === 'appointment') {
         r.followupDate = date;
         r.status = 'hot';
@@ -5833,7 +6198,10 @@ async function spCheckOverbooking(date, time, timeEnd) {
   (crmLoad('appointments') || []).forEach(a => {
     if (a.createdBy === repName && a.date === date && a.time && !a.allDay) {
       if (spTimesOverlap(time, timeEnd, a.time, a.timeEnd)) {
-        conflicts.push((a.title || 'Appointment') + ' at ' + a.time + (a.timeEnd ? '-' + a.timeEnd : ''));
+        conflicts.push({
+          type: 'appointment',
+          message: (a.title || 'Appointment') + ' at ' + a.time + (a.timeEnd ? '-' + a.timeEnd : ''),
+        });
       }
     }
   });
@@ -5851,11 +6219,33 @@ async function spCheckOverbooking(date, time, timeEnd) {
       const catId = pattern[dayLabel + '_' + h];
       if (catId) {
         const cat = SP_SCHED_CATS.find(c => c.id === catId);
-        conflicts.push('Blocked as ' + (cat ? cat.label : catId) + ' on your weekly schedule at ' + h + ':00');
+        conflicts.push({
+          type: 'pattern', dayLabel, hour: h, key: dayLabel + '_' + h,
+          message: 'Blocked as ' + (cat ? cat.label : catId) + ' on your weekly schedule at ' + h + ':00',
+        });
       }
     }
   }
   return conflicts;
+}
+
+// Scans forward from the requested hour, same day, for the first hour
+// with no pattern block and no existing appointment - the "find me
+// another time" option in the conflict modal below.
+async function spFindNextOpenSlot(date, fromHour) {
+  const repName = _spRep?.name || '';
+  const weekDates = spCurrentWeekDates();
+  const dayLabel = Object.keys(weekDates).find(k => weekDates[k] === date);
+  const pattern = _spSchedCache !== null ? _spSchedCache : await spLoadScheduleFromD1();
+  const dayAppts = (crmLoad('appointments') || []).filter(a => a.createdBy === repName && a.date === date && a.time && !a.allDay);
+  const bookedHours = {};
+  dayAppts.forEach(a => { bookedHours[parseInt(a.time.split(':')[0], 10)] = true; });
+
+  for (let h = fromHour + 1; h <= SP_SCHED_HOURS[SP_SCHED_HOURS.length - 1]; h++) {
+    const blocked = dayLabel && pattern[dayLabel + '_' + h];
+    if (!blocked && !bookedHours[h]) return h;
+  }
+  return null; // nothing open the rest of that day
 }
 
 async function spLoadScheduleFromD1() {
@@ -5899,7 +6289,7 @@ async function spRenderSchedule() {
   const chipsHtml = SP_SCHED_CATS.map(c => {
     const armed = _spSchedArmed === c.id;
     return `<button onclick="spSchedArm('${c.id}')" style="background:${armed ? c.color : '#fff'};color:${armed ? '#fff' : c.color};border:1.5px solid ${c.color};border-radius:8px;padding:9px 16px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12px;letter-spacing:.04em;cursor:pointer;white-space:nowrap">${c.label}</button>`;
-  }).join('');
+  }).join('') + `<button onclick="spSchedArm('_eraser')" title="Tap this, then tap any single cell to clear just that one" style="background:${_spSchedArmed === '_eraser' ? '#5A616B' : '#fff'};color:${_spSchedArmed === '_eraser' ? '#fff' : '#5A616B'};border:1.5px solid #5A616B;border-radius:8px;padding:9px 16px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12px;letter-spacing:.04em;cursor:pointer;white-space:nowrap">🧹 Eraser</button>`;
 
   const apptIdx = spApptGridIndex();
   const gridRows = SP_SCHED_HOURS.map(hour => {
@@ -5951,9 +6341,12 @@ function spSchedArm(catId) {
 }
 
 function spSchedPaint(key) {
-  if (!_spSchedArmed) { spToast('Tap a category above first'); return; }
+  if (!_spSchedArmed) { spToast('Tap a category above first (or the eraser to clear one cell)'); return; }
   const data = _spSchedCache || {};
-  if (data[key] === _spSchedArmed) {
+  if (_spSchedArmed === '_eraser') {
+    if (data[key] === undefined) { spToast('Nothing painted there'); return; }
+    delete data[key];
+  } else if (data[key] === _spSchedArmed) {
     delete data[key]; // tap same category on a filled slot to clear it
   } else {
     data[key] = _spSchedArmed;
