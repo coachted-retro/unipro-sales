@@ -241,8 +241,118 @@ export default {
   // who haven't had targets set through the Quota Builder yet.
   async scheduled(event, env, ctx) {
     ctx.waitUntil(runDailyDigest(env));
+    ctx.waitUntil(runBusinessStatusCheck(env));
   },
 };
+
+// -- BUSINESS STATUS CHECK -- added 2026-07-11 per Ted. Runs on the same
+// daily cron as the digest above, reusing the same ANTHROPIC_API_KEY
+// secret. Rotates through real accounts (ServiceTrade-manual imports
+// first, since those are the newest/least-verified, then everything
+// else oldest-checked-first) at a fixed batch size per day rather than
+// hitting the whole book at once -- ~2,400 accounts at 25/day is a
+// ~96-day rotation, which is plenty for "is this place still open,"
+// nothing here changes status day to day for the vast majority of
+// accounts.
+//
+// DELIBERATE DESIGN CHOICE: this job never sets accounts.status itself.
+// A web-search-based AI judgment is good enough to flag something for a
+// human to glance at, not good enough to silently close a real account
+// on. It writes an activity_log row every time it checks something, and
+// sets accounts.status_flag to 'possible_closure' or 'name_change' only
+// when the signal is real -- those flags surface in the Operations
+// Report as a review queue. A person (Ted or office) still makes the
+// final call and clears the flag.
+async function runBusinessStatusCheck(env) {
+  const BATCH_SIZE = 25;
+  const now = Date.now();
+  try {
+    if (!env.ANTHROPIC_API_KEY) return; // same guard as the AI proxy route above
+
+    const batch = await env.DB.prepare(
+      `SELECT id, name, business, address, city, state, zip
+       FROM accounts
+       WHERE status = 'active'
+       ORDER BY
+         CASE WHEN source = 'servicetrade_manual' THEN 0 ELSE 1 END,
+         last_status_check_at IS NOT NULL,
+         last_status_check_at ASC
+       LIMIT ?`
+    ).bind(BATCH_SIZE).all();
+
+    const accounts = batch.results || [];
+
+    for (const acct of accounts) {
+      const name = acct.name || acct.business || '';
+      const addr = [acct.address, acct.city, acct.state, acct.zip].filter(Boolean).join(', ');
+      if (!name || !addr) {
+        // Not enough to search on -- still stamp it checked so the
+        // rotation moves past it instead of stalling here forever.
+        await env.DB.prepare(`UPDATE accounts SET last_status_check_at = ? WHERE id = ?`)
+          .bind(now, acct.id).run();
+        continue;
+      }
+
+      let findingText = '';
+      try {
+        const res = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': env.ANTHROPIC_API_KEY,
+            'anthropic-version': '2023-06-01',
+          },
+          body: JSON.stringify({
+            model: 'claude-sonnet-4-6',
+            max_tokens: 300,
+            tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+            messages: [{
+              role: 'user',
+              content: `Is the business "${name}" at ${addr} still open and operating? ` +
+                `Search the web for current status. Respond in exactly this format, ` +
+                `three lines, no extra text:\n` +
+                `STATUS: OPEN or CLOSED or UNCLEAR\n` +
+                `NAME_CHANGE: none, or a short description if a rebrand/new ownership was found\n` +
+                `SOURCE: one short citation (site name) supporting STATUS`,
+            }],
+          }),
+        });
+        const data = await res.json();
+        const textBlock = (data.content || []).find(b => b.type === 'text');
+        findingText = textBlock ? textBlock.text : '';
+      } catch (e) {
+        findingText = 'STATUS: UNCLEAR\nNAME_CHANGE: none\nSOURCE: search failed - ' + e.message;
+      }
+
+      const statusMatch = /STATUS:\s*(OPEN|CLOSED|UNCLEAR)/i.exec(findingText);
+      const nameChangeMatch = /NAME_CHANGE:\s*(.+)/i.exec(findingText);
+      const status = statusMatch ? statusMatch[1].toUpperCase() : 'UNCLEAR';
+      const nameChange = nameChangeMatch ? nameChangeMatch[1].trim() : '';
+      const hasNameChange = nameChange && !/^none$/i.test(nameChange);
+
+      let flag = null;
+      if (status === 'CLOSED') flag = 'possible_closure';
+      else if (hasNameChange) flag = 'name_change';
+
+      await env.DB.prepare(
+        `INSERT INTO activity_log (id, entity_type, entity_id, account_id, action, detail, created_at) VALUES (?,?,?,?,?,?,?)`
+      ).bind(
+        'LOG-STATUSCHK-' + acct.id + '-' + now,
+        'account', acct.id, acct.id, 'business_status_check',
+        (findingText || 'No result').slice(0, 500),
+        now
+      ).run();
+
+      await env.DB.prepare(
+        `UPDATE accounts SET last_status_check_at = ?, status_flag = ? WHERE id = ?`
+      ).bind(now, flag, acct.id).run();
+    }
+  } catch (e) {
+    // Same pattern as runDailyDigest -- a failed run shouldn't take the
+    // worker down, just means today's batch didn't advance. Tomorrow
+    // picks up from wherever last_status_check_at left off.
+  }
+}
 
 async function runDailyDigest(env) {
   const today = new Date().toISOString().slice(0,10);
