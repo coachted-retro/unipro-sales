@@ -712,8 +712,12 @@ function _lcAlertScheduler(account, job) {
 
 function _lcAlertWarehouse(account, job, est) {
   const items = est?.lineItems || [];
+  // 2026-07-13 FIX: was raw localStorage - the code comments on
+  // lcWarehouseConfirmPull/lcGetWarehouseStatus below already described
+  // this as a cross-device warehouse<->tech workflow, but it never
+  // actually worked across devices since neither side ever reached D1.
   try {
-    const wa = JSON.parse(localStorage.getItem('warehouse_alerts') || '[]');
+    const wa = (typeof crmLoad === 'function') ? crmLoad('warehouse_alerts') : JSON.parse(localStorage.getItem('warehouse_alerts') || '[]');
     wa.unshift({
       id:        'wh_' + Date.now(),
       ts:        Date.now(),
@@ -726,7 +730,8 @@ function _lcAlertWarehouse(account, job, est) {
       items:     items.map(function(li){ return { name:li.desc||li.name, qty:li.qty||1, unit:li.unit||'ea' }; }),
       note:      'First job for new account — pull and stage before tech dispatch.',
     });
-    localStorage.setItem('warehouse_alerts', JSON.stringify(wa));
+    if (typeof crmSave === 'function') { crmSave('warehouse_alerts', wa); }
+    else { localStorage.setItem('warehouse_alerts', JSON.stringify(wa)); }
   } catch(e) {}
 }
 
@@ -1036,7 +1041,7 @@ function _lcDivisionFromInterval(key) {
 // Tech portal polls lcGetWarehouseStatus() before departing.
 function lcWarehouseConfirmPull(alertId, warehouseStaffName, notes) {
   try {
-    const wa = JSON.parse(localStorage.getItem('warehouse_alerts') || '[]');
+    const wa = (typeof crmLoad === 'function') ? crmLoad('warehouse_alerts') : JSON.parse(localStorage.getItem('warehouse_alerts') || '[]');
     const alert = wa.find(function(a){ return a.id === alertId; });
     if (!alert) return false;
     alert.status    = 'ready';
@@ -1044,7 +1049,8 @@ function lcWarehouseConfirmPull(alertId, warehouseStaffName, notes) {
     alert.confirmedBy   = warehouseStaffName || 'Warehouse';
     alert.confirmedAt   = Date.now();
     alert.warehouseNotes = notes || '';
-    localStorage.setItem('warehouse_alerts', JSON.stringify(wa));
+    if (typeof crmSave === 'function') { crmSave('warehouse_alerts', wa); }
+    else { localStorage.setItem('warehouse_alerts', JSON.stringify(wa)); }
 
     // Queue a notification for the tech
     try {
@@ -1064,7 +1070,7 @@ function lcWarehouseConfirmPull(alertId, warehouseStaffName, notes) {
 
 function lcGetWarehouseStatus(jobId) {
   try {
-    const wa = JSON.parse(localStorage.getItem('warehouse_alerts') || '[]');
+    const wa = (typeof crmLoad === 'function') ? crmLoad('warehouse_alerts') : JSON.parse(localStorage.getItem('warehouse_alerts') || '[]');
     const alert = wa.find(function(a){ return a.jobId === jobId; });
     if (!alert) return { status:'no_pull_request', confirmed:false };
     return {

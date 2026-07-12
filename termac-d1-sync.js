@@ -39,7 +39,8 @@
     'transfer_requests', 'scheduler_queue', 'allpro_spiffs',
     'trade_partners', 'trade_partner_referrals', 'trade_partner_bids',
     'reference_library', 'allpro_rate_tables', 'notifications',
-    'accounts_payable', 'expense_reports', 'customer_orders'];
+    'accounts_payable', 'expense_reports', 'customer_orders', 'reorder_requests',
+    'warehouse_alerts'];
 
   async function d1Fetch(method, path, body) {
     try {
@@ -163,6 +164,13 @@
       customerSignature: 'customer_signature', createdTs: 'created_ts',
       scheduledDelivery: 'scheduled_delivery',
     },
+    reorder_requests: {
+      accountId: 'account_id', accountName: 'account_name', requestedAt: 'requested_at',
+    },
+    warehouse_alerts: {
+      jobId: 'job_id', confirmedBy: 'confirmed_by', confirmedAt: 'confirmed_at',
+      warehouseNotes: 'warehouse_notes', itemCount: 'item_count',
+    },
   };
 
   var VALID = {
@@ -177,6 +185,12 @@
       'site_notes', 'rep', 'visit_type', 'type', 'lines', 'total',
       'inventory_snapshot', 'payment_method', 'payment_ref',
       'customer_signature', 'status', 'created_ts', 'scheduled_delivery',
+      'created_at', 'updated_at'],
+    reorder_requests: ['id', 'account_id', 'account_name', 'address', 'rep',
+      'items', 'requested_at', 'status', 'created_at', 'updated_at'],
+    warehouse_alerts: ['id', 'ts', 'type', 'status', 'confirmed', 'account',
+      'job_id', 'division', 'items', 'note', 'confirmed_by', 'confirmed_at',
+      'warehouse_notes', 'company', 'warehouse', 'tech', 'item_count',
       'created_at', 'updated_at'],
     leads: ['id', 'business', 'address', 'city', 'state', 'zip', 'phone', 'email',
       'contact_name', 'contact_title', 'pricing_tier', 'facility_type', 'division',

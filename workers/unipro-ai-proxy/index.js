@@ -68,6 +68,13 @@ const ALLOWED_TABLES = new Set([
   // Customer Orders, added 2026-07-13 - same class of bug. See
   // customer-orders-schema.sql.
   'customer_orders',
+  // Reorder Requests, added 2026-07-13 - storage layer fix only, see
+  // reorder-requests-schema.sql for the note on missing consumer UI.
+  'reorder_requests',
+  // Warehouse Alerts, added 2026-07-13 - fixes a broken cross-device
+  // warehouse/tech parts-staging confirmation workflow. See
+  // warehouse-alerts-schema.sql.
+  'warehouse_alerts',
   // Growth & Opportunity Intelligence panel + Bid Pipeline Watchlist tab,
   // added 2026-07-12. growth_snapshots is written on a schedule (piggybacks
   // the existing daily digest cron) to build a real forward-looking trend
@@ -101,6 +108,8 @@ const TABLE_PREFIX = {
   accounts_payable:'AP',
   expense_reports:'EXP',
   customer_orders:'ORD',
+  reorder_requests:'RO',
+  warehouse_alerts:'WHA',
 };
 
 function corsHeaders(origin) {
