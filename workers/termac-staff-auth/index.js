@@ -126,6 +126,7 @@ async function handleProvision(request, env) {
   const email = (body.email || '').trim().toLowerCase();
   const name = (body.name || '').trim();
   const role = (body.role || '').trim();
+  const division = (body.division || '').trim();
   const portals = Array.isArray(body.portals) ? body.portals : [];
   if (!email || !name) return jsonResponse({ ok: false, error: 'Email and name are required.' }, 400);
 
@@ -138,8 +139,8 @@ async function handleProvision(request, env) {
   const id = 'STF_' + Date.now().toString(36).toUpperCase() + '_' + randomHex(3);
 
   await env.DB.prepare(
-    'INSERT INTO staff_auth (id, email, name, role, portals, password_hash, salt, must_reset, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)'
-  ).bind(id, email, name, role, JSON.stringify(portals), hash, salt, 'active', Date.now(), Date.now()).run();
+    'INSERT INTO staff_auth (id, email, name, role, division, portals, password_hash, salt, must_reset, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)'
+  ).bind(id, email, name, role, division, JSON.stringify(portals), hash, salt, 'active', Date.now(), Date.now()).run();
 
   const LOGIN_URL = 'https://coachted-retro.github.io/unipro-sales/staff-login.html';
   const emailSent = await sendEmail(env, name, email, 'Termac One Account Created',
@@ -329,12 +330,12 @@ async function handleMyAccess(request, env) {
   const email = (url.searchParams.get('email') || '').trim().toLowerCase();
   if (!email) return jsonResponse({ ok: false, error: 'Email is required.' }, 400);
 
-  const user = await env.DB.prepare('SELECT portals, status FROM staff_auth WHERE email = ?').bind(email).first();
+  const user = await env.DB.prepare('SELECT portals, status, division FROM staff_auth WHERE email = ?').bind(email).first();
   if (!user || user.status !== 'active') return jsonResponse({ ok: true, portals: [], active: false });
 
   let portals = [];
   try { portals = JSON.parse(user.portals || '[]'); } catch (e) {}
-  return jsonResponse({ ok: true, portals: portals, active: true });
+  return jsonResponse({ ok: true, portals: portals, active: true, division: user.division || '' });
 }
 
 export default {
