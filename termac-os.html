@@ -1519,6 +1519,60 @@ setTimeout(function(){ if(typeof TECHS!=='undefined' && typeof renderLB==='funct
 function crmLoad(key){ try{ return JSON.parse(localStorage.getItem('termac_crm_'+key)||'[]'); }catch(e){return[];} }
 function crmSave(key, val){ try{ localStorage.setItem('termac_crm_'+key, JSON.stringify(val)); }catch(e){} }
 
+// Ted, 2026-07-12: one-time cleanup for every browser that already has
+// fake demo records sitting in it from before today -- disabling the
+// seed functions below only stops NEW fake data, it doesn't remove what
+// they already wrote. Two categories:
+//  1. Records flagged _seeded:true (from the "safe" seedCRM function) --
+//     filtered out cleanly, no guesswork.
+//  2. Records with no flag at all, from the older seedDemoData function
+//     that ran before it was disabled -- removed by exact known ID,
+//     since there's nothing else to filter on.
+// Real records are never touched either way.
+(function termacPurgeLegacyDemoData(){
+  var PURGE_VERSION = 'v1_2026-07-12';
+  if (localStorage.getItem('termac_demo_purge_version') === PURGE_VERSION) return;
+
+  var UNFLAGGED_DEMO_IDS = {
+    accounts: ['acc001','acc002','acc003','acc004','acc005','acc006','acc007','acc008'],
+    leads: ['lead001','lead002','lead003','lead004','lead006','lead007'],
+    contacts: ['con001','con002','con003','con004'],
+  };
+
+  ['accounts','leads','contacts'].forEach(function(key){
+    try {
+      var raw = localStorage.getItem('termac_crm_'+key);
+      if (!raw) return;
+      var arr = JSON.parse(raw);
+      var knownFake = new Set(UNFLAGGED_DEMO_IDS[key] || []);
+      var cleaned = arr.filter(function(r){ return !r._seeded && !knownFake.has(r.id); });
+      if (cleaned.length !== arr.length) localStorage.setItem('termac_crm_'+key, JSON.stringify(cleaned));
+    } catch(e) {}
+  });
+
+  // seedDemoInvoices (also disabled 2026-07-10, also _seeded-flagged) --
+  // same cleanup, different key prefix, not under termac_crm_.
+  ['unipro_jobs','gto_invoices','filterman_invoices','termac_invoices','allpro_invoices'].forEach(function(key){
+    try {
+      var raw = localStorage.getItem(key);
+      if (!raw) return;
+      var arr = JSON.parse(raw);
+      var cleaned = arr.filter(function(r){ return !r._seeded; });
+      if (cleaned.length !== arr.length) localStorage.setItem(key, JSON.stringify(cleaned));
+    } catch(e) {}
+  });
+
+  // Reception's demo call log -- real calls are id:'call_'+timestamp,
+  // demo calls are always id:'rcp_d1' through 'rcp_d5'.
+  try {
+    var calls = JSON.parse(localStorage.getItem('termac_inbound_calls')||'[]');
+    var cleanedCalls = calls.filter(function(c){ return !(c.id && c.id.indexOf('rcp_d') === 0); });
+    if (cleanedCalls.length !== calls.length) localStorage.setItem('termac_inbound_calls', JSON.stringify(cleanedCalls));
+  } catch(e) {}
+
+  localStorage.setItem('termac_demo_purge_version', PURGE_VERSION);
+})();
+
 // ── SEED DEMO ACCOUNTS if none exist ─────────────────────────
 (function seedDemoAccounts(){
   // DISABLED 2026-07-10 per Ted — going live next week, no more demo
@@ -2069,6 +2123,14 @@ setInterval(d1HydrateAll, 30000);
 
 // Seed demo data if empty
 (function seedCRM(){
+  // DISABLED 2026-07-12 per Ted -- this was the one demo seeder from the
+  // 2026-07-10 cleanup pass that got missed (it was framed as "safe"
+  // because of the _seeded:true flag, but Ted wants zero demo injection
+  // now, flagged or not, going live for real). Left in place only for
+  // reference, never executes. See termacPurgeLegacyDemoData() below for
+  // the one-time cleanup of whatever this already wrote to existing
+  // browsers before today.
+  return;
   // SAFE SEED: stamps demo records with _seeded:true, merges with real data
   // Never overwrites records that don't have _seeded:true
   const SEED_VERSION = 'v3_25leads_safe';
@@ -22227,6 +22289,12 @@ function rcpSaveCalls(c){try{localStorage.setItem('termac_inbound_calls',JSON.st
 // ── DEMO SEED: Inbound call log ───────────────────────────────────
 const RCP_DEMO_VERSION = 'demo_v1';
 function rcpSeedDemoCalls() {
+  // DISABLED 2026-07-12 per Ted -- also missed in the July 10 cleanup.
+  // This one was worse than it looked: it stamped fake calls with
+  // TODAY'S actual date every time the Reception overlay opened on a
+  // browser that hadn't seen this exact version yet, so the fake calls
+  // looked freshly logged instead of obviously old demo content.
+  return;
   if (localStorage.getItem('termac_rcp_demo_seeded') === RCP_DEMO_VERSION) return;
   const today = new Date().toISOString().slice(0,10);
   const demos = [
