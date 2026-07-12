@@ -2088,24 +2088,33 @@ async function d1Hydrate(table) {
   const local = crmLoad(table);
   const existingIds = {};
   local.forEach(function (r) { if (r && r.id) existingIds[r.id] = true; });
+  // The Worker caps each request at 500 rows, so a table with more than
+  // 500 records (like the 6,127-row Termac accounts book) needs multiple
+  // pages. Loop on offset until a page comes back with fewer than PAGE_SIZE
+  // rows. Hard cap of 60 pages (30,000 rows) as a safety valve against a
+  // runaway loop if the API ever misbehaves.
+  const PAGE_SIZE = 500;
+  const MAX_PAGES = 60;
+  let added = 0;
   try {
-    const res = await d1Fetch('GET', '/api/' + table + '?limit=500');
-    if (res.ok && Array.isArray(res.results) && res.results.length > 0) {
-      let added = 0;
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const offset = page * PAGE_SIZE;
+      const res = await d1Fetch('GET', '/api/' + table + '?limit=' + PAGE_SIZE + '&offset=' + offset);
+      if (!res.ok || !Array.isArray(res.results) || res.results.length === 0) break;
       res.results.forEach(function (rec) {
         if (!rec || !rec.id || existingIds[rec.id]) return;
         local.push(d1ReverseMapLocal(table, rec));
         existingIds[rec.id] = true;
         added++;
       });
-      if (added > 0) {
-        try { localStorage.setItem('termac_crm_' + table, JSON.stringify(local)); } catch(e) {}
-        if (typeof renderCRMView === 'function') renderCRMView();
-      }
-      return { added: added };
+      if (res.results.length < PAGE_SIZE) break;
+    }
+    if (added > 0) {
+      try { localStorage.setItem('termac_crm_' + table, JSON.stringify(local)); } catch(e) {}
+      if (typeof renderCRMView === 'function') renderCRMView();
     }
   } catch(e) {}
-  return { added: 0 };
+  return { added: added };
 }
 
 // Patch crmSave to also push to D1 (override rather than wrap to avoid TDZ)
@@ -2121,6 +2130,7 @@ window.crmSave = crmSave = function(key, val) {
 // not only on the next full page reload.
 async function d1HydrateAll() {
   for (const t of D1_SYNC_TABLES) { await d1Hydrate(t); }
+  if (typeof tcRealKpiStrip === 'function') tcRealKpiStrip();
 }
 d1HydrateAll();
 
