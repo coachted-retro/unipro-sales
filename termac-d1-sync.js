@@ -92,6 +92,13 @@
       // name/company/title/email/phone/assigned_rep/status directly, no
       // mapping needed for those, they already match.
       assignedRep: 'assigned_rep', created: 'created_at',
+      // 2026-07-13 FIX: accountId was never in VALID at all, and the
+      // contacts table had no account_id column - so a contact created
+      // with a link to an account had that link silently stripped
+      // before ever reaching D1. This is a large part of why AllPro's
+      // Contacts tab, which filters contacts by account_id, looked
+      // empty even when contacts existed.
+      accountId: 'account_id',
     },
     collections: {
       collectedBy: 'collected_by', accountName: 'account_name',
@@ -205,7 +212,7 @@
       'billing_cycle', 'territory', 'division', 'cust_num', 'attention_status',
       'status_flag', 'last_status_check_at', 'confirmation_status'],
     contacts: ['id', 'name', 'company', 'title', 'email', 'phone',
-      'assigned_rep', 'status', 'created_at', 'updated_at'],
+      'assigned_rep', 'status', 'account_id', 'created_at', 'updated_at'],
     jobs: ['id', 'account_id', 'location_id', 'division', 'service_type', 'tech_id',
       'scheduled_date', 'scheduled_time', 'status', 'notes', 'report_url',
       'square_ref', 'completed_at', 'created_at', 'updated_at',
