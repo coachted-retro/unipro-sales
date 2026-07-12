@@ -6697,7 +6697,7 @@ async function siSendChat() {
   window._siChatHistory.push({role:'user', content: q});
 
   try {
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    const resp = await fetch('https://unipro-ai-proxy.termac-one.workers.dev/', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({
@@ -8630,6 +8630,16 @@ function spBuildAlerts(r) {
     const stuck = Math.floor((Date.now() - new Date(r.stageChangedAt)) / 86400000);
     if(stuck > 21) list.push({cls:'', text:`⏳ Stuck in ${r.lifecycleStage||'stage'} for ${stuck} days`});
   }
+  // 2026-07-13: flagged priority prospect (isHot / warm-or-hot stage) --
+  // surface the actual reason from notes right in the alert strip, not
+  // just a bare "hot lead" badge with no context.
+  const isFlagged = r.isHot || r.is_hot;
+  const stageNow = (r.lifecycleStage||'').toLowerCase();
+  if(isFlagged && (stageNow === 'warm' || stageNow === 'hot') && !fus.length) {
+    const reason = (r.notes||'').trim();
+    const short = reason.length > 90 ? reason.slice(0,87)+'…' : reason;
+    list.push({cls: stageNow==='hot'?'red':'green', text: `${stageNow==='hot'?'🔥':'🟡'} Flagged ${stageNow} — ${short || 'priority prospect, see Pre-Call Prep'}`});
+  }
 
   const section = document.getElementById('siAlerts');
   const listEl = document.getElementById('siAlertList');
@@ -8646,11 +8656,22 @@ function spBuildPrep(r) {
   const fus = (r.followUps||[]).filter(f=>!f.completed);
   const fuNote = fus.length ? `Open follow-up: ${fus[0].note||'(no details)'}` : 'No open follow-ups';
   const services = (r.services||[]).join(', ') || 'No services tagged';
+  // 2026-07-13: research/status-check notes were being saved on the
+  // record (source, cross-division gaps, verified-open/closed status,
+  // management changes, etc.) but nothing on this panel ever displayed
+  // them -- the rep only ever saw a generic templated opening line.
+  // Surface real notes first, when present, above the generic fallback.
+  const realNotes = (r.notes || '').trim();
+  const intelHtml = realNotes
+    ? `<div style="margin-bottom:8px"><div style="margin-bottom:4px">🧠 <strong style="color:#FDE68A">What we know:</strong></div>
+       <div style="color:#F1F5F9">${escH(realNotes)}</div></div>`
+    : '';
   el.innerHTML = `
-    <div style="margin-bottom:5px">📋 <strong style="color:#F2B705">Opening angle:</strong></div>
-    <div style="color:#9CA3AF;margin-bottom:8px">"Hi, I'm following up on your ${services} — wanted to make sure everything is up to date."</div>
-    <div style="font-size:10px;color:#6B7280;border-top:1px solid #1F2937;padding-top:6px;margin-top:4px">${escH(lastNote)}</div>
-    <div style="font-size:10px;color:#6B7280;margin-top:3px">${escH(fuNote)}</div>`;
+    ${intelHtml}
+    <div style="margin-bottom:5px">📋 <strong style="color:#FDE68A">Opening angle:</strong></div>
+    <div style="color:#CBD5E1;margin-bottom:8px">"Hi, I'm following up on your ${services} — wanted to make sure everything is up to date."</div>
+    <div style="font-size:12px;color:#94A3B8;border-top:1px solid #2A3A55;padding-top:7px;margin-top:5px">${escH(lastNote)}</div>
+    <div style="font-size:12px;color:#94A3B8;margin-top:4px">${escH(fuNote)}</div>`;
   section.style.display = 'block';
 }
 
@@ -9074,7 +9095,7 @@ async function spRunAI(r, tab) {
     + '}';
 
   try {
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    const resp = await fetch('https://unipro-ai-proxy.termac-one.workers.dev/', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({

@@ -336,6 +336,17 @@
       var camelKey = inverse[col];
       if (camelKey && !(camelKey in out)) out[camelKey] = out[col];
     });
+    // 2026-07-13 FIX: FIELD_MAP only supports one camelCase alias per D1
+    // column, and 'lifecycle_stage' is aliased to 'status' there -- but
+    // nearly every UI function in sales-portal.html actually reads
+    // r.lifecycleStage, not r.status. Any record hydrated straight from
+    // D1 (never re-saved through the app's own save flow) silently had
+    // no r.lifecycleStage at all, so it fell back to default/gray stage
+    // badges and generic pre-call prep everywhere, even though the
+    // correct stage was sitting right there in r.status. This fills
+    // r.lifecycleStage from r.status only when it's not already set, so
+    // nothing that already relies on r.lifecycleStage is touched.
+    if (out.status !== undefined && out.lifecycleStage === undefined) out.lifecycleStage = out.status;
     return out;
   }
 
