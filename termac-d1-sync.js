@@ -883,4 +883,83 @@
   if (typeof global.crmSave !== 'function') global.crmSave = crmSave;
   if (typeof global.crmLoad !== 'function') global.crmLoad = crmLoad;
   if (typeof global.crmDelete !== 'function') global.crmDelete = crmDelete;
+
+  // ════════════════════════════════════════════════════════════════════
+  // APP-UPDATE CHECK (added 2026-07-12 per Ted)
+  // ────────────────────────────────────────────────────────────────────
+  // With a lot of people on the platform at once, someone can be sitting
+  // on an old cached version of a page for hours and never see a fix that
+  // was pushed. This polls a tiny app-version.json (bumped automatically
+  // on every deploy) and, if the deployed version is newer than the one
+  // this page loaded with, shows a small non-blocking banner offering a
+  // refresh. It never force-reloads (that could interrupt someone
+  // mid-form) -- it just makes the update visible and one tap away.
+  //
+  // Self-contained and fail-safe: any network hiccup fetching the version
+  // file is ignored silently. Loading this file on any page opts that
+  // page in automatically, so all 20 portals that already load
+  // termac-d1-sync.js get update prompts with zero per-page changes.
+  // ════════════════════════════════════════════════════════════════════
+  (function appUpdateCheck() {
+    var VERSION_URL = 'app-version.json';
+    var POLL_MS = 5 * 60 * 1000; // every 5 minutes
+    var loadedVersion = null;
+    var bannerShown = false;
+
+    function showUpdateBanner() {
+      if (bannerShown || document.getElementById('termacUpdateBanner')) return;
+      bannerShown = true;
+      var bar = document.createElement('div');
+      bar.id = 'termacUpdateBanner';
+      bar.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:99999;'
+        + 'background:#1A1D21;color:#fff;padding:12px 16px;display:flex;'
+        + 'align-items:center;justify-content:center;gap:14px;'
+        + 'font-family:Barlow,-apple-system,sans-serif;font-size:14px;'
+        + 'box-shadow:0 -2px 12px rgba(0,0,0,.25)';
+      bar.innerHTML = '<span>A new version of Termac One is available.</span>'
+        + '<button id="termacUpdateBtn" style="background:#C8102E;color:#fff;'
+        + 'border:none;border-radius:7px;padding:8px 18px;font-weight:800;'
+        + 'font-family:inherit;font-size:13px;cursor:pointer">Refresh now</button>'
+        + '<button id="termacUpdateDismiss" style="background:transparent;'
+        + 'color:#B8BEC6;border:none;font-size:13px;cursor:pointer">Later</button>';
+      document.body.appendChild(bar);
+      document.getElementById('termacUpdateBtn').onclick = function () {
+        // location.reload(true) is deprecated/ignored in modern browsers;
+        // adding a cache-busting param is the reliable way to force a
+        // fresh fetch of the page and its assets.
+        var u = new URL(window.location.href);
+        u.searchParams.set('_v', Date.now());
+        window.location.href = u.toString();
+      };
+      document.getElementById('termacUpdateDismiss').onclick = function () {
+        bar.remove();
+      };
+    }
+
+    function check() {
+      // Cache-bust the version file itself, otherwise the browser may hand
+      // back a stale cached copy and defeat the whole point.
+      fetch(VERSION_URL + '?_=' + Date.now(), { cache: 'no-store' })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (data) {
+          if (!data || !data.version) return;
+          if (loadedVersion === null) {
+            loadedVersion = data.version; // first read = the version we loaded on
+          } else if (data.version !== loadedVersion) {
+            showUpdateBanner();
+          }
+        })
+        .catch(function () { /* offline or file missing -- ignore */ });
+    }
+
+    if (typeof window !== 'undefined' && window.fetch) {
+      check();                    // establish baseline on load
+      setInterval(check, POLL_MS); // then poll
+      // Also check when the tab regains focus -- someone coming back to a
+      // long-open tab is exactly when a stale version is most likely.
+      document.addEventListener('visibilitychange', function () {
+        if (!document.hidden) check();
+      });
+    }
+  })();
 })(window);

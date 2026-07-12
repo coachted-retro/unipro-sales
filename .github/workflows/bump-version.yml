@@ -1,0 +1,59 @@
+name: Bump app version
+
+# Auto-bumps app-version.json on every push that changes front-end files,
+# so the in-app "new version available -- refresh" banner (in
+# termac-d1-sync.js) fires for anyone sitting on an old cached page.
+#
+# Added 2026-07-12 per Ted. Without this, the version file never changes
+# and the update banner would never appear.
+#
+# Loop-safety: this workflow writes app-version.json and pushes it back to
+# main. To avoid that push re-triggering the workflow forever:
+#   - paths-ignore excludes app-version.json itself, and
+#   - the commit uses [skip ci] which GitHub honors to skip workflow runs.
+# Both guards are deliberate belt-and-suspenders.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**.html'
+      - '**.js'
+      - '**.css'
+    paths-ignore:
+      - 'app-version.json'
+      - 'workers/**'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bump-version
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need write-back access and full history for the push.
+          persist-credentials: true
+
+      - name: Write new version stamp
+        run: |
+          STAMP=$(date -u +%Y%m%d-%H%M%S)
+          printf '{"version":"%s","note":"Bumped automatically on each deploy by the bump-version workflow."}\n' "$STAMP" > app-version.json
+          echo "New version: $STAMP"
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name "Termac One CI"
+          git config user.email "ci@termac.com"
+          if git diff --quiet app-version.json; then
+            echo "No change to app-version.json, nothing to commit."
+            exit 0
+          fi
+          git add app-version.json
+          git commit -m "Bump app version [skip ci]"
+          git push

@@ -1,10 +1,24 @@
 name: Deploy Cloudflare Workers
 
+# Deploys all Cloudflare Workers on any push to main that touches workers/.
+#
+# 2026-07-12 rebuild (per Ted): the previous version had continue-on-error:true
+# on every deploy step, so a FAILED deploy still showed a green check and
+# nobody found out until an employee hit a broken login. That silent-failure
+# behavior is removed here. Now:
+#   - Each worker deploys independently (one failing does not stop the others),
+#     but a real failure is recorded and fails the overall run at the end.
+#   - After deploys, the login-critical worker (termac-staff-auth) is
+#     health-checked with a real request. If it does not respond correctly,
+#     the whole run is marked failed and visible in the Actions tab / email.
+#   - A summary lists exactly which workers deployed and which did not.
+
 on:
   push:
     branches: [main]
     paths:
       - 'workers/**'
+  workflow_dispatch: {}
 
 jobs:
   deploy:
@@ -21,82 +35,65 @@ jobs:
       - name: Install Wrangler
         run: npm install -g wrangler@4
 
-      - name: Deploy unipro-ai-proxy
-        run: wrangler deploy
-        working-directory: workers/unipro-ai-proxy
+      # Deploy every worker. We loop instead of one step per worker so adding
+      # or removing a worker is a one-line change, and so a single failure is
+      # captured without aborting the rest (set -e is deliberately not used;
+      # we track failures and report them at the end).
+      - name: Deploy all workers
+        id: deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        continue-on-error: true
+        run: |
+          WORKERS="unipro-ai-proxy ors-route-proxy termac-notify cms-cors-proxy outscraper-proxy termac-photo-upload termac-d1-api termac-booking-api termac-hotlead-escalation termac-staff-auth"
+          FAILED=""
+          DEPLOYED=""
+          for w in $WORKERS; do
+            echo "::group::Deploying $w"
+            if (cd "workers/$w" && wrangler deploy); then
+              echo "$w deployed OK"
+              DEPLOYED="$DEPLOYED $w"
+            else
+              echo "::error::Deploy FAILED for $w"
+              FAILED="$FAILED $w"
+            fi
+            echo "::endgroup::"
+          done
 
-      - name: Deploy ors-route-proxy
-        run: wrangler deploy
-        working-directory: workers/ors-route-proxy
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        continue-on-error: true
+          {
+            echo "## Worker deploy results"
+            echo ""
+            echo "**Deployed:**${DEPLOYED:- none}"
+            echo ""
+            echo "**Failed:**${FAILED:- none}"
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Deploy termac-notify
-        run: wrangler deploy
-        working-directory: workers/termac-notify
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        continue-on-error: true
+          if [ -n "$FAILED" ]; then
+            echo "::error::One or more workers failed to deploy:$FAILED"
+            exit 1
+          fi
 
-      - name: Deploy cms-cors-proxy
-        run: wrangler deploy
-        working-directory: workers/cms-cors-proxy
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        continue-on-error: true
-
-      - name: Deploy outscraper-proxy
-        run: wrangler deploy
-        working-directory: workers/outscraper-proxy
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        continue-on-error: true
-
-      - name: Deploy termac-photo-upload
-        run: wrangler deploy
-        working-directory: workers/termac-photo-upload
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        continue-on-error: true
-
-      - name: Deploy termac-d1-api
-        run: wrangler deploy
-        working-directory: workers/termac-d1-api
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        continue-on-error: true
-
-      - name: Deploy termac-booking-api
-        run: wrangler deploy
-        working-directory: workers/termac-booking-api
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        continue-on-error: true
-
-      - name: Deploy termac-hotlead-escalation
-        run: wrangler deploy
-        working-directory: workers/termac-hotlead-escalation
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        continue-on-error: true
-
-      - name: Deploy termac-staff-auth
-        run: wrangler deploy
-        working-directory: workers/termac-staff-auth
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        continue-on-error: true
+      # Post-deploy health check on the login-critical worker. If staff-auth
+      # is down or returning the wrong shape, every employee login is affected,
+      # so this is the one we verify with a real request rather than trusting
+      # the deploy step's exit code alone. /my-access is a safe read-only GET.
+      - name: Health check termac-staff-auth
+        run: |
+          URL="https://termac-staff-auth.termac-one.workers.dev/my-access?email=healthcheck@termac.com"
+          echo "Checking $URL"
+          # Retry a few times — a worker can take a few seconds to go live.
+          for i in 1 2 3 4 5; do
+            BODY=$(curl -s --max-time 10 "$URL" || true)
+            echo "Attempt $i response: $BODY"
+            # A healthy worker returns JSON with "ok":true even for an unknown
+            # email (it just reports active:false). The old, pre-role version
+            # also returns ok:true, so this confirms the worker is UP; the
+            # front-end roster fallback covers the role-field case separately.
+            if echo "$BODY" | grep -q '"ok":true'; then
+              echo "termac-staff-auth is responding correctly."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::termac-staff-auth did NOT respond correctly after deploy. Login may be broken — check the worker in the Cloudflare dashboard before assuming this deploy succeeded."
+          exit 1
