@@ -142,7 +142,7 @@ async function handleProvision(request, env) {
     'INSERT INTO staff_auth (id, email, name, role, division, portals, password_hash, salt, must_reset, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)'
   ).bind(id, email, name, role, division, JSON.stringify(portals), hash, salt, 'active', Date.now(), Date.now()).run();
 
-  const LOGIN_URL = 'https://coachted-retro.github.io/unipro-sales/staff-login.html';
+  const LOGIN_URL = 'https://my.termac.com/staff-login.html';
   const emailSent = await sendEmail(env, name, email, 'Termac One Account Created',
     'Your Termac One login is ready. Sign in at ' + LOGIN_URL + ' using this email address, ' + email +
     ', and this temporary password: ' + tempPassword +
@@ -343,7 +343,7 @@ async function handleResendInvite(request, env) {
     'UPDATE staff_auth SET password_hash = ?, salt = ?, must_reset = 1, status = ?, updated_at = ? WHERE id = ?'
   ).bind(hash, salt, 'active', Date.now(), id).run();
 
-  const LOGIN_URL = 'https://coachted-retro.github.io/unipro-sales/staff-login.html';
+  const LOGIN_URL = 'https://my.termac.com/staff-login.html';
   const emailSent = await sendEmail(env, user.name, user.email, 'Termac One Login Resent',
     'Your Termac One login was resent. Sign in at ' + LOGIN_URL + ' using this email address, ' + user.email +
     ', and this temporary password: ' + tempPassword +
