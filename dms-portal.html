@@ -532,8 +532,17 @@ button{cursor:pointer}
 
 <script>
 // ── SHARED STORAGE ──
+// FIX 2026-07-12 (Ted): this file used to define its own crmSave that only
+// wrote to localStorage, silently overriding the real D1-syncing version
+// from termac-d1-sync.js (loaded above). Every CSV/PDF lead import in this
+// portal was localStorage-only as a result -- never reached D1, never
+// visible to another device or browser, gone the moment that browser's
+// storage was cleared. crmLoad is left local-declared (harmless -- it's
+// identical to the shared one, a straight localStorage read used as a
+// fast cache) but crmSave is no longer redeclared here, so the real
+// TermacD1Sync-backed version from termac-d1-sync.js (push to D1 on every
+// save) is what actually runs.
 function crmLoad(key){ try{ return JSON.parse(localStorage.getItem('termac_crm_'+key)||'[]'); }catch(e){return[];} }
-function crmSave(key,val){ try{ localStorage.setItem('termac_crm_'+key,JSON.stringify(val)); }catch(e){} }
 function escH(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
 // ── AUTH ──
@@ -630,6 +639,15 @@ function dmsEnterPortal(){
       }
       if (typeof dmsRender === 'function') dmsRender('leads');
     })();
+
+    // FIX 2026-07-12 (Ted): this portal never pulled from D1 either --
+    // no hydrate, no sweep. Every other correctly-wired portal (Sales,
+    // Warehouse, etc.) calls startCrmSyncSweep on entry so records
+    // created elsewhere (another rep's import, a manager's edit) show up
+    // here without a full reload. Matches that same pattern now.
+    TermacD1Sync.startCrmSyncSweep(30000, function () {
+      if (typeof dmsRender === 'function') dmsRender(_dmsTab || 'leads');
+    });
   }
 }
 

@@ -190,6 +190,7 @@ label{display:block;font-size:11px;font-weight:700;color:var(--soft);text-transf
   .form-full{grid-column:1}
 }
 </style>
+<script src="termac-d1-sync.js"></script>
 </head>
 <body>
 
@@ -392,8 +393,13 @@ let _tech = null;
 let _tab = 'dashboard';
 let _selectedDivs = new Set();
 
+// FIX 2026-07-12 (Ted): this file had no termac-d1-sync.js include at all
+// and its own crmSave was localStorage-only -- every write here (leads,
+// etc.) was invisible to D1 and to every other device/browser. Added the
+// shared script above; crmLoad stays local-declared (identical to the
+// shared one, a fast localStorage read) but crmSave is no longer
+// redeclared, so the real D1-syncing version takes effect.
 function crmLoad(k){try{return JSON.parse(localStorage.getItem('termac_crm_'+k)||'[]')}catch(e){return[]}}
-function crmSave(k,v){try{localStorage.setItem('termac_crm_'+k,JSON.stringify(v))}catch(e){}}
 function escH(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 
 // ══ AUTH ══
@@ -428,6 +434,14 @@ function techEnterPortal(){
   av.style.background=_tech.color;
   document.getElementById('techUsername').textContent=_tech.name.split(' ')[0];
   techNav('dashboard');
+
+  // FIX 2026-07-12 (Ted): pulls live from D1 on entry, then every 30s,
+  // matching every other correctly-wired portal.
+  if (typeof TermacD1Sync !== 'undefined') {
+    TermacD1Sync.startCrmSyncSweep(30000, function () {
+      if (typeof techNav === 'function') techNav(_tab || 'dashboard');
+    });
+  }
 }
 
 // ══ NAV ══
