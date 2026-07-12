@@ -567,6 +567,10 @@ body.rail-open .rail-overlay{display:block}
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
         <span style="font-size:11px;color:var(--soft)" id="spTopDate"></span>
+        <div style="position:relative">
+          <button onclick="spToggleNotifPanel()" title="Invites & notifications" style="background:none;border:1.5px solid #3A3E43;border-radius:7px;color:#9CA3AF;font-size:14px;padding:5px 9px;cursor:pointer;position:relative">🔔<span id="spNotifBadge" style="display:none;position:absolute;top:-6px;right:-6px;background:#C8102E;color:#fff;font-size:10px;font-weight:800;border-radius:10px;padding:1px 5px;line-height:1.4">0</span></button>
+          <div id="spNotifPanel" style="display:none;position:absolute;top:calc(100% + 6px);right:0;width:320px;max-height:380px;overflow-y:auto;background:#fff;border:1.5px solid #D7DBE0;border-radius:10px;box-shadow:0 12px 32px rgba(0,0,0,.25);z-index:9800"></div>
+        </div>
         <button class="sp-btn sp-btn-ghost" onclick="spLogout()" style="font-size:11px;padding:5px 10px">Sign Out</button>
       </div>
     </div>
@@ -5631,6 +5635,7 @@ function spOpenApptModal(id, tab, mode, presetDate, keepNotes) {
   _spApptTab = tab;
   _spApptMode = mode || 'appointment';
   _spApptPresetDate = presetDate || _spApptPresetDate || null;
+  _spApptGuestChips = [];
 
   const data = crmLoad('leads');
   const r = data.find(x => x.id === id) || {};
@@ -5690,6 +5695,13 @@ function spOpenApptModal(id, tab, mode, presetDate, keepNotes) {
     ? '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Location</label><input type="text" id="spApptLocation" value="' + addr.replace(/"/g,'&quot;') + '" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px" placeholder="Business address"></div>'
     : '';
 
+  const guestChips = Object.keys(SP_REPS).filter(function(n){ return n !== (_spRep && _spRep.name); })
+    .map(function(n){ return '<button type="button" onclick="spApptToggleGuestChip(this,' + JSON.stringify(n) + ')" data-guest="' + escH(n) + '" style="border:1.5px solid #D7DBE0;background:#fff;border-radius:20px;padding:4px 11px;font-size:12px;cursor:pointer;color:#333">' + escH(n) + '</button>'; }).join('');
+  const guestsHtml = '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Invite someone <span style="font-weight:400;text-transform:none">(optional)</span></label>' +
+    '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px">' + guestChips + '</div>' +
+    '<input type="text" id="spApptGuests" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px" placeholder="Other names or emails, comma separated (e.g. Jim Kennedy)">' +
+    '<div style="font-size:11px;color:#8A9099;margin-top:3px">They\'ll get a notification with the address and a directions link.</div></div>';
+
   const brevoNote = _spApptMode === 'appointment'
     ? '<div style="background:#EBF2FD;border-radius:8px;padding:9px 12px;font-size:11px;color:#1B5FA8">📧 Customer confirmation fires via Brevo when wired. Promotes Lead/Contact to Opportunity.</div>'
     : '';
@@ -5706,6 +5718,7 @@ function spOpenApptModal(id, tab, mode, presetDate, keepNotes) {
         allDayRecurHtml +
         linkFieldHtml +
         locationHtml +
+        guestsHtml +
         brevoNote +
         '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Notes <span style="font-weight:400;text-transform:none">(optional)</span></label>' +
         '<textarea id="spApptNotes" rows="2" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px" placeholder="What is the plan?">' + (keepNotes||'') + '</textarea></div>' +
@@ -5756,6 +5769,75 @@ function spApptToggleAllDay(checked) {
   var wrap = document.getElementById('spApptTimeWrap');
   if (wrap) wrap.style.display = checked ? 'none' : 'block';
 }
+var _spApptGuestChips = [];
+function spApptToggleGuestChip(btn, name) {
+  var i = _spApptGuestChips.indexOf(name);
+  if (i >= 0) { _spApptGuestChips.splice(i, 1); btn.style.background = '#fff'; btn.style.color = '#333'; btn.style.borderColor = '#D7DBE0'; }
+  else { _spApptGuestChips.push(name); btn.style.background = '#C8102E'; btn.style.color = '#fff'; btn.style.borderColor = '#C8102E'; }
+}
+function spApptCollectGuests() {
+  var free = (document.getElementById('spApptGuests')?.value || '').split(',').map(function(s){ return s.trim(); }).filter(Boolean);
+  var all = _spApptGuestChips.concat(free);
+  return Array.from(new Set(all));
+}
+function spMapsDirectionsLink(address) {
+  if (!address) return '';
+  return 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(address);
+}
+
+// ── Guest invite notifications: bell + dropdown, polled every 60s ──
+var _spNotifCache = [];
+async function spFetchNotifications() {
+  if (!_spRep || typeof TermacD1Sync === 'undefined') return;
+  try {
+    var res = await TermacD1Sync.d1Fetch('GET', '/api/notifications?recipient=' + encodeURIComponent(_spRep.name));
+    var rows = (res && (res.results || res.data)) || [];
+    _spNotifCache = rows.sort(function(a,b){ return (b.created_at||0)-(a.created_at||0); });
+    var unread = _spNotifCache.filter(function(n){ return !n.read_flag; }).length;
+    var badge = document.getElementById('spNotifBadge');
+    if (badge) { badge.style.display = unread ? 'block' : 'none'; badge.textContent = unread; }
+  } catch(e){}
+}
+function spToggleNotifPanel() {
+  var panel = document.getElementById('spNotifPanel');
+  if (!panel) return;
+  var open = panel.style.display === 'none';
+  panel.style.display = open ? 'block' : 'none';
+  if (open) spRenderNotifPanel();
+}
+function spRenderNotifPanel() {
+  var panel = document.getElementById('spNotifPanel');
+  if (!panel) return;
+  if (!_spNotifCache.length) { panel.innerHTML = '<div style="padding:16px;font-size:12px;color:var(--soft);text-align:center">No invites yet.</div>'; return; }
+  panel.innerHTML = _spNotifCache.map(function(n){
+    var lines = (n.message||'').split('\n');
+    var body = lines.map(function(l){
+      if (l.indexOf('Directions: ') === 0) return '<a href="' + l.replace('Directions: ','') + '" target="_blank" style="color:#1B5FA8;font-weight:700">Get directions \u2192</a>';
+      return escH(l);
+    }).join('<br>');
+    return '<div onclick="spMarkNotifRead(\'' + n.id + '\',this)" style="padding:10px 12px;border-bottom:1px solid #F1F5F9;cursor:pointer;background:' + (n.read_flag?'#fff':'#FFF8EC') + '">' +
+      '<div style="font-size:12px;font-weight:800;color:#1F2937">' + escH(n.title||'') + '</div>' +
+      '<div style="font-size:11px;color:#5A616B;margin-top:3px;line-height:1.5">' + body + '</div></div>';
+  }).join('');
+}
+function spMarkNotifRead(id, el) {
+  var n = _spNotifCache.find(function(x){ return x.id === id; });
+  if (n && !n.read_flag) {
+    n.read_flag = 1;
+    if (typeof TermacD1Sync !== 'undefined') TermacD1Sync.d1Push('notifications', n).catch(function(){});
+    if (el) el.style.background = '#fff';
+    var unread = _spNotifCache.filter(function(x){ return !x.read_flag; }).length;
+    var badge = document.getElementById('spNotifBadge');
+    if (badge) { badge.style.display = unread ? 'block' : 'none'; badge.textContent = unread; }
+  }
+}
+document.addEventListener('click', function(e){
+  var panel = document.getElementById('spNotifPanel');
+  if (panel && panel.style.display !== 'none' && !panel.contains(e.target) && e.target.id !== 'spNotifBadge' && !e.target.closest('[onclick="spToggleNotifPanel()"]')) {
+    panel.style.display = 'none';
+  }
+});
+setTimeout(function(){ spFetchNotifications(); setInterval(spFetchNotifications, 60000); }, 1500);
 
 async function spSaveAppt() {
   const date = document.getElementById('spApptDate')?.value || '';
@@ -5869,20 +5951,42 @@ async function spCommitAppt(patternKeysToClear) {
   }
 
   // Save to the shared appointments pool the Calendar and Today's Agenda both read from
+  const guests = spApptCollectGuests();
+  const newApptId = mode + '_' + Date.now();
   try {
     const title = linkedName || cfg.label.replace(/^\S+\s/,'');
     const appts = crmLoad('appointments');
     appts.push({
-      id: mode + '_' + Date.now(),
+      id: newApptId,
       recordId: linkedId, tab: linkedTab, type: mode, date, time, timeEnd, address: location, notes,
-      title, allDay, recurring, recurFreq,
+      title, allDay, recurring, recurFreq, guests,
       isFlexStop: mode !== 'appointment', createdAt: Date.now(), createdBy: _spRep.name,
     });
     crmSave('appointments', appts);
   } catch(e){}
 
+  // Notify anyone invited along - directions link included so they don't
+  // have to ask where to meet.
+  if (guests.length && typeof TermacD1Sync !== 'undefined') {
+    const dateLabel2 = new Date(date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
+    const whenStr = time ? (dateLabel2 + ' at ' + time) : dateLabel2;
+    const dirLink = spMapsDirectionsLink(location);
+    guests.forEach(function(g){
+      TermacD1Sync.d1Push('notifications', {
+        id: 'notif_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
+        recipient: g,
+        type: 'appointment_invite',
+        title: (_spRep.name) + ' invited you to a stop',
+        message: (linkedName || 'Site visit') + ' \u2014 ' + whenStr + (location ? ('\nAddress: ' + location) : '') + (dirLink ? ('\nDirections: ' + dirLink) : ''),
+        readFlag: 0,
+        relatedId: newApptId,
+        createdAt: Date.now(),
+      }).catch(function(){});
+    });
+  }
+
   document.getElementById('spApptModal')?.remove();
-  spToast(cfg.saveLabel.replace('Save ', '') + ' saved');
+  spToast(cfg.saveLabel.replace('Save ', '') + ' saved' + (guests.length ? (' \u2014 ' + guests.length + ' invited') : ''));
   _spApptLinkedId = null; _spApptLinkedTab = null; _spApptLinkedName = '';
   if (linkedTab) spNav(linkedTab);
 }
