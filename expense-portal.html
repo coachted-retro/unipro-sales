@@ -271,16 +271,35 @@ textarea{resize:vertical;min-height:80px;line-height:1.5}
 
 <div class="toast" id="toast"></div>
 
+<script src="termac-d1-sync.js"></script>
 <script>
 // ── DATA LAYER ──────────────────────────────────────────────────────────────
 var EXPENSE_KEY = 'termac_expense_reports';
 
+// 2026-07-13 FIX: was raw localStorage with zero D1 sync - an expense
+// report submitted here never reached accounting-portal.html or
+// ap-portal.html on a different device for approval. Now routes through
+// the real D1-synced expense_reports table, with a one-time migration
+// of anything already sitting in the old raw key on this device.
 function loadExpenses() {
-  try { return JSON.parse(localStorage.getItem(EXPENSE_KEY) || '[]'); } catch(e) { return []; }
+  return (typeof crmLoad === 'function') ? crmLoad('expense_reports') : (function(){
+    try { return JSON.parse(localStorage.getItem(EXPENSE_KEY) || '[]'); } catch(e) { return []; }
+  })();
 }
 function saveExpenses(items) {
+  if (typeof crmSave === 'function') { crmSave('expense_reports', items); return; }
   try { localStorage.setItem(EXPENSE_KEY, JSON.stringify(items)); } catch(e) {}
 }
+(function migrateLegacyExpenses(){
+  try {
+    if (typeof crmLoad !== 'function') return;
+    var already = crmLoad('expense_reports');
+    var legacy = JSON.parse(localStorage.getItem(EXPENSE_KEY) || '[]');
+    if (already.length === 0 && legacy.length > 0) {
+      crmSave('expense_reports', legacy);
+    }
+  } catch(e) {}
+})();
 function getUser() {
   return localStorage.getItem('termac_current_user') || 'Employee';
 }
@@ -879,6 +898,14 @@ function showToast(msg) {
 
 // ── INIT ──────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function() {
+  // 2026-07-13 FIX: no D1 hydration existed at all - expense reports
+  // submitted or approved on another device never pulled in here.
+  if (typeof TermacD1Sync !== 'undefined' && typeof TermacD1Sync.d1HydrateAll === 'function') {
+    TermacD1Sync.d1HydrateAll().then(function() {
+      loadMyExpenses(); loadApprovalQueue(); loadAccountingQueue();
+    }).catch(function(){});
+  }
+
   // Set default period dates to current week
   var today = new Date();
   var monday = new Date(today); monday.setDate(today.getDate() - today.getDay() + 1);

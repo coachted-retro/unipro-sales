@@ -62,6 +62,9 @@ const ALLOWED_TABLES = new Set([
   // Accounts Payable, added 2026-07-13 - fixing a real localStorage-only
   // bug found during a platform-wide audit. See accounts-payable-schema.sql.
   'accounts_payable',
+  // Expense Reports, added 2026-07-13 - same class of bug. See
+  // expense-reports-schema.sql.
+  'expense_reports',
 ]);
 
 const TABLE_PREFIX = {
@@ -87,6 +90,7 @@ const TABLE_PREFIX = {
   reference_library:'REL',
   allpro_rate_tables:'ART',
   accounts_payable:'AP',
+  expense_reports:'EXP',
 };
 
 function corsHeaders(origin) {

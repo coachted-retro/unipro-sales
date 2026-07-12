@@ -39,7 +39,7 @@
     'transfer_requests', 'scheduler_queue', 'allpro_spiffs',
     'trade_partners', 'trade_partner_referrals', 'trade_partner_bids',
     'reference_library', 'allpro_rate_tables', 'notifications',
-    'accounts_payable'];
+    'accounts_payable', 'expense_reports'];
 
   async function d1Fetch(method, path, body) {
     try {
@@ -151,12 +151,21 @@
       dueDate: 'due_date', invoiceNum: 'invoice_num', loggedAt: 'logged_at',
       paidAt: 'paid_at',
     },
+    expense_reports: {
+      periodFrom: 'period_from', periodTo: 'period_to', lineItems: 'line_items',
+      submittedAt: 'submitted_at', submittedDate: 'submitted_date',
+      autoCloseAt: 'auto_close_at',
+    },
   };
 
   var VALID = {
     accounts_payable: ['id', 'vendor', 'amount', 'division', 'category',
       'due_date', 'invoice_num', 'notes', 'status', 'logged_at', 'paid_at',
       'source', 'created_at', 'updated_at'],
+    expense_reports: ['id', 'employee', 'division', 'title', 'period_from',
+      'period_to', 'notes', 'line_items', 'total', 'receipts', 'status',
+      'submitted_at', 'submitted_date', 'history', 'auto_close_at',
+      'created_at', 'updated_at'],
     leads: ['id', 'business', 'address', 'city', 'state', 'zip', 'phone', 'email',
       'contact_name', 'contact_title', 'pricing_tier', 'facility_type', 'division',
       'lifecycle_stage', 'ai_score', 'assigned_rep', 'source', 'notes',
