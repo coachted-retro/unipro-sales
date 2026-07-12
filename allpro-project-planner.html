@@ -374,6 +374,12 @@ body{font-family:'Barlow',-apple-system,sans-serif;background:var(--bg);color:va
           <a class="warehouse-link" id="detDesignStudioLink" href="design-portal.html" target="_blank">Open Stainless Design Studio - spec sheet, 2D dimensioned drawing, client sign-off</a>
           <p class="stage-locked-note" style="margin-top:6px">Build the spec and generate the client-facing dimensioned drawing here, then come back and mark this stage complete once the customer approves.</p>
         </div>
+        <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
+          <h4 style="margin-bottom:6px;font-family:'Barlow Condensed',sans-serif;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--soft)">Drawing Register</h4>
+          <p style="font-size:11px;color:var(--soft);margin-bottom:10px">Every drawing and revision tied to this job in one place - so "which version is current" is never a hunt. Paste a link to wherever the file actually lives (Design Studio output, Google Drive, R2).</p>
+          <div id="detDrawingRegisterList"></div>
+          <button class="btn btn-ghost btn-sm" onclick="addDrawing()">+ Add Drawing</button>
+        </div>
       </div>
 
       <div class="pj-tab-panel" id="panel-costing">
@@ -389,6 +395,12 @@ body{font-family:'Barlow',-apple-system,sans-serif;background:var(--bg);color:va
         <p style="font-size:12px;color:var(--soft);margin-bottom:12px">Questions to the architect, engineer, customer, or AHJ that need a formal answer before work can proceed. Separate from AHJ compliance submittals on the Permitting tab.</p>
         <div id="detRfisList"></div>
         <button class="btn btn-ghost btn-sm" onclick="addRfi()">+ Add RFI</button>
+      </div>
+
+      <div class="pj-tab-panel" id="panel-submittals">
+        <p style="font-size:12px;color:var(--soft);margin-bottom:12px">Shop drawings, spec sheets, and product data sent to the architect, engineer, or customer for approval before work starts. Separate from AHJ compliance submittals on the Permitting tab.</p>
+        <div id="detSubmittalsList"></div>
+        <button class="btn btn-ghost btn-sm" onclick="addSubmittal()">+ Add Submittal</button>
       </div>
 
       <div class="pj-tab-panel" id="panel-permitting">
@@ -1564,6 +1576,7 @@ var TAB_DEFS = [
   {key:'survey', label:'Survey & Drawings'},
   {key:'costing', label:'Costing'},
   {key:'rfis', label:'RFIs'},
+  {key:'submittals', label:'Submittals'},
   {key:'permitting', label:'Permitting'},
   {key:'fabrication', label:'Fabrication'},
   {key:'subcontractors', label:'Subcontractors'},
@@ -1635,6 +1648,8 @@ function openDetail(id) {
   renderPunchList(p);
   renderSubcontractors(p);
   renderRfis(p);
+  renderSubmittals(p);
+  renderDrawingRegister(p);
   renderUniproLink(p);
 
   switchTab('overview');
@@ -2051,6 +2066,126 @@ function deleteRfi(i) {
   rfis.splice(i, 1);
   updateProjectField('rfis_json', JSON.stringify(rfis));
   renderRfis(getProject(currentProjectId));
+}
+
+// -- Submittals -- shop drawings, spec sheets, product data sent for
+// approval before work starts. Same JSON-field-on-project pattern as
+// RFIs above. Distinct from ahj_submittals_json (compliance submittals
+// to the fire marshal / building dept) on the Permitting tab - this is
+// design-approval, not code-compliance.
+var SUBMITTAL_STATUS_COLORS = { draft: '#5A616B', submitted: '#D97706', approved: '#1E7B3C', approved_as_noted: '#1B5FA8', rejected: '#C8102E', resubmit: '#D97706' };
+function renderSubmittals(p) {
+  var subs = p.submittals_json ? JSON.parse(p.submittals_json) : [];
+  var el = document.getElementById('detSubmittalsList');
+  if (!subs.length) {
+    el.innerHTML = '<div class="stage-locked-note">No submittals on this job yet.</div>';
+    return;
+  }
+  el.innerHTML = subs.map(function(s, i) {
+    var overdue = s.due_date && ['submitted','resubmit'].indexOf(s.status) !== -1 && new Date(s.due_date).getTime() < Date.now();
+    return '<div class="ahj-row" style="flex-direction:column;align-items:stretch;gap:8px">' +
+      '<div class="form-row" style="margin-bottom:0">' +
+        '<div class="form-field" style="margin-bottom:0"><label>Submittal #' + (i + 1) + ' - Title</label><input value="' + (s.title||'').replace(/"/g,'&quot;') + '" onchange="updateSubmittalField(' + i + ',\'title\',this.value)"></div>' +
+        '<div class="form-field" style="margin-bottom:0"><label>Type</label><select onchange="updateSubmittalField(' + i + ',\'submittal_type\',this.value)">' +
+          ['shop_drawing','spec_sheet','product_data','sample','other'].map(function(v){ return '<option value="' + v + '"' + (s.submittal_type===v?' selected':'') + '>' + v.replace('_',' ') + '</option>'; }).join('') +
+        '</select></div>' +
+      '</div>' +
+      '<div class="form-row" style="margin-bottom:0">' +
+        '<div class="form-field" style="margin-bottom:0"><label>Sent To</label><input value="' + (s.sent_to||'').replace(/"/g,'&quot;') + '" placeholder="architect, engineer, customer..." onchange="updateSubmittalField(' + i + ',\'sent_to\',this.value)"></div>' +
+        '<div class="form-field" style="margin-bottom:0"><label>Revision</label><input value="' + (s.revision||'').replace(/"/g,'&quot;') + '" placeholder="Rev A, Rev 0..." onchange="updateSubmittalField(' + i + ',\'revision\',this.value)"></div>' +
+      '</div>' +
+      '<div class="form-row" style="margin-bottom:0">' +
+        '<div class="form-field" style="margin-bottom:0"><label>Sent Date</label><input type="date" value="' + (s.sent_date||'') + '" onchange="updateSubmittalField(' + i + ',\'sent_date\',this.value)"></div>' +
+        '<div class="form-field" style="margin-bottom:0"><label' + (overdue?' style="color:var(--red)"':'') + '>Due Date' + (overdue?' - OVERDUE':'') + '</label><input type="date" value="' + (s.due_date||'') + '" onchange="updateSubmittalField(' + i + ',\'due_date\',this.value)"></div>' +
+      '</div>' +
+      '<div class="form-row" style="margin-bottom:0;align-items:center">' +
+        '<div class="form-field" style="margin-bottom:0"><label>Status</label><select onchange="updateSubmittalField(' + i + ',\'status\',this.value)">' +
+          ['draft','submitted','approved','approved_as_noted','rejected','resubmit'].map(function(v){ return '<option value="' + v + '"' + (s.status===v?' selected':'') + '>' + v.replace(/_/g,' ') + '</option>'; }).join('') +
+        '</select></div>' +
+        '<div class="form-field" style="margin-bottom:0"><span class="status-badge" style="background:' + (SUBMITTAL_STATUS_COLORS[s.status]||'#5A616B') + '22;color:' + (SUBMITTAL_STATUS_COLORS[s.status]||'#5A616B') + '">' + (s.status||'draft').replace(/_/g,' ') + '</span></div>' +
+      '</div>' +
+      '<div class="form-field" style="margin-bottom:0"><label>Notes</label><textarea rows="2" onchange="updateSubmittalField(' + i + ',\'notes\',this.value)">' + (s.notes||'').replace(/</g,'&lt;') + '</textarea></div>' +
+      '<button class="btn btn-ghost btn-sm" onclick="deleteSubmittal(' + i + ')" style="align-self:flex-end">✕ Remove</button>' +
+    '</div>';
+  }).join('');
+}
+function addSubmittal() {
+  var p = getProject(currentProjectId);
+  var subs = p.submittals_json ? JSON.parse(p.submittals_json) : [];
+  subs.push({ title: '', submittal_type: 'shop_drawing', sent_to: '', revision: '', sent_date: '', due_date: '', status: 'draft', notes: '' });
+  updateProjectField('submittals_json', JSON.stringify(subs));
+  renderSubmittals(getProject(currentProjectId));
+}
+function updateSubmittalField(i, field, value) {
+  var p = getProject(currentProjectId);
+  var subs = p.submittals_json ? JSON.parse(p.submittals_json) : [];
+  if (!subs[i]) return;
+  subs[i][field] = value;
+  updateProjectField('submittals_json', JSON.stringify(subs));
+}
+function deleteSubmittal(i) {
+  var p = getProject(currentProjectId);
+  var subs = p.submittals_json ? JSON.parse(p.submittals_json) : [];
+  subs.splice(i, 1);
+  updateProjectField('submittals_json', JSON.stringify(subs));
+  renderSubmittals(getProject(currentProjectId));
+}
+
+// -- Drawing Register -- every drawing and revision tied to this job.
+// file_link is a manual URL for now since design-portal.html is still
+// localStorage-only (flagged in CLAUDE.md as needing D1 conversion) -
+// once that's done, this can link by project_id automatically instead
+// of a pasted link.
+var DRAWING_STATUS_COLORS = { draft: '#5A616B', issued_for_review: '#D97706', approved: '#1E7B3C', superseded: '#C8102E' };
+function renderDrawingRegister(p) {
+  var drawings = p.drawing_register_json ? JSON.parse(p.drawing_register_json) : [];
+  var el = document.getElementById('detDrawingRegisterList');
+  if (!drawings.length) {
+    el.innerHTML = '<div class="stage-locked-note">No drawings logged on this job yet.</div>';
+    return;
+  }
+  el.innerHTML = drawings.map(function(d, i) {
+    return '<div class="ahj-row" style="flex-direction:column;align-items:stretch;gap:8px">' +
+      '<div class="form-row" style="margin-bottom:0">' +
+        '<div class="form-field" style="margin-bottom:0"><label>Drawing #</label><input value="' + (d.drawing_number||'').replace(/"/g,'&quot;') + '" onchange="updateDrawingField(' + i + ',\'drawing_number\',this.value)"></div>' +
+        '<div class="form-field" style="margin-bottom:0"><label>Title</label><input value="' + (d.title||'').replace(/"/g,'&quot;') + '" onchange="updateDrawingField(' + i + ',\'title\',this.value)"></div>' +
+      '</div>' +
+      '<div class="form-row" style="margin-bottom:0">' +
+        '<div class="form-field" style="margin-bottom:0"><label>Revision</label><input value="' + (d.revision||'').replace(/"/g,'&quot;') + '" placeholder="Rev A, Rev 0..." onchange="updateDrawingField(' + i + ',\'revision\',this.value)"></div>' +
+        '<div class="form-field" style="margin-bottom:0"><label>Date</label><input type="date" value="' + (d.drawing_date||'') + '" onchange="updateDrawingField(' + i + ',\'drawing_date\',this.value)"></div>' +
+      '</div>' +
+      '<div class="form-row" style="margin-bottom:0;align-items:center">' +
+        '<div class="form-field" style="margin-bottom:0"><label>Status</label><select onchange="updateDrawingField(' + i + ',\'status\',this.value)">' +
+          ['draft','issued_for_review','approved','superseded'].map(function(v){ return '<option value="' + v + '"' + (d.status===v?' selected':'') + '>' + v.replace(/_/g,' ') + '</option>'; }).join('') +
+        '</select></div>' +
+        '<div class="form-field" style="margin-bottom:0"><span class="status-badge" style="background:' + (DRAWING_STATUS_COLORS[d.status]||'#5A616B') + '22;color:' + (DRAWING_STATUS_COLORS[d.status]||'#5A616B') + '">' + (d.status||'draft').replace(/_/g,' ') + '</span></div>' +
+      '</div>' +
+      '<div class="form-field" style="margin-bottom:0"><label>File Link</label><input value="' + (d.file_link||'').replace(/"/g,'&quot;') + '" placeholder="https://..." onchange="updateDrawingField(' + i + ',\'file_link\',this.value)"></div>' +
+      (d.file_link ? '<a href="' + escSp(d.file_link) + '" target="_blank" style="font-size:11px;color:var(--purple)">Open file &rarr;</a>' : '') +
+      '<button class="btn btn-ghost btn-sm" onclick="deleteDrawing(' + i + ')" style="align-self:flex-end">✕ Remove</button>' +
+    '</div>';
+  }).join('');
+}
+function addDrawing() {
+  var p = getProject(currentProjectId);
+  var drawings = p.drawing_register_json ? JSON.parse(p.drawing_register_json) : [];
+  drawings.push({ drawing_number: '', title: '', revision: '', drawing_date: '', status: 'draft', file_link: '' });
+  updateProjectField('drawing_register_json', JSON.stringify(drawings));
+  renderDrawingRegister(getProject(currentProjectId));
+}
+function updateDrawingField(i, field, value) {
+  var p = getProject(currentProjectId);
+  var drawings = p.drawing_register_json ? JSON.parse(p.drawing_register_json) : [];
+  if (!drawings[i]) return;
+  drawings[i][field] = value;
+  updateProjectField('drawing_register_json', JSON.stringify(drawings));
+}
+function deleteDrawing(i) {
+  var p = getProject(currentProjectId);
+  var drawings = p.drawing_register_json ? JSON.parse(p.drawing_register_json) : [];
+  drawings.splice(i, 1);
+  updateProjectField('drawing_register_json', JSON.stringify(drawings));
+  renderDrawingRegister(getProject(currentProjectId));
 }
 
 function addAhjSubmittal() {

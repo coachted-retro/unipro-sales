@@ -226,7 +226,7 @@
       'actual_duct_ft', 'ahj_submittals_json', 'commissioning_checklist_json',
       'compliance_checklist_json', 'estimated_duct_ft', 'hood_crew_assigned',
       'linked_scheduler_id', 'needs_unipro', 'project_contacts_json',
-      'punch_list_json', 'rfis_json', 'streets_dept_permit_date',
+      'punch_list_json', 'rfis_json', 'submittals_json', 'drawing_register_json', 'streets_dept_permit_date',
       'streets_dept_permit_status', 'subcontractors_json',
       'unipro_balloon_test_date', 'unipro_jurisdiction', 'unipro_signoff_status',
       'created_at', 'updated_at'],
