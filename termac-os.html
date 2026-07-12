@@ -26554,17 +26554,7 @@ setInterval(buildActionQueue, 5 * 60 * 1000);
         <div class="act-field">
           <label>Catalog Item</label>
           <select id="defQuoteCatalog" onchange="defFillCatalog()">
-            <option value="">— Select or type custom —</option>
-            <option value="ext_replace" data-price="85">Extinguisher Replacement</option>
-            <option value="ext_recharge" data-price="45">Extinguisher Recharge</option>
-            <option value="ext_6yr" data-price="65">6-Year Maintenance</option>
-            <option value="ext_hydro" data-price="90">Hydrostatic Test</option>
-            <option value="hood_nozzle" data-price="35">Nozzle Replacement</option>
-            <option value="hood_agent" data-price="120">Suppression Agent Replacement</option>
-            <option value="hood_repair" data-price="195">Hood System Repair</option>
-            <option value="exit_replace" data-price="55">Exit Light Replacement</option>
-            <option value="grease_emergency" data-price="275">Emergency Grease Trap Pump</option>
-            <option value="custom" data-price="0">Custom Line Item</option>
+            <option value="">Loading catalog…</option>
           </select>
         </div>
         <div class="act-field">
@@ -26946,6 +26936,58 @@ function compMarkStatus(idx, newStatus) {
   opsRenderCompliance();
 }
 
+// Real pricing catalog for deficiency quotes -- replaces the old
+// hardcoded 10-item demo list (Extinguisher Replacement $85, etc, which
+// were placeholder numbers, not real prices). Pulled from
+// service_pricing_catalog (615 real items across UniPro/Termac/AllPro/
+// GTO/Filter Man, loaded 2026-07-12/13). Cached after first load since
+// pricing doesn't change mid-session; a manager can always type a custom
+// line item for anything not in the catalog yet.
+var _defCatalogCache = null;
+async function defLoadCatalog() {
+  var sel = document.getElementById('defQuoteCatalog');
+  if (!sel) return;
+  if (_defCatalogCache) {
+    defRenderCatalogOptions(_defCatalogCache);
+    return;
+  }
+  try {
+    var res = await d1Fetch('POST', '/api/query', {
+      sql: "SELECT sku, description, category_label, division, price, unit FROM service_pricing_catalog WHERE active=1 ORDER BY division, category_label, description"
+    });
+    if (res && res.ok && Array.isArray(res.results) && res.results.length) {
+      _defCatalogCache = res.results;
+      defRenderCatalogOptions(_defCatalogCache);
+    } else {
+      throw new Error('empty catalog response');
+    }
+  } catch (e) {
+    sel.innerHTML = '<option value="">— Catalog unavailable, enter price manually —</option><option value="custom" data-price="0">Custom Line Item</option>';
+  }
+}
+
+function defRenderCatalogOptions(items) {
+  var sel = document.getElementById('defQuoteCatalog');
+  if (!sel) return;
+  var groups = {};
+  items.forEach(function (it) {
+    var groupKey = it.division + ' — ' + it.category_label;
+    if (!groups[groupKey]) groups[groupKey] = [];
+    groups[groupKey].push(it);
+  });
+  var html = '<option value="">— Select or type custom —</option>';
+  Object.keys(groups).sort().forEach(function (groupKey) {
+    html += '<optgroup label="' + escH(groupKey) + '">';
+    groups[groupKey].forEach(function (it) {
+      var label = it.description + ' — $' + Number(it.price).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' (' + it.unit + ')';
+      html += '<option value="' + escH(it.sku) + '" data-price="' + it.price + '">' + escH(label) + '</option>';
+    });
+    html += '</optgroup>';
+  });
+  html += '<option value="custom" data-price="0">Custom Line Item</option>';
+  sel.innerHTML = html;
+}
+
 function defOpenQuoteModal(idx) {
   const item = window._defQueueData?.[idx];
   if (!item) return;
@@ -26967,6 +27009,7 @@ function defOpenQuoteModal(idx) {
   document.querySelectorAll('#defTripPills .act-outcome-pill').forEach((p,i) => p.classList.toggle('sel', i===0));
 
   document.getElementById('defQuoteModal').classList.add('open');
+  defLoadCatalog();
 }
 
 function defFillCatalog() {
@@ -26974,6 +27017,13 @@ function defFillCatalog() {
   const opt = sel.options[sel.selectedIndex];
   const price = parseFloat(opt?.dataset?.price || 0);
   document.getElementById('defQuotePrice').value = price > 0 ? price : '';
+  // Custom line items keep whatever description the rep already typed;
+  // real catalog picks overwrite the description field with the real
+  // catalog description so quotes stay consistent with what's invoiced.
+  if (opt && opt.value && opt.value !== 'custom' && opt.value !== '') {
+    var descOnly = opt.textContent.split(' — $')[0];
+    document.getElementById('defQuoteDesc').value = descOnly;
+  }
   defCalcTotal();
 }
 
