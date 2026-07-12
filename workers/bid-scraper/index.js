@@ -3,6 +3,12 @@
  * Deploy from workers/bid-scraper/ to Cloudflare Workers.
  * Matches BID_SCRAPER_URL in termac-os.html: worker name "bid-scraper"
  * on this account's workers.dev subdomain resolves to
+ *
+ * 2026-07-13: this worker was written and pushed but never deployed —
+ * it wasn't in the hardcoded WORKERS list in
+ * .github/workflows/deploy-workers.yml, so every push to this file was
+ * silently ignored by CI. Added to that list in the same commit as this
+ * comment, which is what finally gets it live.
  * https://bid-scraper.termac-one.workers.dev/
  *
  * Sources (all public, no API key required):

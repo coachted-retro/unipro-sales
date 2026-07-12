@@ -3,6 +3,11 @@
  * Stores and retrieves the actual compliance document files (W-9, COI,
  * license PDFs) for the Bid Vault. This is the piece that was missing —
  * the Company Vault already stores the *data* extracted from these
+ *
+ * 2026-07-13: same deploy-pipeline gap as bid-scraper — this worker
+ * was pushed but never in the CI deploy list, so it was never actually
+ * live despite the code being correct. Added to the list in
+ * .github/workflows/deploy-workers.yml in the same commit as this note.
  * documents (EINs, policy numbers, expiration dates); this worker stores
  * the real files themselves so a bid bundle can actually include them.
  *

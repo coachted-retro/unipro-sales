@@ -120,6 +120,91 @@ confirming with Ted first.
 - **Old warehouse-portal.html AllPro job board** may still hold real data
   and may conflict with the new Project Planner — confirm supersession
   with Ted before treating the planner as the sole source of truth.
+- **Worker deploys are NOT automatic just because a worker folder exists
+  under `workers/`.** `.github/workflows/deploy-workers.yml` deploys a
+  HARDCODED `WORKERS` list — a new worker folder does nothing until its
+  name is added to that list. Two workers (`termac-vault-docs`,
+  `bid-scraper`) sat fully written and pushed for a while, silently never
+  deploying, because of exactly this. Fixed 2026-07-13, but check this
+  list before ever assuming "I pushed it, CI must have deployed it."
+- **Validating `node --check` on inline `<script>` blocks in a large HTML
+  file:** a plain regex extraction (`<script>...</script>` via `.*?`) can
+  be fooled by any JS string that happens to contain literal
+  `<script>`/`</script>` text, silently misaligning every block after it
+  and producing a false "syntax error" that isn't real. Cost real time
+  tracking a phantom bug 2026-07-13. Use Python's `html.parser` module to
+  extract script contents instead — it is not fooled by this. Div-balance
+  counting (`<div` vs `</div>`) is a simple count, not a paired
+  extraction, so it is not affected by this same issue.
+
+---
+
+## Session Log
+
+### 2026-07-13 (evening session, wrapped up here, pick up tomorrow)
+
+**Root-caused and fixed tonight:**
+- Bids never actually reached D1 despite multiple earlier attempted fixes,
+  because `bidsLoad`/`bidsSave` in `termac-os.html` used a completely
+  separate, D1-disconnected `localStorage` key (`termac_bids`) instead of
+  going through `crmLoad`/`crmSave` like every other table. Fixed to write
+  through the real store.
+- The Bid Pipeline's "50% Win Rate" stat seen earlier was computed from
+  2 fake seed bids (`bidsSeedIfEmpty()`), not real activity. Disabled,
+  board now shows an honest empty state.
+- Found and deleted 5 fake demo accounts plus 4 fake demo leads that
+  leaked into the live D1 database in two separate events same night
+  (explicitly labeled SCENARIO A-E demo data in source: Ferraro
+  Ristorante, Midtown Office Plaza, Wu Dim Sum Palace, Fairless Hills
+  Retirement Center, Eastside Grille & Bar, plus 4 fake leads). Root
+  cause: the purge function meant to prevent this only covered one of two
+  different demo-seeder ID schemes in this file. Fixed to cover both,
+  bumped purge version to re-run on every browser, added a D1-level
+  safety-net delete.
+- `bid-scraper` and `termac-vault-docs` workers were fully written and
+  pushed but never actually live, see the deploy-pipeline note above.
+  Both added to the CI deploy list tonight.
+- AllPro Dashboard and Bid Pipeline now open inside `sales-portal.html`
+  as an overlay (iframe kept alive, not destroyed) instead of a new
+  browser tab, per Ted, switching between them is instant, nothing lost.
+  Added a Home button to AllPro (had none). Fixed a ~900ms flash of the
+  full Manager Dashboard before Bid Pipeline opened.
+- AllPro Project Planner: detail modal now fills the screen instead of a
+  small centered box. Project title is directly editable (was static
+  text, the literal cause of the stuck "Untitled Project" Ted hit). New
+  projects default to `Account Name — Project Type` when left blank.
+  Added Delete Project with a warning, using the shared `crmDelete` so it
+  actually propagates to D1.
+
+**Left off here, pick up tomorrow:**
+1. Full tab-by-tab audit of the Manager Portal Reports section (Revenue &
+   Billing, PNL Financials, Operations, Sales Pipeline, Health of
+   Customers). Ted flagged this is due for a real accuracy pass, not
+   started yet.
+2. The "504 vs 6100" active-accounts bug is back, this time specifically
+   in the Reports → "All Accounts — Revenue Detail" table (same root
+   cause pattern as the rep-load chart fix earlier, likely reading from
+   local cache instead of a live D1 aggregate). Not yet fixed in this
+   specific view.
+3. Account rows in that Revenue Detail table (and per Ted, this should
+   really extend to any report, chart, or number anywhere in the
+   platform that represents an account or contact) are static text, need
+   to be clickable through to the real account record. Scoped fix for
+   the Revenue Detail table not started; the platform-wide version of
+   this is a real, larger initiative, not a one-session task.
+4. "Charcoal BYOB" exists as two separate account records (`PT363703`
+   and `PT953572` in D1) from two different creation paths (one via CSV
+   import test, one via the Start Pitch survey tool, `source:
+   'pitch_tool'`). Real business per Ted, just needs the duplicate
+   merged, not deleted.
+5. "ABC Cafe" (`PT755831`) is Ted's own test record from testing the
+   AllPro Project Planner earlier. Confirm with Ted whether to delete it
+   or leave it, not touched yet.
+6. `bid-scraper` and `termac-vault-docs` should auto-deploy from tonight's
+   CI list fix, verify both are actually live in the Cloudflare Workers
+   dashboard before assuming Check for New Bids or Bid Vault document
+   upload works. If either isn't live, the CI run itself may have failed
+   silently on just that one worker, check the Actions tab.
 
 ---
 
