@@ -425,21 +425,30 @@
     var local = crmLoad(table);
     var existingIds = {};
     local.forEach(function (r) { if (r && r.id) existingIds[r.id] = true; });
+    // The Worker caps each request at 500 rows. Tables like accounts (6,127+
+    // rows) need multiple pages, so loop on offset until a page comes back
+    // with fewer than PAGE_SIZE rows. Hard cap of 60 pages (30,000 rows) as
+    // a safety valve against a runaway loop if the API ever misbehaves.
+    var PAGE_SIZE = 500;
+    var MAX_PAGES = 60;
+    var added = 0;
     try {
-      var res = await d1Fetch('GET', '/api/' + table + '?limit=500');
-      if (res.ok && Array.isArray(res.results) && res.results.length > 0) {
-        var added = 0;
+      for (var page = 0; page < MAX_PAGES; page++) {
+        var offset = page * PAGE_SIZE;
+        var res = await d1Fetch('GET', '/api/' + table + '?limit=' + PAGE_SIZE + '&offset=' + offset);
+        if (!res.ok || !Array.isArray(res.results) || res.results.length === 0) break;
         res.results.forEach(function (rec) {
           if (!rec || !rec.id || existingIds[rec.id]) return;
           local.push(d1ReverseMap(table, rec));
           existingIds[rec.id] = true;
           added++;
         });
-        if (added > 0) {
-          try { localStorage.setItem('termac_crm_' + table, JSON.stringify(local)); } catch (e) {}
-        }
-        return { records: local, added: added, removed: removed };
+        if (res.results.length < PAGE_SIZE) break;
       }
+      if (added > 0) {
+        try { localStorage.setItem('termac_crm_' + table, JSON.stringify(local)); } catch (e) {}
+      }
+      return { records: local, added: added, removed: removed };
     } catch (e) {}
     return { records: local, added: 0, removed: removed };
   }
