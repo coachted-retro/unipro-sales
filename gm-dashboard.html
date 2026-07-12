@@ -129,14 +129,76 @@ function todayStr(){ const d=new Date(); return d.toISOString().slice(0,10); }
 function thisMonthStr(){ return new Date().toISOString().slice(0,7); }
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
+const STAFF_AUTH_API = 'https://termac-staff-auth.termac-one.workers.dev';
+// role 'owner' or 'admin' = company-wide, sees every division.
+// role 'manager' or 'employee' = locked to their own division only, per
+// Ted (2026-07-12): GMs should not be able to browse into each other's
+// dashboards.
+const REVERSE_DIVISION_SLUG = {};
+Object.keys(DIVISIONS).forEach(function(k){ REVERSE_DIVISION_SLUG[DIVISIONS[k].real] = k; });
+
+async function checkAccess(){
+  const raw = sessionStorage.getItem('termac_staff_session');
+  if (!raw) {
+    sessionStorage.setItem('termac_staff_return_to', location.href);
+    location.href = 'staff-login.html';
+    return null;
+  }
+  let session;
+  try { session = JSON.parse(raw); } catch(e) { location.href = 'staff-login.html'; return null; }
+
+  const res = await fetch(STAFF_AUTH_API + '/my-access?email=' + encodeURIComponent(session.email));
+  const data = await res.json();
+  if (!data.ok || !data.active || !(data.portals||[]).includes('gm_dashboard')) {
+    showUnauthorized(session.name);
+    return null;
+  }
+  return {
+    name: session.name,
+    division: data.division || '',
+    ownSlug: REVERSE_DIVISION_SLUG[data.division] || null,
+    elevated: data.role === 'owner' || data.role === 'admin',
+  };
+}
+
+function showUnauthorized(name){
+  document.getElementById('loadingBanner').style.display='none';
+  const app = document.getElementById('app');
+  app.style.display='block';
+  app.innerHTML = `
+    <div class="wrap" style="max-width:520px;margin:60px auto;text-align:center">
+      <div style="font-size:40px;margin-bottom:10px">🔒</div>
+      <h2 style="font-size:20px;margin-bottom:8px">Not authorized</h2>
+      <p style="color:var(--soft);font-size:13px;line-height:1.6">${esc(name||'This account')} doesn't have GM Dashboard access. Ask an admin to grant it from HR Manager → Directory → Share App.</p>
+      <a href="termac-os.html" style="display:inline-block;margin-top:16px;color:var(--red);font-weight:700;text-decoration:none;font-size:13px">← Back to Manager Dashboard</a>
+    </div>
+  `;
+}
+
 const qs = new URLSearchParams(location.search);
 const slug = qs.get('division');
 
-if (!slug || !DIVISIONS[slug]) {
-  renderPicker();
-} else {
-  renderDashboard(slug, DIVISIONS[slug]);
-}
+checkAccess().then(function(access){
+  if (!access) return; // checkAccess already redirected or showed unauthorized
+
+  if (!access.elevated) {
+    // Locked to their own division. No slug -> send them straight there
+    // (no point showing a picker with one option). Wrong slug -> same,
+    // rather than silently rendering someone else's numbers.
+    if (!access.ownSlug) { showUnauthorized(access.name); return; }
+    if (slug !== access.ownSlug) { location.href = 'gm-dashboard.html?division=' + access.ownSlug; return; }
+    renderDashboard(slug, DIVISIONS[slug]);
+    return;
+  }
+
+  // Elevated (owner/admin): full picker + any division on request, same
+  // as before.
+  if (!slug || !DIVISIONS[slug]) {
+    renderPicker();
+  } else {
+    renderDashboard(slug, DIVISIONS[slug]);
+  }
+});
 
 function renderPicker(){
   document.getElementById('loadingBanner').style.display='none';
@@ -304,8 +366,7 @@ async function renderDashboard(slug, div){
           <tr><th>Name</th><th>Title</th><th>Email</th></tr>
           ${team.map(t=>`<tr><td>${esc(t.name)}</td><td>${esc(t.title||'')}</td><td>${esc(t.email||'')}</td></tr>`).join('')}
         </table>
-      ` : `<div class="empty">No roster synced yet. Open HR Manager → Directory and save once to populate this section — it reads the same roster HR maintains, nothing duplicated here.</div>`}
-      <div class="linkrow" style="margin-top:14px"><a class="linkbtn" href="hr-manager-v3.html">👥 Open HR Manager</a></div>
+      ` : `<div class="empty">Team roster not yet available for this division.</div>`}
     </div>
 
     <h2 class="section-title">Quick Links</h2>
@@ -314,7 +375,7 @@ async function renderDashboard(slug, div){
       <a class="linkbtn" href="dispatch-v2.html">🚚 Dispatch</a>
       <a class="linkbtn" href="deficiency-portal.html">🛠️ Deficiency Portal</a>
       <a class="linkbtn" href="warehouse-portal.html">📦 Warehouse</a>
-      <a class="linkbtn" href="hr-manager-v3.html">👥 HR Manager</a>
+      <a class="linkbtn" href="my-hr.html">🪪 My HR</a>
       ${div.isAllPro ? '<a class="linkbtn" href="allpro-project-planner.html">🏗️ AllPro Project Planner</a>' : ''}
     </div>
   `;

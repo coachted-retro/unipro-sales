@@ -360,12 +360,12 @@ async function handleMyAccess(request, env) {
   const email = (url.searchParams.get('email') || '').trim().toLowerCase();
   if (!email) return jsonResponse({ ok: false, error: 'Email is required.' }, 400);
 
-  const user = await env.DB.prepare('SELECT portals, status, division FROM staff_auth WHERE email = ?').bind(email).first();
+  const user = await env.DB.prepare('SELECT portals, status, division, role FROM staff_auth WHERE email = ?').bind(email).first();
   if (!user || user.status !== 'active') return jsonResponse({ ok: true, portals: [], active: false });
 
   let portals = [];
   try { portals = JSON.parse(user.portals || '[]'); } catch (e) {}
-  return jsonResponse({ ok: true, portals: portals, active: true, division: user.division || '' });
+  return jsonResponse({ ok: true, portals: portals, active: true, division: user.division || '', role: user.role || 'employee' });
 }
 
 export default {
