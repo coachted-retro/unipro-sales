@@ -1879,6 +1879,7 @@ crmHydrateBackup();
 // Tables covered: accounts, leads, contacts, opportunities, bids, jobs, deficiencies, collections
 const D1_API_URL = 'https://unipro-ai-proxy.termac-one.workers.dev';
 const D1_API_SECRET = 'termac2026';
+const VAULT_DOCS_API_URL = 'https://termac-vault-docs.termac-one.workers.dev';
 // 2026-07-13 FIX: this local list only had the original 9 tables from
 // when termac-os.html was first split off from the shared sync file
 // (see the comment on d1ReverseMapLocal below for why this duplicate
@@ -2170,6 +2171,7 @@ async function d1HydrateAll() {
   for (const t of D1_SYNC_TABLES) { await d1Hydrate(t); }
   if (typeof tcRealKpiStrip === 'function') tcRealKpiStrip();
   if (typeof mgrRenderGrowthPanel === 'function') mgrRenderGrowthPanel();
+  if (typeof mgrRenderGrowthTrend === 'function') mgrRenderGrowthTrend();
 }
 d1HydrateAll();
 
@@ -2199,82 +2201,163 @@ var REP_TERRITORY_MAP = {
 };
 
 function mgrRenderGrowthPanel() {
+  mgrRenderRepLoadChart(); // real aggregate query, doesn't depend on local hydration
+  mgrRenderGrowthOpportunities();
+}
+
+// Queries real territory counts directly from D1 via the raw-SELECT
+// endpoint instead of pulling all 6,000+ account records into the browser
+// first and counting client-side. That client-side count depended on the
+// paginated local hydrate having fully completed, which turned out to be
+// fragile in practice (a single failed page silently left the chart
+// showing a partial, misleading picture -- see 2026-07-13). This is a
+// small aggregated query (a couple dozen rows back, not thousands) and is
+// correct on every load regardless of how much of the account list has
+// synced to this browser yet.
+async function mgrRenderRepLoadChart() {
+  var chartEl = document.getElementById('mgrRepLoadChart');
+  if (!chartEl) return;
+  chartEl.innerHTML = '<div style="color:var(--soft);font-size:12px">Loading&hellip;</div>';
   try {
-    var accounts = crmLoad('accounts');
-    var chartEl = document.getElementById('mgrRepLoadChart');
-    if (chartEl) {
-      if (!accounts || accounts.length === 0) {
-        chartEl.innerHTML = '<div style="color:var(--soft);font-size:12px">Loading&hellip;</div>';
-      } else {
-        var territoryCounts = {};
-        accounts.forEach(function (a) {
-          var t = (a && a.territory) ? a.territory : 'Unassigned';
-          territoryCounts[t] = (territoryCounts[t] || 0) + 1;
-        });
-        var repCounts = {};
-        var mappedTerritories = {};
-        Object.keys(REP_TERRITORY_MAP).forEach(function (rep) {
-          var total = 0;
-          REP_TERRITORY_MAP[rep].forEach(function (t) {
-            total += territoryCounts[t] || 0;
-            mappedTerritories[t] = true;
-          });
-          repCounts[rep] = total;
-        });
-        var unassigned = 0;
-        Object.keys(territoryCounts).forEach(function (t) {
-          if (!mappedTerritories[t]) unassigned += territoryCounts[t];
-        });
-        if (unassigned > 0) repCounts['Unassigned / Other Territories'] = unassigned;
-
-        var entries = Object.keys(repCounts).map(function (rep) { return [rep, repCounts[rep]]; });
-        entries.sort(function (a, b) { return b[1] - a[1]; });
-        var maxVal = entries.length ? entries[0][1] : 1;
-
-        var html = '';
-        entries.forEach(function (entry) {
-          var rep = entry[0], cnt = entry[1];
-          var pct = maxVal > 0 ? Math.round((cnt / maxVal) * 100) : 0;
-          var barColor = rep.indexOf('Unassigned') === 0 ? 'var(--soft)' : 'var(--blue)';
-          html += '<div style="margin-bottom:7px">' +
-            '<div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px">' +
-            '<span style="font-weight:600;color:var(--dark)">' + rep + '</span>' +
-            '<span style="font-weight:700;color:var(--dark)">' + cnt.toLocaleString() + '</span></div>' +
-            '<div style="background:#EEF0F2;border-radius:4px;height:7px;overflow:hidden">' +
-            '<div style="background:' + barColor + ';height:100%;width:' + pct + '%;border-radius:4px"></div></div></div>';
-        });
-        chartEl.innerHTML = html || '<div style="color:var(--soft);font-size:12px">No account data yet.</div>';
-      }
+    var res = await d1Fetch('POST', '/api/query', {
+      sql: "SELECT territory, COUNT(*) as cnt FROM accounts WHERE division='Termac' AND status='active' GROUP BY territory"
+    });
+    if (!res || !res.ok || !Array.isArray(res.results)) {
+      chartEl.innerHTML = '<div style="color:var(--red);font-size:12px">Couldn\'t load rep data right now &mdash; try again shortly.</div>';
+      return;
     }
+    var territoryCounts = {};
+    res.results.forEach(function (row) {
+      var t = row.territory || 'Unassigned';
+      territoryCounts[t] = (territoryCounts[t] || 0) + (row.cnt || 0);
+    });
 
-    var oppEl = document.getElementById('mgrGrowthOpportunities');
-    if (oppEl && !oppEl.dataset.rendered) {
-      oppEl.dataset.rendered = '1';
-      var opportunities = [
-        {
-          title: 'Fire Sprinkler Inspection &amp; Testing',
-          body: 'Natural adjacency to the existing kitchen hood suppression book &mdash; same commercial customers, same annual life-safety compliance cycle (NFPA 25), same AHJ relationships already mapped in the AHJ Reference tool. Bundling onto an existing service visit is the lowest-friction way to test this.'
-        },
-        {
-          title: 'Fire Alarm Systems &mdash; Install, Inspection &amp; Monitoring',
-          body: 'Third leg of the commercial life-safety stool alongside suppression and sprinkler (NFPA 72). Monitoring in particular is recurring revenue, not one-time service, and is the kind of contract that compounds the way suppression contracts already do.'
-        },
-        {
-          title: 'Tag current accounts with real services (prerequisite, not optional)',
-          body: 'All 6,127 newly imported Termac accounts currently show an empty services array. The Cross-Sell White Space engine already built into this platform can\'t surface real gaps until each account is tagged with what it actually has today. This is the single highest-leverage next step to turn this list into real, actionable opportunity data instead of a suggestion box.'
-        }
-      ];
-      var oHtml = '';
-      opportunities.forEach(function (o) {
-        oHtml += '<div style="background:#fff;border:1px solid var(--line);border-radius:6px;padding:9px 11px">' +
-          '<div style="font-weight:800;font-size:12px;color:var(--dark);margin-bottom:2px">' + o.title + '</div>' +
-          '<div style="font-size:11px;color:var(--soft);line-height:1.5">' + o.body + '</div></div>';
+    var repCounts = {};
+    var mappedTerritories = {};
+    Object.keys(REP_TERRITORY_MAP).forEach(function (rep) {
+      var total = 0;
+      REP_TERRITORY_MAP[rep].forEach(function (t) {
+        total += territoryCounts[t] || 0;
+        mappedTerritories[t] = true;
       });
-      oppEl.innerHTML = oHtml;
-    }
+      repCounts[rep] = total;
+    });
+    var unassigned = 0;
+    Object.keys(territoryCounts).forEach(function (t) {
+      if (!mappedTerritories[t]) unassigned += territoryCounts[t];
+    });
+    if (unassigned > 0) repCounts['Unassigned / Other Territories'] = unassigned;
+
+    var entries = Object.keys(repCounts).map(function (rep) { return [rep, repCounts[rep]]; });
+    entries.sort(function (a, b) { return b[1] - a[1]; });
+    var maxVal = entries.length ? entries[0][1] : 1;
+
+    var html = '';
+    entries.forEach(function (entry) {
+      var rep = entry[0], cnt = entry[1];
+      var pct = maxVal > 0 ? Math.round((cnt / maxVal) * 100) : 0;
+      var barColor = rep.indexOf('Unassigned') === 0 ? 'var(--soft)' : 'var(--blue)';
+      html += '<div style="margin-bottom:7px">' +
+        '<div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px">' +
+        '<span style="font-weight:600;color:var(--dark)">' + rep + '</span>' +
+        '<span style="font-weight:700;color:var(--dark)">' + cnt.toLocaleString() + '</span></div>' +
+        '<div style="background:#EEF0F2;border-radius:4px;height:7px;overflow:hidden">' +
+        '<div style="background:' + barColor + ';height:100%;width:' + pct + '%;border-radius:4px"></div></div></div>';
+    });
+    chartEl.innerHTML = html || '<div style="color:var(--soft);font-size:12px">No account data yet.</div>';
+  } catch (e) {
+    chartEl.innerHTML = '<div style="color:var(--red);font-size:12px">Couldn\'t load rep data right now &mdash; try again shortly.</div>';
+  }
+}
+
+function mgrRenderGrowthOpportunities() {
+  var oppEl = document.getElementById('mgrGrowthOpportunities');
+  if (!oppEl || oppEl.dataset.rendered) return;
+  oppEl.dataset.rendered = '1';
+  try {
+    var opportunities = [
+      {
+        title: 'Fire Sprinkler Inspection &amp; Testing',
+        body: 'Natural adjacency to the existing kitchen hood suppression book &mdash; same commercial customers, same annual life-safety compliance cycle (NFPA 25), same AHJ relationships already mapped in the AHJ Reference tool. Bundling onto an existing service visit is the lowest-friction way to test this.'
+      },
+      {
+        title: 'Fire Alarm Systems &mdash; Install, Inspection &amp; Monitoring',
+        body: 'Third leg of the commercial life-safety stool alongside suppression and sprinkler (NFPA 72). Monitoring in particular is recurring revenue, not one-time service, and is the kind of contract that compounds the way suppression contracts already do.'
+      },
+      {
+        title: 'Tag current accounts with real services (prerequisite, not optional)',
+        body: 'All 6,127 newly imported Termac accounts currently show an empty services array. The Cross-Sell White Space engine already built into this platform can\'t surface real gaps until each account is tagged with what it actually has today. This is the single highest-leverage next step to turn this list into real, actionable opportunity data instead of a suggestion box.'
+      }
+    ];
+    var oHtml = '';
+    opportunities.forEach(function (o) {
+      oHtml += '<div style="background:#fff;border:1px solid var(--line);border-radius:6px;padding:9px 11px">' +
+        '<div style="font-weight:800;font-size:12px;color:var(--dark);margin-bottom:2px">' + o.title + '</div>' +
+        '<div style="font-size:11px;color:var(--soft);line-height:1.5">' + o.body + '</div></div>';
+    });
+    oppEl.innerHTML = oHtml;
   } catch (e) {}
 }
 setTimeout(mgrRenderGrowthPanel, 1500);
+
+// Renders the real growth_snapshots history. With 1-2 points there isn't
+// a meaningful trend yet -- say so plainly rather than drawing a chart
+// that implies more history than exists. Once there are enough points,
+// draws a simple real bar trend for account count (revenue trend joins
+// automatically the moment total_annual_value stops being 0 -- no code
+// change needed here for that, it just starts rendering real numbers).
+async function mgrRenderGrowthTrend() {
+  var el = document.getElementById('mgrGrowthTrend');
+  if (!el) return;
+  try {
+    var res = await d1Fetch('GET', '/api/growth_snapshots?limit=90');
+    var rows = (res && res.ok && Array.isArray(res.results)) ? res.results.slice() : [];
+    rows.sort(function (a, b) { return (a.snapshot_date || '').localeCompare(b.snapshot_date || ''); });
+
+    if (rows.length === 0) {
+      el.innerHTML = '<div style="background:linear-gradient(135deg,#EEF0F2,#F8F9FA);border-radius:8px;height:110px;display:flex;align-items:center;justify-content:center;color:var(--soft);font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;border:1.5px dashed var(--line);text-align:center;line-height:1.6">No Snapshots Yet<br><span style="font-size:10px;font-weight:400">First daily snapshot runs on the next scheduled cron cycle</span></div>';
+      return;
+    }
+    if (rows.length < 5) {
+      var latest = rows[rows.length - 1];
+      el.innerHTML = '<div style="background:#F8F9FA;border:1.5px dashed var(--line);border-radius:8px;padding:14px;text-align:center">' +
+        '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:22px;color:var(--dark)">' + (latest.total_active_accounts || 0).toLocaleString() + '</div>' +
+        '<div style="font-size:10px;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Active Accounts &middot; ' + latest.snapshot_date + '</div>' +
+        '<div style="font-size:10px;color:var(--soft)">Only ' + rows.length + ' day' + (rows.length === 1 ? '' : 's') + ' of history so far &mdash; a real trend line needs at least 5 days. Check back soon.</div></div>';
+      return;
+    }
+
+    // Enough points for a real trend -- simple bar sparkline on account count.
+    var maxVal = Math.max.apply(null, rows.map(function (r) { return r.total_active_accounts || 0; }));
+    var minVal = Math.min.apply(null, rows.map(function (r) { return r.total_active_accounts || 0; }));
+    var latest = rows[rows.length - 1];
+    var first = rows[0];
+    var delta = (latest.total_active_accounts || 0) - (first.total_active_accounts || 0);
+    var deltaColor = delta > 0 ? 'var(--green)' : (delta < 0 ? 'var(--red)' : 'var(--soft)');
+
+    var bars = '';
+    rows.forEach(function (r) {
+      var v = r.total_active_accounts || 0;
+      var pct = maxVal > minVal ? Math.max(6, Math.round(((v - minVal) / (maxVal - minVal)) * 100)) : 50;
+      bars += '<div title="' + r.snapshot_date + ': ' + v.toLocaleString() + ' accounts" style="flex:1;background:var(--blue);border-radius:2px 2px 0 0;height:' + pct + '%;min-width:3px"></div>';
+    });
+
+    var revenueTotal = latest.total_annual_value || 0;
+    var revenueLine = revenueTotal > 0
+      ? '<div style="font-size:10px;color:var(--soft);margin-top:4px">Revenue: $' + revenueTotal.toLocaleString() + ' across ' + (latest.accounts_with_value || 0) + ' priced accounts</div>'
+      : '<div style="font-size:10px;color:var(--soft);margin-top:4px">Revenue still $0 on file &mdash; will populate the moment pricing/invoicing feeds in</div>';
+
+    el.innerHTML =
+      '<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px">' +
+      '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:20px;color:var(--dark)">' + (latest.total_active_accounts || 0).toLocaleString() + '</div>' +
+      '<div style="font-size:11px;font-weight:700;color:' + deltaColor + '">' + (delta > 0 ? '+' : '') + delta.toLocaleString() + ' since ' + first.snapshot_date + '</div></div>' +
+      '<div style="display:flex;align-items:flex-end;gap:2px;height:60px;background:#F8F9FA;border-radius:6px;padding:6px">' + bars + '</div>' +
+      revenueLine;
+  } catch (e) {
+    el.innerHTML = '<div style="color:var(--red);font-size:12px">Couldn\'t load growth trend right now.</div>';
+  }
+}
+setTimeout(mgrRenderGrowthTrend, 1500);
 
 
 // FIX 2026-07-12 (Ted): this used to read counts from crmLoad(), i.e.
@@ -4640,8 +4723,8 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
         </div>
         <div>
           <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;color:var(--dark);margin-bottom:2px">Revenue &amp; Account Growth Trend</div>
-          <div style="font-size:10px;color:var(--soft);margin-bottom:8px">Requires either NetSuite revenue history or a real customer-since date per account &mdash; neither exists in the system yet, so this stays honest rather than guessed at.</div>
-          <div style="background:linear-gradient(135deg,#EEF0F2,#F8F9FA);border-radius:8px;height:110px;display:flex;align-items:center;justify-content:center;color:var(--soft);font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;border:1.5px dashed var(--line);text-align:center;line-height:1.6">Awaiting Revenue Data<br><span style="font-size:10px;font-weight:400">Populates automatically once NetSuite sync or account-tenure dates land &middot; Phase B</span></div>
+          <div style="font-size:10px;color:var(--soft);margin-bottom:8px">Real daily snapshots, starting 2026-07-12. Revenue stays honestly blank until NetSuite sync or real pricing-driven invoicing exists &mdash; account-count trend is real starting now.</div>
+          <div id="mgrGrowthTrend"><div style="color:var(--soft);font-size:12px">Loading&hellip;</div></div>
         </div>
       </div>
       <div style="margin-top:14px;background:#F8F9FA;border:1.5px solid var(--line);border-radius:8px;padding:12px">
@@ -16931,6 +17014,98 @@ function bidsVaultSave() {
   }
 }
 
+// ── COMPLIANCE DOCUMENT FILE STORAGE (real files in R2, not just data) ──
+// Talks to the termac-vault-docs Worker, separate from the D1 API since
+// this handles binary file bytes, not JSON records. Same shared-secret
+// pattern as everywhere else in this platform -- consistent with what's
+// already deployed, not a new heavier standard invented just for this.
+const VAULT_DOC_TYPES = [
+  { key: 'w9', label: 'W-9' },
+  { key: 'coi', label: 'Certificate of Insurance' },
+  { key: 'license', label: 'License Copies' },
+  { key: 'bonding', label: 'Bonding Documentation' },
+];
+
+async function vaultDocsRender() {
+  var el = document.getElementById('vaultDocsSection');
+  if (!el) return;
+  try {
+    var res = await fetch(VAULT_DOCS_API_URL + '/list?secret=' + encodeURIComponent(D1_API_SECRET));
+    var data = await res.json();
+    var files = (data && data.ok && Array.isArray(data.files)) ? data.files : [];
+
+    var html = '';
+    VAULT_DOC_TYPES.forEach(function (dt) {
+      var matches = files.filter(function (f) { return f.docType === dt.key; })
+        .sort(function (a, b) { return (b.uploadedAt || 0) - (a.uploadedAt || 0); });
+      html += '<div style="background:#F8F9FA;border-radius:8px;padding:10px 12px">';
+      html += '<div style="font-weight:700;font-size:12px;margin-bottom:6px">' + dt.label + '</div>';
+      if (matches.length) {
+        matches.forEach(function (f) {
+          var dateStr = f.uploadedAt ? new Date(f.uploadedAt).toLocaleDateString() : '';
+          html += '<div style="display:flex;align-items:center;justify-content:space-between;background:#fff;border-radius:6px;padding:6px 8px;margin-bottom:4px;font-size:11px">';
+          html += '<a href="' + VAULT_DOCS_API_URL + '/doc?key=' + encodeURIComponent(f.key) + '&secret=' + encodeURIComponent(D1_API_SECRET) + '" target="_blank" style="color:#1B5FA8;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:65%">' + escH(f.filename) + '</a>';
+          html += '<span style="color:var(--soft)">' + dateStr + '</span>';
+          html += '<span onclick="vaultDocDelete(\'' + f.key.replace(/'/g, "\\'") + '\')" style="cursor:pointer;color:#C8102E;font-weight:700;margin-left:6px">✕</span>';
+          html += '</div>';
+        });
+      } else {
+        html += '<div style="font-size:11px;color:var(--soft);margin-bottom:6px">No file uploaded yet</div>';
+      }
+      html += '<input type="file" id="vaultDocInput_' + dt.key + '" style="display:none" onchange="vaultDocUpload(\'' + dt.key + '\')" accept=".pdf,.jpg,.jpeg,.png">';
+      html += '<button onclick="document.getElementById(\'vaultDocInput_' + dt.key + '\').click()" style="background:#5B21B6;color:#fff;border:none;border-radius:6px;padding:5px 10px;font-size:10px;font-weight:700;cursor:pointer">+ Upload</button>';
+      html += '</div>';
+    });
+    el.innerHTML = html;
+  } catch (e) {
+    el.innerHTML = '<div style="color:var(--red);font-size:12px">Couldn\'t load documents — the vault-docs Worker may not be deployed yet.</div>';
+  }
+}
+
+function vaultDocUpload(docType) {
+  var input = document.getElementById('vaultDocInput_' + docType);
+  var file = input && input.files && input.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = async function () {
+    var base64 = reader.result.split(',')[1];
+    try {
+      var res = await fetch(VAULT_DOCS_API_URL + '/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Secret': D1_API_SECRET },
+        body: JSON.stringify({
+          docType: docType,
+          label: docType,
+          base64: base64,
+          contentType: file.type || 'application/octet-stream',
+          filename: file.name,
+        }),
+      });
+      var data = await res.json();
+      if (data && data.ok) {
+        vaultDocsRender();
+      } else {
+        alert('Upload failed: ' + (data && data.error ? data.error : 'unknown error'));
+      }
+    } catch (e) {
+      alert('Upload failed: ' + e.message);
+    }
+    input.value = '';
+  };
+  reader.readAsDataURL(file);
+}
+
+async function vaultDocDelete(key) {
+  if (!confirm('Remove this document? This cannot be undone.')) return;
+  try {
+    await fetch(VAULT_DOCS_API_URL + '/doc?key=' + encodeURIComponent(key) + '&secret=' + encodeURIComponent(D1_API_SECRET), { method: 'DELETE' });
+    vaultDocsRender();
+  } catch (e) {
+    alert('Delete failed: ' + e.message);
+  }
+}
+
+
 function bidsRenderVault() {
   var el = document.getElementById('bidsVaultBody');
   if (!el) return;
@@ -16962,6 +17137,11 @@ function bidsRenderVault() {
   } else {
     html += '<div style="background:#D1FAE5;border:1.5px solid #1E7B3C;border-radius:9px;padding:12px 16px;margin-bottom:16px"><div style="font-weight:700;color:#1E7B3C">✅ Vault complete — AI has everything it needs to write proposals</div></div>';
   }
+
+  // ── COMPLIANCE DOCUMENTS (real files, not just extracted data) ──
+  html += section('Compliance Documents', '#5B21B6');
+  html += '<div style="font-size:11px;color:var(--soft);margin-bottom:10px">The fields below already have your license numbers, insurance limits, etc. extracted. This is the actual files (W-9, COI, license copies) so a bid bundle can include the real document, not just the data pulled from it.</div>';
+  html += '<div id="vaultDocsSection" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:6px"><div style="color:var(--soft);font-size:12px">Loading…</div></div>';
 
   // ── ENTITIES ──
   html += section('Legal Entities', '#1B5FA8');
@@ -17085,6 +17265,7 @@ function bidsRenderVault() {
   html += '<div style="padding:16px;text-align:center"><button onclick="bidsVaultSave()" style="background:#1E7B3C;color:#fff;border:none;border-radius:8px;padding:12px 32px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">💾 Save Vault</button></div>';
 
   el.innerHTML = html;
+  vaultDocsRender();
 }
 
 async function bidsHarvest(){

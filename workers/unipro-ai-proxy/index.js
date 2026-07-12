@@ -287,6 +287,7 @@ export default {
   async scheduled(event, env, ctx) {
     ctx.waitUntil(runDailyDigest(env));
     ctx.waitUntil(runBusinessStatusCheck(env));
+    ctx.waitUntil(runGrowthSnapshot(env));
   },
 };
 
@@ -458,5 +459,53 @@ async function runDailyDigest(env) {
   } catch (e) {
     // Swallow - a failed digest shouldn't take the worker down, just
     // means nothing new got written today. Next morning tries again.
+  }
+}
+
+// -- GROWTH SNAPSHOT -- added 2026-07-13 per Ted. Runs on the same daily
+// cron as the digest above. Records one real data point per day into
+// growth_snapshots: total active accounts, total annual_value (real
+// revenue once populated, honestly 0/null until then -- this job never
+// invents a number), and a division breakdown. This is what lets the
+// Growth & Opportunity panel show a genuine trend line over time instead
+// of a single point-in-time snapshot. INSERT OR IGNORE against the
+// unique snapshot_date index means re-running this on the same UTC day
+// (e.g. a manual re-trigger) never creates a duplicate or double-counts.
+async function runGrowthSnapshot(env) {
+  try {
+    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD, UTC
+    const now = Date.now();
+
+    const totals = await env.DB.prepare(
+      `SELECT COUNT(*) as total_accounts,
+              SUM(CASE WHEN annual_value IS NOT NULL THEN annual_value ELSE 0 END) as total_value,
+              SUM(CASE WHEN annual_value IS NOT NULL THEN 1 ELSE 0 END) as accounts_with_value
+       FROM accounts WHERE status = 'active'`
+    ).first();
+
+    const byDivision = await env.DB.prepare(
+      `SELECT division, COUNT(*) as cnt FROM accounts WHERE status = 'active' GROUP BY division`
+    ).all();
+    const divisionMap = {};
+    for (const row of (byDivision.results || [])) {
+      divisionMap[row.division || 'Unassigned'] = row.cnt;
+    }
+
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO growth_snapshots
+       (id, snapshot_date, total_active_accounts, total_annual_value, accounts_with_value, by_division, created_at)
+       VALUES (?,?,?,?,?,?,?)`
+    ).bind(
+      'snap_' + today,
+      today,
+      totals ? totals.total_accounts : 0,
+      totals ? totals.total_value : 0,
+      totals ? totals.accounts_with_value : 0,
+      JSON.stringify(divisionMap),
+      now
+    ).run();
+  } catch (e) {
+    // Swallow - same reasoning as the digest job. Missing one day's
+    // snapshot is recoverable; taking the worker down is not.
   }
 }
