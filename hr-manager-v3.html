@@ -986,7 +986,15 @@ async function hmCheckRealAccess(){
     return false;
   }
 
-  const authorized = data.ok && data.active && (data.role === 'admin' || data.role === 'owner' || (data.portals||[]).includes('hr'));
+  // Full access for admin/owner. We check the role from /my-access, but
+  // also fall back to the HR roster by email -- if the staff-auth worker's
+  // deploy is ever stale and not returning `role` yet, an admin/owner
+  // should still never be locked out of their own system. Either signal
+  // saying admin/owner is enough.
+  var rosterMatch = hmGetUsers().find(function(u){ return (u.email||'').toLowerCase() === session.email.toLowerCase(); });
+  var rosterRole = rosterMatch ? rosterMatch.role : null;
+  var isAdminOrOwner = data.role === 'admin' || data.role === 'owner' || rosterRole === 'admin' || rosterRole === 'owner';
+  const authorized = data.ok && data.active && (isAdminOrOwner || (data.portals||[]).includes('hr'));
   if (!authorized) {
     document.getElementById('hmLoginMsg').style.display='none';
     document.getElementById('hmLoginErr').style.display='block';
