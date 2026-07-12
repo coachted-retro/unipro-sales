@@ -1854,6 +1854,18 @@ document.addEventListener('DOMContentLoaded',function(){
         }).catch(function(){});
       }
     });
+    // 2026-07-13 FIX: org chart, job descriptions, and policies don't
+    // follow the termac_hr_ prefix convention above (legacy key names),
+    // and were never hydrated at all - added here so a brand-new device
+    // actually pulls what's already been saved instead of starting blank.
+    ['termac_orgchart','termac_jds','termac_policies'].forEach(function(localKey){
+      var hasLocal = localStorage.getItem(localKey) !== null;
+      if (!hasLocal) {
+        TermacD1Sync.d1HydrateHrData(localKey).then(function(data){
+          if (data !== null) { try { localStorage.setItem(localKey, JSON.stringify(data)); } catch(e){} }
+        }).catch(function(){});
+      }
+    });
   }
   // DEMO MODE auto-login removed 2026-07-12 per Ted -- this used to log
   // anyone who opened the page straight in as Ted (or any admin/manager)
@@ -1891,7 +1903,13 @@ function hmRenderOrgChart(){
   }
   window._orgData = orgData;
 
-  function saveOrg(){ localStorage.setItem('termac_orgchart', JSON.stringify(window._orgData)); }
+  // 2026-07-13 FIX: was localStorage-only, bypassing the D1 push every
+  // other HR save in this file already does via hrSave/hrSaveObj - an
+  // org chart edit made on one device never reached another.
+  function saveOrg(){
+    localStorage.setItem('termac_orgchart', JSON.stringify(window._orgData));
+    if (typeof TermacD1Sync !== 'undefined') TermacD1Sync.d1PushHrData('termac_orgchart', window._orgData).catch(function(){});
+  }
 
   function avatarInitials(name){ return (name||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase(); }
   function avatarColor(name){ const c=['#C8102E','#1B5FA8','#065F46','#92400E','#6D28D9','#0D7490','#374151']; let h=0; for(let ch of(name||''))h=(h*31+ch.charCodeAt(0))&0xFFFF; return c[h%c.length]; }
@@ -2053,6 +2071,7 @@ function hmRenderOrgChart(){
   window.orgResetToHR = function(){
     if(!confirm('Reset org chart from HR records? Custom changes will be lost.')) return;
     localStorage.removeItem('termac_orgchart');
+    if (typeof TermacD1Sync !== 'undefined') TermacD1Sync.d1PushHrData('termac_orgchart', null).catch(function(){});
     hmRenderOrgChart();
   };
 }
@@ -4111,6 +4130,9 @@ function hmAutoSaveJD(roleId, el){
   // Save as HTML to preserve formatting
   _hmJDSaved[roleId]=el.innerHTML;
   localStorage.setItem('termac_jds',JSON.stringify(_hmJDSaved));
+  // 2026-07-13 FIX: was localStorage-only - a job description edited on
+  // one device never reached another.
+  if (typeof TermacD1Sync !== 'undefined') TermacD1Sync.d1PushHrData('termac_jds', _hmJDSaved).catch(function(){});
 }
 
 function hmSaveJD(roleId){
@@ -4333,6 +4355,9 @@ function hmAutoSavePolicy(polId,el){
   if(!text.trim()||text.includes('Click ⚡'))return;
   _hmPolicySaved[polId]=el.innerHTML;
   localStorage.setItem('termac_policies',JSON.stringify(_hmPolicySaved));
+  // 2026-07-13 FIX: was localStorage-only - a policy edited on one
+  // device never reached another.
+  if (typeof TermacD1Sync !== 'undefined') TermacD1Sync.d1PushHrData('termac_policies', _hmPolicySaved).catch(function(){});
 }
 
 function hmSavePolicy(polId){
@@ -4659,14 +4684,18 @@ function hmResetDoc(type, id) {
   if (!original) { hmToast('No original content found for this document'); return; }
 
   // Clear saved version
+  // 2026-07-13 FIX: was localStorage-only - a reset done on one device
+  // never reached another, so the stale edited version would come back.
   if (isJD) {
     delete _hmJDSaved[id];
     localStorage.setItem('termac_jds', JSON.stringify(_hmJDSaved));
+    if (typeof TermacD1Sync !== 'undefined') TermacD1Sync.d1PushHrData('termac_jds', _hmJDSaved).catch(function(){});
     const body = document.getElementById('hmJDBody');
     if (body) body.innerHTML = original;
   } else {
     delete _hmPolicySaved[id];
     localStorage.setItem('termac_policies', JSON.stringify(_hmPolicySaved));
+    if (typeof TermacD1Sync !== 'undefined') TermacD1Sync.d1PushHrData('termac_policies', _hmPolicySaved).catch(function(){});
     const body = document.getElementById('hmPolBody');
     if (body) body.innerHTML = original;
   }
