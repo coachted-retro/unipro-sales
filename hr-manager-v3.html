@@ -584,6 +584,7 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--ink);min-h
       </div>
       <div id="hmAccessHasLogin" style="display:none">
         <p style="font-size:13px;color:var(--soft);margin-bottom:14px;line-height:1.5">Check or uncheck portals and it saves automatically.</p>
+        <button onclick="hmAccessResendInvite()" class="hm-btn hm-btn-sm hm-btn-ghost" style="width:100%;margin-bottom:14px">🔁 Resend Invite Email</button>
       </div>
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px" id="hmAccessCheckboxes">
@@ -1312,6 +1313,38 @@ async function hmAccessSaveExisting(){
     setTimeout(function(){ statusEl.style.display='none'; }, 2000);
   } catch(e) {
     hmToast('Could not save access change.');
+  }
+}
+
+// Ted, 2026-07-12: needs to be repeatable with zero help from Claude --
+// generates a fresh temp password and re-sends the login email. Safe to
+// click as many times as needed; each click invalidates whatever
+// password was on the previous email (dead code if never used, live
+// login if used).
+async function hmAccessResendInvite(){
+  if (!_hmAccessCurrentAccountId) return;
+  const statusEl = document.getElementById('hmAccessStatus');
+  statusEl.style.display='block'; statusEl.style.background='#F1F2F4'; statusEl.style.color='var(--soft)';
+  statusEl.textContent = 'Resending…';
+  try {
+    const res = await fetch(STAFF_AUTH_API + '/resend-invite', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: _hmAccessCurrentAccountId }),
+    });
+    const data = await res.json();
+    if (data.ok && data.emailSent) {
+      statusEl.style.background='#F0FAF5'; statusEl.style.color='#1E7B3C';
+      statusEl.textContent = '✓ Invite resent to ' + (_hmAccessCurrentEmp ? _hmAccessCurrentEmp.email : 'them') + '.';
+    } else if (data.ok && !data.emailSent) {
+      statusEl.style.background='#FEF3C7'; statusEl.style.color='#92400E';
+      statusEl.textContent = 'Email did not send. Share manually — new temp password: ' + data.tempPassword;
+    } else {
+      statusEl.style.background='#FEE2E2'; statusEl.style.color='#991B1B';
+      statusEl.textContent = data.error || 'Could not resend the invite.';
+    }
+  } catch(e) {
+    statusEl.style.background='#FEE2E2'; statusEl.style.color='#991B1B';
+    statusEl.textContent = 'Could not resend — check your connection.';
   }
 }
 

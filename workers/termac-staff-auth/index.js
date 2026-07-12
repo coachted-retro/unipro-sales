@@ -322,6 +322,36 @@ async function handleUpdateAccess(request, env) {
   return jsonResponse({ ok: true });
 }
 
+// Self-service resend, callable any number of times -- no need to delete
+// and re-provision the account by hand. Generates a brand new temp
+// password (the old one, sent or not, is dead the moment this runs),
+// flips must_reset back on so they're forced to set their own password
+// again, and sends the same invite email provisioning does.
+async function handleResendInvite(request, env) {
+  const body = await request.json();
+  const id = (body.id || '').trim();
+  if (!id) return jsonResponse({ ok: false, error: 'Account id is required.' }, 400);
+
+  const user = await env.DB.prepare('SELECT * FROM staff_auth WHERE id = ?').bind(id).first();
+  if (!user) return jsonResponse({ ok: false, error: 'Account not found.' }, 404);
+
+  const tempPassword = generateTempPassword();
+  const salt = randomHex(16);
+  const hash = await hashPassword(tempPassword, salt);
+
+  await env.DB.prepare(
+    'UPDATE staff_auth SET password_hash = ?, salt = ?, must_reset = 1, status = ?, updated_at = ? WHERE id = ?'
+  ).bind(hash, salt, 'active', Date.now(), id).run();
+
+  const LOGIN_URL = 'https://coachted-retro.github.io/unipro-sales/staff-login.html';
+  const emailSent = await sendEmail(env, user.name, user.email, 'Termac One Login Resent',
+    'Your Termac One login was resent. Sign in at ' + LOGIN_URL + ' using this email address, ' + user.email +
+    ', and this temporary password: ' + tempPassword +
+    '. You will be asked to set your own password the first time you log in.');
+
+  return jsonResponse({ ok: true, tempPassword, emailSent });
+}
+
 // Lightweight lookup for employee-portal.html to decide which tiles to
 // show for the currently logged-in person, without exposing the full
 // account list (handleList) to every employee.
@@ -366,6 +396,7 @@ export default {
         case '/reactivate': return await handleReactivate(request, env);
         case '/revoke-by-email': return await handleRevokeByEmail(request, env);
         case '/update-access': return await handleUpdateAccess(request, env);
+        case '/resend-invite': return await handleResendInvite(request, env);
         case '/my-access': return await handleMyAccess(request, env);
         default: return jsonResponse({ ok: false, error: 'Unknown endpoint.' }, 404);
       }
