@@ -10,6 +10,7 @@
  *   - Maryland eMMA (public bid board)
  *   - PA eMarketplace (HTML parse)
  *   - Delaware procurement (public)
+ *   - SEPTA (regional transit authority — own eProcurement portal, public)
  */
 
 const CORS = {
@@ -256,6 +257,50 @@ async function scrapeDE() {
   }
 }
 
+// ── SEPTA (regional transit authority — own eProcurement portal, separate
+// from PA state DGS eMarketplace, was not covered by any existing source) ──
+async function scrapeSEPTA() {
+  try {
+    const res = await fetch(
+      'https://www.septa.org/procurement/bids/?bid_category=with-eps&bid_status=open',
+      { headers: { 'Accept': 'text/html', 'User-Agent': 'Mozilla/5.0' } }
+    );
+    if (!res.ok) throw new Error(`SEPTA HTTP ${res.status}`);
+    const text = await res.text();
+
+    const matches = [];
+    // Bid list renders as anchors linking to /procurement/bids/<slug>/ with
+    // the solicitation title as the link text (bid number usually sits just
+    // outside the anchor as bold text, so this pass keyword-matches on the
+    // title only, same approach as the MD/DE scrapers below).
+    const anchorRe = /<a[^>]+href="(https:\/\/w{3,4}\.septa\.org\/procurement\/bids\/[^"]+)"[^>]*>([^<]+)<\/a>/gi;
+    let m;
+    const seen = new Set();
+    while ((m = anchorRe.exec(text)) !== null) {
+      const url = m[1].trim();
+      const title = m[2].replace(/&amp;/g, '&').trim();
+      if (title.length < 8 || seen.has(url)) continue;
+      seen.add(url);
+      if (matchesKeyword(title)) {
+        matches.push({
+          source: 'SEPTA',
+          refNo: '',
+          title,
+          agency: 'SEPTA',
+          dueDate: '',
+          url,
+          scopeRaw: title,
+          estValue: null,
+          scrapedAt: Date.now(),
+        });
+      }
+    }
+    return { bids: matches, count: matches.length };
+  } catch (e) {
+    return { bids: [], error: `SEPTA: ${e.message}` };
+  }
+}
+
 // ── PA eMARKETPLACE ─────────────────────────────────────────────────────────
 async function scrapePA(env) {
   // Reads PA e-Alert solicitations ingested by the bid-alert-parser worker
@@ -283,7 +328,7 @@ export default {
     const results = { bids: [], counts: {}, errors: [], sources_checked: [] };
 
     // Run all public scrapers in parallel
-    const [phlResult, dcResult, njResult, mdResult, deResult, paResult, samResult] = await Promise.allSettled([
+    const [phlResult, dcResult, njResult, mdResult, deResult, paResult, samResult, septaResult] = await Promise.allSettled([
       scrapePHL(),
       scrapeDC(),
       scrapeNJ(env),
@@ -291,6 +336,7 @@ export default {
       scrapeDE(),
       scrapePA(env),
       scrapeSAMgov(samKey),
+      scrapeSEPTA(),
     ]);
 
     const sources = [
@@ -301,6 +347,7 @@ export default {
       { key: 'de',  label: 'Delaware',         result: deResult  },
       { key: 'pa',  label: 'PA eMarketplace',  result: paResult  },
       { key: 'sam', label: 'SAM.gov',          result: samResult },
+      { key: 'septa', label: 'SEPTA',          result: septaResult },
     ];
 
     sources.forEach(({ key, label, result }) => {

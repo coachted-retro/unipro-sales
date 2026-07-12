@@ -59,6 +59,12 @@ const ALLOWED_TABLES = new Set([
   // material/labor rate tables backing the calculators on the AllPro
   // Project Planner's left toolbar.
   'reference_library','allpro_rate_tables',
+  // Growth & Opportunity Intelligence panel + Bid Pipeline Watchlist tab,
+  // added 2026-07-12. growth_snapshots is written on a schedule (piggybacks
+  // the existing daily digest cron) to build a real forward-looking trend
+  // instead of a fabricated one. bid_watchlist tracks known recurring public
+  // bids (e.g. SEPTA fire extinguisher maintenance) between live-scraper hits.
+  'growth_snapshots','bid_watchlist',
 ]);
 
 const TABLE_PREFIX = {
