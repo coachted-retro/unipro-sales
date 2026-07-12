@@ -2,6 +2,26 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<script>
+// 2026-07-13 per Ted: eliminates the flash of the full Manager Dashboard
+// that showed for ~900ms before the Bid Pipeline overlay opened when
+// arriving via ?view=bids (now the normal path from sales-portal.html's
+// embed). The actual open-or-not decision waits on an async user check
+// further down the page, but nothing was hiding the dashboard shell
+// while that wait happened, so it rendered fully visible the whole time.
+// This hides the page synchronously, before first paint, the moment the
+// URL is seen -- the real reveal happens right where that decision is
+// finally made (search this file for "bidsFlashGuard"). A hard safety
+// timeout below guarantees the page is never left invisible even if
+// something unexpected happens in that later logic.
+if (location.search.indexOf('view=bids') !== -1) {
+  document.write('<style id="bidsFlashGuard">body{visibility:hidden!important}</style>');
+  setTimeout(function () {
+    var g = document.getElementById('bidsFlashGuard');
+    if (g) g.remove();
+  }, 1500);
+}
+</script>
 <script src="termac-intelligence.js"></script>
 <script src="termac-cogs.js"></script>
 <script src="termac-labor.js"></script>
@@ -1534,13 +1554,35 @@ function crmSave(key, val){ try{ localStorage.setItem('termac_crm_'+key, JSON.st
 //     since there's nothing else to filter on.
 // Real records are never touched either way.
 (function termacPurgeLegacyDemoData(){
-  var PURGE_VERSION = 'v1_2026-07-12';
+  // 2026-07-13 FIX: this only ever covered ONE of the two demo seeders
+  // that existed in this file (the lowercase accXXX/leadXXX/conXXX IDs
+  // from the seedDemoData() seeder disabled 2026-07-10). It never knew
+  // about the second, separately-written seeder (safeSeed(), disabled
+  // 2026-07-12) which used a completely different ID scheme -- A001-A005
+  // for accounts, L001-L004 for leads, C001-C003 for contacts. Records
+  // from that second seeder were sitting in some browser's localStorage,
+  // survived this purge running (wrong ID list, so it didn't match, and
+  // the _seeded:true flag apparently didn't survive whatever save path
+  // carried them to D1 either), and reached the live shared database
+  // twice tonight -- 5 fake accounts (Ferraro Ristorante, Midtown Office
+  // Plaza, Wu Dim Sum Palace, Fairless Hills Retirement Center, Eastside
+  // Grille & Bar) and 4 fake leads (Maria Santos, James Park, Frank
+  // DeLuca, Angela Wu / Wu Dim Sum Palace), all deleted from D1 directly
+  // 2026-07-13. Version bumped so this re-runs on every browser even
+  // ones that already ran v1, and now also issues real D1 deletes for
+  // these specific known-fake IDs as a safety net -- local cleanup alone
+  // can't undo a record that already reached the shared database, and a
+  // stale cached copy of this page on some other device could otherwise
+  // push these right back in before the code fix has fully propagated.
+  var PURGE_VERSION = 'v2_2026-07-13';
   if (localStorage.getItem('termac_demo_purge_version') === PURGE_VERSION) return;
 
   var UNFLAGGED_DEMO_IDS = {
-    accounts: ['acc001','acc002','acc003','acc004','acc005','acc006','acc007','acc008'],
-    leads: ['lead001','lead002','lead003','lead004','lead006','lead007'],
-    contacts: ['con001','con002','con003','con004'],
+    accounts: ['acc001','acc002','acc003','acc004','acc005','acc006','acc007','acc008',
+               'A001','A002','A003','A004','A005'],
+    leads: ['lead001','lead002','lead003','lead004','lead006','lead007',
+            'L001','L002','L003','L004'],
+    contacts: ['con001','con002','con003','con004','C001','C002','C003'],
   };
 
   ['accounts','leads','contacts'].forEach(function(key){
@@ -1553,6 +1595,19 @@ function crmSave(key, val){ try{ localStorage.setItem('termac_crm_'+key, JSON.st
       if (cleaned.length !== arr.length) localStorage.setItem('termac_crm_'+key, JSON.stringify(cleaned));
     } catch(e) {}
   });
+
+  // Safety net: delete these specific known-fake IDs from D1 directly too,
+  // in case this exact browser is the one that already pushed them (or
+  // any device still running a stale cached copy of this page does so
+  // again before picking up today's code fix). Fire-and-forget -- this
+  // must never block real page load if the API is briefly unavailable.
+  if (typeof d1Fetch === 'function') {
+    Object.keys(UNFLAGGED_DEMO_IDS).forEach(function (table) {
+      UNFLAGGED_DEMO_IDS[table].forEach(function (id) {
+        try { d1Fetch('DELETE', '/api/' + table + '/' + id).catch(function(){}); } catch(e) {}
+      });
+    });
+  }
 
   // seedDemoInvoices (also disabled 2026-07-10, also _seeded-flagged) --
   // same cleanup, different key prefix, not under termac_crm_.
@@ -1973,6 +2028,17 @@ function d1NormalizeRecord(table, record) {
       docChecklist: 'doc_checklist', priceAnalysis: 'price_analysis',
       outcomeDate: 'outcome_date', scrapedAt: 'scraped_at',
       submittedDate: 'submitted_date'
+    },
+    // 2026-07-13 per Ted: debriefs need to reach D1 too -- they were
+    // 100% localStorage-only, capped at 60 and silently truncated, and
+    // invisible to any GM opening gm-dashboard.html on a different
+    // device than whichever tech submitted them.
+    debriefs: {
+      submittedAt: 'submitted_at', shiftStart: 'shift_start', shiftEnd: 'shift_end',
+      vanCondition: 'van_condition', fuelLevel: 'fuel_level',
+      suppliesNeeded: 'supplies_needed', vanNotes: 'van_notes',
+      salesLeadsDiscovered: 'sales_leads_discovered', customerComplaints: 'customer_complaints',
+      siteNotes: 'site_notes', shiftRating: 'shift_rating', extraStops: 'extra_stops'
     }
   };
   var map = FIELD_MAP[table] || {};
@@ -2148,6 +2214,13 @@ function d1ReverseMapLocal(table, record) {
       docChecklist: 'doc_checklist', priceAnalysis: 'price_analysis',
       outcomeDate: 'outcome_date', scrapedAt: 'scraped_at',
       submittedDate: 'submitted_date'
+    },
+    debriefs: {
+      submittedAt: 'submitted_at', shiftStart: 'shift_start', shiftEnd: 'shift_end',
+      vanCondition: 'van_condition', fuelLevel: 'fuel_level',
+      suppliesNeeded: 'supplies_needed', vanNotes: 'van_notes',
+      salesLeadsDiscovered: 'sales_leads_discovered', customerComplaints: 'customer_complaints',
+      siteNotes: 'site_notes', shiftRating: 'shift_rating', extraStops: 'extra_stops'
     }
   };
   const map = REVERSE_FIELD_MAP[table] || {};
@@ -16222,10 +16295,72 @@ const TERMAC_COMPANY_PROFILE = {
   ],
 };
 
-function bidsLoad(){ try{ return JSON.parse(localStorage.getItem('termac_bids')||'[]'); }catch(e){ return []; } }
-function bidsSave(data){ localStorage.setItem('termac_bids', JSON.stringify(data)); }
+// 2026-07-13 FIX: bidsLoad/bidsSave used a completely separate,
+// D1-disconnected localStorage key ('termac_bids') from every other CRM
+// table in this platform (which all go through crmLoad/crmSave ->
+// 'termac_crm_' + table). This is the real, deeper reason the Bid
+// Pipeline never reached the shared database no matter what got fixed
+// on the D1 schema/FIELD_MAP side (see the 2026-07-13 bids fix in
+// FIELD_MAP above) -- this file's own board was never even calling
+// crmSave/d1Push in the first place, it was 100% localStorage-only,
+// harvested bids and AI drafts included. bidsLoad() migrates any bids
+// still sitting under the old key into the real one, once, so nothing
+// already on the board disappears when this ships. bidsSave() now
+// writes through the real store and pushes every record to D1 -- bid
+// counts here are small (dozens, not thousands), so a full push per
+// save is simple and safe; if this board ever grows very large, this
+// should switch to pushing only the specific changed record instead.
+// IMPORTANT: bid_seed_*/bid_demo_* are the hardcoded placeholder cards
+// bidsSeedIfEmpty() below fills the board with whenever it's empty --
+// fictional reference examples, not real bids. These stay visible
+// locally (so the board isn't blank before a real harvest ever runs)
+// but are deliberately excluded from ever reaching D1, so fake data
+// never pollutes the real shared database.
+function _isRealBid(b) { return b && b.id && !/^bid_(seed|demo)_/.test(b.id); }
+function bidsLoad(){
+  try {
+    var legacy = JSON.parse(localStorage.getItem('termac_bids') || '[]');
+    if (legacy.length) {
+      var current = crmLoad('bids');
+      var existingIds = {};
+      current.forEach(function (b) { if (b && b.id) existingIds[b.id] = true; });
+      var merged = current.slice();
+      var addedAny = false;
+      legacy.forEach(function (b) {
+        if (b && b.id && !existingIds[b.id]) { merged.push(b); existingIds[b.id] = true; addedAny = true; }
+      });
+      if (addedAny) {
+        crmSave('bids', merged);
+        var realOnly = merged.filter(_isRealBid);
+        if (realOnly.length && typeof d1PushBatch === 'function') d1PushBatch('bids', realOnly).catch(function(){});
+      }
+      localStorage.removeItem('termac_bids');
+      return merged; // include seed/demo locally so the board isn't blank
+    }
+  } catch (e) {}
+  var stored = crmLoad('bids');
+  return stored.length ? stored : [];
+}
+function bidsSave(data){
+  crmSave('bids', data || []);
+  var realOnly = (data || []).filter(_isRealBid);
+  if (realOnly.length && typeof d1PushBatch === 'function') { d1PushBatch('bids', realOnly).catch(function(){}); }
+}
 
+// 2026-07-13 per Ted: this was auto-filling the board with fictional
+// pipeline cards (bid_demo_1-5) and two fake "historical" won/lost
+// examples (bid_seed_1/2) any time the real board was empty -- which,
+// combined with the harvester never actually running (see BID_SCRAPER_URL
+// below), meant Ted's entire visible Bid Pipeline -- including the 50%
+// Win Rate stat, computed straight from the 2 fake decided bids -- was
+// fictional the whole time, with no visible indicator that it wasn't
+// real activity. Disabled. The board now shows an honest empty state
+// until a real harvest or manual Ingest RFP puts something there. Seed
+// data left below, inert, in case a genuine reference-example feature
+// (clearly separated from real stats) is wanted later.
 function bidsSeedIfEmpty(){
+  return;
+  /* eslint-disable no-unreachable */
   let bids = bidsLoad();
   if (bids.length) return;
 
@@ -17579,6 +17714,21 @@ const BID_STATUS_COLS = [
   { key:'won',       label:'🏆 Won',                 color:'#3FA34D' },
 ];
 
+// 2026-07-13 per Ted: when this page is loaded inside sales-portal.html's
+// embed overlay (not opened as its own standalone tab), "Home" should
+// mean back to sales-portal.html itself -- not just closing this overlay
+// to reveal the Manager Dashboard shell sitting underneath it inside the
+// same iframe, which isn't where Ted actually wants to land. Detects the
+// iframe case and posts a message the parent listens for instead;
+// standalone (not embedded) keeps the original local-close behavior.
+function bidsGoHome() {
+  if (window.parent && window.parent !== window) {
+    try { window.parent.postMessage({ type: 'termac-embed-home' }, '*'); return; } catch (e) {}
+  }
+  document.getElementById('ovBids').classList.remove('open');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
 function bidsRender(){
   bidsSeedIfEmpty();
   const bids = bidsLoad().filter(b => b.status !== 'lost');
@@ -17598,7 +17748,8 @@ function bidsRender(){
   setText('bidsKpiWon', won);
   setText('bidsKpiValue', '$' + pipelineValue.toLocaleString());
 
-  board.innerHTML = BID_STATUS_COLS.map(col => {
+  board.innerHTML = (bids.length === 0 ? '<div style="grid-column:1/-1;background:#FFF8E1;border:1.5px dashed #D8690B;border-radius:10px;padding:16px;text-align:center;margin-bottom:14px"><div style="font-weight:800;color:#D8690B;margin-bottom:4px">No bids in the pipeline yet</div><div style="font-size:12px;color:var(--soft)">Click "Check for New Bids" above once the scraper is deployed, or use Ingest RFP to add one manually.</div></div>' : '') +
+    BID_STATUS_COLS.map(col => {
     const items = bids.filter(b => b.status === col.key);
     return `
       <div>
@@ -25540,6 +25691,12 @@ document.addEventListener('DOMContentLoaded', () => {
       setTimeout(function(){
         if (_currentUser && _currentUser.email === 'tscholl@termac.com') { openOverlay('bids'); }
         else { try { sessionStorage.setItem('termac_pending_view','bids'); } catch(e){} }
+        // Reveal now regardless of which branch ran -- either the overlay
+        // is already open on top of the dashboard, or the user isn't
+        // recognized yet and needs to see the login prompt to proceed.
+        // Either way there's nothing left to hide for.
+        var _guard = document.getElementById('bidsFlashGuard');
+        if (_guard) _guard.remove();
       }, 900);
     }
   })();
@@ -26618,6 +26775,22 @@ setInterval(buildActionQueue, 5 * 60 * 1000);
 </div>
 
 <!-- DEFICIENCY QUOTE BUILDER MODAL -->
+<!-- PERFORMANCE DASHBOARD DRILL-DOWN MODAL -- 2026-07-13 per Ted: every
+     KPI card on the Performance Dashboard should be clickable, showing
+     the real records behind the number instead of being a dead-end
+     stat. One reusable modal instead of a bespoke view per card. -->
+<div class="act-modal-bg" id="perfDrillModal" style="z-index:700">
+  <div class="act-modal" style="width:min(680px,96vw)">
+    <div class="act-modal-header">
+      <h3 id="perfDrillTitle">Details</h3>
+      <button onclick="perfDrillClose()" style="background:none;border:none;color:#BFC4CA;font-size:20px;cursor:pointer;line-height:1">✕</button>
+    </div>
+    <div class="act-modal-body">
+      <div id="perfDrillBody" style="display:flex;flex-direction:column;gap:8px"></div>
+    </div>
+  </div>
+</div>
+
 <div class="act-modal-bg" id="defQuoteModal">
   <div class="act-modal" style="width:min(560px,96vw)">
     <div class="act-modal-header">
@@ -27531,6 +27704,68 @@ function csHdr(title, id, extraRight) {
 //  Metrics are QUARTERLY cadence — not weekly like reps
 // ══════════════════════════════════════════════════════════════
 
+// ══════════════════════════════════════════════════════════════
+//  PERFORMANCE DASHBOARD DRILL-DOWN
+//  2026-07-13 per Ted: every KPI card should be clickable, showing the
+//  real records behind the number. One generic modal + row-renderer
+//  keyed by record kind, instead of a bespoke drill-down view built
+//  separately for each of the ~30 cards on this dashboard.
+// ══════════════════════════════════════════════════════════════
+function perfDrillOpen(title, records, kind) {
+  document.getElementById('perfDrillTitle').textContent = title + ' (' + records.length + ')';
+  var body = document.getElementById('perfDrillBody');
+  if (!records.length) {
+    body.innerHTML = '<div style="color:var(--soft);font-size:13px;padding:12px 0">No records behind this number right now.</div>';
+  } else {
+    body.innerHTML = records.map(function (r) { return perfDrillRow(r, kind); }).join('');
+  }
+  document.getElementById('perfDrillModal').classList.add('open');
+}
+function perfDrillClose() {
+  document.getElementById('perfDrillModal').classList.remove('open');
+}
+function perfDrillOpenRecord(kind, id) {
+  perfDrillClose();
+  if (kind === 'bid') { openOverlay('bids'); setTimeout(function () { bidsOpenDetail(id); }, 250); }
+  else if (kind === 'lead' || kind === 'appointment' || kind === 'deficiency_account') { viewRecord(kind === 'appointment' ? 'appointments' : 'leads', id); }
+}
+function perfDrillRow(r, kind) {
+  var rowStyle = 'background:#F8F9FA;border-radius:8px;padding:10px 12px;cursor:pointer';
+  if (kind === 'bid') {
+    return '<div style="' + rowStyle + '" onclick="perfDrillOpenRecord(\'bid\',\'' + r.id + '\')">' +
+      '<div style="font-weight:700;font-size:13px">' + escH(r.title || 'Untitled') + '</div>' +
+      '<div style="font-size:11px;color:var(--soft)">' + escH(r.agency || '') + (r.dueDate ? ' · Due ' + escH(r.dueDate) : '') + (r.estValue ? ' · $' + Number(r.estValue).toLocaleString() : '') + ' · ' + escH(r.status || '') + '</div></div>';
+  }
+  if (kind === 'lead') {
+    var lname = r.contact_name || r.name || r.business || 'Unnamed';
+    return '<div style="' + rowStyle + '" onclick="perfDrillOpenRecord(\'lead\',\'' + r.id + '\')">' +
+      '<div style="font-weight:700;font-size:13px">' + escH(lname) + '</div>' +
+      '<div style="font-size:11px;color:var(--soft)">' + escH(r.business || r.company || '') + (r.lifecycleStage ? ' · ' + escH(r.lifecycleStage) : '') + (r.source ? ' · ' + escH(r.source) : '') + '</div></div>';
+  }
+  if (kind === 'appointment') {
+    return '<div style="' + rowStyle + '" onclick="perfDrillOpenRecord(\'appointment\',\'' + r.id + '\')">' +
+      '<div style="font-weight:700;font-size:13px">' + escH(r.title || r.business || 'Appointment') + '</div>' +
+      '<div style="font-size:11px;color:var(--soft)">' + escH(r.date || '') + ' ' + escH(r.time || '') + (r.type ? ' · ' + escH(r.type) : '') + '</div></div>';
+  }
+  if (kind === 'deficiency') {
+    return '<div style="' + rowStyle + ';cursor:default">' +
+      '<div style="font-weight:700;font-size:13px">' + escH(r.equipment_type || 'Deficiency') + '</div>' +
+      '<div style="font-size:11px;color:var(--soft)">' + escH(r.description || '') + (r.severity ? ' · ' + escH(r.severity) : '') + '</div></div>';
+  }
+  if (kind === 'tech') {
+    return '<div style="' + rowStyle + ';cursor:default">' +
+      '<div style="font-weight:700;font-size:13px">' + escH(r.name || 'Tech') + '</div>' +
+      '<div style="font-size:11px;color:var(--soft)">' + escH(r.division || '') + (r.score !== undefined ? ' · Score ' + r.score : '') + '</div></div>';
+  }
+  return '<div style="' + rowStyle + ';cursor:default">' + escH(JSON.stringify(r).slice(0, 120)) + '</div>';
+}
+// Records arrays live in window._perfDrillCache, keyed by a stable
+// string, since an inline onclick attribute is evaluated later in
+// global scope and can't reach renderTedPerf()'s local variables
+// directly. Each kpiCard call that should be drillable stashes its
+// records here right before building the card.
+window._perfDrillCache = window._perfDrillCache || {};
+
 function renderTedPerf() {
   var el = document.getElementById('tedPerfContent');
   if (!el) return;
@@ -27600,9 +27835,19 @@ function renderTedPerf() {
     : null;
 
   // ── Build HTML ──────────────────────────────────────────────
-  function kpiCard(label, value, sub, color, warn) {
-    return '<div style="background:#fff;border-radius:9px;padding:13px 14px;box-shadow:0 1px 3px rgba(26,29,33,.08);border-top:3px solid '+color+';position:relative">' +
+  function kpiCard(label, value, sub, color, warn, drill) {
+    // drill = { key, records, kind } -- optional. When present, caches
+    // the records under a stable global key (see window._perfDrillCache
+    // above) and makes the card clickable to open the drill-down modal
+    // showing those real records.
+    var clickable = drill && drill.records;
+    if (clickable) window._perfDrillCache[drill.key] = drill.records;
+    var clickAttr = clickable
+      ? ' onclick="perfDrillOpen(\''+escH(label).replace(/'/g,"\\'")+'\', window._perfDrillCache.'+drill.key+', \''+drill.kind+'\')" style="cursor:pointer"'
+      : '';
+    return '<div'+clickAttr+' style="background:#fff;border-radius:9px;padding:13px 14px;box-shadow:0 1px 3px rgba(26,29,33,.08);border-top:3px solid '+color+';position:relative'+(clickable?';cursor:pointer':'')+'">' +
       (warn ? '<div style="position:absolute;top:8px;right:8px;background:#FEE2E2;color:#C8102E;border-radius:4px;padding:1px 6px;font-size:9px;font-weight:800">⚠️ '+warn+'</div>' : '') +
+      (clickable ? '<div style="position:absolute;bottom:8px;right:10px;font-size:9px;color:#BFC4CA">↗ view</div>' : '') +
       '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:24px;color:'+color+'">'+value+'</div>' +
       '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--soft);margin-top:2px">'+label+'</div>' +
       (sub ? '<div style="font-size:11px;color:#6B7280;margin-top:4px">'+sub+'</div>' : '') +
@@ -27630,11 +27875,11 @@ function renderTedPerf() {
   // ── Section 1: Pipeline Health ─────────────────────────────
   html += sectionHdr('📊', 'Pipeline Health', '#1B5FA8');
   html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:4px">';
-  html += kpiCard('Active Bids', activeBids.length, '$'+pipelineValue.toLocaleString()+' pipeline', '#1B5FA8', activeBids.length===0?'No bids':'');
-  html += kpiCard('Submitted / Pending', submittedBids.length, 'Awaiting decision', '#5B21B6', '');
-  html += kpiCard('Win Rate (last 12)', winRate+'%', resolved.length+' bids resolved', winRate>=40?'#1E7B3C':winRate>=25?'#D97706':'#C8102E', winRate<25&&resolved.length>3?'Low':'');
-  html += kpiCard('Avg Days to Close', avgDaysClose||'—', 'From posting to award', '#0D7490', '');
-  html += kpiCard('Stale >90 Days', stale90.length, 'No movement — review', stale90.length>0?'#C8102E':'#1E7B3C', stale90.length>2?stale90.length+' stale':'');
+  html += kpiCard('Active Bids', activeBids.length, '$'+pipelineValue.toLocaleString()+' pipeline', '#1B5FA8', activeBids.length===0?'No bids':'', {key:'activeBids', records:activeBids, kind:'bid'});
+  html += kpiCard('Submitted / Pending', submittedBids.length, 'Awaiting decision', '#5B21B6', '', {key:'submittedBids', records:submittedBids, kind:'bid'});
+  html += kpiCard('Win Rate (last 12)', winRate+'%', resolved.length+' bids resolved', winRate>=40?'#1E7B3C':winRate>=25?'#D97706':'#C8102E', winRate<25&&resolved.length>3?'Low':'', {key:'resolvedBids', records:resolved, kind:'bid'});
+  html += kpiCard('Avg Days to Close', avgDaysClose||'—', 'From posting to award', '#0D7490', '', {key:'closedWithDates', records:closedWithDates, kind:'bid'});
+  html += kpiCard('Stale >90 Days', stale90.length, 'No movement — review', stale90.length>0?'#C8102E':'#1E7B3C', stale90.length>2?stale90.length+' stale':'', {key:'stale90', records:stale90, kind:'bid'});
   html += '</div>';
 
   // Bid stage breakdown
@@ -27651,38 +27896,40 @@ function renderTedPerf() {
   // ── Section 2: Revenue Impact ──────────────────────────────
   html += sectionHdr('💰', 'Revenue Impact', '#1E7B3C');
   html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:4px">';
-  html += kpiCard('Won QTD', '$'+wonValueQTD.toLocaleString(), wonBids.length+' contract'+(wonBids.length!==1?'s':''), '#1E7B3C', wonValueQTD===0&&new Date().getMonth()%3>0?'0 won this Q':'');
-  html += kpiCard('Won YTD', '$'+wonValueYTD.toLocaleString(), 'Calendar year to date', '#059669', '');
-  html += kpiCard('Active Pipeline Value', '$'+pipelineValue.toLocaleString(), activeBids.length+' open bid'+(activeBids.length!==1?'s':''), '#1B5FA8', '');
-  html += kpiCard('At Risk (90d stale)', stale90.reduce(function(s,b){return s+(b.estValue||0);},0)>0?'$'+stale90.reduce(function(s,b){return s+(b.estValue||0);},0).toLocaleString():'—', 'Pipeline value at risk', stale90.length?'#C8102E':'#6B7280', '');
+  html += kpiCard('Won QTD', '$'+wonValueQTD.toLocaleString(), wonBids.length+' contract'+(wonBids.length!==1?'s':''), '#1E7B3C', wonValueQTD===0&&new Date().getMonth()%3>0?'0 won this Q':'', {key:'wonBidsQTD', records:wonBids, kind:'bid'});
+  html += kpiCard('Won YTD', '$'+wonValueYTD.toLocaleString(), 'Calendar year to date', '#059669', '', {key:'wonBidsYTD', records:bids.filter(function(b){ return b.status==='won' && b.outcomeDate && new Date(b.outcomeDate).getTime() >= yStart; }), kind:'bid'});
+  html += kpiCard('Active Pipeline Value', '$'+pipelineValue.toLocaleString(), activeBids.length+' open bid'+(activeBids.length!==1?'s':''), '#1B5FA8', '', {key:'activeBids2', records:activeBids, kind:'bid'});
+  html += kpiCard('At Risk (90d stale)', stale90.reduce(function(s,b){return s+(b.estValue||0);},0)>0?'$'+stale90.reduce(function(s,b){return s+(b.estValue||0);},0).toLocaleString():'—', 'Pipeline value at risk', stale90.length?'#C8102E':'#6B7280', '', {key:'stale90b', records:stale90, kind:'bid'});
   html += '</div>';
 
   // ── Section 3: AllPro / Hood Design ───────────────────────
   html += sectionHdr('🏗️', 'AllPro / Hood Design & Installation', '#D8690B');
   html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:4px">';
-  html += kpiCard('Permit Leads QTD', permitLeads.filter(function(r){return r.created>=qStart;}).length, 'From permit harvester', '#D8690B', '');
-  html += kpiCard('AllPro Contacts QTD', allproQTD.length, 'New build + reno contacts', '#1B5FA8', '');
-  html += kpiCard('Site Walks QTD', siteWalks.length, 'Permit + cold site visits', '#5B21B6', siteWalks.length===0?'No walks logged':'');
-  html += kpiCard('Permit → Proposal', avgP2P!==null ? avgP2P+'h avg' : '—', 'Target: <48 hours', avgP2P!==null&&avgP2P<=48?'#1E7B3C':avgP2P!==null?'#C8102E':'#6B7280', avgP2P!==null&&avgP2P>48?'>48h':'');
+  html += kpiCard('Permit Leads QTD', permitLeads.filter(function(r){return r.created>=qStart;}).length, 'From permit harvester', '#D8690B', '', {key:'permitLeadsQTD', records:permitLeads.filter(function(r){return r.created>=qStart;}), kind:'lead'});
+  html += kpiCard('AllPro Contacts QTD', allproQTD.length, 'New build + reno contacts', '#1B5FA8', '', {key:'allproQTD', records:allproQTD, kind:'lead'});
+  html += kpiCard('Site Walks QTD', siteWalks.length, 'Permit + cold site visits', '#5B21B6', siteWalks.length===0?'No walks logged':'', {key:'siteWalksQTD', records:siteWalks, kind:'appointment'});
+  html += kpiCard('Permit → Proposal', avgP2P!==null ? avgP2P+'h avg' : '—', 'Target: <48 hours', avgP2P!==null&&avgP2P<=48?'#1E7B3C':avgP2P!==null?'#C8102E':'#6B7280', avgP2P!==null&&avgP2P>48?'>48h':'', {key:'recentAllpro', records:recentAllpro, kind:'lead'});
   html += '</div>';
 
   // ── Section 4: Operations Oversight ───────────────────────
   html += sectionHdr('⚙️', 'UniPro + AllPro Operations Oversight', '#6B7280');
   html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:4px">';
-  html += kpiCard('Tech Score (Avg)', avgTechScore||'—', 'UniPro + AllPro division', avgTechScore>=80?'#1E7B3C':avgTechScore>=60?'#D97706':'#C8102E', avgTechScore>0&&avgTechScore<60?'Below target':'');
-  html += kpiCard('Open Deficiencies', openDefs.length, 'Pending quotes from Lexi', openDefs.length>5?'#C8102E':openDefs.length>0?'#D97706':'#1E7B3C', '');
-  html += kpiCard('Defs Without Quote >5d', defs5Days.length, 'Should have a quote by now', defs5Days.length>0?'#C8102E':'#1E7B3C', defs5Days.length>0?defs5Days.length+' overdue':'');
-  html += kpiCard('Tech Division Coverage', myTechs.length||'—', 'Techs tracked in system', '#6B7280', '');
+  html += kpiCard('Tech Score (Avg)', avgTechScore||'—', 'UniPro + AllPro division', avgTechScore>=80?'#1E7B3C':avgTechScore>=60?'#D97706':'#C8102E', avgTechScore>0&&avgTechScore<60?'Below target':'', {key:'myTechs', records:myTechs, kind:'tech'});
+  html += kpiCard('Open Deficiencies', openDefs.length, 'Pending quotes from Lexi', openDefs.length>5?'#C8102E':openDefs.length>0?'#D97706':'#1E7B3C', '', {key:'openDefs', records:openDefs, kind:'deficiency'});
+  html += kpiCard('Defs Without Quote >5d', defs5Days.length, 'Should have a quote by now', defs5Days.length>0?'#C8102E':'#1E7B3C', defs5Days.length>0?defs5Days.length+' overdue':'', {key:'defs5Days', records:defs5Days, kind:'deficiency'});
+  html += kpiCard('Tech Division Coverage', myTechs.length||'—', 'Techs tracked in system', '#6B7280', '', {key:'myTechs2', records:myTechs, kind:'tech'});
   html += '</div>';
 
   // ── Section 5: Activity ────────────────────────────────────
   html += sectionHdr('📋', 'Activity This Quarter', '#5B21B6');
-  var bidSubmissionsQTD = bids.filter(function(b){ return b.status==='submitted' || (b.status==='won'&&b.outcomeDate&&new Date(b.outcomeDate).getTime()>=qStart); }).length;
+  var bidSubmissionsQTDArr = bids.filter(function(b){ return b.status==='submitted' || (b.status==='won'&&b.outcomeDate&&new Date(b.outcomeDate).getTime()>=qStart); });
+  var bidSubmissionsQTD = bidSubmissionsQTDArr.length;
   html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:4px">';
-  html += kpiCard('Bid Submissions QTD', bidSubmissionsQTD, 'Submitted this quarter', '#5B21B6', '');
-  html += kpiCard('Site Walks / Pop-Ins', siteWalks.length, 'Field visits logged', '#D8690B', '');
-  html += kpiCard('Follow-Up Touchpoints', leads.filter(function(r){ return r.activityLog && r.activityLog.some(function(a){ return a.ts>=qStart && (r.services||[]).some(function(s){ return s==='allpro'||s==='unipro'; }); }); }).length, 'On active bids', '#1B5FA8', '');
-  html += kpiCard('Total Bids in System', bids.length, 'All time in pipeline', '#6B7280', '');
+  var followUpTouchpointsArr = leads.filter(function(r){ return r.activityLog && r.activityLog.some(function(a){ return a.ts>=qStart && (r.services||[]).some(function(s){ return s==='allpro'||s==='unipro'; }); }); });
+  html += kpiCard('Bid Submissions QTD', bidSubmissionsQTD, 'Submitted this quarter', '#5B21B6', '', {key:'bidSubmissionsQTD', records:bidSubmissionsQTDArr, kind:'bid'});
+  html += kpiCard('Site Walks / Pop-Ins', siteWalks.length, 'Field visits logged', '#D8690B', '', {key:'siteWalks2', records:siteWalks, kind:'appointment'});
+  html += kpiCard('Follow-Up Touchpoints', followUpTouchpointsArr.length, 'On active bids', '#1B5FA8', '', {key:'followUpTouchpoints', records:followUpTouchpointsArr, kind:'lead'});
+  html += kpiCard('Total Bids in System', bids.length, 'All time in pipeline', '#6B7280', '', {key:'allBids', records:bids, kind:'bid'});
   html += '</div>';
 
   // ── Section 6: Revenue Forecast ──────────────────────────
@@ -27707,9 +27954,9 @@ function renderTedPerf() {
   var untaggedCount = activePipeline.length - taggedCount;
 
   html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:12px">';
-  html += kpiCard('Pipeline Leads', activePipeline.length, taggedCount+' tagged · '+untaggedCount+' untagged', '#1E7B3C', untaggedCount>10?untaggedCount+' need tags':'');
-  html += kpiCard('Est. 1-Yr Value', '$'+(totalPipeValue/1000).toFixed(0)+'K', 'Active pipeline', '#1B5FA8', '');
-  html += kpiCard('Est. 3-Yr Value', '$'+(total3yrValue/1000).toFixed(0)+'K', 'Full account lifetime', '#5B21B6', '');
+  html += kpiCard('Pipeline Leads', activePipeline.length, taggedCount+' tagged · '+untaggedCount+' untagged', '#1E7B3C', untaggedCount>10?untaggedCount+' need tags':'', {key:'activePipeline', records:activePipeline, kind:'lead'});
+  html += kpiCard('Est. 1-Yr Value', '$'+(totalPipeValue/1000).toFixed(0)+'K', 'Active pipeline', '#1B5FA8', '', {key:'activePipeline2', records:activePipeline, kind:'lead'});
+  html += kpiCard('Est. 3-Yr Value', '$'+(total3yrValue/1000).toFixed(0)+'K', 'Full account lifetime', '#5B21B6', '', {key:'activePipeline3', records:activePipeline, kind:'lead'});
   html += kpiCard('Single Kitchen Win', '$50-60K', 'Hood+suppression+3yr bundle', '#D8690B', '');
   html += '</div>';
 
@@ -27739,10 +27986,10 @@ function renderTedPerf() {
   var referralValue = referralConverted.reduce(function(s,r){return s+(r.estValue||8000);},0);
 
   html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:10px">';
-  html += kpiCard('Referral Leads QTD', referralQTD.length, 'Tagged source=Referral', referralQTD.length>0?'#1E7B3C':'#6B7280', '');
-  html += kpiCard('All-Time Referrals', referralLeads.length, 'Total tagged referral leads', '#D8690B', '');
-  html += kpiCard('Converted', referralConverted.length, 'Active accounts from referrals', '#1E7B3C', '');
-  html += kpiCard('Referral Revenue', referralValue>0?'$'+(referralValue/1000).toFixed(0)+'K':'--', 'Est. value converted', '#5B21B6', '');
+  html += kpiCard('Referral Leads QTD', referralQTD.length, 'Tagged source=Referral', referralQTD.length>0?'#1E7B3C':'#6B7280', '', {key:'referralQTD', records:referralQTD, kind:'lead'});
+  html += kpiCard('All-Time Referrals', referralLeads.length, 'Total tagged referral leads', '#D8690B', '', {key:'referralLeads', records:referralLeads, kind:'lead'});
+  html += kpiCard('Converted', referralConverted.length, 'Active accounts from referrals', '#1E7B3C', '', {key:'referralConverted', records:referralConverted, kind:'lead'});
+  html += kpiCard('Referral Revenue', referralValue>0?'$'+(referralValue/1000).toFixed(0)+'K':'--', 'Est. value converted', '#5B21B6', '', {key:'referralConverted2', records:referralConverted, kind:'lead'});
   html += '</div>';
 
   var recentWins = leads.filter(function(r){return ['active','close','onboarding'].includes(r.lifecycleStage||'');});
@@ -27768,7 +28015,7 @@ function renderTedPerf() {
       var urgColor = alert.urgency==='critical'?'#C8102E':alert.urgency==='overdue'?'#7F1D1D':alert.urgency==='high'?'#D97706':'#1B5FA8';
       var urgBg    = alert.urgency==='critical'?'#FEE2E2':alert.urgency==='overdue'?'#FEE2E2':alert.urgency==='high'?'#FEF3C7':'#EFF6FF';
       var urgLabel = alert.urgency==='overdue'?'OVERDUE':alert.urgency==='critical'?'CRITICAL — '+alert.daysLeft+'d':alert.urgency==='high'?alert.daysLeft+'d left':alert.daysLeft+'d left';
-      html += '<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:'+urgBg+';border-radius:8px;border-left:4px solid '+urgColor+'">';
+      html += '<div onclick="perfDrillOpenRecord(\'bid\',\''+escH(b.id)+'\')" style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:'+urgBg+';border-radius:8px;border-left:4px solid '+urgColor+';cursor:pointer">';
       html += '<div style="min-width:90px;font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:11px;letter-spacing:.06em;color:'+urgColor+'">'+urgLabel+'</div>';
       html += '<div style="flex:1"><div style="font-weight:600;font-size:13px">'+escH(b.title)+'</div>';
       html += '<div style="font-size:11px;color:#6B7280">'+escH(b.agency||'')+(b.dueDate?' · Due '+escH(b.dueDate):'')+(b.estValue?' · $'+b.estValue.toLocaleString():'')+'</div></div>';
@@ -30072,8 +30319,8 @@ window.uvCollectData = uvCollectData;
     <h2>📑 Bid Pipeline</h2>
     <div class="ov-header-btns">
       <button class="ov-btn" id="bidsCheckBtn" onclick="bidsHarvest()">🔄 Check for New Bids</button>
-      <button class="ov-btn" onclick="document.getElementById('ovBids').classList.remove('open');window.scrollTo({top:0,behavior:'smooth'})">← Home</button>
-      <button class="ov-btn close" onclick="document.getElementById('ovBids').classList.remove('open')">✕</button>
+      <button class="ov-btn" onclick="bidsGoHome()">← Home</button>
+      <button class="ov-btn close" onclick="bidsGoHome()">✕</button>
     </div>
   </div>
 

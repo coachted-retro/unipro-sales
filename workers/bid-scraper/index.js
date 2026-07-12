@@ -1,6 +1,9 @@
 /**
  * Termac One — Bid & RFP Scraper Worker v2
- * Deploy to: Cloudflare Workers (bid-scraper.tedscholl.workers.dev)
+ * Deploy from workers/bid-scraper/ to Cloudflare Workers.
+ * Matches BID_SCRAPER_URL in termac-os.html: worker name "bid-scraper"
+ * on this account's workers.dev subdomain resolves to
+ * https://bid-scraper.termac-one.workers.dev/
  *
  * Sources (all public, no API key required):
  *   - SAM.gov API v2 (federal — requires free API key registration at SAM.gov)

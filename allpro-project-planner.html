@@ -29,6 +29,7 @@ body{font-family:'Barlow',-apple-system,sans-serif;background:var(--bg);color:va
 .trn-title{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.10em;color:#BFC4CA;text-transform:uppercase;padding-left:12px;border-left:1px solid rgba(255,255,255,.15)}
 .trn-spacer{flex:1}
 .trn-btn{background:var(--red);border:1.5px solid var(--red);color:#fff;border-radius:7px;padding:6px 14px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.10em;text-transform:uppercase;cursor:pointer;text-decoration:none}
+.trn-btn-ghost{background:none;border:1.5px solid rgba(255,255,255,.25);color:#fff}
 .wrap{max-width:1400px;margin:0 auto;padding:18px 14px}
 .page-hdr{background:linear-gradient(135deg,var(--navy),#241A3D);border-radius:var(--radius);padding:18px 22px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px}
 .page-hdr h1{font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:20px;letter-spacing:.06em;text-transform:uppercase;color:#fff}
@@ -146,9 +147,25 @@ body{font-family:'Barlow',-apple-system,sans-serif;background:var(--bg);color:va
     <span class="trn-logo">Termac One</span>
     <span class="trn-title">AllPro Dashboard</span>
     <div class="trn-spacer"></div>
+    <button class="trn-btn trn-btn-ghost" onclick="apGoHome()">&larr; Home</button>
     <a class="trn-btn" href="employee-portal.html">Employee Portal</a>
   </div>
 </div>
+<script>
+// 2026-07-13 per Ted: this page had no way back to sales-portal.html at
+// all before this. When embedded inside sales-portal.html's overlay,
+// Home means telling that parent to close the overlay (the iframe stays
+// alive underneath, nothing lost). Opened standalone -- a real separate
+// browser tab, which Ted's OK with for pages other than this one and Bid
+// Pipeline -- Home goes straight to sales-portal.html since that's the
+// actual home base, not termac-os.html.
+function apGoHome() {
+  if (window.parent && window.parent !== window) {
+    try { window.parent.postMessage({ type: 'termac-embed-home' }, '*'); return; } catch (e) {}
+  }
+  window.location.href = 'sales-portal.html';
+}
+</script>
 
 <div class="ap-tabnav">
   <div class="ap-tabnav-inner">
@@ -328,7 +345,7 @@ body{font-family:'Barlow',-apple-system,sans-serif;background:var(--bg);color:va
       <div class="form-row">
         <div class="form-field">
           <label>Project Name</label>
-          <input id="npName" placeholder="e.g. Corner Diner — 36ft hood + suppression">
+          <input id="npName" placeholder="e.g. Corner Diner — 36ft hood + suppression (leave blank to auto-name from account + type)">
         </div>
         <div class="form-field">
           <label>Project Type</label>
@@ -372,12 +389,15 @@ body{font-family:'Barlow',-apple-system,sans-serif;background:var(--bg);color:va
 
 <!-- PROJECT DETAIL MODAL -->
 <div class="modal-ov" id="detailModal" style="display:none">
-  <div class="modal" style="max-width:1040px">
+  <div class="modal" style="max-width:96vw;width:96vw;height:92vh;max-height:92vh;display:flex;flex-direction:column">
     <div class="modal-hdr">
-      <span class="modal-hdr-title" id="detailTitle">Project</span>
-      <button class="modal-close" onclick="closeModal('detailModal')">&times;</button>
+      <input class="modal-hdr-title" id="detailTitle" value="Project" onchange="updateProjectField('project_name', this.value)" style="background:none;border:none;border-bottom:1px solid rgba(255,255,255,.3);padding:2px 0;width:auto;min-width:220px;max-width:50vw" title="Click to rename this project">
+      <div style="display:flex;align-items:center;gap:10px">
+        <button class="btn btn-ghost btn-sm" style="border-color:#C0392B;color:#C0392B" onclick="confirmDeleteProject()">&#128465; Delete Project</button>
+        <button class="modal-close" onclick="closeModal('detailModal')">&times;</button>
+      </div>
     </div>
-    <div class="modal-body">
+    <div class="modal-body" style="flex:1;overflow-y:auto">
       <div class="pj-modal-flex">
       <div class="pj-rail">
         <button class="pj-rail-btn" id="railBtn-calc" onclick="openToolPanel('calc')" title="Calculators">🧮</button>
@@ -1506,12 +1526,20 @@ function createProject() {
   var accountId = document.getElementById('npAccountId').value;
   if (!accountId) { alert('Select an account first.'); return; }
   var now = Date.now();
+  var typeVal = document.getElementById('npType').value;
+  var typedName = document.getElementById('npName').value.trim();
+  var smartDefaultName = typedName;
+  if (!smartDefaultName) {
+    var acct = crmLoad('accounts').filter(function (x) { return x.id === accountId; })[0];
+    var acctName = acct ? (acct.business || acct.name) : null;
+    smartDefaultName = acctName ? (acctName + ' \u2014 ' + (TYPE_LABELS[typeVal] || 'Project')) : 'Untitled Project';
+  }
   var p = {
     id: genId('APR'),
     account_id: accountId,
     opportunity_id: document.getElementById('npOpportunityId').value || null,
-    project_name: document.getElementById('npName').value || 'Untitled Project',
-    project_type: document.getElementById('npType').value,
+    project_name: smartDefaultName,
+    project_type: typeVal,
     facility_type: document.getElementById('npFacility').value,
     build_context: document.getElementById('npContext').value,
     estimated_value: Number(document.getElementById('npValue').value) || 0,
@@ -1804,13 +1832,37 @@ var TAB_DEFS = [
 
 function getProject(id) { return loadProjects().filter(function(p){return p.id===id;})[0]; }
 
+// Available from the modal header, so it's reachable regardless of which
+// tab or stage is showing -- per Ted, "in any phase just in case we need
+// to take something out and redo it again." Uses the shared crmDelete
+// (termac-d1-sync.js) so the deletion actually reaches D1 and every
+// other device via a tombstone, not just this browser's local cache.
+async function confirmDeleteProject() {
+  var p = getProject(currentProjectId);
+  if (!p) return;
+  var name = p.project_name || 'this project';
+  var warning = 'You are about to delete "' + name + '". This cannot be undone. Are you sure you want to proceed?';
+  if (!confirm(warning)) return;
+  if (window.TermacD1Sync && typeof window.TermacD1Sync.crmDelete === 'function') {
+    await window.TermacD1Sync.crmDelete('allpro_projects', currentProjectId);
+  } else {
+    // Fallback only if the shared sync library somehow isn't loaded --
+    // still removes it locally so the user isn't stuck, but won't
+    // propagate to D1 until a real hydrate/delete cycle catches it up.
+    saveProjects(loadProjects().filter(function (x) { return x.id !== currentProjectId; }));
+  }
+  closeModal('detailModal');
+  currentProjectId = null;
+  renderAll();
+}
+
 function openDetail(id) {
   currentProjectId = id;
   currentTab = 'overview';
   var p = getProject(id);
   if (!p) return;
 
-  document.getElementById('detailTitle').textContent = p.project_name;
+  document.getElementById('detailTitle').value = p.project_name;
 
   var hideStages = p.project_type === 'custom_fabrication';
   var visibleTabs = TAB_DEFS.filter(function(t){

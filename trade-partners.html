@@ -106,7 +106,7 @@ body{font-family:'Barlow',-apple-system,sans-serif;background:var(--bg);color:va
   <div class="ap-tabnav-inner">
     <button class="ap-tab active" id="tpTab-directory" onclick="tpNav('directory')">Directory</button>
     <button class="ap-tab" id="tpTab-referrals" onclick="tpNav('referrals')">Referrals</button>
-    <button class="ap-tab" id="tpTab-bids" onclick="tpNav('bids')">All Bids</button>
+    <button class="ap-tab" id="tpTab-bids" onclick="tpNav('bids')">GC Bid Tracker</button>
   </div>
 </div>
 
@@ -148,18 +148,20 @@ body{font-family:'Barlow',-apple-system,sans-serif;background:var(--bg);color:va
 </div>
 </div>
 
-<!-- ═══════════════════ ALL BIDS (unified log) ═══════════════════ -->
+<!-- ═══════════════════ GC BID TRACKER ═══════════════════ -->
 <div id="tpView-bids" style="display:none">
 <div class="wrap">
   <div class="page-hdr">
     <div>
-      <h1>All Bids</h1>
-      <p>Every bid, company-wide — direct/harvested public bids from the Bid Pipeline and everything submitted through a GC relationship, in one running log. Oldest first so nothing stalls unnoticed; won and lost bids drop out of the Active view automatically but stay on record.</p>
+      <h1>General Contractor Bid Tracker</h1>
+      <p>Every bid submitted through a GC relationship — win/loss and value, so you can see which GCs are actually worth chasing. Every bid logged here also flows into the full Bid Pipeline (AI drafting, documents, sources, watchlist all live there — this stays the one system, not a second copy of it).</p>
     </div>
-    <button class="btn btn-gold" onclick="openBidModal()">+ Log GC Bid</button>
+    <div style="display:flex;gap:8px">
+      <a class="btn btn-ghost" href="termac-os.html?view=bids" target="_blank">Open Full Bid Pipeline &rarr;</a>
+      <button class="btn btn-gold" onclick="openBidModal()">+ Log GC Bid</button>
+    </div>
   </div>
   <div class="kpi-row" id="tpBidKpiRow"></div>
-  <div class="filter-row" id="tpBidStatusFilters"></div>
   <div id="tpBidsList"></div>
 </div>
 </div>
@@ -726,49 +728,20 @@ function renderReferrals(){
 }
 function setRefDirFilter(v){ currentRefDirFilter = v; renderReferrals(); }
 
-/* ═══════════════════ ALL BIDS (unified log) ═══════════════════ */
-// Combines two genuinely different record types into one visible log,
-// without merging their underlying tables:
-//   trade_partner_bids -- a bid submitted through a GC relationship
-//     (this page's original data, unchanged)
-//   bids -- direct/harvested public bids from the Bid Pipeline
-//     (termac-os.html) -- as of 2026-07-13 these actually reach D1 at
-//     all (see the FIELD_MAP fix note in termac-d1-sync.js); before that
-//     fix this table was always empty here regardless of how much work
-//     had gone into the Pipeline, since nothing had ever really saved.
-// Division tags on the harvested side are derived at render time by
-// keyword match against title/scope -- directional, not stored, so it's
-// always consistent with whatever the actual bid text says rather than
-// needing a separate classification step.
-var BID_DIVISION_KEYWORDS = [
-  { div: 'AllPro', words: ['stainless', 'fabrication', 'commercial kitchen hood', 'kitchen hood install', 'hood design'] },
-  { div: 'UniPro', words: ['fire extinguisher', 'fire suppression', 'hood suppression', 'ansul', 'nfpa 10', 'nfpa 96'] },
-  { div: 'GTO', words: ['grease trap', 'grease interceptor', 'fog service'] },
-  { div: 'Filter Man', words: ['hood filter', 'kitchen exhaust filter'] },
-  { div: 'Termac', words: ['dish machine', 'dishwasher', 'warewasher', 'kitchen chemical'] },
-];
-function bidGuessDivisions(text) {
-  var lower = (text || '').toLowerCase();
-  var hits = BID_DIVISION_KEYWORDS.filter(function (d) {
-    return d.words.some(function (w) { return lower.indexOf(w) !== -1; });
-  }).map(function (d) { return d.div; });
-  return hits.length ? hits : ['Unclassified'];
-}
-function bidNormalizeStatus(raw) {
-  var s = (raw || '').toLowerCase();
-  if (s === 'won') return 'won';
-  if (s === 'lost') return 'lost';
-  return 'active'; // open/draft/review/submitted/pending all count as active
-}
-function bidAgeDays(dateStr, fallbackTs) {
-  var t = dateStr ? Date.parse(dateStr) : fallbackTs;
-  if (!t || isNaN(t)) return null;
-  return Math.max(0, Math.floor((Date.now() - t) / 86400000));
-}
-
-var currentBidFilter = 'active';
-function setBidFilter(f) { currentBidFilter = f; renderBids(); }
-
+/* ═══════════════════ GC BID TRACKER ═══════════════════ */
+// Per Ted 2026-07-13: the Bid Pipeline in termac-os.html (Ingest RFP, AI
+// drafting, Document Vault, Sources, Watchlist, real Won/Lost stats) is
+// the one living system -- this page should not re-implement a second
+// copy of it. What stays genuinely unique to this page is GC-relationship
+// context (which partner, referral value) that the generic Pipeline has
+// no way to know. So: this tracker keeps its own simple form for logging
+// a bid against a specific GC partner, but every save also writes a
+// mirrored record straight into the real `bids` table (tagged
+// source: "Via GC: <partner>", division: AllPro) so the living Pipeline
+// board and its real Won/Lost stats show the complete picture -- GC bids
+// included -- without this page trying to render its own copy of that
+// board. linked_bid_id on the trade_partner_bids record ties the two
+// together so a later Won/Lost update here updates both.
 function openBidModal(){
   populatePartnerSelect('bfPartnerId', 'gc');
   document.getElementById('bfProjectName').value = '';
@@ -783,133 +756,117 @@ function openBidModal(){
 function saveBid(){
   var partnerId = document.getElementById('bfPartnerId').value;
   if (!partnerId) { alert('Select a general contractor.'); return; }
+  var partners = loadPartners();
+  var partner = partners.find(function (p) { return p.id === partnerId; });
   var now = nowTs();
+  var projectName = document.getElementById('bfProjectName').value;
+  var amount = parseFloat(document.getElementById('bfBidAmount').value) || null;
+  var submittedDate = document.getElementById('bfSubmittedDate').value;
+  var result = document.getElementById('bfResult').value;
+
+  var linkedBidId = genId('BID');
   var record = {
     id: genId('TPB'),
     partner_id: partnerId,
-    project_name: document.getElementById('bfProjectName').value,
-    bid_amount: parseFloat(document.getElementById('bfBidAmount').value) || null,
-    submitted_date: document.getElementById('bfSubmittedDate').value,
-    result: document.getElementById('bfResult').value,
+    project_name: projectName,
+    bid_amount: amount,
+    submitted_date: submittedDate,
+    result: result,
     result_date: document.getElementById('bfResultDate').value,
     notes: document.getElementById('bfNotes').value,
+    linked_bid_id: linkedBidId,
     created_at: now, updated_at: now
   };
   var bids = loadBids();
   bids.push(record);
   saveBids(bids);
+
+  // Mirror into the real Bid Pipeline so it has the complete picture --
+  // this is a write, not a second display of Pipeline data.
+  var pipelineRecord = {
+    id: linkedBidId,
+    title: projectName || '(GC bid, no project name given)',
+    agency: partner ? partner.company_name : 'Unknown GC',
+    source: 'Via GC: ' + (partner ? partner.company_name : 'Unknown GC'),
+    division: 'AllPro',
+    status: result === 'pending' ? 'submitted' : result,
+    estValue: amount || 0,
+    submittedDate: submittedDate,
+    outcomeDate: result !== 'pending' ? (document.getElementById('bfResultDate').value || null) : null,
+    createdAt: now,
+  };
+  var pipelineBids = crmLoad('bids');
+  pipelineBids.push(pipelineRecord);
+  crmSave('bids', pipelineBids);
+  if (typeof d1Push === 'function') d1Push('bids', pipelineRecord);
+
   closeModal('bidModal');
   renderBids();
 }
 
-function tpBidMarkResult(sourceTable, id, result) {
-  if (sourceTable === 'trade_partner_bids') {
-    var bids = loadBids();
-    var b = bids.find(function (x) { return x.id === id; });
-    if (!b) return;
-    b.result = result;
-    b.result_date = new Date().toISOString().slice(0, 10);
-    b.updated_at = nowTs();
-    saveBids(bids);
-  } else {
+function tpBidMarkResult(id, result) {
+  var bids = loadBids();
+  var b = bids.find(function (x) { return x.id === id; });
+  if (!b) return;
+  b.result = result;
+  b.result_date = new Date().toISOString().slice(0, 10);
+  b.updated_at = nowTs();
+  saveBids(bids);
+
+  // Keep the mirrored Pipeline record in sync so its Won/Lost stats stay
+  // accurate without this page needing to render them itself.
+  if (b.linked_bid_id) {
     var pipelineBids = crmLoad('bids');
-    var pb = pipelineBids.find(function (x) { return x.id === id; });
-    if (!pb) return;
-    pb.status = result;
-    pb.outcomeDate = new Date().toISOString().slice(0, 10);
-    pb.updated_at = nowTs();
-    crmSave('bids', pipelineBids);
-    if (typeof d1Push === 'function') d1Push('bids', pb);
+    var pb = pipelineBids.find(function (x) { return x.id === b.linked_bid_id; });
+    if (pb) {
+      pb.status = result;
+      pb.outcomeDate = b.result_date;
+      pb.updated_at = nowTs();
+      crmSave('bids', pipelineBids);
+      if (typeof d1Push === 'function') d1Push('bids', pb);
+    }
   }
   renderBids();
 }
 
 function renderBids(){
-  var tpBids = loadBids(); // GC-relationship bids
-  var pipelineBids = crmLoad('bids'); // direct/harvested bids from termac-os.html
+  var bids = loadBids();
   var partners = loadPartners();
   var partnerMap = {};
   partners.forEach(function(p){ partnerMap[p.id] = p; });
 
-  // Normalize both sources into one common row shape.
-  var combined = [];
-  tpBids.forEach(function (b) {
-    var p = partnerMap[b.partner_id];
-    combined.push({
-      sourceTable: 'trade_partner_bids', id: b.id,
-      title: b.project_name || '(untitled project)',
-      sourceLabel: 'Via GC: ' + (p ? p.company_name : 'Unknown GC'),
-      divisions: ['AllPro'], // GC-relationship bids are all fabrication/install work
-      amount: b.bid_amount || 0,
-      status: bidNormalizeStatus(b.result),
-      dateLogged: b.submitted_date || null,
-      createdAt: b.created_at,
-    });
-  });
-  pipelineBids.forEach(function (b) {
-    combined.push({
-      sourceTable: 'bids', id: b.id,
-      title: b.title || b.description || '(untitled bid)',
-      sourceLabel: (b.source || 'Bid Pipeline') + (b.agency ? ' — ' + b.agency : ''),
-      divisions: bidGuessDivisions((b.title || '') + ' ' + (b.scopeRaw || '')),
-      amount: b.estValue || b.amount || 0,
-      status: bidNormalizeStatus(b.status),
-      dateLogged: b.submittedDate || (b.createdAt ? new Date(b.createdAt).toISOString().slice(0,10) : null),
-      createdAt: b.createdAt || b.scrapedAt,
-    });
-  });
-
-  var activeCount = combined.filter(function (b) { return b.status === 'active'; }).length;
-  var wonList = combined.filter(function (b) { return b.status === 'won'; });
-  var lostCount = combined.filter(function (b) { return b.status === 'lost'; }).length;
-  var wonValue = wonList.reduce(function (s, b) { return s + (b.amount || 0); }, 0);
-
+  var won = bids.filter(function(b){ return b.result === 'won'; });
+  var lost = bids.filter(function(b){ return b.result === 'lost'; });
+  var wonValue = won.reduce(function(s,b){ return s + (b.bid_amount||0); }, 0);
   document.getElementById('tpBidKpiRow').innerHTML =
-    kpi(combined.length, 'Total Bids') + kpi(activeCount, 'Active') +
-    kpi(wonList.length, 'Won') + kpi(lostCount, 'Lost') +
-    kpi('$' + wonValue.toLocaleString(), 'Won Value');
+    kpi(bids.length, 'Total Bids') + kpi(won.length, 'Won') + kpi(lost.length, 'Lost') +
+    kpi(bids.filter(function(b){return b.result==='pending';}).length, 'Pending') +
+    kpi('$'+wonValue.toLocaleString(), 'Won Value');
 
-  var filters = [['active', 'Active'], ['won', 'Won'], ['lost', 'Lost'], ['all', 'All']];
-  document.getElementById('tpBidStatusFilters').innerHTML = filters.map(function (f) {
-    return '<span class="filter-chip' + (currentBidFilter === f[0] ? ' active' : '') + '" onclick="setBidFilter(\'' + f[0] + '\')">' + f[1] + '</span>';
-  }).join('');
-
-  var filtered = currentBidFilter === 'all' ? combined : combined.filter(function (b) { return b.status === currentBidFilter; });
-  // Oldest first within whichever bucket is showing, so the stalest
-  // active bids surface at the top instead of getting buried under
-  // whatever was logged most recently.
-  filtered.sort(function (a, b) {
-    var ta = a.createdAt || (a.dateLogged ? Date.parse(a.dateLogged) : 0);
-    var tb = b.createdAt || (b.dateLogged ? Date.parse(b.dateLogged) : 0);
-    return ta - tb;
-  });
+  var filtered = bids.slice();
+  filtered.sort(function(a,b){ return (a.submitted_date||'').localeCompare(b.submitted_date||''); }); // oldest first
 
   var el = document.getElementById('tpBidsList');
   if (!filtered.length) {
-    el.innerHTML = '<div class="empty-state">No bids in this view yet.</div>';
+    el.innerHTML = '<div class="empty-state">No GC bids logged yet.</div>';
     return;
   }
-  var rows = filtered.map(function (b) {
-    var statusColor = b.status === 'won' ? 'var(--green)' : (b.status === 'lost' ? 'var(--red)' : 'var(--soft)');
-    var age = bidAgeDays(b.dateLogged, b.createdAt);
-    var divChips = b.divisions.map(function (d) {
-      return '<span class="status-badge" style="background:#EEF0F2;color:#374151;margin-right:3px">' + escH(d) + '</span>';
-    }).join('');
-    var actions = b.status === 'active'
-      ? '<button class="btn btn-ghost btn-sm" onclick="tpBidMarkResult(\'' + b.sourceTable + '\',\'' + b.id + '\',\'won\')">Won</button> ' +
-        '<button class="btn btn-ghost btn-sm" onclick="tpBidMarkResult(\'' + b.sourceTable + '\',\'' + b.id + '\',\'lost\')">Lost</button>'
+  var rows = filtered.map(function(b){
+    var p = partnerMap[b.partner_id];
+    var resultColor = b.result === 'won' ? 'var(--green)' : (b.result === 'lost' ? 'var(--red)' : 'var(--soft)');
+    var actions = b.result === 'pending'
+      ? '<button class="btn btn-ghost btn-sm" onclick="tpBidMarkResult(\'' + b.id + '\',\'won\')">Won</button> ' +
+        '<button class="btn btn-ghost btn-sm" onclick="tpBidMarkResult(\'' + b.id + '\',\'lost\')">Lost</button>'
       : '';
-    return '<tr>' +
-      '<td>' + escH(b.dateLogged || '') + (age !== null ? '<div style="font-size:10px;color:var(--soft)">' + age + 'd old</div>' : '') + '</td>' +
-      '<td>' + escH(b.title) + '</td>' +
-      '<td>' + divChips + '</td>' +
-      '<td style="font-size:11px;color:var(--soft)">' + escH(b.sourceLabel) + '</td>' +
-      '<td>' + (b.amount ? '$' + Number(b.amount).toLocaleString() : '') + '</td>' +
-      '<td><span class="status-badge" style="background:' + statusColor + '22;color:' + statusColor + '">' + escH(b.status) + '</span></td>' +
-      '<td>' + actions + '</td>' +
+    return '<tr><td>'+escH(b.submitted_date||'')+'</td>' +
+      '<td>'+escH(p ? p.company_name : 'Unknown GC')+'</td>' +
+      '<td>'+escH(b.project_name||'')+'</td>' +
+      '<td>'+(b.bid_amount ? '$'+Number(b.bid_amount).toLocaleString() : '')+'</td>' +
+      '<td><span class="status-badge" style="background:'+resultColor+'22;color:'+resultColor+'">'+escH(b.result)+'</span></td>' +
+      '<td>'+actions+'</td>' +
       '</tr>';
   }).join('');
-  el.innerHTML = '<table class="ap-list-table"><thead><tr><th>Logged</th><th>Bid / Project</th><th>Division</th><th>Source</th><th>Value</th><th>Status</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>';
+  el.innerHTML = '<table class="ap-list-table"><thead><tr><th>Submitted</th><th>General Contractor</th><th>Project</th><th>Bid Amount</th><th>Result</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>';
 }
 
 document.addEventListener('DOMContentLoaded', function(){

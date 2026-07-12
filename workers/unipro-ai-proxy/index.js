@@ -81,6 +81,12 @@ const ALLOWED_TABLES = new Set([
   // instead of a fabricated one. bid_watchlist tracks known recurring public
   // bids (e.g. SEPTA fire extinguisher maintenance) between live-scraper hits.
   'growth_snapshots','bid_watchlist',
+  // Route Debriefs, added 2026-07-13 - same class of bug: tech end-of-
+  // shift debriefs were 100% localStorage-only on whichever device
+  // submitted them (route-debrief.html), capped at 60 and truncated
+  // silently. A GM on a different device could never see any of it.
+  // See the per-division routing fix on gm-dashboard.html the same day.
+  'debriefs',
 ]);
 
 const TABLE_PREFIX = {
@@ -110,6 +116,7 @@ const TABLE_PREFIX = {
   customer_orders:'ORD',
   reorder_requests:'RO',
   warehouse_alerts:'WHA',
+  debriefs:'DBR',
 };
 
 function corsHeaders(origin) {
