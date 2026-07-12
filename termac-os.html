@@ -7905,7 +7905,13 @@ let svState = {
   currentSurveyIdx: 0,      // index into surveyOrder during survey steps
   currentStep: 0,           // overall step index
   surveyData: {},           // collected field data keyed by service
-  _objContext: ''           // current context for objection handler
+  _objContext: '',          // current context for objection handler
+  // 2026-07-12 (Ted): true only when this survey was launched from the
+  // rep-facing Start Pitch flow (termac-pitch-tool.html -> ?launch=survey).
+  // Drives svClose()'s exit path -- reps go back to sales-portal.html,
+  // Manager Portal usage (renderCard 'Survey'/'Resume Survey' buttons)
+  // is untouched and still bottoms out at the CRM view as before.
+  repFlow: false
 };
 
 // ── ACCOUNT TYPE CONFIG ────────────────────────────────────────────────────
@@ -8387,6 +8393,15 @@ function svClose(){
   // Force it closed so the survey always bottoms out at the base CRM view.
   const mgrOv = document.getElementById('ovMgr');
   if (mgrOv) mgrOv.classList.remove('open');
+  // 2026-07-12 (Ted): reps land here via the Start Pitch flow, not the
+  // internal back-office CRM/Manager tooling -- send them back to their
+  // own portal instead of bottoming out on the internal dashboard. Only
+  // fires when svState.repFlow was set (i.e. this survey was launched
+  // from termac-pitch-tool.html), so Manager Portal usage is unaffected.
+  if (typeof svState !== 'undefined' && svState && svState.repFlow) {
+    window.location.href = 'sales-portal.html';
+    return;
+  }
   if (typeof renderCRMView === 'function') renderCRMView();
 }
 
@@ -25575,6 +25590,21 @@ document.addEventListener('DOMContentLoaded', () => {
             if (_ov) _ov.classList.add('open');
           }
         } catch(se) { console.warn('survey launch error:', se); }
+        // 2026-07-12 (Ted): mark this survey session as rep-originated so
+        // svClose() (Close button, Back to CRM, decline logging, onboarding
+        // save -- every exit point) sends the rep back to sales-portal.html
+        // instead of the internal back-office CRM view. Manager Portal
+        // survey launches (renderCard's Survey/Resume Survey buttons)
+        // never set this flag, so that path is completely unchanged.
+        var _svOverlayOpen = document.getElementById('svOverlay') &&
+          document.getElementById('svOverlay').classList.contains('open');
+        if (typeof svState !== 'undefined') svState.repFlow = true;
+        if (!_svOverlayOpen) {
+          // Survey never actually opened (record not found, etc.) --
+          // don't strand the rep on the internal dashboard either.
+          window.location.href = 'sales-portal.html';
+          return;
+        }
         _showPage();
       }, 500);
     } else if (openOnLoad === 'catalog') {
