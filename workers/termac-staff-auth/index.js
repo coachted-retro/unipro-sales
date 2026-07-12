@@ -99,9 +99,12 @@ async function jsonResponse(body, status) {
   });
 }
 
+// Returns true only if termac-notify confirms the email actually sent
+// (it checks the real Resend API response). Account creation never fails
+// just because the email did -- callers decide what to tell the user.
 async function sendEmail(env, recipientName, recipientEmail, subjectNote, notes) {
   try {
-    await env.NOTIFY_SERVICE.fetch('https://termac-notify.termac-one.workers.dev/notify', {
+    const res = await env.NOTIFY_SERVICE.fetch('https://termac-notify.termac-one.workers.dev/notify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -110,7 +113,12 @@ async function sendEmail(env, recipientName, recipientEmail, subjectNote, notes)
         source: subjectNote, loggedBy: 'termac-staff-auth',
       }),
     });
-  } catch (e) { /* account creation should not fail just because the email did */ }
+    if (!res.ok) return false;
+    const data = await res.json();
+    return data.emailSent === true;
+  } catch (e) {
+    return false;
+  }
 }
 
 async function handleProvision(request, env) {
@@ -133,11 +141,11 @@ async function handleProvision(request, env) {
     'INSERT INTO staff_auth (id, email, name, role, portals, password_hash, salt, must_reset, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)'
   ).bind(id, email, name, role, JSON.stringify(portals), hash, salt, 'active', Date.now(), Date.now()).run();
 
-  await sendEmail(env, name, email, 'Termac One Account Created',
+  const emailSent = await sendEmail(env, name, email, 'Termac One Account Created',
     'Your Termac One login is ready. Email: ' + email + '. Temporary password: ' + tempPassword +
     '. You will be asked to set your own password the first time you log in.');
 
-  return jsonResponse({ ok: true, id, tempPassword });
+  return jsonResponse({ ok: true, id, tempPassword, emailSent });
 }
 
 async function handleLogin(request, env) {
