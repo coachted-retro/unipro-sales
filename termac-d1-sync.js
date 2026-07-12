@@ -198,6 +198,19 @@
       jobId: 'job_id', confirmedBy: 'confirmed_by', confirmedAt: 'confirmed_at',
       warehouseNotes: 'warehouse_notes', itemCount: 'item_count',
     },
+    // 2026-07-13 FIX: matching the same fix made the same day in
+    // termac-os.html's own copy of this map -- bids had no entry here
+    // either, meaning every camelCase Bid Pipeline field was silently
+    // dropped by the Worker's column-name filter before ever reaching
+    // D1. See that file's copy of this comment for the full explanation.
+    bids: {
+      scopeRaw: 'scope_raw', estValue: 'amount', dueDate: 'due_date',
+      refNo: 'ref_no', aiDraft: 'ai_draft', aiDraftedAt: 'ai_drafted_at',
+      aiScope: 'ai_scope', crossSellDetected: 'cross_sell_detected',
+      docChecklist: 'doc_checklist', priceAnalysis: 'price_analysis',
+      outcomeDate: 'outcome_date', scrapedAt: 'scraped_at',
+      submittedDate: 'submitted_date',
+    },
   };
 
   var VALID = {
@@ -264,6 +277,11 @@
     appointments: ['id', 'account_id', 'record_id', 'tab', 'title', 'business',
       'date', 'time', 'type', 'notes', 'location', 'is_flex_stop', 'rep',
       'created_by', 'division', 'status', 'guests', 'created_at', 'updated_at'],
+    bids: ['id', 'opportunity_id', 'account_id', 'division', 'bid_number', 'amount',
+      'status', 'submitted_date', 'expiration_date', 'title', 'agency', 'source',
+      'url', 'scope_raw', 'due_date', 'ref_no', 'ai_draft', 'ai_drafted_at',
+      'ai_scope', 'cross_sell_detected', 'doc_checklist', 'price_analysis',
+      'outcome_date', 'scraped_at', 'created_at', 'updated_at'],
     notifications: ['id', 'recipient', 'type', 'title', 'message', 'read_flag',
       'related_id', 'created_at', 'updated_at'],
     // 2026-07-10: previously had no explicit entry here at all, which
