@@ -50,6 +50,11 @@ const ALLOWED_TABLES = new Set([
   // Division GM Dashboards, added 2026-07-12 - manual monthly P&L
   // actuals entry for divisions without a live NetSuite/Adagio feed yet.
   'division_actuals',
+  // Trade Partner Network, added 2026-07-12 - cross-division database of
+  // subcontractors, fire-protection vendors who sub work to Termac, and
+  // general contractors used for bid work. Shared by every division, not
+  // scoped to AllPro.
+  'trade_partners','trade_partner_referrals','trade_partner_bids',
 ]);
 
 const TABLE_PREFIX = {
@@ -69,6 +74,9 @@ const TABLE_PREFIX = {
   daily_digests:'DIG',
   rep_targets:'TGT',
   division_actuals:'DVA',
+  trade_partners:'TRP',
+  trade_partner_referrals:'REF',
+  trade_partner_bids:'TPB',
 };
 
 function corsHeaders(origin) {
