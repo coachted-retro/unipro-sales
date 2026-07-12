@@ -39,7 +39,7 @@
     'transfer_requests', 'scheduler_queue', 'allpro_spiffs',
     'trade_partners', 'trade_partner_referrals', 'trade_partner_bids',
     'reference_library', 'allpro_rate_tables', 'notifications',
-    'accounts_payable', 'expense_reports'];
+    'accounts_payable', 'expense_reports', 'customer_orders'];
 
   async function d1Fetch(method, path, body) {
     try {
@@ -156,6 +156,13 @@
       submittedAt: 'submitted_at', submittedDate: 'submitted_date',
       autoCloseAt: 'auto_close_at',
     },
+    customer_orders: {
+      accountId: 'account_id', accountName: 'account_name', siteNotes: 'site_notes',
+      visitType: 'visit_type', inventorySnapshot: 'inventory_snapshot',
+      paymentMethod: 'payment_method', paymentRef: 'payment_ref',
+      customerSignature: 'customer_signature', createdTs: 'created_ts',
+      scheduledDelivery: 'scheduled_delivery',
+    },
   };
 
   var VALID = {
@@ -165,6 +172,11 @@
     expense_reports: ['id', 'employee', 'division', 'title', 'period_from',
       'period_to', 'notes', 'line_items', 'total', 'receipts', 'status',
       'submitted_at', 'submitted_date', 'history', 'auto_close_at',
+      'created_at', 'updated_at'],
+    customer_orders: ['id', 'account_id', 'account_name', 'address',
+      'site_notes', 'rep', 'visit_type', 'type', 'lines', 'total',
+      'inventory_snapshot', 'payment_method', 'payment_ref',
+      'customer_signature', 'status', 'created_ts', 'scheduled_delivery',
       'created_at', 'updated_at'],
     leads: ['id', 'business', 'address', 'city', 'state', 'zip', 'phone', 'email',
       'contact_name', 'contact_title', 'pricing_tier', 'facility_type', 'division',

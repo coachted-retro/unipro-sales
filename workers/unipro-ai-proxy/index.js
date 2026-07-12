@@ -65,6 +65,9 @@ const ALLOWED_TABLES = new Set([
   // Expense Reports, added 2026-07-13 - same class of bug. See
   // expense-reports-schema.sql.
   'expense_reports',
+  // Customer Orders, added 2026-07-13 - same class of bug. See
+  // customer-orders-schema.sql.
+  'customer_orders',
   // Growth & Opportunity Intelligence panel + Bid Pipeline Watchlist tab,
   // added 2026-07-12. growth_snapshots is written on a schedule (piggybacks
   // the existing daily digest cron) to build a real forward-looking trend
@@ -97,6 +100,7 @@ const TABLE_PREFIX = {
   allpro_rate_tables:'ART',
   accounts_payable:'AP',
   expense_reports:'EXP',
+  customer_orders:'ORD',
 };
 
 function corsHeaders(origin) {

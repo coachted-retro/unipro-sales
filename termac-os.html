@@ -1879,7 +1879,25 @@ crmHydrateBackup();
 // Tables covered: accounts, leads, contacts, opportunities, bids, jobs, deficiencies, collections
 const D1_API_URL = 'https://unipro-ai-proxy.termac-one.workers.dev';
 const D1_API_SECRET = 'termac2026';
-const D1_SYNC_TABLES = ['accounts','leads','contacts','opportunities','bids','jobs','deficiencies','collections','appointments'];
+// 2026-07-13 FIX: this local list only had the original 9 tables from
+// when termac-os.html was first split off from the shared sync file
+// (see the comment on d1ReverseMapLocal below for why this duplicate
+// exists at all). Every table added to the shared termac-d1-sync.js
+// list since then - AllPro Project Planner tables, Trade Partner
+// Network, accounts_payable, expense_reports, customer_orders, and
+// others - was silently never hydrated on this specific page, even
+// after the underlying save/read code elsewhere in this file was
+// fixed to use crmLoad/crmSave, because those calls check membership
+// in THIS local array before pushing or pulling anything from D1 at
+// all. Brought current with the full shared list.
+const D1_SYNC_TABLES = ['accounts','leads','contacts','opportunities','bids','jobs',
+  'deficiencies','collections','appointments','dms_coldcall',
+  'allpro_projects','allpro_cost_lines','allpro_design_projects',
+  'broadcasts','dispatch_msgs','wh_requisitions','wh_ready_handoffs','parts_requests',
+  'transfer_requests','scheduler_queue','allpro_spiffs',
+  'trade_partners','trade_partner_referrals','trade_partner_bids',
+  'reference_library','allpro_rate_tables','notifications',
+  'accounts_payable','expense_reports','customer_orders'];
 
 async function d1Fetch(method, path, body) {
   try {
@@ -2041,6 +2059,26 @@ function d1ReverseMapLocal(table, record) {
   // and isn't reachable from here, so this mirrors the same mappings
   // independently rather than reaching across scope.
   const REVERSE_FIELD_MAP = {
+    // 2026-07-13: matching the FIELD_MAP entries added to the shared
+    // termac-d1-sync.js for these same three tables, so hydration on
+    // this page produces the same camelCase field names the rest of
+    // the platform already expects on these records.
+    accounts_payable: {
+      dueDate: 'due_date', invoiceNum: 'invoice_num', loggedAt: 'logged_at',
+      paidAt: 'paid_at',
+    },
+    expense_reports: {
+      periodFrom: 'period_from', periodTo: 'period_to', lineItems: 'line_items',
+      submittedAt: 'submitted_at', submittedDate: 'submitted_date',
+      autoCloseAt: 'auto_close_at',
+    },
+    customer_orders: {
+      accountId: 'account_id', accountName: 'account_name', siteNotes: 'site_notes',
+      visitType: 'visit_type', inventorySnapshot: 'inventory_snapshot',
+      paymentMethod: 'payment_method', paymentRef: 'payment_ref',
+      customerSignature: 'customer_signature', createdTs: 'created_ts',
+      scheduledDelivery: 'scheduled_delivery',
+    },
     leads: {
       name: 'contact_name', score: 'ai_score',
       status: 'lifecycle_stage', company: 'division', assignedRep: 'assigned_rep',
@@ -16067,8 +16105,11 @@ function openOrdersQueue() {
 }
 function closeOrdersQueue() { var m = document.getElementById('ordersQueueModal'); if (m) m.style.display = 'none'; }
 
-function ordersQueueLoad() { try { return JSON.parse(localStorage.getItem('termac_orders')||'[]'); } catch(e) { return []; } }
-function ordersQueueSave(o) { localStorage.setItem('termac_orders', JSON.stringify(o)); }
+// 2026-07-13 FIX: was raw localStorage with zero D1 sync - see the
+// matching fix in sales-portal.html for the full story. Now routes
+// through the real D1-synced customer_orders table.
+function ordersQueueLoad() { return crmLoad('customer_orders'); }
+function ordersQueueSave(o) { crmSave('customer_orders', o); }
 
 function updateOrdersQueueBadge() {
   var pending = ordersQueueLoad().filter(function(o){ return o.status === 'Pending — Warehouse Pick'; }).length;
@@ -34350,7 +34391,9 @@ function visitSave(placeOrder) {
     });
     if (orderLines.length) {
       // Create order record for warehouse pick queue
-      const orders = JSON.parse(localStorage.getItem('termac_orders') || '[]');
+      // 2026-07-13 FIX: was raw localStorage - see the customer_orders
+      // fix elsewhere in this file and in sales-portal.html.
+      const orders = crmLoad('customer_orders');
       orders.unshift({
         id: 'ORD' + String(now).slice(-6),
         accountId, accountName: acct.name || acct.business,
@@ -34360,7 +34403,7 @@ function visitSave(placeOrder) {
         status: 'Pending — Warehouse Pick',
         createdTs: now, scheduledDelivery: null
       });
-      localStorage.setItem('termac_orders', JSON.stringify(orders));
+      crmSave('customer_orders', orders);
     }
     crmSave('accounts', accounts);
   }

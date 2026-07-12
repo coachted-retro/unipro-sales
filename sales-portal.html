@@ -1998,7 +1998,7 @@ function spRenderWeeksWins() {
   const repName = _spRep.name;
   const weekStart = new Date(); weekStart.setDate(weekStart.getDate() - weekStart.getDay()); weekStart.setHours(0,0,0,0);
   const accts = crmLoad('accounts').filter(a => (a.ownedBy||a.assignedRep||'') === repName && a.acceptedAt >= weekStart.getTime());
-  const orders = (function(){ try { return JSON.parse(localStorage.getItem('termac_orders')||'[]'); } catch(e){ return []; } })()
+  const orders = (function(){ try { return crmLoad('customer_orders'); } catch(e){ return []; } })()
     .filter(o => o.rep === repName && o.createdTs >= weekStart.getTime());
   const dealsClosed = accts.length;
   const revenueThisWeek = accts.reduce((s,a) => s + (a.annualValue||0), 0) + orders.reduce((s,o) => s + (o.total||0), 0);
@@ -8111,7 +8111,7 @@ function spLoadIntelPanel(id, tab) {
 
   // ── CUSTOMER HISTORY — a summary, not a duplicate of the full log below
   // the card. Lifetime orders, revenue, and tenure at a glance.
-  const allOrders = (function(){ try { return JSON.parse(localStorage.getItem('termac_orders')||'[]').filter(o => o.accountId === id); } catch(e){ return []; } })();
+  const allOrders = (function(){ try { return crmLoad('customer_orders').filter(o => o.accountId === id); } catch(e){ return []; } })();
   const lifetimeValue = allOrders.reduce((s,o) => s + (o.total||0), 0);
   const tenureDays = r.created ? Math.round((Date.now() - r.created) / 86400000) : null;
   const tenureStr = tenureDays !== null ? (tenureDays > 365 ? Math.floor(tenureDays/365) + 'y ' + Math.floor((tenureDays%365)/30) + 'mo' : Math.floor(tenureDays/30) + ' months') : '—';
@@ -9081,7 +9081,7 @@ function svLoadPrevOrders(acctId) {
   const listEl = document.getElementById('svPrevOrdersList');
   if (!el || !listEl || !acctId) return;
   try {
-    const orders = JSON.parse(localStorage.getItem('termac_orders')||'[]').filter(o=>o.accountId===acctId).slice(0,3);
+    const orders = crmLoad('customer_orders').filter(o=>o.accountId===acctId).slice(0,3);
     if (!orders.length) { el.style.display='none'; return; }
     el.style.display = 'block';
     listEl.innerHTML = orders.map(o => {
@@ -9256,7 +9256,7 @@ function svGetOrderHistoryMap(acctId) {
   const map = {};
   if (!acctId) return map;
   try {
-    const orders = JSON.parse(localStorage.getItem('termac_orders')||'[]').filter(o => o.accountId === acctId);
+    const orders = crmLoad('customer_orders').filter(o => o.accountId === acctId);
     orders.forEach(o => (o.lines||[]).forEach(l => {
       if (!l.productId) return;
       const e = map[l.productId] || { count: 0, lastTs: 0 };
@@ -9277,7 +9277,7 @@ function svGetLastInventoryMap(acctId) {
   const map = {};
   if (!acctId) return map;
   try {
-    const orders = JSON.parse(localStorage.getItem('termac_orders')||'[]')
+    const orders = crmLoad('customer_orders')
       .filter(o => o.accountId === acctId && Array.isArray(o.inventorySnapshot) && o.inventorySnapshot.length)
       .sort((a,b) => (b.createdTs||0) - (a.createdTs||0));
     if (!orders.length) return map;
@@ -9299,7 +9299,7 @@ function svGetAreaRecommendations(acctId, limit) {
     const accounts = svGetAccounts();
     const acct = accounts.find(a => a.id === acctId);
     if (!acct) return [];
-    const orders = JSON.parse(localStorage.getItem('termac_orders')||'[]');
+    const orders = crmLoad('customer_orders');
     const ownHistory = svGetOrderHistoryMap(acctId);
     const acctCity = (acct.city || '').toLowerCase();
 
@@ -9754,8 +9754,16 @@ function svSubmitVisit() {
     (typeof _currentUser !== 'undefined' ? _currentUser?.name : '') || 'Rep';
 
   // Create order in warehouse queue
+  // 2026-07-13 FIX: was raw localStorage.getItem/setItem('termac_orders')
+  // with zero D1 sync across 7 read sites and this write site, plus a
+  // matching pair in termac-os.html. The cross-device notification below
+  // already fired when an order was placed, but the order record itself
+  // (line items, quantities, delivery address, payment info) never
+  // actually reached the warehouse pick queue unless the picker happened
+  // to be on the same browser the rep used. Now routes through the real
+  // D1-synced customer_orders table.
   if (validLines.length) {
-    const orders = JSON.parse(localStorage.getItem('termac_orders')||'[]');
+    const orders = crmLoad('customer_orders');
     const orderId = 'ORD' + String(now).slice(-6);
     orders.unshift({
       id: orderId,
@@ -9776,7 +9784,7 @@ function svSubmitVisit() {
       createdTs: now,
       scheduledDelivery: null,
     });
-    localStorage.setItem('termac_orders', JSON.stringify(orders));
+    crmSave('customer_orders', orders);
 
     // ── NEW ORDER NOTIFICATION ──────────────────────────────────────────
     // Fires the moment an order is submitted, over the same cross-device
