@@ -141,8 +141,10 @@ async function handleProvision(request, env) {
     'INSERT INTO staff_auth (id, email, name, role, portals, password_hash, salt, must_reset, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)'
   ).bind(id, email, name, role, JSON.stringify(portals), hash, salt, 'active', Date.now(), Date.now()).run();
 
+  const LOGIN_URL = 'https://coachted-retro.github.io/unipro-sales/staff-login.html';
   const emailSent = await sendEmail(env, name, email, 'Termac One Account Created',
-    'Your Termac One login is ready. Email: ' + email + '. Temporary password: ' + tempPassword +
+    'Your Termac One login is ready. Sign in at ' + LOGIN_URL + ' using this email address, ' + email +
+    ', and this temporary password: ' + tempPassword +
     '. You will be asked to set your own password the first time you log in.');
 
   return jsonResponse({ ok: true, id, tempPassword, emailSent });
