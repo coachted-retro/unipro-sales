@@ -1922,9 +1922,19 @@ function d1NormalizeRecord(table, record) {
     // company_id, first_name/last_name, is_primary) — every lead,
     // account, or contact save that touched those fields was silently
     // failing to reach D1 at all. Corrected to match the real schema.
+    // 2026-07-13 FIX: this also mapped status -> lifecycle_stage with
+    // no mapping for lifecycleStage itself, so the real pipeline stage
+    // set by advanceStage() when a rep changes the dropdown never
+    // reached D1 - only the unrelated status/temperature field did,
+    // into the same column. This is the file's own live write path for
+    // stage changes (termac-os.html doesn't include the shared
+    // termac-d1-sync.js at all), so this was the actual bug affecting
+    // reps day to day. 310 existing lead records were found corrupted
+    // this way and repaired directly in D1 the same day.
     leads: {
+      lifecycleStage: 'lifecycle_stage',
       name: 'contact_name', score: 'ai_score',
-      status: 'lifecycle_stage', company: 'division', assignedRep: 'assigned_rep',
+      company: 'division', assignedRep: 'assigned_rep',
       created: 'created_at', followupDate: 'follow_up_date',
       isHot: 'is_hot', isNewLead: 'is_new_lead'
     },
@@ -2080,9 +2090,13 @@ function d1ReverseMapLocal(table, record) {
       customerSignature: 'customer_signature', createdTs: 'created_ts',
       scheduledDelivery: 'scheduled_delivery',
     },
+    // 2026-07-13 FIX: matching the write-side fix above - lifecycleStage
+    // now correctly reverse-maps from the lifecycle_stage column instead
+    // of status hijacking that slot.
     leads: {
+      lifecycleStage: 'lifecycle_stage',
       name: 'contact_name', score: 'ai_score',
-      status: 'lifecycle_stage', company: 'division', assignedRep: 'assigned_rep',
+      company: 'division', assignedRep: 'assigned_rep',
       created: 'created_at', followupDate: 'follow_up_date',
       isHot: 'is_hot', isNewLead: 'is_new_lead'
     },
@@ -2174,6 +2188,49 @@ async function d1HydrateAll() {
   if (typeof mgrRenderGrowthTrend === 'function') mgrRenderGrowthTrend();
 }
 d1HydrateAll();
+
+// ── ONE-TIME REPAIR (2026-07-13) ──────────────────────────────────────
+// 310 lead records had a temperature value (new/hot/warm/cold) sitting
+// in lifecycle_stage instead of a real pipeline stage, due to the
+// status->lifecycle_stage FIELD_MAP bug fixed above. Repaired directly
+// in D1 (reset to 'lead'), but the normal hydrate above only ADDS
+// records missing locally - it never overwrites a record that's
+// already cached on this device, so anyone who already has these leads
+// cached would keep seeing the broken stage forever without this.
+// Runs once per device (gated by a flag), does a full fresh pull of the
+// leads table, and overwrites the local copy of any record whose id
+// matches what's in D1 now - not just new records.
+(async function repairLeadStageCache() {
+  var FLAG = 'termac_lifecycle_stage_repair_20260713';
+  if (localStorage.getItem(FLAG)) return;
+  try {
+    var local = crmLoad('leads');
+    var byId = {};
+    local.forEach(function(r, i){ if (r && r.id) byId[r.id] = i; });
+    var PAGE_SIZE = 500, MAX_PAGES = 60, fixed = 0;
+    for (var page = 0; page < MAX_PAGES; page++) {
+      var offset = page * PAGE_SIZE;
+      var res = await d1Fetch('GET', '/api/leads?limit=' + PAGE_SIZE + '&offset=' + offset);
+      if (!res.ok || !Array.isArray(res.results) || res.results.length === 0) break;
+      res.results.forEach(function(rec) {
+        if (!rec || !rec.id) return;
+        var fresh = d1ReverseMapLocal('leads', rec);
+        if (byId.hasOwnProperty(rec.id)) {
+          local[byId[rec.id]] = fresh;
+        } else {
+          local.push(fresh);
+          byId[rec.id] = local.length - 1;
+        }
+        fixed++;
+      });
+      if (res.results.length < PAGE_SIZE) break;
+    }
+    localStorage.setItem('termac_crm_leads', JSON.stringify(local));
+    localStorage.setItem(FLAG, String(Date.now()));
+    if (typeof renderCRMView === 'function') renderCRMView();
+    console.log('Lead stage repair complete - refreshed', fixed, 'records from D1.');
+  } catch(e) { console.warn('Lead stage repair failed, will retry next load:', e); }
+})();
 
 // Growth & Opportunity panel. The rep load chart is real, computed live
 // from the current accounts book via the known territory-to-rep map (see

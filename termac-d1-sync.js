@@ -64,8 +64,28 @@
     // cause for 'score' -> 'ai_score' previously failing (that column
     // simply didn't exist; it's been added to the table now).
     leads: {
+      // 2026-07-13 FIX (root cause of the Lead->Contact->Opportunity
+      // pipeline data corruption): this previously mapped status ->
+      // lifecycle_stage and had NO mapping for lifecycleStage itself.
+      // Since d1NormalizeRecord only writes a field to D1 if its mapped
+      // column name is in VALID, and VALID only lists the snake_case
+      // 'lifecycle_stage' (not camelCase 'lifecycleStage'), the actual
+      // pipeline stage set by advanceStage() when a user changes the
+      // dropdown was silently dropped before ever reaching D1 - while
+      // status (lead temperature: new/hot/warm/cold, a completely
+      // different concept) got written into the lifecycle_stage column
+      // instead. Every stage change via the dropdown updated the local
+      // browser cache correctly but never propagated to any other
+      // device; any record hydrated fresh from D1 showed whatever
+      // temperature value happened to be set (or nothing) as its stage,
+      // not the real pipeline position. This is exactly what happened
+      // to the "Test Cafe" record from sales-portal.html, which set
+      // status='new' and had no lifecycleStage of its own - it landed
+      // in D1 as lifecycle_stage='new', a value matching no pipeline
+      // bucket at all, so no view could ever place it anywhere.
+      lifecycleStage: 'lifecycle_stage',
       name: 'contact_name', score: 'ai_score',
-      status: 'lifecycle_stage', company: 'division', assignedRep: 'assigned_rep',
+      company: 'division', assignedRep: 'assigned_rep',
       created: 'created_at', followupDate: 'follow_up_date',
       isHot: 'is_hot', isNewLead: 'is_new_lead',
     },
@@ -942,6 +962,46 @@
     sweep(); // run once immediately, then on the interval
     setInterval(sweep, intervalMs || 30000);
   }
+
+  // ── ONE-TIME REPAIR (2026-07-13) ────────────────────────────────────
+  // 310 lead records had a temperature value (new/hot/warm/cold) sitting
+  // in lifecycle_stage instead of a real pipeline stage, due to the
+  // status->lifecycle_stage FIELD_MAP bug fixed above (and independently
+  // in termac-os.html's own duplicated copy of this same mapping).
+  // Repaired directly in D1 (reset to 'lead'), but normal hydration only
+  // ever adds records missing locally - it never overwrites a record
+  // already cached on this device. Every file that loads this shared
+  // module (sales-portal, ap-portal, tech-portal-standalone, and others)
+  // gets this fix automatically, once per device, gated by the same
+  // flag termac-os.html's own copy of this repair uses so it only runs
+  // once total regardless of which page a person opens first.
+  async function repairLeadStageCache() {
+    var FLAG = 'termac_lifecycle_stage_repair_20260713';
+    if (localStorage.getItem(FLAG)) return;
+    try {
+      var local = crmLoad('leads');
+      var byId = {};
+      local.forEach(function (r, i) { if (r && r.id) byId[r.id] = i; });
+      var PAGE_SIZE = 500, MAX_PAGES = 60, fixed = 0;
+      for (var page = 0; page < MAX_PAGES; page++) {
+        var offset = page * PAGE_SIZE;
+        var res = await d1Fetch('GET', '/api/leads?limit=' + PAGE_SIZE + '&offset=' + offset);
+        if (!res.ok || !Array.isArray(res.results) || res.results.length === 0) break;
+        res.results.forEach(function (rec) {
+          if (!rec || !rec.id) return;
+          var fresh = d1ReverseMap('leads', rec);
+          if (byId.hasOwnProperty(rec.id)) { local[byId[rec.id]] = fresh; }
+          else { local.push(fresh); byId[rec.id] = local.length - 1; }
+          fixed++;
+        });
+        if (res.results.length < PAGE_SIZE) break;
+      }
+      try { localStorage.setItem('termac_crm_leads', JSON.stringify(local)); } catch (e) {}
+      localStorage.setItem(FLAG, String(Date.now()));
+      if (typeof global.renderCRMView === 'function') global.renderCRMView();
+    } catch (e) {}
+  }
+  repairLeadStageCache();
 
   global.TermacD1Sync = {
     d1Fetch: d1Fetch,
