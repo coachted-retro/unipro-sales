@@ -2277,27 +2277,43 @@ function mgrRenderGrowthPanel() {
 setTimeout(mgrRenderGrowthPanel, 1500);
 
 
-// Deficiency Tickets are genuinely computable from what's already
-// synced (accounts.status, deficiencies.status), unlike revenue/DSO/
-// job margin which have no real data source yet and stay honestly "—".
-// Runs on a short delay so d1HydrateAll has a chance to populate
-// localStorage first; harmless if it fires before that finishes, since
-// crmLoad just returns whatever's there (possibly empty) either way.
-function tcRealKpiStrip(){
+// FIX 2026-07-12 (Ted): this used to read counts from crmLoad(), i.e.
+// whatever happened to already be sitting in this browser's localStorage
+// cache. That's how "504 active accounts" got stuck on screen after a
+// 6,127-row import actually landed in D1 -- the number on screen was
+// real, just stale, and nothing forced a re-check. These two KPI tiles
+// now run a genuine live SELECT COUNT against D1 every time this runs,
+// no localStorage read involved at all. Deliberately kept to just these
+// two numbers (not a rewrite of every read in this file) because they're
+// the ones Ted is looking at as a go/no-go signal before reps start work
+// -- everywhere else in this file still reads the local cache, which
+// stays correct because crmSave/d1Hydrate keep it synced, just not
+// "live on every render" the way these two now are.
+async function tcRealKpiStrip(){
   try {
-    var accounts = crmLoad('accounts');
     var activeEl = document.getElementById('mgrActiveAccounts');
-    if (activeEl) activeEl.textContent = accounts.filter(function(a){ return a.status === 'active'; }).length || '—';
+    if (activeEl) {
+      var acctRes = await d1Fetch('POST', '/api/query', {
+        sql: "SELECT COUNT(*) as cnt FROM accounts WHERE status = 'active'"
+      });
+      var acctCnt = (acctRes && acctRes.ok && acctRes.results && acctRes.results[0]) ? acctRes.results[0].cnt : null;
+      activeEl.textContent = (acctCnt || acctCnt === 0) ? acctCnt : '—';
+    }
 
-    var deficiencies = crmLoad('deficiencies');
-    var openCount = deficiencies.filter(function(d){ return d.status !== 'resolved'; }).length;
     var ticketsEl = document.getElementById('kpiActiveTickets');
-    if (ticketsEl) ticketsEl.textContent = openCount;
     var defEl = document.getElementById('mgrOpenDeficiencies');
-    if (defEl) defEl.textContent = openCount;
+    if (ticketsEl || defEl) {
+      var defRes = await d1Fetch('POST', '/api/query', {
+        sql: "SELECT COUNT(*) as cnt FROM deficiencies WHERE status != 'resolved'"
+      });
+      var openCount = (defRes && defRes.ok && defRes.results && defRes.results[0]) ? defRes.results[0].cnt : null;
+      if (ticketsEl) ticketsEl.textContent = (openCount || openCount === 0) ? openCount : '—';
+      if (defEl) defEl.textContent = (openCount || openCount === 0) ? openCount : '—';
+    }
   } catch(e) {}
 }
-setTimeout(tcRealKpiStrip, 1500);
+setTimeout(tcRealKpiStrip, 500);
+setInterval(tcRealKpiStrip, 30000);
 setInterval(d1HydrateAll, 30000);
 
 // Seed demo data if empty
@@ -15053,7 +15069,14 @@ function processCallListImport(){
    the setup comment at the top of that file), then paste the resulting
    workers.dev URL in below.
 ══════════════════════════════════════ */
-const OUTSCRAPER_PROXY_URL = 'https://googlemapharvester.tedscholl.workers.dev/'; // set — Outscraper Google Maps harvest proxy
+// FIX 2026-07-12 (Ted): this pointed at a worker name/subdomain that was
+// never actually deployed ("googlemapharvester.tedscholl.workers.dev"
+// doesn't exist -- confirmed against the live Cloudflare account). The
+// worker that actually holds this code is named "outscraper-proxy", and
+// every other worker on this account resolves under the termac-one
+// subdomain (unipro-ai-proxy, termac-notify, termac-staff-auth, etc.),
+// so the real URL is this one.
+const OUTSCRAPER_PROXY_URL = 'https://outscraper-proxy.termac-one.workers.dev/'; // Outscraper Google Maps harvest proxy
 
 const GMH_CATEGORY_LABELS = {
   restaurants:      'Restaurants',
