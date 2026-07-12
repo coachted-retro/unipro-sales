@@ -37,7 +37,7 @@
     'allpro_projects', 'allpro_cost_lines', 'appointments', 'allpro_design_projects',
     'broadcasts', 'dispatch_msgs', 'wh_requisitions', 'wh_ready_handoffs', 'parts_requests',
     'transfer_requests', 'scheduler_queue', 'allpro_spiffs',
-    'trade_partners', 'trade_partner_referrals', 'trade_partner_bids'];
+    'trade_partners', 'trade_partner_referrals', 'trade_partner_bids', 'notifications'];
 
   async function d1Fetch(method, path, body) {
     try {
@@ -139,6 +139,9 @@
     scheduler_queue: {
       acceptedAt: 'accepted_at', assignedRep: 'assigned_rep',
     },
+    notifications: {
+      readFlag: 'read_flag', relatedId: 'related_id', createdAt: 'created_at',
+    },
   };
 
   var VALID = {
@@ -186,7 +189,9 @@
       'linkedin', 'bio', 'service_area', 'years_experience', 'photo_url', 'created_at', 'updated_at'],
     appointments: ['id', 'account_id', 'record_id', 'tab', 'title', 'business',
       'date', 'time', 'type', 'notes', 'location', 'is_flex_stop', 'rep',
-      'created_by', 'division', 'status', 'created_at', 'updated_at'],
+      'created_by', 'division', 'status', 'guests', 'created_at', 'updated_at'],
+    notifications: ['id', 'recipient', 'type', 'title', 'message', 'read_flag',
+      'related_id', 'created_at', 'updated_at'],
     // 2026-07-10: previously had no explicit entry here at all, which
     // meant every field on a project record passed through unfiltered
     // (d1NormalizeRecord treats an empty VALID list as "allow everything").
