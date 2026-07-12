@@ -65,6 +65,12 @@ const ALLOWED_TABLES = new Set([
   // Expense Reports, added 2026-07-13 - same class of bug. See
   // expense-reports-schema.sql.
   'expense_reports',
+  // Growth & Opportunity Intelligence panel + Bid Pipeline Watchlist tab,
+  // added 2026-07-12. growth_snapshots is written on a schedule (piggybacks
+  // the existing daily digest cron) to build a real forward-looking trend
+  // instead of a fabricated one. bid_watchlist tracks known recurring public
+  // bids (e.g. SEPTA fire extinguisher maintenance) between live-scraper hits.
+  'growth_snapshots','bid_watchlist',
 ]);
 
 const TABLE_PREFIX = {

@@ -2131,10 +2131,114 @@ window.crmSave = crmSave = function(key, val) {
 async function d1HydrateAll() {
   for (const t of D1_SYNC_TABLES) { await d1Hydrate(t); }
   if (typeof tcRealKpiStrip === 'function') tcRealKpiStrip();
+  if (typeof mgrRenderGrowthPanel === 'function') mgrRenderGrowthPanel();
 }
 d1HydrateAll();
 
-// Real KPI numbers for the top strip -- Active Accounts and Open
+// Growth & Opportunity panel. The rep load chart is real, computed live
+// from the current accounts book via the known territory-to-rep map (see
+// memory: Brad Fickes=S2, Chris Carzo=D1+P4, Dan Rini=NJ1+NJ2,
+// Joe McDonnell=N1+N2+N9, Matt Belz=P3, Terence O'Reilly=P2, Todd Grill=S4,
+// Tom Jordan=P1 Termac-only, Tom Pittakas=S1). Territories not in this map
+// (small legacy/one-off codes) roll up into "Unassigned" rather than being
+// silently dropped, so nothing hides from the count.
+// The opportunities list below the chart is intentionally NOT computed from
+// live numbers -- it's a curated set of directional suggestions and is
+// labeled as such in the panel header. Do not wire fabricated dollar
+// projections into this card; if a real dollar case exists (e.g. once
+// annual_value or NetSuite data is populated) that belongs in its own
+// grounded metric, not folded into this qualitative list.
+var REP_TERRITORY_MAP = {
+  'Brad Fickes': ['S2'],
+  'Chris Carzo': ['D1', 'P4'],
+  'Dan Rini': ['NJ1', 'NJ2'],
+  'Joe McDonnell': ['N1', 'N2', 'N9'],
+  'Matt Belz': ['P3'],
+  "Terence O'Reilly": ['P2'],
+  'Todd Grill': ['S4'],
+  'Tom Jordan': ['P1'],
+  'Tom Pittakas': ['S1', 'S1.1']
+};
+
+function mgrRenderGrowthPanel() {
+  try {
+    var accounts = crmLoad('accounts');
+    var chartEl = document.getElementById('mgrRepLoadChart');
+    if (chartEl) {
+      if (!accounts || accounts.length === 0) {
+        chartEl.innerHTML = '<div style="color:var(--soft);font-size:12px">Loading&hellip;</div>';
+      } else {
+        var territoryCounts = {};
+        accounts.forEach(function (a) {
+          var t = (a && a.territory) ? a.territory : 'Unassigned';
+          territoryCounts[t] = (territoryCounts[t] || 0) + 1;
+        });
+        var repCounts = {};
+        var mappedTerritories = {};
+        Object.keys(REP_TERRITORY_MAP).forEach(function (rep) {
+          var total = 0;
+          REP_TERRITORY_MAP[rep].forEach(function (t) {
+            total += territoryCounts[t] || 0;
+            mappedTerritories[t] = true;
+          });
+          repCounts[rep] = total;
+        });
+        var unassigned = 0;
+        Object.keys(territoryCounts).forEach(function (t) {
+          if (!mappedTerritories[t]) unassigned += territoryCounts[t];
+        });
+        if (unassigned > 0) repCounts['Unassigned / Other Territories'] = unassigned;
+
+        var entries = Object.keys(repCounts).map(function (rep) { return [rep, repCounts[rep]]; });
+        entries.sort(function (a, b) { return b[1] - a[1]; });
+        var maxVal = entries.length ? entries[0][1] : 1;
+
+        var html = '';
+        entries.forEach(function (entry) {
+          var rep = entry[0], cnt = entry[1];
+          var pct = maxVal > 0 ? Math.round((cnt / maxVal) * 100) : 0;
+          var barColor = rep.indexOf('Unassigned') === 0 ? 'var(--soft)' : 'var(--blue)';
+          html += '<div style="margin-bottom:7px">' +
+            '<div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px">' +
+            '<span style="font-weight:600;color:var(--dark)">' + rep + '</span>' +
+            '<span style="font-weight:700;color:var(--dark)">' + cnt.toLocaleString() + '</span></div>' +
+            '<div style="background:#EEF0F2;border-radius:4px;height:7px;overflow:hidden">' +
+            '<div style="background:' + barColor + ';height:100%;width:' + pct + '%;border-radius:4px"></div></div></div>';
+        });
+        chartEl.innerHTML = html || '<div style="color:var(--soft);font-size:12px">No account data yet.</div>';
+      }
+    }
+
+    var oppEl = document.getElementById('mgrGrowthOpportunities');
+    if (oppEl && !oppEl.dataset.rendered) {
+      oppEl.dataset.rendered = '1';
+      var opportunities = [
+        {
+          title: 'Fire Sprinkler Inspection &amp; Testing',
+          body: 'Natural adjacency to the existing kitchen hood suppression book &mdash; same commercial customers, same annual life-safety compliance cycle (NFPA 25), same AHJ relationships already mapped in the AHJ Reference tool. Bundling onto an existing service visit is the lowest-friction way to test this.'
+        },
+        {
+          title: 'Fire Alarm Systems &mdash; Install, Inspection &amp; Monitoring',
+          body: 'Third leg of the commercial life-safety stool alongside suppression and sprinkler (NFPA 72). Monitoring in particular is recurring revenue, not one-time service, and is the kind of contract that compounds the way suppression contracts already do.'
+        },
+        {
+          title: 'Tag current accounts with real services (prerequisite, not optional)',
+          body: 'All 6,127 newly imported Termac accounts currently show an empty services array. The Cross-Sell White Space engine already built into this platform can\'t surface real gaps until each account is tagged with what it actually has today. This is the single highest-leverage next step to turn this list into real, actionable opportunity data instead of a suggestion box.'
+        }
+      ];
+      var oHtml = '';
+      opportunities.forEach(function (o) {
+        oHtml += '<div style="background:#fff;border:1px solid var(--line);border-radius:6px;padding:9px 11px">' +
+          '<div style="font-weight:800;font-size:12px;color:var(--dark);margin-bottom:2px">' + o.title + '</div>' +
+          '<div style="font-size:11px;color:var(--soft);line-height:1.5">' + o.body + '</div></div>';
+      });
+      oppEl.innerHTML = oHtml;
+    }
+  } catch (e) {}
+}
+setTimeout(mgrRenderGrowthPanel, 1500);
+
+
 // Deficiency Tickets are genuinely computable from what's already
 // synced (accounts.status, deficiencies.status), unlike revenue/DSO/
 // job margin which have no real data source yet and stay honestly "—".
@@ -4455,6 +4559,29 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
 
     <!-- REP ALERT BAR -->
     <div id="mgrRepAlertBar" style="margin-bottom:12px"></div>
+
+    <!-- Growth & Opportunity Intelligence -->
+    <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:14px;margin-bottom:14px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft)">&#128200; Growth &amp; Opportunity Intelligence</div>
+      </div>
+      <div style="display:grid;grid-template-columns:1.1fr 1fr;gap:14px" id="mgrGrowthGrid">
+        <div>
+          <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;color:var(--dark);margin-bottom:2px">Account Load by Rep</div>
+          <div style="font-size:10px;color:var(--soft);margin-bottom:8px">Live from the current active account book &mdash; where capacity is stretched thin vs. where there's room to take on more.</div>
+          <div id="mgrRepLoadChart"><div style="color:var(--soft);font-size:12px">Loading&hellip;</div></div>
+        </div>
+        <div>
+          <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;color:var(--dark);margin-bottom:2px">Revenue &amp; Account Growth Trend</div>
+          <div style="font-size:10px;color:var(--soft);margin-bottom:8px">Requires either NetSuite revenue history or a real customer-since date per account &mdash; neither exists in the system yet, so this stays honest rather than guessed at.</div>
+          <div style="background:linear-gradient(135deg,#EEF0F2,#F8F9FA);border-radius:8px;height:110px;display:flex;align-items:center;justify-content:center;color:var(--soft);font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;border:1.5px dashed var(--line);text-align:center;line-height:1.6">Awaiting Revenue Data<br><span style="font-size:10px;font-weight:400">Populates automatically once NetSuite sync or account-tenure dates land &middot; Phase B</span></div>
+        </div>
+      </div>
+      <div style="margin-top:14px;background:#F8F9FA;border:1.5px solid var(--line);border-radius:8px;padding:12px">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;color:var(--dark);margin-bottom:6px">&#128161; Strategic Growth Opportunities <span style="font-weight:600;color:var(--soft);text-transform:none;letter-spacing:0;font-size:10px">&mdash; directional, not a live revenue figure. Needs business validation before commitment.</span></div>
+        <div id="mgrGrowthOpportunities" style="display:grid;gap:8px"></div>
+      </div>
+    </div>
 
     <!-- Net 30 Credit Queue (hidden until items exist) -->
     <div id="mgrCreditApprovalPanel" style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:14px;margin-bottom:14px;display:none">
@@ -17005,7 +17132,7 @@ function estimateBidValue(title) {
 }
 
 function bidsShowTab(tabId, btn){
-  ['pipeline','winloss','sources'].forEach(t => {
+  ['pipeline','winloss','sources','ingest','vault','watchlist'].forEach(t => {
     const p = document.getElementById('bidsPanel_' + t);
     const b = document.getElementById('bidsTab_' + t);
     if (p) p.style.display = 'none';
@@ -17020,6 +17147,65 @@ function bidsShowTab(tabId, btn){
   if (tabId === 'sources')  bidsRenderSources();
   if (tabId === 'vault')    bidsRenderVault();
   if (tabId === 'ingest')   bidsRenderIngest();
+  if (tabId === 'watchlist') bidsRenderWatchlist();
+}
+
+// D1-backed (table: bid_watchlist). Countdown is only ever computed from a
+// real expected_next_window value -- if that's an honest "estimate, needs
+// verification" placeholder (as seeded for the SEPTA extinguisher contract),
+// this shows that fact plainly instead of rendering a fake day-count. Only
+// once expected_next_window is a real date does a countdown render.
+async function bidsRenderWatchlist() {
+  const el = document.getElementById('bidsWatchlist');
+  if (!el) return;
+  el.innerHTML = '<div style="color:var(--soft);font-size:12px">Loading…</div>';
+  try {
+    const res = await d1Fetch('GET', '/api/bid_watchlist?limit=100');
+    const rows = (res.ok && Array.isArray(res.results)) ? res.results : [];
+    if (!rows.length) {
+      el.innerHTML = '<div style="color:var(--soft);font-size:12px">Nothing on the watchlist yet. Add a known recurring bid to start tracking it.</div>';
+      return;
+    }
+    let html = '';
+    rows.forEach(function (r) {
+      var isDate = /^\d{4}-\d{2}-\d{2}$/.test(r.expected_next_window || '');
+      var countdown = '';
+      if (isDate) {
+        var days = Math.ceil((new Date(r.expected_next_window) - new Date()) / 86400000);
+        countdown = days >= 0
+          ? '<span style="font-weight:800;color:#1E7B3C">' + days + ' days out</span>'
+          : '<span style="font-weight:800;color:#C8102E">window may have passed — re-check</span>';
+      } else {
+        countdown = '<span style="font-weight:700;color:#D8690B">' + (r.expected_next_window || 'date not yet confirmed') + '</span>';
+      }
+      html += '<div style="border:1px solid var(--line);border-radius:8px;padding:12px 14px">' +
+        '<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px">' +
+        '<div style="font-weight:800;font-size:13px;color:var(--dark)">' + (r.title || '') + ' — ' + (r.agency || '') + '</div>' +
+        '<div style="font-size:12px">' + countdown + '</div></div>' +
+        '<div style="font-size:11px;color:var(--soft);margin-top:4px">Last cycle: ' + (r.last_known_ref || 'n/a') + ' &middot; ' + (r.last_cycle_note || '') + '</div>' +
+        (r.notes ? '<div style="font-size:11px;color:var(--soft);margin-top:4px;font-style:italic">' + r.notes + '</div>' : '') +
+        '</div>';
+    });
+    el.innerHTML = html;
+  } catch (e) {
+    el.innerHTML = '<div style="color:var(--red);font-size:12px">Couldn\'t load the watchlist right now.</div>';
+  }
+}
+
+function bidsWatchlistAddPrompt() {
+  var title = prompt('Contract / bid title (e.g. "Annual Extinguisher Maintenance"):');
+  if (!title) return;
+  var agency = prompt('Agency (e.g. "SEPTA", "School District of Philadelphia"):') || '';
+  var lastRef = prompt('Last known bid/ref number, if any:') || '';
+  var expected = prompt('Expected next window — a real date (YYYY-MM-DD) if you know it, otherwise a plain-English note like "roughly 2027, unconfirmed":') || 'date not yet confirmed';
+  var notes = prompt('Any notes (why we want it, who to contact, etc.):') || '';
+  var id = 'wl_' + Date.now();
+  d1Fetch('POST', '/api/bid_watchlist', {
+    id: id, title: title, agency: agency, category: '', last_known_ref: lastRef,
+    last_cycle_note: '', cycle_years: null, expected_next_window: expected,
+    date_confidence: /^\d{4}-\d{2}-\d{2}$/.test(expected) ? 'confirmed' : 'estimate',
+    status: 'watching', notes: notes, created_at: Date.now(), updated_at: Date.now()
+  }).then(function(){ bidsRenderWatchlist(); }).catch(function(){ alert('Save failed — check connection and try again.'); });
 }
 
 const BID_STATUS_COLS = [
@@ -29468,6 +29654,7 @@ window.uvCollectData = uvCollectData;
     <button class="acct-tab" id="bidsTab_ingest" onclick="bidsShowTab('ingest',this)" style="color:#D8690B;font-weight:800">📥 Ingest RFP</button>
     <button class="acct-tab" id="bidsTab_winloss" onclick="bidsShowTab('winloss',this)">🏁 Won / Lost</button>
     <button class="acct-tab" id="bidsTab_sources" onclick="bidsShowTab('sources',this)">🌐 Sources</button>
+    <button class="acct-tab" id="bidsTab_watchlist" onclick="bidsShowTab('watchlist',this)">⏳ Watchlist</button>
     <button class="acct-tab" id="bidsTab_vault" onclick="bidsShowTab('vault',this)">🏛️ Company Vault</button>
   </div>
 
@@ -29584,6 +29771,18 @@ window.uvCollectData = uvCollectData;
         </tr></thead>
         <tbody id="bidsWinLossTable"></tbody>
       </table>
+    </div>
+
+    <!-- ══ RECURRING BID WATCHLIST ══ -->
+    <div id="bidsPanel_watchlist" style="flex:1;overflow-y:auto;padding:22px;display:none">
+      <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:20px;max-width:820px">
+        <div class="rpt-card-title" style="color:#1A1D21;margin-bottom:4px">Recurring Bid Watchlist</div>
+        <div style="font-size:12px;color:var(--soft);margin-bottom:16px;line-height:1.5">
+          Known large contracts that re-bid on a cycle (typically 2&ndash;3 years) &mdash; things worth chasing again even between live-scraper hits, because the scraper only catches what's currently posted, not what's <em>about</em> to post.
+        </div>
+        <div id="bidsWatchlist" style="display:flex;flex-direction:column;gap:10px"></div>
+        <button class="act-save-btn" style="margin-top:14px" onclick="bidsWatchlistAddPrompt()">+ Add to Watchlist</button>
+      </div>
     </div>
 
     <div id="bidsPanel_sources" style="flex:1;overflow-y:auto;padding:22px;display:none">
