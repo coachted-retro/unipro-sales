@@ -251,3 +251,20 @@ CREATE INDEX IF NOT EXISTS idx_notif_user       ON notifications(user_id, read);
 CREATE INDEX IF NOT EXISTS idx_loc_company      ON locations(company_id);
 CREATE INDEX IF NOT EXISTS idx_sched_status     ON scheduler_queue(status);
 CREATE INDEX IF NOT EXISTS idx_accounts_rep     ON accounts(assigned_rep);
+
+-- Added 2026-07-12 for the Division GM Dashboards. Manual monthly P&L
+-- entry per division until NetSuite/Adagio provides a real feed. Only
+-- AllPro has genuine job-level cost data today (allpro_projects /
+-- allpro_cost_lines) -- this table covers the other five divisions.
+CREATE TABLE IF NOT EXISTS division_actuals (
+  id              TEXT PRIMARY KEY,
+  division        TEXT NOT NULL,
+  month           TEXT NOT NULL,   -- 'YYYY-MM'
+  revenue         REAL,
+  cost            REAL,
+  notes           TEXT,
+  entered_by      TEXT,
+  created_at      INTEGER NOT NULL,
+  updated_at      INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_division_actuals_div_month ON division_actuals(division, month);

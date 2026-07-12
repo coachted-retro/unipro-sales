@@ -47,6 +47,9 @@ const ALLOWED_TABLES = new Set([
   // no access to localStorage at all, so this closes the gap that made
   // the digest fall back to defaults instead of each rep's real targets.
   'rep_targets',
+  // Division GM Dashboards, added 2026-07-12 - manual monthly P&L
+  // actuals entry for divisions without a live NetSuite/Adagio feed yet.
+  'division_actuals',
 ]);
 
 const TABLE_PREFIX = {
@@ -65,6 +68,7 @@ const TABLE_PREFIX = {
   allpro_cost_lines:'ACL',
   daily_digests:'DIG',
   rep_targets:'TGT',
+  division_actuals:'DVA',
 };
 
 function corsHeaders(origin) {
