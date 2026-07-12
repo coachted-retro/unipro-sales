@@ -198,6 +198,16 @@
       jobId: 'job_id', confirmedBy: 'confirmed_by', confirmedAt: 'confirmed_at',
       warehouseNotes: 'warehouse_notes', itemCount: 'item_count',
     },
+    // Opportunities as real child records of an account, added
+    // 2026-07-13 - this table (and D1_SYNC_TABLES entry) already
+    // existed with no FIELD_MAP or VALID entry at all, which worked by
+    // accident (no VALID list means every field passes through
+    // unfiltered) but wasn't robust - explicit now, matching the real
+    // D1 columns.
+    opportunities: {
+      accountId: 'account_id', expectedClose: 'expected_close',
+      closedAt: 'closed_at', assignedRep: 'assigned_rep',
+    },
     // 2026-07-13 FIX: matching the same fix made the same day in
     // termac-os.html's own copy of this map -- bids had no entry here
     // either, meaning every camelCase Bid Pipeline field was silently
@@ -214,6 +224,9 @@
   };
 
   var VALID = {
+    opportunities: ['id', 'account_id', 'name', 'division', 'stage', 'value',
+      'assigned_rep', 'expected_close', 'notes', 'closed_at',
+      'created_at', 'updated_at'],
     accounts_payable: ['id', 'vendor', 'amount', 'division', 'category',
       'due_date', 'invoice_num', 'notes', 'status', 'logged_at', 'paid_at',
       'source', 'created_at', 'updated_at'],
