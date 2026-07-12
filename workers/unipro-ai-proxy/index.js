@@ -55,6 +55,10 @@ const ALLOWED_TABLES = new Set([
   // general contractors used for bid work. Shared by every division, not
   // scoped to AllPro.
   'trade_partners','trade_partner_referrals','trade_partner_bids',
+  // AllPro Toolbox, added 2026-07-12 - editable reference library and
+  // material/labor rate tables backing the calculators on the AllPro
+  // Project Planner's left toolbar.
+  'reference_library','allpro_rate_tables',
 ]);
 
 const TABLE_PREFIX = {
@@ -77,6 +81,8 @@ const TABLE_PREFIX = {
   trade_partners:'TRP',
   trade_partner_referrals:'REF',
   trade_partner_bids:'TPB',
+  reference_library:'REL',
+  allpro_rate_tables:'ART',
 };
 
 function corsHeaders(origin) {

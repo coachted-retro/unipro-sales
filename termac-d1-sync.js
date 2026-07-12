@@ -37,7 +37,8 @@
     'allpro_projects', 'allpro_cost_lines', 'appointments', 'allpro_design_projects',
     'broadcasts', 'dispatch_msgs', 'wh_requisitions', 'wh_ready_handoffs', 'parts_requests',
     'transfer_requests', 'scheduler_queue', 'allpro_spiffs',
-    'trade_partners', 'trade_partner_referrals', 'trade_partner_bids'];
+    'trade_partners', 'trade_partner_referrals', 'trade_partner_bids',
+    'reference_library', 'allpro_rate_tables'];
 
   async function d1Fetch(method, path, body) {
     try {
