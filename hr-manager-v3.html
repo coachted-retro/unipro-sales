@@ -926,7 +926,30 @@ const HR_USERS_DEFAULT=[
   {id:'u_tj',username:'tj.orielly',password:'Termac2025!',name:'TJ O\'Reilly',role:'employee',division:'UniPro',title:'Sales Representative — Territory TBD',email:'tjorielly@termac.com',phone:'',startDate:'2024-01-01',avatar:'TJO',color:'#1B5FA8',status:'Active',territory:'TBD',division2:'All Services'},
   {id:'u_dan',username:'dan.soleau',password:'Termac2025!',name:'Dan Soleau',role:'manager',division:'AllPro',title:'AllPro Division Manager',email:'dsoleau@termac.com',phone:'',startDate:'2015-04-01',avatar:'DS',color:'#065F46',status:'Active'},
 ];
-function hmGetUsers(){const s=hrLoad('users');if(!s.length){hrSave('users',HR_USERS_DEFAULT);return HR_USERS_DEFAULT;}return s;}
+// Bump this whenever HR_USERS_DEFAULT gains/changes people. Browsers that
+// already have an older version cached in localStorage will auto-merge in
+// whatever's new on next load instead of being stuck on a stale roster
+// forever -- this is what caused sales reps to go missing from Ted's
+// browser on 2026-07-12 even though the code already had all 21 people.
+const HR_SEED_VERSION = 2;
+function hmGetUsers(){
+  const seenVersion = parseInt(localStorage.getItem('termac_hr_seed_version')||'0',10);
+  const s = hrLoad('users');
+  if (!s.length || seenVersion < HR_SEED_VERSION) {
+    const localById = {}; s.forEach(u=>{ localById[u.id]=u; });
+    const defaultIds = new Set(HR_USERS_DEFAULT.map(d=>d.id));
+    // Default roster wins for anyone already in it (keeps titles/divisions
+    // in sync with the source of truth) but preserves anything genuinely
+    // local-only that isn't in the hardcoded default (e.g. someone added
+    // by hand through Add Employee).
+    const merged = HR_USERS_DEFAULT.slice();
+    s.forEach(u => { if(!defaultIds.has(u.id)) merged.push(u); });
+    hrSave('users', merged);
+    localStorage.setItem('termac_hr_seed_version', String(HR_SEED_VERSION));
+    return merged;
+  }
+  return s;
+}
 
 // ── AUTH ──
 var _hmUser = null;
