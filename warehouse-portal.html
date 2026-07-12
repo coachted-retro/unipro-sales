@@ -152,6 +152,19 @@ body{font-family:Barlow,sans-serif;background:var(--bg);color:var(--ink);font-si
   if (typeof renderAllproTab === 'function') renderAllproTab();
   if (typeof showToast === 'function') showToast('Inventory synced from another device.');
 });</script>
+<script>
+// 2026-07-13 FIX: this file only ever hydrated warehouse_inventory via
+// startWarehouseSyncSweep - no general D1_SYNC_TABLES hydration existed
+// at all, so accounts_payable (and anything else read generically here)
+// never pulled in records created on another device.
+document.addEventListener('DOMContentLoaded', function() {
+  if (typeof TermacD1Sync !== 'undefined' && typeof TermacD1Sync.d1HydrateAll === 'function') {
+    TermacD1Sync.d1HydrateAll().then(function() {
+      if (typeof renderAPQueue === 'function') renderAPQueue();
+    }).catch(function(){});
+  }
+});
+</script>
 </head>
 <body>
 
@@ -3408,9 +3421,18 @@ function saveAPRecord() {
   // Same duplicate-bill check already used in ap-portal.html for
   // manually-entered bills — this is exactly the case it exists to catch,
   // a bill arriving through a second channel for the same vendor/amount.
+  // 2026-07-13 FIX: was raw localStorage with zero D1 sync - despite this
+  // alert telling the user Accounting would see it, that was false. Now
+  // routes through the real D1-synced accounts_payable table.
   var normVendor = apNormName(vendor);
-  var existingAP = [];
-  try { existingAP = JSON.parse(localStorage.getItem('termac_payables') || '[]'); } catch(e) {}
+  var existingAP = crmLoad('accounts_payable');
+  if (existingAP.length === 0) {
+    // one-time migration of anything already sitting in the old raw key
+    try {
+      var legacy = JSON.parse(localStorage.getItem('termac_payables') || '[]');
+      if (legacy.length > 0) { crmSave('accounts_payable', legacy); existingAP = legacy; }
+    } catch(e) {}
+  }
   var dupes = existingAP.filter(function(b) { return apNormName(b.vendor) === normVendor && Math.abs((Number(b.amount)||0) - total) < 0.01; });
   if (dupes.length && !confirm('A bill for ' + vendor + ' at $' + total.toFixed(2) + ' already exists in Accounts Payable. Save anyway?')) {
     try {
@@ -3444,7 +3466,7 @@ function saveAPRecord() {
   };
 
   existingAP.unshift(record);
-  try { localStorage.setItem('termac_payables', JSON.stringify(existingAP)); } catch(e) {}
+  crmSave('accounts_payable', existingAP);
 
   alert('Saved to Accounts Payable for ' + vendor + ' ($' + total.toFixed(2) + '). Accounting will see this in their Bills Worklist.');
 }
@@ -3557,8 +3579,7 @@ function getFilteredAP() {
   var weekStart = now - 7*86400000;
   var monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0,0,0,0);
 
-  var all = [];
-  try { all = JSON.parse(localStorage.getItem('termac_payables') || '[]'); } catch(e) {}
+  var all = crmLoad('accounts_payable');
   all = all.filter(function(inv) { return inv.source === 'warehouse_scan'; });
 
   return all

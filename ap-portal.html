@@ -86,6 +86,7 @@ body{background:var(--bg);color:var(--ink);font-family:Barlow,sans-serif;font-si
 
 <div class="toast" id="toast"></div>
 
+<script src="termac-d1-sync.js"></script>
 <script src="termac-finance.js"></script>
 <script>
 var F=window.TermacFinance, _tab='enter';
@@ -107,7 +108,23 @@ function money(n){ return F?F.money(n):'$'+(Number(n)||0); }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
 function toast(m){ var t=document.getElementById('toast'); t.textContent=m; t.classList.add('show'); setTimeout(function(){t.classList.remove('show');},2200); }
 function normName(s){ return String(s==null?'':s).toLowerCase().replace(/[^a-z0-9]/g,''); }
-function loadAP(){ return lsGet(AP_KEY); }
+// 2026-07-13 FIX: AP_KEY/'termac_payables' was raw localStorage with zero
+// D1 sync across this file, accounting-portal.html, procurement-portal.html,
+// and warehouse-portal.html - a bill entered here never reached any of
+// the other three on a different device. Routed through the real
+// D1-synced accounts_payable table via crmLoad/crmSave, with a one-time
+// migration of anything already sitting in the old raw key on this device.
+function loadAP(){ return crmLoad('accounts_payable'); }
+function saveAPRecords(arr){ crmSave('accounts_payable', arr); }
+(function migrateLegacyAP(){
+  try {
+    var already = crmLoad('accounts_payable');
+    var legacy = JSON.parse(localStorage.getItem(AP_KEY) || '[]');
+    if (already.length === 0 && legacy.length > 0) {
+      crmSave('accounts_payable', legacy);
+    }
+  } catch(e) {}
+})();
 function isCOGS(cat){ var c=CATEGORIES.find(function(x){ return x.name===cat; }); return c?c.cogs:false; }
 function dueMs(b){ return b.dueDate?Date.parse(b.dueDate):(Number(b.loggedAt)||0); }
 
@@ -183,7 +200,7 @@ function saveBill(){
     category:document.getElementById('bCat').value, dueDate:document.getElementById('bDue').value||'',
     invoiceNum:document.getElementById('bInv').value||'', notes:document.getElementById('bNotes').value||'',
     status:'open', loggedAt:Date.now() });
-  lsSet(AP_KEY,ap); toast('Bill saved.'); renderStats(); renderEnter();
+  saveAPRecords(ap); toast('Bill saved.'); renderStats(); renderEnter();
 }
 
 /* ---------- bills worklist ---------- */
@@ -209,9 +226,9 @@ function renderBills(){
   });
   document.getElementById('tab-bills').innerHTML=h;
 }
-function payBill(id){ var ap=loadAP(); ap.forEach(function(b){ if(b.id===id){ b.status='paid'; b.paidAt=Date.now(); } }); lsSet(AP_KEY,ap); toast('Bill marked paid.'); renderStats(); renderBills(); }
-function approveBill(id){ var ap=loadAP(); ap.forEach(function(b){ if(b.id===id) b.status='approved'; }); lsSet(AP_KEY,ap); toast('Bill approved.'); renderStats(); renderBills(); }
-function delBill(id){ if(!confirm('Remove this bill?')) return; var ap=loadAP().filter(function(b){ return b.id!==id; }); lsSet(AP_KEY,ap); toast('Bill removed.'); renderStats(); renderBills(); }
+function payBill(id){ var ap=loadAP(); ap.forEach(function(b){ if(b.id===id){ b.status='paid'; b.paidAt=Date.now(); } }); saveAPRecords(ap); toast('Bill marked paid.'); renderStats(); renderBills(); }
+function approveBill(id){ var ap=loadAP(); ap.forEach(function(b){ if(b.id===id) b.status='approved'; }); saveAPRecords(ap); toast('Bill approved.'); renderStats(); renderBills(); }
+function delBill(id){ if(!confirm('Remove this bill?')) return; crmDelete('accounts_payable', id).then(function(){ toast('Bill removed.'); renderStats(); renderBills(); }); }
 
 /* ---------- cash-out timeline ---------- */
 function renderTimeline(){
@@ -261,6 +278,9 @@ function renderExpenses(){
 function approveExpense(id){ var ex=lsGet(EXP_KEY); ex.forEach(function(e){ if((e.id||'')+''===(id+'')) e.status='approved'; }); lsSet(EXP_KEY,ex); toast('Expense report approved.'); renderStats(); renderExpenses(); }
 
 renderStats(); renderTab();
+if (typeof TermacD1Sync !== 'undefined' && typeof TermacD1Sync.d1HydrateAll === 'function') {
+  TermacD1Sync.d1HydrateAll().then(function(){ renderStats(); renderTab(); }).catch(function(){});
+}
 </script>
 </body>
 </html>

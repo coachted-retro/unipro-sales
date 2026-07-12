@@ -38,7 +38,8 @@
     'broadcasts', 'dispatch_msgs', 'wh_requisitions', 'wh_ready_handoffs', 'parts_requests',
     'transfer_requests', 'scheduler_queue', 'allpro_spiffs',
     'trade_partners', 'trade_partner_referrals', 'trade_partner_bids',
-    'reference_library', 'allpro_rate_tables', 'notifications'];
+    'reference_library', 'allpro_rate_tables', 'notifications',
+    'accounts_payable'];
 
   async function d1Fetch(method, path, body) {
     try {
@@ -143,9 +144,19 @@
     notifications: {
       readFlag: 'read_flag', relatedId: 'related_id', createdAt: 'created_at',
     },
+    // The AP record shape already used across accounting-portal.html,
+    // ap-portal.html, procurement-portal.html, and warehouse-portal.html
+    // - camelCase fields, mapped straight through to the D1 columns.
+    accounts_payable: {
+      dueDate: 'due_date', invoiceNum: 'invoice_num', loggedAt: 'logged_at',
+      paidAt: 'paid_at',
+    },
   };
 
   var VALID = {
+    accounts_payable: ['id', 'vendor', 'amount', 'division', 'category',
+      'due_date', 'invoice_num', 'notes', 'status', 'logged_at', 'paid_at',
+      'source', 'created_at', 'updated_at'],
     leads: ['id', 'business', 'address', 'city', 'state', 'zip', 'phone', 'email',
       'contact_name', 'contact_title', 'pricing_tier', 'facility_type', 'division',
       'lifecycle_stage', 'ai_score', 'assigned_rep', 'source', 'notes',

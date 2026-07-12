@@ -12408,7 +12408,12 @@ function rptBuildPnL(filters){
 
   pnlLoadAR().forEach(function(i){ if(!pl[i.division]) return; if(divFilter&&i.division!==divFilter) return; if(inP(i.date)) pl[i.division].rev+=i.amount; });
   (typeof crmLoad === 'function' ? (crmLoad('collections')||[]) : []).forEach(function(c){ var d=pnlNormDiv(c.division); if(!d||!pl[d]) return; if(divFilter&&d!==divFilter) return; var t=Number(c.collectedAt||(c.collectedDate?Date.parse(c.collectedDate):0))||0; if(inP(t)) pl[d].collected+=Number(c.amount)||0; });
-  pnlLS('termac_payables').forEach(function(b){ var d=pnlNormDiv(b.division); if(!d||!pl[d]) return; if(divFilter&&d!==divFilter) return; var t=Number(b.loggedAt||(b.dueDate?Date.parse(b.dueDate):0))||0; if(!inP(t)) return; var a=Number(b.amount)||0; if(pnlIsCOGS(b.category)) pl[d].cogs+=a; else pl[d].opex+=a; });
+  // 2026-07-13 FIX: was pnlLS('termac_payables') - raw localStorage with
+  // zero D1 sync, meaning company-wide P&L only ever reflected whichever
+  // AP records happened to be cached in this specific browser, not the
+  // real company-wide payables. Now reads the D1-synced accounts_payable
+  // table, same as collections just above.
+  (typeof crmLoad === 'function' ? (crmLoad('accounts_payable')||[]) : []).forEach(function(b){ var d=pnlNormDiv(b.division); if(!d||!pl[d]) return; if(divFilter&&d!==divFilter) return; var t=Number(b.loggedAt||(b.dueDate?Date.parse(b.dueDate):0))||0; if(!inP(t)) return; var a=Number(b.amount)||0; if(pnlIsCOGS(b.category)) pl[d].cogs+=a; else pl[d].opex+=a; });
   pnlLS('termac_expense_reports').forEach(function(e){ var d=pnlNormDiv(e.division); if(!d||!pl[d]) return; if(divFilter&&d!==divFilter) return; var t=Number(e.submittedAt||(e.submittedDate?Date.parse(e.submittedDate):0))||0; if(inP(t)) pl[d].opex+=Number(e.total||e.amount)||0; });
 
   // Real material cost consumed from warehouse inventory (kitting + use/deduct txns), valued at unit cost

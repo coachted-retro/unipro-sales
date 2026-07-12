@@ -59,6 +59,9 @@ const ALLOWED_TABLES = new Set([
   // material/labor rate tables backing the calculators on the AllPro
   // Project Planner's left toolbar.
   'reference_library','allpro_rate_tables',
+  // Accounts Payable, added 2026-07-13 - fixing a real localStorage-only
+  // bug found during a platform-wide audit. See accounts-payable-schema.sql.
+  'accounts_payable',
 ]);
 
 const TABLE_PREFIX = {
@@ -83,6 +86,7 @@ const TABLE_PREFIX = {
   trade_partner_bids:'TPB',
   reference_library:'REL',
   allpro_rate_tables:'ART',
+  accounts_payable:'AP',
 };
 
 function corsHeaders(origin) {

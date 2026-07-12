@@ -67,7 +67,11 @@
   }
   function openBal(i){ if(i.paid) return 0; return Math.max(0, i.amount-(i.paidApplied||0)); }
   function fullyPaid(i){ return i.paid || (i.paidApplied||0) >= i.amount-0.01; }
-  function loadAP(){ return lsGet(AP_KEY); }
+  // 2026-07-13 FIX: was lsGet(AP_KEY) - raw localStorage with zero D1
+  // sync. This module feeds manager-dashboard headline numbers, so a
+  // wrong/incomplete AP figure here was silently wrong for everyone
+  // looking at the dashboard summary, not just a detail screen.
+  function loadAP(){ return (typeof crmLoad === 'function' ? (crmLoad('accounts_payable')||[]) : lsGet(AP_KEY)); }
   function apCOGSInPeriod(start,end){
     var out={}; DIVISIONS.forEach(function(d){ out[d]=0; });
     loadAP().forEach(function(b){

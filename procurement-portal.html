@@ -93,6 +93,7 @@ body{background:var(--bg);color:var(--ink);font-family:Barlow,sans-serif;font-si
 <div class="modal-bg" id="modalBg"><div class="modal" id="modalBody"></div></div>
 <div class="toast" id="toast"></div>
 
+<script src="termac-d1-sync.js"></script>
 <script>
 var PO='termac_purchase_orders', VEND='termac_vendors', REQ='termac_requisitions', AP_KEY='termac_payables', _tab='pos';
 var DIVISIONS=['UniPro','Quality III','GTO','Filter Man','AllPro','Termac','Shared / Office'];
@@ -202,9 +203,13 @@ function issuePO(id){ var p=poFind(id); if(poTotal(p)>=APPROVAL_THRESHOLD && !p.
 function receivePO(id){
   var p=poFind(id); p.status='received'; p.receivedAt=Date.now(); poSave(p);
   if(confirm('Received '+p.poNumber+'. Send it to Accounts Payable as a bill?')){
-    var ap=lsGet(AP_KEY);
+    // 2026-07-13 FIX: was raw lsGet/lsSet(AP_KEY) with zero D1 sync - a
+    // bill created here never reached accounting-portal.html or
+    // ap-portal.html on a different device. Now goes through the real
+    // D1-synced accounts_payable table.
+    var ap=crmLoad('accounts_payable');
     ap.unshift({ id:'ap'+Date.now(), vendor:p.vendor, amount:poTotal(p), division:p.division, category:'Parts & Materials', dueDate:'', invoiceNum:p.poNumber, notes:'From '+p.poNumber, status:'open', loggedAt:Date.now() });
-    lsSet(AP_KEY,ap);
+    crmSave('accounts_payable', ap);
     toast('Received and sent to AP.');
   } else toast('Received.');
   renderStats(); renderPOs();
@@ -300,6 +305,9 @@ function closeModal(){ document.getElementById('modalBg').classList.remove('open
 document.getElementById('modalBg').addEventListener('click', function(e){ if(e.target===this) closeModal(); });
 
 renderStats(); renderTab();
+if (typeof TermacD1Sync !== 'undefined' && typeof TermacD1Sync.d1HydrateAll === 'function') {
+  TermacD1Sync.d1HydrateAll().then(function(){ renderStats(); renderTab(); }).catch(function(){});
+}
 </script>
 </body>
 </html>
