@@ -205,6 +205,16 @@
     // every column both schemas need; this list is explicit so a future
     // typo'd field name fails loudly (never reaches D1) instead of
     // quietly colliding with something else again.
+    // 2026-07-12 FIX: this list only ever had the original field set from
+    // when allpro-project-planner.html first shipped. Every detail-tab
+    // field added since then (subs, AHJ submittals, compliance checklist,
+    // punch list, commissioning checklist, streets permit, UniPro
+    // suppression compliance, duct footage, hood crew, linked scheduler,
+    // project contacts, RFIs) was being written locally and silently
+    // dropped here before ever reaching D1 - meaning that data only ever
+    // existed on whichever single device entered it. Confirmed by cross-
+    // referencing every updateProjectField() call in the planner against
+    // this list.
     allpro_projects: ['id', 'folder_number', 'location_name', 'account_id',
       'accounting_job_number', 'project_type', 'project_description',
       'lead_generation_type', 'project_ntp', 'project_start', 'project_completed',
@@ -213,6 +223,12 @@
       'scope_summary', 'survey_mode', 'survey_notes', 'fab_status', 'fab_notes',
       'delivery_date', 'crane_required', 'final_inspection_date',
       'final_inspection_result', 'stage_updated_at', 'cross_sell_triggered',
+      'actual_duct_ft', 'ahj_submittals_json', 'commissioning_checklist_json',
+      'compliance_checklist_json', 'estimated_duct_ft', 'hood_crew_assigned',
+      'linked_scheduler_id', 'needs_unipro', 'project_contacts_json',
+      'punch_list_json', 'rfis_json', 'streets_dept_permit_date',
+      'streets_dept_permit_status', 'subcontractors_json',
+      'unipro_balloon_test_date', 'unipro_jurisdiction', 'unipro_signoff_status',
       'created_at', 'updated_at'],
     // 2026-07-10: table didn't exist in D1 at all before tonight -- every
     // GET to it returned a 400, visible repeatedly in console screenshots

@@ -135,6 +135,7 @@ body{font-family:'Barlow',-apple-system,sans-serif;background:var(--bg);color:va
 .ref-entry-title{font-weight:700;font-size:12px;margin-bottom:4px}
 .ref-entry-body{font-size:12px;color:var(--soft);line-height:1.5;white-space:pre-wrap}
 .tag{display:inline-block;border-radius:5px;padding:2px 8px;font-size:10px;font-weight:700;color:#fff;margin:1px 3px 1px 0;white-space:nowrap}
+.status-badge{display:inline-block;border-radius:5px;padding:2px 9px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}
 .partner-row{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
 </style>
 </head>
@@ -382,6 +383,12 @@ body{font-family:'Barlow',-apple-system,sans-serif;background:var(--bg);color:va
           <div class="form-field"><label>Sale Price (customer quote)</label><input id="detSalePrice" type="number" onchange="updateProjectField('sale_price', Number(this.value))"></div>
           <div class="form-field"><label>Estimated Project Value (forecasting)</label><input id="detEstValue" type="number" onchange="updateProjectField('estimated_value', Number(this.value))"></div>
         </div>
+      </div>
+
+      <div class="pj-tab-panel" id="panel-rfis">
+        <p style="font-size:12px;color:var(--soft);margin-bottom:12px">Questions to the architect, engineer, customer, or AHJ that need a formal answer before work can proceed. Separate from AHJ compliance submittals on the Permitting tab.</p>
+        <div id="detRfisList"></div>
+        <button class="btn btn-ghost btn-sm" onclick="addRfi()">+ Add RFI</button>
       </div>
 
       <div class="pj-tab-panel" id="panel-permitting">
@@ -1556,6 +1563,7 @@ var TAB_DEFS = [
   {key:'overview', label:'Overview'},
   {key:'survey', label:'Survey & Drawings'},
   {key:'costing', label:'Costing'},
+  {key:'rfis', label:'RFIs'},
   {key:'permitting', label:'Permitting'},
   {key:'fabrication', label:'Fabrication'},
   {key:'subcontractors', label:'Subcontractors'},
@@ -1626,6 +1634,7 @@ function openDetail(id) {
   renderCommissioningBlock(p);
   renderPunchList(p);
   renderSubcontractors(p);
+  renderRfis(p);
   renderUniproLink(p);
 
   switchTab('overview');
@@ -1984,6 +1993,64 @@ function deleteSubcontractor(i) {
   subs.splice(i, 1);
   updateProjectField('subcontractors_json', JSON.stringify(subs));
   renderSubcontractors(getProject(currentProjectId));
+}
+
+// -- RFIs -- questions to the architect, engineer, customer, or AHJ that
+// need a formal answer before work can proceed. Same JSON-field-on-project
+// pattern as subcontractors_json and ahj_submittals_json above, not a
+// separate D1 table, since a project's RFI list is small, always loaded
+// with the project record, and never queried independently.
+var RFI_STATUS_COLORS = { open: '#D97706', answered: '#1B5FA8', closed: '#1E7B3C' };
+function renderRfis(p) {
+  var rfis = p.rfis_json ? JSON.parse(p.rfis_json) : [];
+  var el = document.getElementById('detRfisList');
+  if (!rfis.length) {
+    el.innerHTML = '<div class="stage-locked-note">No RFIs on this job yet.</div>';
+    return;
+  }
+  el.innerHTML = rfis.map(function(r, i) {
+    var overdue = r.due_date && r.status !== 'closed' && new Date(r.due_date).getTime() < Date.now();
+    return '<div class="ahj-row" style="flex-direction:column;align-items:stretch;gap:8px">' +
+      '<div class="form-row" style="margin-bottom:0">' +
+        '<div class="form-field" style="margin-bottom:0"><label>RFI #' + (i + 1) + ' - Subject</label><input value="' + (r.subject||'').replace(/"/g,'&quot;') + '" onchange="updateRfiField(' + i + ',\'subject\',this.value)"></div>' +
+        '<div class="form-field" style="margin-bottom:0"><label>Submitted To</label><input value="' + (r.submitted_to||'').replace(/"/g,'&quot;') + '" placeholder="architect, engineer, customer, AHJ..." onchange="updateRfiField(' + i + ',\'submitted_to\',this.value)"></div>' +
+      '</div>' +
+      '<div class="form-field" style="margin-bottom:0"><label>Question</label><textarea rows="2" onchange="updateRfiField(' + i + ',\'question\',this.value)">' + (r.question||'').replace(/</g,'&lt;') + '</textarea></div>' +
+      '<div class="form-row" style="margin-bottom:0">' +
+        '<div class="form-field" style="margin-bottom:0"><label>Submitted Date</label><input type="date" value="' + (r.submitted_date||'') + '" onchange="updateRfiField(' + i + ',\'submitted_date\',this.value)"></div>' +
+        '<div class="form-field" style="margin-bottom:0"><label' + (overdue?' style="color:var(--red)"':'') + '>Due Date' + (overdue?' - OVERDUE':'') + '</label><input type="date" value="' + (r.due_date||'') + '" onchange="updateRfiField(' + i + ',\'due_date\',this.value)"></div>' +
+      '</div>' +
+      '<div class="form-row" style="margin-bottom:0">' +
+        '<div class="form-field" style="margin-bottom:0"><label>Status</label><select onchange="updateRfiField(' + i + ',\'status\',this.value)">' +
+          ['open','answered','closed'].map(function(v){ return '<option value="' + v + '"' + (r.status===v?' selected':'') + '>' + v + '</option>'; }).join('') +
+        '</select></div>' +
+        '<div class="form-field" style="margin-bottom:0"><span class="status-badge" style="background:' + (RFI_STATUS_COLORS[r.status]||'#5A616B') + '22;color:' + (RFI_STATUS_COLORS[r.status]||'#5A616B') + '">' + (r.status||'open') + '</span></div>' +
+      '</div>' +
+      '<div class="form-field" style="margin-bottom:0"><label>Response</label><textarea rows="2" onchange="updateRfiField(' + i + ',\'response\',this.value)">' + (r.response||'').replace(/</g,'&lt;') + '</textarea></div>' +
+      '<button class="btn btn-ghost btn-sm" onclick="deleteRfi(' + i + ')" style="align-self:flex-end">✕ Remove</button>' +
+    '</div>';
+  }).join('');
+}
+function addRfi() {
+  var p = getProject(currentProjectId);
+  var rfis = p.rfis_json ? JSON.parse(p.rfis_json) : [];
+  rfis.push({ subject: '', question: '', submitted_to: '', submitted_date: '', due_date: '', status: 'open', response: '' });
+  updateProjectField('rfis_json', JSON.stringify(rfis));
+  renderRfis(getProject(currentProjectId));
+}
+function updateRfiField(i, field, value) {
+  var p = getProject(currentProjectId);
+  var rfis = p.rfis_json ? JSON.parse(p.rfis_json) : [];
+  if (!rfis[i]) return;
+  rfis[i][field] = value;
+  updateProjectField('rfis_json', JSON.stringify(rfis));
+}
+function deleteRfi(i) {
+  var p = getProject(currentProjectId);
+  var rfis = p.rfis_json ? JSON.parse(p.rfis_json) : [];
+  rfis.splice(i, 1);
+  updateProjectField('rfis_json', JSON.stringify(rfis));
+  renderRfis(getProject(currentProjectId));
 }
 
 function addAhjSubmittal() {
