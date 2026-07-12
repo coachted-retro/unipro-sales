@@ -156,6 +156,8 @@ body{font-family:'Barlow',-apple-system,sans-serif;background:var(--bg);color:va
     <button class="ap-tab" id="apTab-contacts" onclick="apNav('contacts')">👤 Contacts</button>
     <button class="ap-tab" id="apTab-financials" onclick="apNav('financials')">📊 Financials</button>
     <button class="ap-tab" id="apTab-combined" onclick="apNav('combined')">🤝 Combined Installs</button>
+    <button class="ap-tab" id="apTab-partners" onclick="apNav('partners')">🤝 Trade Partners</button>
+    <button class="ap-tab" id="apTab-reference" onclick="apNav('reference')">📚 Reference</button>
   </div>
 </div>
 
@@ -193,12 +195,49 @@ body{font-family:'Barlow',-apple-system,sans-serif;background:var(--bg);color:va
   <div class="page-hdr">
     <div>
       <h1>AllPro Contacts</h1>
-      <p>Accounts and contacts tied to AllPro work — same CRM data as the sales dashboard, filtered to just AllPro.</p>
+      <p>Customer accounts and contacts tied to AllPro jobs (same CRM data as the sales dashboard) - plus a general Rolodex for people not tied to any account: AHJ officials, architects, engineers, anyone you need to reach that isn't a customer.</p>
     </div>
+    <button class="btn btn-gold" onclick="openContactModal()">+ Add Contact</button>
   </div>
   <input type="text" id="apContactSearch" oninput="renderApContacts()" placeholder="Search name, business, phone…" style="width:100%;max-width:400px;padding:10px 14px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;outline:none;margin-bottom:16px;font-family:'Barlow',sans-serif">
   <div id="apContactsList"></div>
+  <h4 style="margin:24px 0 10px;font-family:'Barlow Condensed',sans-serif;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--soft)">General Contacts / Rolodex</h4>
+  <p style="font-size:11px;color:var(--soft);margin-bottom:12px">Not tied to any customer account - AHJ officials, architects, engineers, and anyone else worth keeping on file.</p>
+  <div id="apRolodexList"></div>
 </div>
+</div>
+
+<!-- CONTACT ADD/EDIT MODAL -->
+<div class="modal-ov" id="contactModal" style="display:none">
+  <div class="modal" style="max-width:520px">
+    <div class="modal-hdr">
+      <span class="modal-hdr-title" id="contactModalTitle">Add Contact</span>
+      <button class="modal-close" onclick="closeModal('contactModal')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="cfId">
+      <div class="form-field"><label>Name *</label><input type="text" id="cfName"></div>
+      <div class="form-row">
+        <div class="form-field"><label>Company / Business</label><input type="text" id="cfCompany"></div>
+        <div class="form-field"><label>Title</label><input type="text" id="cfTitle"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-field"><label>Phone</label><input type="text" id="cfPhone"></div>
+        <div class="form-field"><label>Email</label><input type="text" id="cfEmail"></div>
+      </div>
+      <div class="form-field">
+        <label>Linked Account</label>
+        <select id="cfAccountId">
+          <option value="">None - general contact / Rolodex</option>
+        </select>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-top:14px">
+        <button class="btn btn-ghost btn-sm" id="cfDeleteBtn" style="display:none;color:var(--red);border-color:var(--red)" onclick="deleteContact()">Delete</button>
+        <div style="flex:1"></div>
+        <button class="btn btn-gold" onclick="saveContact()">Save Contact</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div id="apView-financials" style="display:none">
@@ -222,6 +261,37 @@ body{font-family:'Barlow',-apple-system,sans-serif;background:var(--bg);color:va
     </div>
   </div>
   <div id="apCombinedBody"></div>
+</div>
+</div>
+
+<!-- ═══════════════ TOP-LEVEL: TRADE PARTNERS ═══════════════ -->
+<div id="apView-partners" style="display:none">
+<div class="wrap">
+  <div class="page-hdr">
+    <div>
+      <h1>Trade Partner Network</h1>
+      <p>Subs, fire-protection vendors, and general contractors - shared across every division. Full referral and bid tracking lives in the standalone directory.</p>
+    </div>
+    <a class="btn btn-gold" href="trade-partners.html" target="_blank">Open Full Directory</a>
+  </div>
+  <input type="text" id="apTopPartnerSearch" oninput="renderApTopPartners()" placeholder="Search company, trade, territory..." style="width:100%;max-width:400px;padding:10px 14px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;outline:none;margin-bottom:16px;font-family:'Barlow',sans-serif">
+  <div id="apTopPartnerList"></div>
+</div>
+</div>
+
+<!-- ═══════════════ TOP-LEVEL: REFERENCE LIBRARY ═══════════════ -->
+<div id="apView-reference" style="display:none">
+<div class="wrap">
+  <div class="page-hdr">
+    <div>
+      <h1>Reference Library</h1>
+      <p>Code references, AHJ/permit notes, and gauge/material charts - the same library available inside every project's toolbar.</p>
+    </div>
+    <button class="btn btn-gold" onclick="openReferenceEditor()">+ Add Entry</button>
+  </div>
+  <input type="text" id="apTopRefSearch" oninput="renderApTopReference()" placeholder="Search reference library..." style="width:100%;max-width:400px;padding:10px 14px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;outline:none;margin-bottom:12px;font-family:'Barlow',sans-serif">
+  <div class="ref-cat-list" id="apTopRefCatList"></div>
+  <div id="apTopRefEntryList"></div>
 </div>
 </div>
 
@@ -960,25 +1030,41 @@ function loadReferenceEntries() { return crmLoad('reference_library'); }
 function saveReferenceEntries(arr) { crmSave('reference_library', arr); }
 function setRefCat(v) { currentRefCat = v; renderReferenceLibrary(); }
 function renderReferenceLibrary() {
-  document.getElementById('refCatList').innerHTML = REF_CATEGORIES.map(function(c){
+  var catHtml = REF_CATEGORIES.map(function(c){
     return '<span class="filter-chip' + (currentRefCat === c.v ? ' active' : '') + '" onclick="setRefCat(\'' + c.v + '\')">' + escH(c.l) + '</span>';
   }).join('');
-  var search = (document.getElementById('refSearch').value || '').toLowerCase();
+  // Updates both targets unconditionally - the rail panel's elements
+  // (refCatList/refSearch/refEntryList) and the top-level Reference tab's
+  // (apTopRefCatList/apTopRefSearch/apTopRefEntryList) both exist in the
+  // DOM at all times, just hidden via CSS depending on which view is
+  // active, so writing to both here means one render function serves
+  // both entry points without duplicating the logic.
+  var refCatEl = document.getElementById('refCatList');
+  var topCatEl = document.getElementById('apTopRefCatList');
+  if (refCatEl) refCatEl.innerHTML = catHtml;
+  if (topCatEl) topCatEl.innerHTML = catHtml;
+
+  var search = ((document.getElementById('refSearch') || document.getElementById('apTopRefSearch') || {}).value || '').toLowerCase();
   var entries = loadReferenceEntries();
   if (currentRefCat) entries = entries.filter(function(e){ return e.category === currentRefCat; });
   if (search) entries = entries.filter(function(e){ return ((e.title||'') + ' ' + (e.content||'')).toLowerCase().indexOf(search) !== -1; });
   entries.sort(function(a,b){ return (a.title||'').localeCompare(b.title||''); });
-  var el = document.getElementById('refEntryList');
+
+  var listHtml;
   if (!entries.length) {
-    el.innerHTML = '<div class="empty-state">No reference entries yet. Click "+ Add Entry" to start building the library.</div>';
-    return;
+    listHtml = '<div class="empty-state">No reference entries yet. Click "+ Add Entry" to start building the library.</div>';
+  } else {
+    listHtml = entries.map(function(e){
+      return '<div class="ref-entry" onclick="openReferenceEditor(\'' + e.id + '\')" style="cursor:pointer">' +
+        '<div class="ref-entry-title">' + escH(e.title||'') + '</div>' +
+        '<div class="ref-entry-body">' + escH(e.content||'') + '</div>' +
+        '</div>';
+    }).join('');
   }
-  el.innerHTML = entries.map(function(e){
-    return '<div class="ref-entry" onclick="openReferenceEditor(\'' + e.id + '\')" style="cursor:pointer">' +
-      '<div class="ref-entry-title">' + escH(e.title||'') + '</div>' +
-      '<div class="ref-entry-body">' + escH(e.content||'') + '</div>' +
-      '</div>';
-  }).join('');
+  var refListEl = document.getElementById('refEntryList');
+  var topListEl = document.getElementById('apTopRefEntryList');
+  if (refListEl) refListEl.innerHTML = listHtml;
+  if (topListEl) topListEl.innerHTML = listHtml;
 }
 function openReferenceEditor(id) {
   document.getElementById('refId').value = '';
@@ -1084,6 +1170,35 @@ function assignPartnerToProject(partnerId) {
   renderSubcontractors(getProject(currentProjectId));
 }
 
+// ── Top-level Trade Partners tab (main dashboard, not inside a
+// project) ── same directory, no "Assign to This Job" since there's
+// no project in context here - full directory management (referrals,
+// bids, adding new partners) still lives on trade-partners.html.
+function renderApTopPartners() {
+  var search = (document.getElementById('apTopPartnerSearch')?.value || '').toLowerCase();
+  var partners = crmLoad('trade_partners');
+  if (search) {
+    partners = partners.filter(function(p){
+      var blob = [p.company_name, p.primary_contact_name, (p.trades||[]).join(' '), (p.territory||[]).join(' ')].join(' ').toLowerCase();
+      return blob.indexOf(search) !== -1;
+    });
+  }
+  partners.sort(function(a,b){ return (a.company_name||'').localeCompare(b.company_name||''); });
+  var el = document.getElementById('apTopPartnerList');
+  if (!partners.length) {
+    el.innerHTML = '<div class="empty-state">No trade partners in the directory yet. <a href="trade-partners.html" target="_blank">Add one</a> to get started.</div>';
+    return;
+  }
+  el.innerHTML = partners.map(function(p){
+    var tradeTags = (p.trades||[]).map(function(t){ return '<span class="tag" style="background:#5A616B">' + escH(TRADE_LABELS[t] || t) + '</span>'; }).join('');
+    var contact = [p.primary_contact_name, p.primary_contact_phone, p.primary_contact_email].filter(Boolean).join(' \u00b7 ');
+    return '<div class="partner-row">' +
+      '<div><strong>' + escH(p.company_name||'') + '</strong><div style="font-size:11px;color:var(--soft);margin-top:2px">' + escH(contact) + '</div><div style="margin-top:4px">' + tradeTags + '</div></div>' +
+      '<a class="btn btn-ghost btn-sm" href="trade-partners.html" target="_blank">Manage &rarr;</a>' +
+      '</div>';
+  }).join('');
+}
+
 
 // ── TAB NAV (2026-07-10) ──────────────────────────────────────────────
 function apNav(view) {
@@ -1093,9 +1208,13 @@ function apNav(view) {
   document.getElementById('apView-contacts').style.display = view === 'contacts' ? 'block' : 'none';
   document.getElementById('apView-financials').style.display = view === 'financials' ? 'block' : 'none';
   document.getElementById('apView-combined').style.display = view === 'combined' ? 'block' : 'none';
+  document.getElementById('apView-partners').style.display = view === 'partners' ? 'block' : 'none';
+  document.getElementById('apView-reference').style.display = view === 'reference' ? 'block' : 'none';
   if (view === 'contacts') renderApContacts();
   if (view === 'financials') renderFinancials();
   if (view === 'combined') renderCombinedInstalls();
+  if (view === 'partners') renderApTopPartners();
+  if (view === 'reference') renderReferenceLibrary();
 }
 
 // ── Shared Dan/Paul view: every AllPro project that needs UniPro
@@ -1167,7 +1286,8 @@ function renderApContacts() {
   projects.forEach(function(p){ if (p.account_id) allProAccountIds[p.account_id] = true; });
 
   var accounts = (crmLoad('accounts') || []).filter(function(a){ return allProAccountIds[a.id]; });
-  var contacts = (crmLoad('contacts') || []).filter(function(c){ return allProAccountIds[c.accountId] || allProAccountIds[c.account_id]; });
+  var allContacts = crmLoad('contacts') || [];
+  var contacts = allContacts.filter(function(c){ return allProAccountIds[c.accountId] || allProAccountIds[c.account_id]; });
 
   var rows = accounts.map(function(a){
     var acctProjects = projects.filter(function(p){ return p.account_id === a.id; });
@@ -1184,15 +1304,17 @@ function renderApContacts() {
   }
 
   var el = document.getElementById('apContactsList');
+  // 2026-07-13 FIX: this used to return early here, which meant the
+  // Rolodex section below never rendered at all when there were no
+  // account-linked rows - now falls through so both sections always
+  // get a chance to render.
   if (!rows.length) {
-    el.innerHTML = '<div style="text-align:center;padding:40px;color:var(--soft)">No AllPro contacts yet — they show up here once a lead is forwarded from the field.</div>';
-    return;
-  }
-
-  el.innerHTML = rows.map(function(r) {
+    el.innerHTML = '<div style="text-align:center;padding:40px;color:var(--soft)">No AllPro customer contacts yet — they show up here once tied to an account, or add one directly with "+ Add Contact".</div>';
+  } else {
+    el.innerHTML = rows.map(function(r) {
     var a = r.account;
     var contactLines = r.contacts.length
-      ? r.contacts.map(function(c){ return '<div style="font-size:12px;color:var(--soft)">' + escSp(c.name||'') + (c.phone?' · '+escSp(c.phone):'') + (c.email?' · '+escSp(c.email):'') + '</div>'; }).join('')
+      ? r.contacts.map(function(c){ return '<div style="font-size:12px;color:var(--soft);cursor:pointer" onclick="openContactModal(\'' + c.id + '\')">' + escSp(c.name||'') + (c.phone?' · '+escSp(c.phone):'') + (c.email?' · '+escSp(c.email):'') + '</div>'; }).join('')
       : '<div style="font-size:12px;color:var(--soft);font-style:italic">No individual contacts on file</div>';
     var projectLines = r.projects.map(function(p){
       return '<span style="display:inline-block;background:' + (STAGE_COLORS[p.stage]||'#6B7280') + '22;color:' + (STAGE_COLORS[p.stage]||'#6B7280') + ';border-radius:5px;padding:2px 8px;font-size:11px;font-weight:700;margin-right:6px">' + (STAGE_LABELS[p.stage]||p.stage) + '</span>';
@@ -1207,7 +1329,102 @@ function renderApContacts() {
       '</div>' +
       '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--line)">' + contactLines + '</div>' +
     '</div>';
-  }).join('');
+    }).join('');
+  }
+
+  // ── Rolodex: contacts with no account_id at all ──
+  var rolodex = allContacts.filter(function(c){ return !c.accountId && !c.account_id; });
+  if (search) {
+    rolodex = rolodex.filter(function(c){
+      var blob = [c.name, c.company, c.title, c.phone, c.email].filter(Boolean).join(' ').toLowerCase();
+      return blob.includes(search);
+    });
+  }
+  rolodex.sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
+  var rEl = document.getElementById('apRolodexList');
+  if (!rolodex.length) {
+    rEl.innerHTML = '<div class="empty-state">No general contacts yet. Click "+ Add Contact" and leave the account blank.</div>';
+  } else {
+    rEl.innerHTML = rolodex.map(function(c){
+      return '<div class="partner-row" style="cursor:pointer" onclick="openContactModal(\'' + c.id + '\')">' +
+        '<div><strong>' + escSp(c.name||'') + '</strong>' + (c.title||c.company ? '<div style="font-size:11px;color:var(--soft);margin-top:2px">' + escSp([c.title,c.company].filter(Boolean).join(' \u00b7 ')) + '</div>' : '') + '</div>' +
+        '<div style="font-size:12px;color:var(--soft)">' + escSp([c.phone,c.email].filter(Boolean).join(' \u00b7 ')) + '</div>' +
+      '</div>';
+    }).join('');
+  }
+}
+
+function populateContactAccountOptions() {
+  var sel = document.getElementById('cfAccountId');
+  var projects = loadProjects();
+  var allProAccountIds = {};
+  projects.forEach(function(p){ if (p.account_id) allProAccountIds[p.account_id] = true; });
+  var accounts = (crmLoad('accounts') || []).filter(function(a){ return allProAccountIds[a.id]; });
+  accounts.sort(function(a,b){ return (a.business||a.name||'').localeCompare(b.business||b.name||''); });
+  sel.innerHTML = '<option value="">None - general contact / Rolodex</option>' +
+    accounts.map(function(a){ return '<option value="' + a.id + '">' + escH(a.business||a.name||'Unknown') + '</option>'; }).join('');
+}
+
+function openContactModal(id) {
+  populateContactAccountOptions();
+  document.getElementById('cfId').value = '';
+  document.getElementById('cfName').value = '';
+  document.getElementById('cfCompany').value = '';
+  document.getElementById('cfTitle').value = '';
+  document.getElementById('cfPhone').value = '';
+  document.getElementById('cfEmail').value = '';
+  document.getElementById('cfAccountId').value = '';
+  document.getElementById('cfDeleteBtn').style.display = 'none';
+  if (id) {
+    var c = crmLoad('contacts').find(function(x){ return x.id === id; });
+    if (c) {
+      document.getElementById('contactModalTitle').textContent = 'Edit Contact';
+      document.getElementById('cfId').value = c.id;
+      document.getElementById('cfName').value = c.name || '';
+      document.getElementById('cfCompany').value = c.company || '';
+      document.getElementById('cfTitle').value = c.title || '';
+      document.getElementById('cfPhone').value = c.phone || '';
+      document.getElementById('cfEmail').value = c.email || '';
+      document.getElementById('cfAccountId').value = c.accountId || c.account_id || '';
+      document.getElementById('cfDeleteBtn').style.display = '';
+    }
+  } else {
+    document.getElementById('contactModalTitle').textContent = 'Add Contact';
+  }
+  document.getElementById('contactModal').style.display = 'flex';
+}
+
+function saveContact() {
+  var name = document.getElementById('cfName').value.trim();
+  if (!name) { alert('Name is required.'); return; }
+  var id = document.getElementById('cfId').value;
+  var now = nowTs();
+  var contacts = crmLoad('contacts');
+  var record = {
+    id: id || genId('CON'),
+    name: name,
+    company: document.getElementById('cfCompany').value.trim(),
+    title: document.getElementById('cfTitle').value.trim(),
+    phone: document.getElementById('cfPhone').value.trim(),
+    email: document.getElementById('cfEmail').value.trim(),
+    accountId: document.getElementById('cfAccountId').value || '',
+    status: 'active',
+    created_at: id ? (contacts.find(function(x){return x.id===id;})||{}).created_at || now : now,
+    updated_at: now
+  };
+  contacts = id ? contacts.map(function(c){ return c.id === id ? record : c; }) : contacts.concat([record]);
+  crmSave('contacts', contacts);
+  closeModal('contactModal');
+  renderApContacts();
+}
+
+function deleteContact() {
+  var id = document.getElementById('cfId').value;
+  if (!id || !confirm('Delete this contact?')) return;
+  crmDelete('contacts', id).then(function(){
+    closeModal('contactModal');
+    renderApContacts();
+  });
 }
 
 // ── REFERRAL SPIFFS (2026-07-10) ──────────────────────────────────────
