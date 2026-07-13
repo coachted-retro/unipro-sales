@@ -92,6 +92,57 @@ function generateResetCode() {
   return String(n % 1000000).padStart(6, '0');
 }
 
+// 2026-07-13, per Ted: "not a generic page -- a direct link to their
+// dashboard, specifically." This MUST stay in sync with PORTAL_META and
+// DIVISION_SLUG in employee-portal.html -- that file is the single source
+// of truth for which portal key maps to which URL and how a division name
+// becomes a gm-dashboard.html slug. If a portal or division is ever added
+// there, mirror it here too, or invite links will point at the wrong page
+// (or the old generic one) while the tile chooser is already correct.
+const PORTAL_URLS = {
+  sales_rep: 'sales-portal.html',
+  dms: 'dms-portal.html',
+  reception: 'reception-portal.html',
+  scheduler: 'scheduler-v2.html',
+  dispatch: 'dispatch-v2.html',
+  tech: 'tech-portal-unified.html',
+  warehouse: 'warehouse-portal.html',
+  manager: 'termac-os.html',
+  admin: 'termac-os.html',
+  gm_dashboard: 'gm-dashboard.html',
+};
+const DIVISION_SLUG = {
+  'UniPro': 'unipro', 'AllPro': 'allpro', 'Quality III': 'quality3',
+  'Filter Man': 'filterman', 'GTO': 'gto', 'Termac': 'termac',
+};
+
+// One clear job role -> one direct dashboard link, full stop. Only people
+// with several genuinely different portals and no single "home" (or full
+// platform access, which is its own kind of home) land on the personalized
+// tile chooser -- that's a real destination in its own right, not a
+// fallback shrug, since it's built from this exact same person's granted
+// access rather than a blank login form.
+function resolveDestinationUrl(role, division, portals) {
+  const list = Array.isArray(portals) ? portals : [];
+  const fullAccess = role === 'admin' || role === 'owner' || list.indexOf('admin') !== -1;
+  if (fullAccess) return 'employee-portal.html';
+  if (list.indexOf('gm_dashboard') !== -1) {
+    const slug = DIVISION_SLUG[division || ''];
+    return slug ? ('gm-dashboard.html?division=' + slug) : 'gm-dashboard.html';
+  }
+  if (list.length === 1 && PORTAL_URLS[list[0]]) return PORTAL_URLS[list[0]];
+  return 'employee-portal.html';
+}
+
+// Builds the actual link that goes in invite/resend emails: the login
+// page, carrying this person's resolved destination as ?dest= so
+// staff-login.html can bounce them straight there once they're signed in,
+// instead of leaving them on a generic page to figure out on their own.
+function buildLoginUrl(role, division, portals) {
+  const dest = resolveDestinationUrl(role, division, portals);
+  return 'https://my.termac.com/staff-login.html?dest=' + encodeURIComponent(dest);
+}
+
 async function jsonResponse(body, status) {
   return new Response(JSON.stringify(body), {
     status: status || 200,
@@ -142,7 +193,7 @@ async function handleProvision(request, env) {
     'INSERT INTO staff_auth (id, email, name, role, division, portals, password_hash, salt, must_reset, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)'
   ).bind(id, email, name, role, division, JSON.stringify(portals), hash, salt, 'active', Date.now(), Date.now()).run();
 
-  const LOGIN_URL = 'https://my.termac.com/staff-login.html';
+  const LOGIN_URL = buildLoginUrl(role, division, portals);
   const emailSent = await sendEmail(env, name, email, 'Termac One Account Created',
     'Your Termac One login is ready. Sign in at ' + LOGIN_URL + ' using this email address, ' + email +
     ', and this temporary password: ' + tempPassword +
@@ -343,7 +394,9 @@ async function handleResendInvite(request, env) {
     'UPDATE staff_auth SET password_hash = ?, salt = ?, must_reset = 1, status = ?, updated_at = ? WHERE id = ?'
   ).bind(hash, salt, 'active', Date.now(), id).run();
 
-  const LOGIN_URL = 'https://my.termac.com/staff-login.html';
+  let userPortals = [];
+  try { userPortals = JSON.parse(user.portals || '[]'); } catch (e) {}
+  const LOGIN_URL = buildLoginUrl(user.role, user.division, userPortals);
   const emailSent = await sendEmail(env, user.name, user.email, 'Termac One Login Resent',
     'Your Termac One login was resent. Sign in at ' + LOGIN_URL + ' using this email address, ' + user.email +
     ', and this temporary password: ' + tempPassword +

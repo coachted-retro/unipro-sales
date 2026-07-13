@@ -358,12 +358,20 @@ async function runScheduledReports(env) {
       if (!html) continue;
 
       try {
-        await fetch('https://termac-notify.termac-one.workers.dev/send-report', {
+        // 2026-07-13 fix: was a raw fetch() to termac-notify's public
+        // workers.dev URL, which Cloudflare blocks worker-to-worker
+        // (error 1042, not JSON) -- silently failed every time via the
+        // catch below, which is why last_sent_at never updated and Ted
+        // never saw a single report despite the setting being saved and
+        // enabled correctly. Now uses the Service Binding, same pattern
+        // already working for termac-booking-api.
+        if (!env.NOTIFY_SERVICE) continue;
+        await env.NOTIFY_SERVICE.fetch('https://termac-notify.termac-one.workers.dev/send-report', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             recipients,
-            subject: (report.label || report.report_key) + ' — ' + todayStr,
+            subject: (report.label || report.report_key) + ' - ' + todayStr,
             html,
           }),
         });

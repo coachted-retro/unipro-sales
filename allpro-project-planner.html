@@ -142,6 +142,45 @@ body{font-family:'Barlow',-apple-system,sans-serif;background:var(--bg);color:va
 </head>
 <body>
 
+<script>
+// 2026-07-13 per Ted: this page had no way back to sales-portal.html at
+// all before this. When embedded inside sales-portal.html's overlay,
+// Home means telling that parent to close the overlay (the iframe stays
+// alive underneath, nothing lost).
+//
+// 2026-07-13, later same day, per Ted: opened standalone, Home was still
+// hardcoded to sales-portal.html regardless of who's actually logged in --
+// fine for a sales rep, wrong for Dan (or any division GM) who lands here
+// straight from their own gm-dashboard.html. Same rule as everywhere else
+// today (CLAUDE.md Rule 9): one specific person, one specific link back to
+// THEIR page, not a hardcoded guess. Checks the real session the same way
+// gm-dashboard.html and employee-portal.html already do.
+const AP_STAFF_AUTH_API = 'https://termac-staff-auth.termac-one.workers.dev';
+const AP_DIVISION_SLUG = {
+  'UniPro': 'unipro', 'AllPro': 'allpro', 'Quality III': 'quality3',
+  'Filter Man': 'filterman', 'GTO': 'gto', 'Termac': 'termac',
+};
+async function apGoHome() {
+  if (window.parent && window.parent !== window) {
+    try { window.parent.postMessage({ type: 'termac-embed-home' }, '*'); return; } catch (e) {}
+  }
+  try {
+    const raw = sessionStorage.getItem('termac_staff_session');
+    if (raw) {
+      const session = JSON.parse(raw);
+      const res = await fetch(AP_STAFF_AUTH_API + '/my-access?email=' + encodeURIComponent(session.email));
+      const data = await res.json();
+      if (data.ok && data.active && (data.portals || []).includes('gm_dashboard')) {
+        const slug = AP_DIVISION_SLUG[data.division || ''];
+        window.location.href = slug ? ('gm-dashboard.html?division=' + slug) : 'gm-dashboard.html';
+        return;
+      }
+    }
+  } catch (e) { /* fall through to the sales-rep default below */ }
+  window.location.href = 'sales-portal.html';
+}
+</script>
+
 <div class="trn">
   <div class="trn-inner">
     <span class="trn-logo">Termac One</span>
@@ -151,21 +190,6 @@ body{font-family:'Barlow',-apple-system,sans-serif;background:var(--bg);color:va
     <a class="trn-btn" href="employee-portal.html">Employee Portal</a>
   </div>
 </div>
-<script>
-// 2026-07-13 per Ted: this page had no way back to sales-portal.html at
-// all before this. When embedded inside sales-portal.html's overlay,
-// Home means telling that parent to close the overlay (the iframe stays
-// alive underneath, nothing lost). Opened standalone -- a real separate
-// browser tab, which Ted's OK with for pages other than this one and Bid
-// Pipeline -- Home goes straight to sales-portal.html since that's the
-// actual home base, not termac-os.html.
-function apGoHome() {
-  if (window.parent && window.parent !== window) {
-    try { window.parent.postMessage({ type: 'termac-embed-home' }, '*'); return; } catch (e) {}
-  }
-  window.location.href = 'sales-portal.html';
-}
-</script>
 
 <div class="ap-tabnav">
   <div class="ap-tabnav-inner">
@@ -593,6 +617,8 @@ function apGoHome() {
           <button class="pj-tool-subtab" id="calcSub-duct" onclick="switchCalcSub('duct')">Duct Velocity</button>
           <button class="pj-tool-subtab" id="calcSub-material" onclick="switchCalcSub('material')">Material Takeoff</button>
           <button class="pj-tool-subtab" id="calcSub-labor" onclick="switchCalcSub('labor')">Labor Hours</button>
+          <button class="pj-tool-subtab" id="calcSub-hoodprice" onclick="switchCalcSub('hoodprice')">Hood Pricing</button>
+          <button class="pj-tool-subtab" id="calcSub-fanprice" onclick="switchCalcSub('fanprice')">Fan Pricing</button>
         </div>
 
         <div class="pj-tool-subpanel active" id="calcPanel-cfm">
@@ -687,6 +713,50 @@ function apGoHome() {
           <div class="form-field"><label>Quantity / Units</label><input type="number" id="laborQty" oninput="calcLabor()" value="1"></div>
           <p style="font-size:10px;color:var(--soft);margin-top:-4px"><a href="#" onclick="event.preventDefault();openRateEditor('labor')">edit labor rate table</a></p>
           <div class="calc-result" id="laborResult"></div>
+        </div>
+
+        <div class="pj-tool-subpanel" id="calcPanel-hoodprice">
+          <p class="stage-locked-note">Baseline $/linear-ft rates derived from 88 historical AllPro hood jobs (QuickBase migration, 2026-07-13). Wide real-world variance means these are a starting point for a first-pass number, not a quote -- edit freely as you learn more.</p>
+          <div class="form-row">
+            <div class="form-field"><label>Hood Category / Type</label>
+              <select id="hoodPriceKey" onchange="calcHoodPrice()"></select>
+            </div>
+            <div class="form-field"><label>Length (ft)</label><input type="number" id="hoodPriceLength" oninput="calcHoodPrice()" value="10"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-field"><label>SS Wall Sheeting?</label>
+              <select id="hoodPriceSheeting" onchange="calcHoodPrice()">
+                <option value="no">No</option>
+                <option value="yes">Yes</option>
+              </select>
+            </div>
+            <div class="form-field"><label>Insulated?</label>
+              <select id="hoodPriceInsulated" onchange="calcHoodPrice()">
+                <option value="no">No</option>
+                <option value="yes">Yes</option>
+              </select>
+            </div>
+          </div>
+          <p style="font-size:10px;color:var(--soft);margin-top:-4px"><a href="#" onclick="event.preventDefault();openRateEditor('hood')">edit hood rate table</a></p>
+          <div class="calc-result" id="hoodPriceResult"></div>
+        </div>
+
+        <div class="pj-tool-subpanel" id="calcPanel-fanprice">
+          <p class="stage-locked-note">Baseline costs derived from 214 historical AllPro fan/duct jobs. Horsepower was only recorded on 7 of 257 historical fan records -- too sparse to price by HP reliably, so this is priced by fan category instead. Capture HP consistently going forward to unlock a tighter rate.</p>
+          <div class="form-row">
+            <div class="form-field"><label>Fan Category</label>
+              <select id="fanPriceKey" onchange="calcFanPrice()"></select>
+            </div>
+            <div class="form-field"><label>Duct Length (ft)</label><input type="number" id="fanPriceDuctLength" oninput="calcFanPrice()" value="20"></div>
+          </div>
+          <div class="form-field"><label>Fire Wrapped?</label>
+            <select id="fanPriceWrapped" onchange="calcFanPrice()">
+              <option value="unwrapped">No</option>
+              <option value="wrapped">Yes - Inside</option>
+            </select>
+          </div>
+          <p style="font-size:10px;color:var(--soft);margin-top:-4px"><a href="#" onclick="event.preventDefault();openRateEditor('fan')">edit fan rate table</a></p>
+          <div class="calc-result" id="fanPriceResult"></div>
         </div>
       </div>
 
@@ -838,7 +908,7 @@ function openToolPanel(id) {
   document.querySelectorAll('.pj-tab-panel').forEach(function(p){ p.classList.remove('active'); });
   document.querySelectorAll('.pj-tool-panel').forEach(function(p){ p.classList.toggle('active', p.id === 'panel-tool-' + id); });
   document.querySelectorAll('.pj-rail-btn').forEach(function(b){ b.classList.toggle('active', b.id === 'railBtn-' + id); });
-  if (id === 'calc') { populateGaugeOptions(); populateLaborComponents(); calcCfm(); calcDuct(); calcMaterial(); calcLabor(); }
+  if (id === 'calc') { populateGaugeOptions(); populateLaborComponents(); calcCfm(); calcDuct(); calcMaterial(); calcLabor(); populateHoodPriceOptions(); calcHoodPrice(); populateFanPriceOptions(); calcFanPrice(); }
   if (id === 'reference') { renderReferenceLibrary(); }
   if (id === 'partners') { renderPartnerPicker(); }
 }
@@ -852,7 +922,7 @@ function closeToolPanel() {
 }
 
 function switchCalcSub(key) {
-  ['cfm','duct','material','labor'].forEach(function(k){
+  ['cfm','duct','material','labor','hoodprice','fanprice'].forEach(function(k){
     var btn = document.getElementById('calcSub-'+k);
     if (btn) btn.classList.toggle('active', k === key);
     var panel = document.getElementById('calcPanel-'+k);
@@ -981,6 +1051,108 @@ function calcLabor() {
     '<div class="calc-result-row"><span>Estimated total</span><strong>' + total.toFixed(1) + ' hrs</strong></div>';
 }
 
+/* ── Hood Pricing ── baseline $/linear-ft rates derived from 88 historical
+   AllPro hood jobs during the QuickBase migration (2026-07-13). Real jobs
+   showed wide variance (e.g. Captive Air Type 1 ranged $100-$1092/ft on
+   just 9 samples) -- this gives a first-pass number to start a quote from,
+   not a substitute for judgment on an unusual job. ── */
+function populateHoodPriceOptions() {
+  var sel = document.getElementById('hoodPriceKey');
+  if (!sel) return;
+  var rates = loadRates().filter(function(r){
+    return r.rate_type === 'hood' && r.rate_key.indexOf('sheeting_') !== 0 && r.rate_key !== 'insulation_premium';
+  });
+  var current = sel.value;
+  sel.innerHTML = '';
+  if (!rates.length) {
+    sel.innerHTML = '<option value="">No hood rates set yet</option>';
+    return;
+  }
+  rates.forEach(function(r){
+    var opt = document.createElement('option');
+    opt.value = r.rate_key;
+    opt.textContent = r.label + ' ($' + r.value + '/ft)';
+    sel.appendChild(opt);
+  });
+  if (current) sel.value = current;
+}
+function calcHoodPrice() {
+  var key = document.getElementById('hoodPriceKey').value;
+  var length = parseFloat(document.getElementById('hoodPriceLength').value) || 0;
+  var wantSheeting = document.getElementById('hoodPriceSheeting').value === 'yes';
+  var wantInsulated = document.getElementById('hoodPriceInsulated').value === 'yes';
+  var baseRate = getRate('hood', key);
+  var el = document.getElementById('hoodPriceResult');
+  if (!baseRate) {
+    el.innerHTML = '<div class="calc-result-row calc-flag-warn">No rate set for this hood type yet - <a href="#" onclick="event.preventDefault();openRateEditor(\'hood\')">set it here</a></div>';
+    return;
+  }
+  var hoodCost = baseRate * length;
+  var html = '<div class="calc-result-row"><span>Hood (@ $' + baseRate + '/ft x ' + length + 'ft)</span><strong>$' + hoodCost.toLocaleString(undefined,{maximumFractionDigits:0}) + '</strong></div>';
+  var total = hoodCost;
+  if (wantSheeting) {
+    var sheetKey = 'sheeting_' + key;
+    var sheetRate = getRate('hood', sheetKey);
+    if (sheetRate) {
+      var sheetCost = sheetRate * length;
+      html += '<div class="calc-result-row"><span>Wall sheeting (@ $' + sheetRate + '/ft)</span><strong>$' + sheetCost.toLocaleString(undefined,{maximumFractionDigits:0}) + '</strong></div>';
+      total += sheetCost;
+    } else {
+      html += '<div class="calc-result-row calc-flag-warn">No sheeting rate on file for this hood type - <a href="#" onclick="event.preventDefault();openRateEditor(\'hood\')">add one</a></div>';
+    }
+  }
+  if (wantInsulated) {
+    var insPremium = getRate('hood', 'insulation_premium');
+    if (insPremium) {
+      html += '<div class="calc-result-row"><span>Insulation premium (rough historical avg)</span><strong>$' + insPremium.toLocaleString(undefined,{maximumFractionDigits:0}) + '</strong></div>';
+      total += insPremium;
+    }
+  }
+  html += '<div class="calc-result-row"><span>Estimated total</span><strong>$' + total.toLocaleString(undefined,{maximumFractionDigits:0}) + '</strong></div>';
+  el.innerHTML = html;
+}
+
+/* ── Fan Pricing ── priced by fan category (Exhaust/Return) rather than
+   horsepower, since HP was only recorded on 7 of 257 historical fan
+   records -- too sparse to build a reliable $/HP rate. Duct run priced
+   separately by linear foot and fire-wrap status. ── */
+function populateFanPriceOptions() {
+  var sel = document.getElementById('fanPriceKey');
+  if (!sel) return;
+  var rates = loadRates().filter(function(r){ return r.rate_type === 'fan' && r.rate_key.indexOf('base_') === 0; });
+  var current = sel.value;
+  sel.innerHTML = '';
+  if (!rates.length) {
+    sel.innerHTML = '<option value="">No fan rates set yet</option>';
+    return;
+  }
+  rates.forEach(function(r){
+    var opt = document.createElement('option');
+    opt.value = r.rate_key;
+    opt.textContent = r.label + ' ($' + r.value + ')';
+    sel.appendChild(opt);
+  });
+  if (current) sel.value = current;
+}
+function calcFanPrice() {
+  var key = document.getElementById('fanPriceKey').value;
+  var ductLength = parseFloat(document.getElementById('fanPriceDuctLength').value) || 0;
+  var wrapKey = document.getElementById('fanPriceWrapped').value === 'wrapped' ? 'duct_wrapped' : 'duct_unwrapped';
+  var fanBase = getRate('fan', key);
+  var el = document.getElementById('fanPriceResult');
+  if (!fanBase) {
+    el.innerHTML = '<div class="calc-result-row calc-flag-warn">No rate set for this fan category yet - <a href="#" onclick="event.preventDefault();openRateEditor(\'fan\')">set it here</a></div>';
+    return;
+  }
+  var ductRate = getRate('fan', wrapKey);
+  var ductCost = ductRate * ductLength;
+  var total = fanBase + ductCost;
+  el.innerHTML =
+    '<div class="calc-result-row"><span>Fan unit</span><strong>$' + fanBase.toLocaleString() + '</strong></div>' +
+    '<div class="calc-result-row"><span>Duct (@ $' + ductRate + '/ft x ' + ductLength + 'ft)</span><strong>$' + ductCost.toLocaleString(undefined,{maximumFractionDigits:0}) + '</strong></div>' +
+    '<div class="calc-result-row"><span>Estimated total</span><strong>$' + total.toLocaleString(undefined,{maximumFractionDigits:0}) + '</strong></div>';
+}
+
 /* ── Rate Table (shared by Material Takeoff and Labor Hours) ── */
 function loadRates() { return crmLoad('allpro_rate_tables'); }
 function saveRates(arr) { crmSave('allpro_rate_tables', arr); }
@@ -989,7 +1161,8 @@ function getRate(type, key) {
   return r ? (parseFloat(r.value) || 0) : 0;
 }
 function openRateEditor(type) {
-  document.getElementById('rateEditorTitle').textContent = type === 'material' ? 'Edit Material Rates ($/lb)' : 'Edit Labor Rate Table (hrs)';
+  var titles = { material: 'Edit Material Rates ($/lb)', labor: 'Edit Labor Rate Table (hrs)', hood: 'Edit Hood Rate Table ($/ft)', fan: 'Edit Fan Rate Table ($)' };
+  document.getElementById('rateEditorTitle').textContent = titles[type] || 'Edit Rate Table';
   document.getElementById('rateEditorModal').dataset.type = type;
   renderRateEditorList(type);
   document.getElementById('rateNewKey').value = '';

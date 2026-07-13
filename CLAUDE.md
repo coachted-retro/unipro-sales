@@ -47,6 +47,21 @@ missed.
 remote URL and treat as dead the moment the session ends. Remind Ted to
 revoke if it wasn't already done.
 
+## Rule 9 — Staff access links are NEVER generic, full stop. Modeled
+directly on how Retro Fitness's "Share App" works (a coach shares with a
+client, the client's link goes straight to THAT client's page -- never a
+generic app-open screen). Same standard here: when HR shares access via
+Employee Directory -> Share App, or resends an invite, the email MUST
+carry that specific person's specific dashboard as the destination --
+built from their actual role/division/portals -- not a bare login page
+the person has to figure out on their own afterward. This is implemented
+in workers/termac-staff-auth/index.js (resolveDestinationUrl/
+buildLoginUrl) and staff-login.html (captures ?dest= and bounces there
+post-login). If a new portal or division is ever added, update
+PORTAL_URLS/DIVISION_SLUG in BOTH that worker and employee-portal.html's
+PORTAL_META/DIVISION_SLUG -- they must stay identical or invite links and
+the tile chooser will disagree with each other.
+
 ---
 
 ## Current Live Infrastructure (verify against the actual dashboard/API

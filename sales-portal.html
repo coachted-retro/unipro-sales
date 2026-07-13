@@ -782,6 +782,14 @@ const SP_REPS = {
 
 let _spRep = null; // currently logged-in rep
 let _spTab = 'leads';
+// 2026-07-13 per Ted: tracks whether an account/contact/lead detail is
+// currently open on screen (spOpenDetail), separate from _spTab, since
+// spViewRecord opens a detail WITHOUT going through spNav -- _spTab alone
+// can't tell the difference between "on the home list" and "home list is
+// the tab underneath, but a detail card is open on top of it." The
+// background sync sweep below was blowing reps out of account details
+// mid-note because it didn't know this.
+let _spDetailOpen = false;
 let _spEditId = null;
 
 // ══════════════════════════════════════════════════════
@@ -866,7 +874,16 @@ function spEnterPortal() {
   // an existing local record, only adds ones that aren't here yet.
   if (typeof TermacD1Sync !== 'undefined') {
     TermacD1Sync.startCrmSyncSweep(30000, function () {
-      if (typeof spNav === 'function') spNav('home');
+      // 2026-07-13 per Ted: this was calling spNav('home') unconditionally
+      // any time ANY background sync found even one new/changed record in
+      // ANY of the 24+ synced tables -- completely unrelated to what the
+      // rep was doing. A rep could be mid-sentence typing a note on an
+      // open account and get yanked back to the Plan My Day list the
+      // instant a totally unrelated lead synced somewhere else. Only
+      // refresh if they're actually sitting on the plain Home view with
+      // no detail card open -- never interrupt an open record, a form, or
+      // anything else someone's actively working in.
+      if (typeof spNav === 'function' && _spTab === 'home' && !_spDetailOpen) spNav('home');
     });
   }
 }
@@ -922,6 +939,7 @@ const SP_TITLES = {
 
 function spNav(tab) {
   _spTab = tab;
+  _spDetailOpen = false;
   // Update tab active state
   document.querySelectorAll('.sp-tab').forEach(el => el.classList.remove('active'));
   const tabEl = document.getElementById('spTab-' + tab);
@@ -3482,6 +3500,7 @@ function spResendInvoice(invoiceId) {
 }
 
 function spOpenDetail(r, tab) {
+  _spDetailOpen = true;
   const stage = SP_STAGES[spNormalizeStage(r.lifecycleStage)] || SP_STAGES.lead;
   const svcs = (r.services || []).map(s => { const c = spSvcColor(s); return `<span style="background:${c.bg};color:${c.color};border-radius:4px;padding:3px 9px;font-size:11px;font-weight:700">${spSvcLabel(s)}</span>`; }).join(' ');
   const extraContacts = (r.extraContacts || []).map((c,i) => `<div style="border-top:1px dashed var(--line);padding-top:8px;margin-top:8px">

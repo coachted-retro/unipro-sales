@@ -282,7 +282,10 @@ function lcNotifyNewLead(lead, source) {
 
   // Build TO and CC lists
   const toEmail  = repInfo ? repInfo.email : 'tscholl@termac.com';
-  const ccEmails = ['jkennedy@termac.com','tpittakas@termac.com','tscholl@termac.com']
+  // 2026-07-12: Jim + Tom pulled off the CC list for now per Ted, while DMS
+  // gets populated with a large batch of new leads. Restore by adding
+  // 'jkennedy@termac.com' and 'tpittakas@termac.com' back to this array.
+  const ccEmails = ['tscholl@termac.com']
     .filter(e => e !== toEmail).join(',');
 
   // Store in-app notification

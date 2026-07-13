@@ -25,9 +25,13 @@
  */
 
 const ESCALATION_THRESHOLD_MS = 60 * 60 * 1000; // 60 minutes, per Ted
+// 2026-07-12: Jim + Tom pulled off lead notifications for now per Ted, while
+// DMS gets populated with a large batch of new leads (would otherwise spam
+// them). Cron still runs and still marks leads escalated, it just has
+// nobody to notify. Restore by uncommenting the two lines below.
 const ESCALATION_RECIPIENTS = [
-  { name: 'Jim Kennedy', email: 'jkennedy@termac.com' },
-  { name: 'Tom Pittakas', email: 'tpittakas@termac.com' },
+  // { name: 'Jim Kennedy', email: 'jkennedy@termac.com' },
+  // { name: 'Tom Pittakas', email: 'tpittakas@termac.com' },
 ];
 
 async function d1Fetch(env, method, path, body) {
@@ -71,7 +75,13 @@ async function runEscalationCheck(env) {
     lead.is_hot &&
     lead.is_new_lead &&
     !lead.escalated &&
-    (lead.created_at || 0) < cutoff
+    (lead.created_at || 0) < cutoff &&
+    // 2026-07-12, per Ted: a Digital Business Card booking is a rep's own
+    // self-harvested lead, not a corporate/DMS-sourced lead management
+    // needs oversight on. This is a permanent exclusion, not part of the
+    // "Jim/Tom paused for now" change above -- even once recipients are
+    // restored, these should never escalate to managers.
+    lead.source !== 'Digital Business Card'
   );
 
   for (const lead of stale) {
