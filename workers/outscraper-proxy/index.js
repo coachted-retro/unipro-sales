@@ -1,8 +1,12 @@
 /**
  * Termac One — Google Maps Harvest Proxy Worker
- * Deploy to: Cloudflare Workers (googlemapharvester.tedscholl.workers.dev)
+ * Deploy from workers/outscraper-proxy/ to Cloudflare Workers.
+ * Matches OUTSCRAPER_PROXY_URL in termac-os.html: worker name
+ * "outscraper-proxy" on this account's workers.dev subdomain resolves to
+ * https://outscraper-proxy.termac-one.workers.dev/
  *
- * Environment secrets required (set in Cloudflare dashboard → Workers → Settings → Variables):
+ * Environment secrets required (set in Cloudflare dashboard → Workers →
+ * outscraper-proxy → Settings → Variables):
  *   OUTSCRAPER_API_KEY  — your Outscraper API key from app.outscraper.com
  *
  * KV namespace (optional, for daily budget tracking):
@@ -108,7 +112,7 @@ export default {
 
 async function callOutscraper(env, query, location, limit) {
   if (!env.OUTSCRAPER_API_KEY) {
-    throw new Error('OUTSCRAPER_API_KEY not set in Worker environment variables. Go to Cloudflare Dashboard → Workers → googlemapharvester → Settings → Variables and add it.');
+    throw new Error('OUTSCRAPER_API_KEY not set in Worker environment variables. Go to Cloudflare Dashboard → Workers → outscraper-proxy → Settings → Variables and add it.');
   }
 
   const params = new URLSearchParams({
