@@ -3672,7 +3672,11 @@ function spRenderTimeline(r) {
         ${a.emailTo ? `<div style="font-size:11px;color:var(--soft);margin-top:1px">To: ${escH(a.emailTo)}</div>` : ''}
         ${a.note && a.title ? spRenderTimelineNote(a) : ''}
       </div>
-      <button onclick="spTpTogglePin('${r.id}','${a.id}')" title="${a.pinned?'Unpin':'Pin to top'}" style="background:none;border:none;cursor:pointer;font-size:14px;opacity:${a.pinned?'1':'.35'};flex-shrink:0;align-self:flex-start">📌</button>
+      <div style="display:flex;gap:2px;flex-shrink:0;align-self:flex-start">
+        <button onclick="spTpTogglePin('${r.id}','${a.id}')" title="${a.pinned?'Unpin':'Pin to top'}" style="background:none;border:none;cursor:pointer;font-size:14px;opacity:${a.pinned?'1':'.35'}">📌</button>
+        <button onclick="spTpEdit('${r.id}','${a.id}')" title="Edit this note" style="background:none;border:none;cursor:pointer;font-size:13px;opacity:.4">✏️</button>
+        <button onclick="spTpDelete('${r.id}','${a.id}')" title="Delete this touch point" style="background:none;border:none;cursor:pointer;font-size:14px;opacity:.4;color:var(--red)">✕</button>
+      </div>
     </div>`).join('');
 }
 
@@ -3805,6 +3809,49 @@ function spTpTogglePin(id, activityId) {
     a.pinned = !a.pinned;
     crmSave(tab, data);
     document.getElementById('spTpTimeline').innerHTML = spRenderTimeline(r);
+    return;
+  }
+}
+
+// Per Ted 2026-07-13: touch points logged by voice dictation can end up
+// with rambling, off-topic, or duplicated notes -- there was no way to
+// fix or remove one short of leaving it there permanently. Both follow
+// the same "search every pool" pattern as spTpTogglePin above, since
+// this renderer only has the record object, not which tab it came from.
+function spTpEdit(id, activityId) {
+  const pools = ['leads','contacts','accounts','opportunities'];
+  for (const tab of pools) {
+    const data = crmLoad(tab);
+    const idx = data.findIndex(x => x.id === id);
+    if (idx < 0) continue;
+    const r = data[idx];
+    const a = (r.activityLog||[]).find(x => x.id === activityId);
+    if (!a) return;
+    const updated = prompt('Edit this touch point note:', a.note || '');
+    if (updated === null) return; // cancelled
+    a.note = updated.trim();
+    r.updated = Date.now();
+    crmSave(tab, data);
+    document.getElementById('spTpTimeline').innerHTML = spRenderTimeline(r);
+    spToast('✓ Touch point updated');
+    return;
+  }
+}
+
+function spTpDelete(id, activityId) {
+  if (!confirm('Delete this touch point? This cannot be undone.')) return;
+  const pools = ['leads','contacts','accounts','opportunities'];
+  for (const tab of pools) {
+    const data = crmLoad(tab);
+    const idx = data.findIndex(x => x.id === id);
+    if (idx < 0) continue;
+    const r = data[idx];
+    if (!r.activityLog) return;
+    r.activityLog = r.activityLog.filter(x => x.id !== activityId);
+    r.updated = Date.now();
+    crmSave(tab, data);
+    document.getElementById('spTpTimeline').innerHTML = spRenderTimeline(r);
+    spToast('✓ Touch point deleted');
     return;
   }
 }
