@@ -121,6 +121,12 @@ async function callOutscraper(env, query, location, limit) {
     language: 'en',
     region: 'us',
     dropDuplicates: 'true',
+    async: 'false', // 2026-07-13 fix: Outscraper defaults to async=true,
+                     // which returns {id, status:'Pending', results_location}
+                     // instead of actual data -- this was the real reason
+                     // "zero results" showed up with no error. Forcing
+                     // sync mode here since our limits (<=200) are well
+                     // within a normal request/response cycle.
   });
 
   const resp = await fetch(`https://api.app.outscraper.com/maps/search-v3?${params}`, {
@@ -142,6 +148,14 @@ async function callOutscraper(env, query, location, limit) {
   }
 
   const data = await resp.json();
+
+  // Defensive check: if Outscraper still hands back an async task shell
+  // despite async=false (e.g. a slow/large query), surface that honestly
+  // instead of silently reporting zero results as if the search found
+  // nothing -- this exact confusion is what prompted this fix.
+  if (data && !Array.isArray(data) && data.status === 'Pending' && data.results_location) {
+    throw new Error(`Outscraper is still processing this request (task ${data.id || 'unknown'}). It returned a pending task instead of immediate results -- try a smaller result limit, or wait a minute and retry. Do not treat this as "zero results found".`);
+  }
 
   // Outscraper returns { data: [...], status: 'Success' } for sync calls
   // or a task ID for async — we use sync (limit ≤ 200 should be sync)
