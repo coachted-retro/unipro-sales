@@ -18053,7 +18053,7 @@ function estimateBidValue(title) {
 }
 
 function bidsShowTab(tabId, btn){
-  ['pipeline','winloss','sources','ingest','vault','watchlist'].forEach(t => {
+  ['pipeline','hotlist','winloss','sources','ingest','vault','watchlist'].forEach(t => {
     const p = document.getElementById('bidsPanel_' + t);
     const b = document.getElementById('bidsTab_' + t);
     if (p) p.style.display = 'none';
@@ -18064,6 +18064,7 @@ function bidsShowTab(tabId, btn){
   if (btn) btn.classList.add('active');
 
   if (tabId === 'pipeline') bidsRender();
+  if (tabId === 'hotlist') bidsRenderHotList();
   if (tabId === 'winloss')  bidsRenderWinLoss();
   if (tabId === 'sources')  bidsRenderSources();
   if (tabId === 'vault')    bidsRenderVault();
@@ -18198,6 +18199,130 @@ function bidsCardHTML(b){
       </div>
       ${changeFlag ? '<div style="margin-top:6px;font-size:10px;font-weight:700;color:#C0392B">⚠️ Addendum posted — review needed</div>' : ''}
     </div>`;
+}
+
+// ══════════════════════════════════════════════════════════════
+//  HOT LIST — ranked view of active pipeline bids (Session, 2026-07-13)
+//  Same underlying bids table as the Pipeline tab, just a different
+//  view: instead of grouped by stage, everything still open/drafting/
+//  in review gets ranked by a blended heat score so Ted can see at a
+//  glance which bid deserves attention first. A manual pin (bid.hotPin)
+//  lets Ted override the computed ranking for any bid; once pinned,
+//  that bid holds its position (sorted among other pinned bids by
+//  pinned order) until moved again, ahead of every unpinned bid.
+// ══════════════════════════════════════════════════════════════
+
+var BID_HOT_STATUSES = ['open','draft','review']; // decided (won/lost) or already submitted bids aren't "in the running" anymore
+
+function bidHeatScore(b, maxValue){
+  // Win probability: High/Medium/Low -> 1.0/0.6/0.25, unset -> 0.5 (neutral)
+  var wp = (b.winProbability||'').toLowerCase();
+  var wpScore = wp === 'high' ? 1.0 : wp === 'medium' ? 0.6 : wp === 'low' ? 0.25 : 0.5;
+
+  // Deadline urgency: closer due date -> higher score. No due date -> neutral 0.5.
+  // Scales down to 0 at 90+ days out; overdue/due-today bids stay clamped at 1.
+  var dlScore = 0.5;
+  if (b.dueDate) {
+    var daysOut = (new Date(b.dueDate) - new Date()) / 86400000;
+    dlScore = Math.max(0, Math.min(1, 1 - (daysOut / 90)));
+  }
+
+  // Value: normalized against the largest est. value among current hot-list bids,
+  // so this is always relative to what's actually in the pipeline right now, not
+  // an arbitrary fixed dollar scale.
+  var valScore = maxValue > 0 ? Math.min(1, (b.estValue||0) / maxValue) : 0;
+
+  return (wpScore * 0.4) + (dlScore * 0.35) + (valScore * 0.25);
+}
+
+// allBids param is optional — pass it in when the caller already holds the exact
+// array it intends to save afterward (see bidsHotMove), so ranked entries point at
+// the SAME objects that get written back, not a second, independent parse of the
+// same storage key (crmLoad returns a fresh copy every call — reusing one array
+// end-to-end is what makes a mutate-then-save actually stick).
+function bidsHotList(allBids){
+  var bids = (allBids || bidsLoad()).filter(function(b){ return BID_HOT_STATUSES.indexOf(b.status) !== -1; });
+  var maxValue = bids.reduce(function(m,b){ return Math.max(m, b.estValue||0); }, 0);
+  return bids.map(function(b){ return { bid:b, score: bidHeatScore(b, maxValue) }; })
+    .sort(function(a,b){
+      var ap = a.bid.hotPin != null, bp = b.bid.hotPin != null;
+      if (ap && bp) return a.bid.hotPin - b.bid.hotPin;
+      if (ap && !bp) return -1;
+      if (!ap && bp) return 1;
+      return b.score - a.score;
+    });
+}
+
+function bidsHotMove(id, dir){
+  var bids = bidsLoad();
+  var ranked = bidsHotList(bids); // ranked[i].bid are the SAME objects sitting in `bids` above
+  var idx = ranked.findIndex(function(r){ return r.bid.id === id; });
+  var swapIdx = idx + dir;
+  if (idx === -1 || swapIdx < 0 || swapIdx >= ranked.length) return;
+  // Lock in the CURRENT visual order as explicit pins for everyone in the hot list,
+  // then swap the two positions being moved. This is what makes a single arrow click
+  // predictable instead of jumping around as scores keep shifting underneath it.
+  ranked.forEach(function(r, i){ r.bid.hotPin = i; });
+  var tmp = ranked[idx].bid.hotPin;
+  ranked[idx].bid.hotPin = ranked[swapIdx].bid.hotPin;
+  ranked[swapIdx].bid.hotPin = tmp;
+  bidsSave(bids);
+  bidsRenderHotList();
+}
+
+function bidsHotCardHTML(b, rank, score){
+  const dueSoon = b.dueDate && (new Date(b.dueDate) - new Date()) < 1000*60*60*24*5;
+  const wp = b.winProbability || 'Unrated';
+  const wpColor = wp==='High'?'#1E7B3C':wp==='Medium'?'#D97706':wp==='Low'?'#C8102E':'#6B7280';
+  return `
+    <div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:12px;display:flex;align-items:stretch;gap:12px;border-left:3px solid ${dueSoon?'#C0392B':'transparent'}">
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:34px">
+        <button onclick="event.stopPropagation();bidsHotMove('${b.id}',-1)" title="Move up" style="border:none;background:none;cursor:pointer;font-size:14px;color:var(--soft);line-height:1;padding:2px">▲</button>
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:16px;color:var(--ink)">#${rank}</div>
+        <button onclick="event.stopPropagation();bidsHotMove('${b.id}',1)" title="Move down" style="border:none;background:none;cursor:pointer;font-size:14px;color:var(--soft);line-height:1;padding:2px">▼</button>
+      </div>
+      <div onclick="bidsOpenDetail('${b.id}')" style="flex:1;cursor:pointer;min-width:0">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--soft);margin-bottom:4px">${b.source}${b.refNo?' · '+b.refNo:''}${b.hotPin!=null?' · 📌 Pinned':''}</div>
+        <div style="font-size:13px;font-weight:700;color:var(--ink);line-height:1.3;margin-bottom:6px">${b.title}</div>
+        <div style="font-size:11px;color:var(--soft);margin-bottom:6px">${b.agency}</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
+          <span style="font-size:12px;font-weight:800;color:#1A1D21">$${(b.estValue||0).toLocaleString()}</span>
+          <span style="font-size:10px;font-weight:700;color:${wpColor};text-transform:uppercase">${wp} win odds</span>
+          ${b.dueDate ? `<span style="font-size:10px;color:${dueSoon?'#C0392B':'var(--soft)'};font-weight:${dueSoon?'700':'400'}">Due ${b.dueDate}</span>` : ''}
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:44px;border-left:1px solid #F3F4F6;padding-left:10px">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:15px;color:#C0392B">${Math.round(score*100)}</div>
+        <div style="font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--soft)">Heat</div>
+      </div>
+    </div>`;
+}
+
+function bidsRenderHotList(){
+  bidsSeedIfEmpty();
+  const allBids = bidsLoad().filter(b => b.status !== 'lost');
+  const board = document.getElementById('bidsHotBoard');
+  if (!board) return;
+
+  const open = allBids.filter(b=>b.status==='open').length;
+  const review = allBids.filter(b=>b.status==='review').length;
+  const submitted = allBids.filter(b=>b.status==='submitted').length;
+  const won = allBids.filter(b=>b.status==='won').length;
+  const pipelineValue = allBids.filter(b=>['open','draft','review','submitted'].includes(b.status)).reduce((s,b)=>s+(b.estValue||0),0);
+
+  const setText = (id,val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  setText('bidsHotKpiOpen', open);
+  setText('bidsHotKpiReview', review);
+  setText('bidsHotKpiSubmitted', submitted);
+  setText('bidsHotKpiWon', won);
+  setText('bidsHotKpiValue', '$' + pipelineValue.toLocaleString());
+
+  const ranked = bidsHotList();
+  if (!ranked.length) {
+    board.innerHTML = '<div style="background:#FFF8E1;border:1.5px dashed #D8690B;border-radius:10px;padding:16px;text-align:center"><div style="font-weight:800;color:#D8690B;margin-bottom:4px">Nothing active to rank right now</div><div style="font-size:12px;color:var(--soft)">Bids show up here once they are Open, AI Drafting, or Ready for Review — submitted, won, and lost bids stay out of the running.</div></div>';
+    return;
+  }
+  board.innerHTML = ranked.map(function(r, i){ return bidsHotCardHTML(r.bid, i+1, r.score); }).join('');
 }
 
 function bidsRenderSources(){
@@ -30942,6 +31067,7 @@ window.uvCollectData = uvCollectData;
 
   <div style="background:#fff;border-bottom:1px solid var(--line);padding:0 22px;display:flex;gap:0;flex-shrink:0">
     <button class="acct-tab active" id="bidsTab_pipeline" onclick="bidsShowTab('pipeline',this)">📊 Pipeline</button>
+    <button class="acct-tab" id="bidsTab_hotlist" onclick="bidsShowTab('hotlist',this)" style="color:#C0392B;font-weight:800">🔥 Hot List</button>
     <button class="acct-tab" id="bidsTab_ingest" onclick="bidsShowTab('ingest',this)" style="color:#D8690B;font-weight:800">📥 Ingest RFP</button>
     <button class="acct-tab" id="bidsTab_winloss" onclick="bidsShowTab('winloss',this)">🏁 Won / Lost</button>
     <button class="acct-tab" id="bidsTab_sources" onclick="bidsShowTab('sources',this)">🌐 Sources</button>
@@ -30965,6 +31091,20 @@ window.uvCollectData = uvCollectData;
       <div id="bidsBoard" style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;align-items:start"></div>
     </div>
 
+    <!-- ══ HOT LIST — ranked view of active opportunities, same data as Pipeline ══ -->
+    <div id="bidsPanel_hotlist" style="flex:1;overflow-y:auto;padding:22px;display:none">
+      <div class="rpt-kpi-grid" style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);margin-bottom:18px">
+        <div class="rpt-kpi"><div class="rpt-kpi-val" id="bidsHotKpiOpen">0</div><div class="rpt-kpi-lbl">Open Opportunities</div></div>
+        <div class="rpt-kpi"><div class="rpt-kpi-val amber" id="bidsHotKpiReview">0</div><div class="rpt-kpi-lbl">Ready for Review</div></div>
+        <div class="rpt-kpi"><div class="rpt-kpi-val" id="bidsHotKpiSubmitted">0</div><div class="rpt-kpi-lbl">Submitted / Pending</div></div>
+        <div class="rpt-kpi"><div class="rpt-kpi-val green" id="bidsHotKpiWon">0</div><div class="rpt-kpi-lbl">Won (Active Pipeline)</div></div>
+        <div class="rpt-kpi"><div class="rpt-kpi-val" id="bidsHotKpiValue">$0</div><div class="rpt-kpi-lbl">Total Est. Value — Open + Pending</div></div>
+      </div>
+      <div style="font-size:12px;color:var(--soft);margin-bottom:14px">
+        Ranked by win probability, deadline urgency, and dollar value — highest priority first. Use the arrows to move a bid up or down yourself; a manual move locks that bid's position until you move it again.
+      </div>
+      <div id="bidsHotBoard" style="display:flex;flex-direction:column;gap:10px"></div>
+    </div>
 
     <!-- ══ RFP INGEST + BRIEF GENERATOR ══ -->
     <div id="bidsPanel_ingest" style="flex:1;overflow-y:auto;padding:22px;display:none">
