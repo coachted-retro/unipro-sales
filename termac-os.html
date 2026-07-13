@@ -18709,10 +18709,35 @@ function bdBundleHTML(b) {
   html += '<button onclick="bdPrintBundle(\''+b.id+'\')" style="flex:1;background:#1E7B3C;color:#fff;border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">🖨️ Print / Save as PDF</button>';
   html += '</div>';
 
-  // Submission instructions
-  html += '<div style="margin-top:14px;background:#EFF6FF;border:1.5px solid #BFDBFE;border-radius:8px;padding:12px 14px;font-size:12px;color:#1E40AF">';
-  html += '<strong>Submission reminder:</strong> Print or export each generated section, combine with physical W-9, COI, and license copies in the order above. Most government portals accept PDF uploads — use browser Print → Save as PDF on each section, then merge using a free PDF merger. For emailed submissions, attach in the numbered order shown above.';
-  html += '</div>';
+  // Submission instructions -- dynamic per bid now instead of generic boilerplate.
+  // 2026-07-13 per Ted: there was no indication anywhere of HOW a finished bid actually
+  // gets to the agency (portal, email, mail, hand-delivered), so this pulls the real
+  // portal from BID_SOURCES when the bid's source matches one, and once a bid has
+  // actually been logged as submitted, shows the real trail instead of a reminder.
+  if (b.status === 'submitted' || b.status === 'won' || b.status === 'lost') {
+    if (b.submissionMethod) {
+      html += '<div style="margin-top:14px;background:#F0FDF4;border:1.5px solid #A7F3D0;border-radius:8px;padding:12px 14px;font-size:12px;color:#065F46">';
+      html += '<strong>Submitted</strong> '+escH(b.submittedDate||'')+' via <strong>'+escH(b.submissionMethod)+'</strong>' +
+        (b.submissionDestination ? ' to <strong>'+escH(b.submissionDestination)+'</strong>' : '') +
+        (b.submissionConfirmation ? ' — confirmation: '+escH(b.submissionConfirmation) : '') + '.';
+      html += '</div>';
+    } else {
+      html += '<div style="margin-top:14px;background:#FFF8E6;border:1.5px solid #F2B705;border-radius:8px;padding:12px 14px;font-size:12px;color:#5A4A00">';
+      html += 'Marked submitted, but no submission method was logged for this one (it predates the submission log). Worth adding a note in Checklist for your own records.';
+      html += '</div>';
+    }
+  } else {
+    var matchedSrc = bidsMatchSource(b.source);
+    html += '<div style="margin-top:14px;background:#EFF6FF;border:1.5px solid #BFDBFE;border-radius:8px;padding:12px 14px;font-size:12px;color:#1E40AF">';
+    if (matchedSrc) {
+      html += '<strong>Where this goes:</strong> '+escH(matchedSrc.name)+' — <a href="'+escH(matchedSrc.url)+'" target="_blank" style="color:#1B5FA8;font-weight:700">'+escH(matchedSrc.url)+'</a>. ' +
+        'Print or export each generated section, combine with physical W-9, COI, and license copies in the order above, then upload as PDF through that portal.';
+    } else {
+      html += '<strong>Where this goes:</strong> No matching portal on file for source "'+escH(b.source||'Unknown')+'" — check the RFP\'s instructions page for the actual submission method (portal, email, or physical mail) before submitting.';
+    }
+    html += ' When you click Mark as Submitted below, you\'ll be asked how and where it actually went so there\'s a real record — not just a status flip.';
+    html += '</div>';
+  }
 
   return html;
 }
@@ -18960,8 +18985,61 @@ var PRICING_CATALOG = {
   hood_design: { label:'Hood Design & Engineering', unit:'per project', base:1200, floor:900, target_margin:0.55, notes:'CAD design + submittal drawings' },
   hood_fab_linear: { label:'Hood Fabrication', unit:'per linear foot', base:185, floor:150, target_margin:0.42, notes:'Type I or Type II, 18ga stainless' },
   hood_install: { label:'Hood Installation', unit:'per project', base:2400, floor:1800, target_margin:0.45, notes:'Labor + rigging, excludes electrical' },
-  fab_custom: { label:'Custom Stainless Fabrication', unit:'per project', base:0, floor:0, target_margin:0.40, notes:'Quote-based — use AI pricing tool' },
+  // 2026-07-13: base updated from placeholder $0 to the real average of 499 completed
+  // AllPro custom fabrication jobs pulled directly from the QuickBase-migrated D1 data
+  // (allpro_projects, project_type='custom_fabrication', total_quoted_value>0). Query:
+  // SELECT COUNT(*), AVG(total_quoted_value) FROM allpro_projects WHERE id LIKE 'AP-QB-%'
+  // AND project_type='custom_fabrication' AND total_quoted_value>0 -- n=499, avg=$4,755.78,
+  // range $1-$83,648.55. Floor set at ~70% of that average as a starting discipline; both
+  // numbers should move if/when real job-cost data (not just quoted value) is available.
+  fab_custom: { label:'Custom Stainless Fabrication', unit:'per project', base:4755.78, floor:3329, target_margin:0.40, notes:'Reference avg from 499 real AllPro jobs (QuickBase data) — still adjust per actual scope' },
 };
+
+// ══════════════════════════════════════════════════════════════
+//  SITE COMPLEXITY MODEL — AllPro hood jobs (added 2026-07-13 per Ted)
+//  Three independent variables, each scored Level 1-3, discovered on the site
+//  survey (framed vs. block vs. brick wall, roof/deck height, duct run
+//  difficulty). Duct run and wall type apply as a stacked PERCENTAGE on top
+//  of Hood Fabrication and Hood Installation, since that's genuinely how a
+//  harder run or a tougher wall inflates LABOR TIME on those two line items.
+//  Deck height/access is NOT a percentage -- it's a real, quotable rental
+//  cost, so it's a flat dollar add instead, sourced from actual current
+//  lift rental rates (see notes on each tier). None of this is derived from
+//  Termac's own job-cost history (that data doesn't exist yet at this
+//  granularity -- see the fab_custom note above) -- the percentage tiers are
+//  a documented starting estimate to react to and refine against real jobs
+//  over time; the deck-height dollar figures ARE real, sourced rental rates.
+// ══════════════════════════════════════════════════════════════
+var DUCT_RUN_COMPLEXITY = {
+  1: { label:'Level 1 — Straight run, direct to exterior', pct:0 },
+  2: { label:'Level 2 — Several turns/offsets, moderate obstacles', pct:0.15 },
+  3: { label:'Level 3 — Long complex run, many turns, heavy obstacle rerouting', pct:0.40 },
+};
+var WALL_TYPE_COMPLEXITY = {
+  1: { label:'Level 1 — Frame wall (2x4, drywall, ext. sheathing)', pct:0 },
+  2: { label:'Level 2 — Block/CMU or mixed construction', pct:0.15 },
+  3: { label:'Level 3 — Solid brick or masonry/concrete', pct:0.40 },
+};
+// Flat dollar adds, not percentages -- these are real equipment rental costs, not estimates.
+// Sourced 2026-07-13: DOZR/RNTR/CountBricks 2026 lift rental pricing guides. Level 3 uses the
+// Philadelphia-specific published rate for an 80ft telescopic boom since that's Ted's home market.
+// Assumes roughly 1 rental day; adjust if a job genuinely needs the lift on site longer.
+var DECK_ACCESS_COMPLEXITY = {
+  1: { label:'Level 1 — Single story, ladder access', add:0, notes:'No equipment needed' },
+  2: { label:'Level 2 — Two-story / moderate height, lift required', add:350, notes:'~30-45ft class scissor/boom lift, ~1 day, national average range $200-500/day' },
+  3: { label:'Level 3 — High roof (~30ft+), scaffolding or extended boom', add:1150, notes:'~80ft telescopic boom, ~1 day, Philadelphia published rate $950-1,350/day' },
+};
+
+// Applies site complexity on top of the base catalog price for a hood line item.
+// Only meaningful for hood_fab_linear and hood_install -- design and everything
+// outside AllPro hood work is unaffected, so this is called selectively, not
+// baked into calcLinePrice() globally.
+function applyHoodComplexity(basePrice, serviceKey, ductLevel, wallLevel){
+  if (serviceKey !== 'hood_fab_linear' && serviceKey !== 'hood_install') return basePrice;
+  var ductPct = (DUCT_RUN_COMPLEXITY[ductLevel]||DUCT_RUN_COMPLEXITY[1]).pct;
+  var wallPct = (WALL_TYPE_COMPLEXITY[wallLevel]||WALL_TYPE_COMPLEXITY[1]).pct;
+  return basePrice * (1 + ductPct + wallPct);
+}
 
 var VOLUME_TIERS = [
   { minUnits:1,   maxUnits:24,  discount:0,    label:'Standard' },
@@ -18989,16 +19067,18 @@ function getPricingTier(unitCount) {
   return VOLUME_TIERS.find(function(t){ return unitCount >= t.minUnits && unitCount <= t.maxUnits; }) || VOLUME_TIERS[0];
 }
 
-function calcLinePrice(serviceKey, qty, years, jurisdiction) {
+function calcLinePrice(serviceKey, qty, years, jurisdiction, ductLevel, wallLevel) {
   var item = PRICING_CATALOG[serviceKey];
   if (!item) return null;
   var volTier = getPricingTier(qty);
   var yearTier = MULTI_YEAR_TIERS.find(function(t){return t.years===years;})||MULTI_YEAR_TIERS[0];
   var jAdj = jurisdiction ? (JURISDICTION_ADJUSTMENTS[jurisdiction]||{multiplier:1}).multiplier : 1;
-  var unitPrice = item.base * jAdj * (1 - volTier.discount) * (1 - yearTier.discount);
+  var complexityBase = applyHoodComplexity(item.base, serviceKey, ductLevel, wallLevel);
+  var unitPrice = complexityBase * jAdj * (1 - volTier.discount) * (1 - yearTier.discount);
   var totalPerYear = unitPrice * qty;
   var totalContract = totalPerYear * years;
   var margin = 1 - (item.floor / unitPrice);
+  var complexityAdd = Math.round((complexityBase - item.base) * 100)/100;
   return {
     label: item.label,
     unitPrice: Math.round(unitPrice * 100)/100,
@@ -19014,6 +19094,7 @@ function calcLinePrice(serviceKey, qty, years, jurisdiction) {
     belowTarget: margin < item.target_margin,
     floor: item.floor,
     notes: item.notes,
+    complexityAdd: complexityAdd,
   };
 }
 
@@ -19079,6 +19160,7 @@ function bdPricingHTML(b) {
              agency.includes(' de')||agency.includes('delaware')?'de_state':'pa_county';
 
   var jAdj = JURISDICTION_ADJUSTMENTS[jKey];
+  var hasHoodItems = suggested.indexOf('hood_fab_linear') !== -1;
 
   var html = '<div style="margin-bottom:14px;background:#F8F9FA;border-radius:9px;padding:12px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">';
   html += '<div><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;color:var(--soft);text-transform:uppercase;letter-spacing:.06em">Jurisdiction</div>';
@@ -19122,17 +19204,41 @@ function bdPricingHTML(b) {
     html += '<option value="'+k+'" '+(k===jKey?'selected':'')+'>'+k.replace('_',' ').toUpperCase()+'</option>';
   });
   html += '</select></div></div>';
+  if (hasHoodItems) {
+    html += '<div style="font-size:9px;color:var(--soft);margin:-6px 0 8px">"Unit Count" above only applies to per-unit/per-system items. Hood Fabrication is priced by the linear foot separately in the site complexity panel below.</div>';
+  }
+
+  // Site complexity panel -- AllPro hood jobs only. Added 2026-07-13 per Ted.
+  if (hasHoodItems) {
+    html += '<div style="background:#FFF8E6;border:1.5px solid #F2B705;border-radius:9px;padding:12px 14px;margin-bottom:12px">';
+    html += '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#5A4A00;margin-bottom:8px">🏗️ Site Complexity — from the site survey</div>';
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">';
+    html += '<div><label style="font-size:10px;font-weight:700;color:#5A4A00;display:block;margin-bottom:3px">HOOD LENGTH (ft)</label><input id="px_hoodft" type="number" value="12" min="1" onchange="bdRefreshPricing(\''+b.id+'\')" style="width:100%;box-sizing:border-box;padding:7px;border:1.5px solid var(--line);border-radius:6px;font-size:12px"></div>';
+    html += '<div><label style="font-size:10px;font-weight:700;color:#5A4A00;display:block;margin-bottom:3px">DUCT RUN</label><select id="px_duct" onchange="bdRefreshPricing(\''+b.id+'\')" style="width:100%;padding:7px;border:1.5px solid var(--line);border-radius:6px;font-size:11px">';
+    [1,2,3].forEach(function(lv){ html += '<option value="'+lv+'">'+escH(DUCT_RUN_COMPLEXITY[lv].label)+'</option>'; });
+    html += '</select></div>';
+    html += '<div><label style="font-size:10px;font-weight:700;color:#5A4A00;display:block;margin-bottom:3px">WALL TYPE</label><select id="px_wall" onchange="bdRefreshPricing(\''+b.id+'\')" style="width:100%;padding:7px;border:1.5px solid var(--line);border-radius:6px;font-size:11px">';
+    [1,2,3].forEach(function(lv){ html += '<option value="'+lv+'">'+escH(WALL_TYPE_COMPLEXITY[lv].label)+'</option>'; });
+    html += '</select></div></div>';
+    html += '<div style="margin-top:8px"><label style="font-size:10px;font-weight:700;color:#5A4A00;display:block;margin-bottom:3px">DECK HEIGHT / ACCESS</label><select id="px_deck" onchange="bdRefreshPricing(\''+b.id+'\')" style="width:100%;padding:7px;border:1.5px solid var(--line);border-radius:6px;font-size:11px">';
+    [1,2,3].forEach(function(lv){ html += '<option value="'+lv+'">'+escH(DECK_ACCESS_COMPLEXITY[lv].label)+' — +$'+DECK_ACCESS_COMPLEXITY[lv].add+'</option>'; });
+    html += '</select></div>';
+    html += '<div style="font-size:10px;color:#5A4A00;margin-top:6px">Duct run and wall type add a stacked % to Hood Fabrication and Hood Installation below. Deck height/access is a real equipment rental cost, added as its own line, not a percentage.</div>';
+    html += '</div>';
+  }
 
   // Service rows
+  var ductLevel = 1, wallLevel = 1, deckLevel = 1, hoodFt = 12;
   html += '<div id="px_lines_'+b.id+'">';
   suggested.forEach(function(sk) {
     var item = PRICING_CATALOG[sk];
     if (!item) return;
-    var line = calcLinePrice(sk, 50, 3, jKey);
+    var qtyForLine = (sk === 'hood_fab_linear') ? hoodFt : 50;
+    var line = calcLinePrice(sk, qtyForLine, 3, jKey, ductLevel, wallLevel);
     if (!line) return;
     var marginColor = line.belowTarget?'#C8102E':'#1E7B3C';
     html += '<div style="display:grid;grid-template-columns:2fr 80px 80px 80px 80px 60px;gap:6px;align-items:center;padding:7px 10px;background:#fff;border-radius:7px;margin-bottom:4px;border:1px solid #E5E7EB;font-size:12px" data-sk="'+sk+'">';
-    html += '<div style="font-weight:600">'+escH(item.label)+'</div>';
+    html += '<div style="font-weight:600">'+escH(item.label)+(line.complexityAdd?' <span style="color:#D8690B;font-weight:700;font-size:10px">(+site complexity)</span>':'')+'</div>';
     html += '<div style="text-align:right;color:#1B5FA8;font-weight:700">$'+line.unitPrice.toFixed(2)+'</div>';
     html += '<div style="text-align:right">×'+line.qty+'</div>';
     html += '<div style="text-align:right;font-weight:700">$'+line.totalPerYear.toLocaleString()+'</div>';
@@ -19140,6 +19246,17 @@ function bdPricingHTML(b) {
     html += '<div style="text-align:right;color:'+marginColor+';font-weight:700">'+line.estMargin+'%</div>';
     html += '</div>';
   });
+  if (hasHoodItems) {
+    var deckTier = DECK_ACCESS_COMPLEXITY[deckLevel];
+    html += '<div id="px_deckline_'+b.id+'" style="display:grid;grid-template-columns:2fr 80px 80px 80px 80px 60px;gap:6px;align-items:center;padding:7px 10px;background:#FFF8E6;border-radius:7px;margin-bottom:4px;border:1px solid #F2B705;font-size:12px">';
+    html += '<div style="font-weight:600">Access Equipment — '+escH(deckTier.label.replace(/^Level \d — /,''))+'</div>';
+    html += '<div style="text-align:right;color:#1B5FA8;font-weight:700">$'+deckTier.add.toLocaleString()+'</div>';
+    html += '<div style="text-align:right">×1</div>';
+    html += '<div style="text-align:right;font-weight:700">—</div>';
+    html += '<div style="text-align:right;color:#5B21B6;font-weight:700">$'+deckTier.add.toLocaleString()+'</div>';
+    html += '<div style="text-align:right;color:var(--soft)">flat</div>';
+    html += '</div>';
+  }
   html += '</div>';
 
   // Table header
@@ -19149,6 +19266,17 @@ function bdPricingHTML(b) {
 
   html += '<div style="font-size:11px;color:var(--soft);margin-top:10px;padding:8px;background:#F8F9FA;border-radius:6px">Prices auto-adjust for jurisdiction, volume tier, and contract length. Margin shown against floor price. <span style="color:#C8102E;font-weight:700">Red = below target margin</span> — review before submitting.</div>';
 
+  // Pricing model reference -- 2026-07-13 per Ted: "locked in" and documented so the source
+  // of every number here is always visible, not buried in code.
+  html += '<div style="margin-top:14px;background:#F3F4F6;border-radius:8px;padding:12px 14px;font-size:11px;color:#374151;line-height:1.7">';
+  html += '<div style="font-weight:800;text-transform:uppercase;letter-spacing:.06em;font-size:10px;color:var(--soft);margin-bottom:6px">📌 Pricing Model Reference</div>';
+  html += '<div><strong>Base catalog prices</strong> (extinguisher/suppression/filter/grease trap services): estimated rate card built June 26, 2026, not yet validated against real job-cost history.</div>';
+  html += '<div><strong>Custom Stainless Fabrication base ($4,755.78):</strong> real average of 499 completed AllPro jobs, pulled directly from QuickBase-migrated data, 2026-07-13.</div>';
+  html += '<div><strong>Hood Design/Fabrication/Installation base prices:</strong> estimated June 26, 2026 — real QuickBase job totals exist (kitchen_hood avg $22,791.59 across 87 jobs) but don\'t break down into design/fab/install, so these three stay estimates pending real phase-level cost data.</div>';
+  html += '<div><strong>Site Complexity percentages</strong> (duct run, wall type — 0% / +15% / +40%): starting estimate set 2026-07-13, not derived from Termac job history — refine against real jobs over time.</div>';
+  html += '<div><strong>Deck Height/Access dollar amounts</strong> ($0 / $350 / $1,150): real current lift rental rates (DOZR/RNTR/CountBricks 2026 pricing guides, Philadelphia-specific for Level 3), assumes ~1 rental day.</div>';
+  html += '</div>';
+
   return html;
 }
 
@@ -19156,22 +19284,37 @@ function bdRefreshPricing(bidId) {
   var years = parseInt(document.getElementById('px_years')?.value||'3');
   var units = parseInt(document.getElementById('px_units')?.value||'50');
   var jKey  = document.getElementById('px_jurisdiction')?.value||'pa_county';
+  var ductLevel = parseInt(document.getElementById('px_duct')?.value||'1');
+  var wallLevel = parseInt(document.getElementById('px_wall')?.value||'1');
+  var deckLevel = parseInt(document.getElementById('px_deck')?.value||'1');
+  var hoodFt = parseInt(document.getElementById('px_hoodft')?.value||'12');
   var linesEl = document.getElementById('px_lines_'+bidId);
   if (!linesEl) return;
 
   var rows = linesEl.querySelectorAll('[data-sk]');
   rows.forEach(function(row) {
     var sk = row.dataset.sk;
-    var line = calcLinePrice(sk, units, years, jKey);
+    var qtyForLine = (sk === 'hood_fab_linear') ? hoodFt : units;
+    var line = calcLinePrice(sk, qtyForLine, years, jKey, ductLevel, wallLevel);
     if (!line) return;
     var cells = row.querySelectorAll('div');
     var marginColor = line.belowTarget?'#C8102E':'#1E7B3C';
+    if (cells[0]) { cells[0].innerHTML = escH(line.label)+(line.complexityAdd?' <span style="color:#D8690B;font-weight:700;font-size:10px">(+site complexity)</span>':''); }
     if (cells[1]) { cells[1].textContent = '$'+line.unitPrice.toFixed(2); }
     if (cells[2]) { cells[2].textContent = '×'+line.qty; }
     if (cells[3]) { cells[3].textContent = '$'+line.totalPerYear.toLocaleString(); }
     if (cells[4]) { cells[4].textContent = '$'+line.totalContract.toLocaleString(); }
     if (cells[5]) { cells[5].style.color = marginColor; cells[5].textContent = line.estMargin+'%'; }
   });
+
+  var deckLineEl = document.getElementById('px_deckline_'+bidId);
+  if (deckLineEl) {
+    var deckTier = DECK_ACCESS_COMPLEXITY[deckLevel];
+    var deckCells = deckLineEl.querySelectorAll('div');
+    if (deckCells[0]) deckCells[0].textContent = 'Access Equipment — '+deckTier.label.replace(/^Level \d — /,'');
+    if (deckCells[1]) deckCells[1].textContent = '$'+deckTier.add.toLocaleString();
+    if (deckCells[4]) deckCells[4].textContent = '$'+deckTier.add.toLocaleString();
+  }
 }
 
 var BD_SECTIONS = [
@@ -19519,7 +19662,7 @@ function bidsOpenDetail(id){
     </div>
 
     <div style="display:flex;gap:10px;margin-top:20px;flex-wrap:wrap">
-      ${b.status !== 'submitted' && b.status !== 'won' && b.status !== 'lost' ? `<button class="act-save-btn" onclick="bidsMarkSubmitted('${b.id}')">✅ Mark as Submitted</button>` : ''}
+      ${b.status !== 'submitted' && b.status !== 'won' && b.status !== 'lost' ? `<button class="act-save-btn" onclick="bidsOpenSubmitModal('${b.id}')">✅ Mark as Submitted</button>` : ''}
       ${b.status === 'submitted' ? `<button class="act-save-btn" style="background:#3FA34D" onclick="bidsMarkOutcome('${b.id}','won')">🏆 Mark Won</button>
       <button class="act-cancel-btn" onclick="bidsMarkOutcome('${b.id}','lost')">Mark Lost</button>` : ''}
     </div>
@@ -19634,6 +19777,81 @@ function bidsMarkSubmitted(id){
   bidsSave(bids);
   document.getElementById('ovBidDetail').classList.remove('open');
   bidsRender();
+}
+
+// Matches a bid's source string (e.g. "Philadelphia PHLContracts", "PA eMarketplace") against
+// the real BID_SOURCES list so the Submit Bundle tab can point to the actual portal a bid needs
+// to go through, instead of generic "most portals accept PDF uploads" boilerplate that never told
+// Ted where THIS bid specifically needs to be sent. Loose match on either direction since bid.source
+// strings (set by the harvester/manual entry) don't always exactly match BID_SOURCES' name field.
+function bidsMatchSource(sourceName){
+  if (!sourceName) return null;
+  var s = sourceName.toLowerCase();
+  return BID_SOURCES.find(function(src){
+    var n = src.name.toLowerCase();
+    return n.includes(s) || s.includes(n) || n.split(' ').some(function(word){ return word.length > 3 && s.includes(word); });
+  }) || null;
+}
+
+// Opens a small modal to capture HOW and WHERE a bid was actually sent before flipping it to
+// Submitted -- 2026-07-13 per Ted: the old one-click Mark as Submitted just stamped a date with no
+// record of the delivery method, so there was no trail of whether a bid went through a portal, was
+// emailed, mailed, or hand-delivered, and no confirmation number logged anywhere.
+function bidsOpenSubmitModal(id){
+  var bids = bidsLoad();
+  var b = bids.find(function(x){ return x.id === id; });
+  if (!b) return;
+  var matchedSource = bidsMatchSource(b.source);
+
+  var modal = document.createElement('div');
+  modal.id = '_submitModal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+  modal.innerHTML = '<div style="background:#fff;border-radius:12px;width:min(460px,96vw);padding:22px;box-shadow:0 8px 40px rgba(0,0,0,.3)">' +
+    '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:16px;margin-bottom:4px">✅ Log This Submission</div>' +
+    '<div style="font-size:13px;color:var(--soft);margin-bottom:14px">'+escH(b.title)+'</div>' +
+    (matchedSource ?
+      '<div style="background:#EFF6FF;border:1.5px solid #BFDBFE;border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:12px;color:#1E40AF">' +
+        'This bid came from <strong>'+escH(matchedSource.name)+'</strong> — that\u2019s almost certainly where it needs to be submitted: ' +
+        '<a href="'+escH(matchedSource.url)+'" target="_blank" style="color:#1B5FA8;font-weight:700">'+escH(matchedSource.url)+'</a>' +
+      '</div>'
+      : '<div style="background:#FFF8E6;border:1.5px solid #F2B705;border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:12px;color:#5A4A00">' +
+        'No matching portal found for source "'+escH(b.source||'Unknown')+'" — check the RFP\u2019s instructions page for the actual submission method (portal, email, or mail) and log it below.' +
+      '</div>') +
+    '<div style="margin-bottom:12px"><label style="font-size:12px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">How was this sent?</label>' +
+    '<select id="submitMethod" style="width:100%;box-sizing:border-box;padding:8px;border:1.5px solid #E5E7EB;border-radius:7px;font-size:13px">' +
+      '<option value="Portal Upload">Government Portal Upload</option>' +
+      '<option value="Email">Email</option>' +
+      '<option value="Mail">Physical Mail</option>' +
+      '<option value="Hand-Delivered">Hand-Delivered</option>' +
+      '<option value="Other">Other</option>' +
+    '</select></div>' +
+    '<div style="margin-bottom:12px"><label style="font-size:12px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Where — portal name, email address, or mailing address</label>' +
+    '<input id="submitDestination" type="text" value="'+(matchedSource?escH(matchedSource.name):'')+'" style="width:100%;box-sizing:border-box;padding:8px;border:1.5px solid #E5E7EB;border-radius:7px;font-size:13px" placeholder="e.g. PA eMarketplace, or procurement@agency.gov"></div>' +
+    '<div style="margin-bottom:16px"><label style="font-size:12px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Confirmation # / notes (optional)</label>' +
+    '<input id="submitConfirmation" type="text" style="width:100%;box-sizing:border-box;padding:8px;border:1.5px solid #E5E7EB;border-radius:7px;font-size:13px" placeholder="Portal receipt #, tracking #, or who you spoke with"></div>' +
+    '<div style="display:flex;gap:8px">' +
+      '<button id="submitConfirmBtn" style="flex:1;background:#1E7B3C;color:#fff;border:none;border-radius:7px;padding:10px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;cursor:pointer">✅ Confirm Submitted</button>' +
+      '<button onclick="document.getElementById(\'_submitModal\').remove()" style="padding:10px 16px;background:#F3F4F6;border:none;border-radius:7px;font-size:12px;cursor:pointer">Cancel</button>' +
+    '</div>' +
+  '</div>';
+  document.body.appendChild(modal);
+
+  modal.querySelector('#submitConfirmBtn').onclick = function(){
+    var method = modal.querySelector('#submitMethod').value;
+    var destination = modal.querySelector('#submitDestination').value.trim();
+    var confirmation = modal.querySelector('#submitConfirmation').value.trim();
+    modal.remove();
+
+    b.status = 'submitted';
+    b.submittedDate = new Date().toISOString().slice(0,10);
+    b.submissionMethod = method;
+    b.submissionDestination = destination;
+    b.submissionConfirmation = confirmation;
+    bidsSave(bids);
+    if (document.getElementById('ovBidDetail')) document.getElementById('ovBidDetail').classList.remove('open');
+    bidsRender();
+    showToast('✅ Logged — now watch for addenda/RFIs and set a follow-up before the decision date.');
+  };
 }
 
 function bidsMarkOutcome(id, outcome){
