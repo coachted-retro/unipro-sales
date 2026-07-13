@@ -17603,11 +17603,18 @@ var VAULT_DEFAULT = {
   },
 
   // ── KEY PERSONNEL ────────────────────────────────────────────
+  // Corrected 2026-07-13 per Ted: he is Project & Sales Executive (sales/estimating,
+  // primary bid contact) NOT a Principal -- Sean and Terence O'Reilly are the
+  // Principals/owners. Jim Kennedy is Senior VP of Sales, not "Operations/Field
+  // Supervision" -- that's Dan Soleau's role (AllPro), added below since he was
+  // missing entirely, which is why the AI had nothing to pull from and guessed
+  // wrong titles for a stainless/hood bid's qualifications summary.
   personnel: [
-    { name:'Ted Scholl', title:'Senior Account & Operations Manager / Fire Protection Specialist / Bid Manager', phone:'267-421-6336', email:'tscholl@termac.com', role:'Primary bid contact, proposal preparation, site surveys, AllPro hood design', bio:'Experienced fire protection and commercial kitchen services specialist managing Eastern PA, NJ, DE, MD, and DC territory. Oversees UniPro and AllPro operations, bid management, and client relationships. Background in commercial kitchen design and fire protection compliance.' },
+    { name:'Ted Scholl', title:'Senior Account & Operations Manager / Fire Protection Specialist / Bid Manager', bidTitle:'Project & Sales Executive', phone:'267-421-6336', email:'tscholl@termac.com', role:'Primary bid contact, sales & estimating, proposal preparation, site surveys, AllPro hood design', bio:'Experienced fire protection and commercial kitchen services specialist managing Eastern PA, NJ, DE, MD, and DC territory. Oversees UniPro and AllPro operations, bid management, and client relationships. Background in commercial kitchen design and fire protection compliance.' },
     { name:'Sean O\'Reilly', title:'Owner / Principal', phone:'[REQUIRED]', email:'[REQUIRED]', role:'Contract signatory, authorized company representative', bio:'[REQUIRED — brief bio for bid submissions]' },
     { name:'Terence O\'Reilly', title:'Owner / Principal', phone:'[REQUIRED]', email:'[REQUIRED]', role:'Contract signatory, authorized company representative', bio:'[REQUIRED — brief bio for bid submissions]' },
-    { name:'Jim Kennedy', title:'Vice President of Sales', phone:'[REQUIRED]', email:'jkennedy@termac.com', role:'Sales oversight, major contract review', bio:'[REQUIRED]' },
+    { name:'Jim Kennedy', title:'Senior Vice President of Sales', phone:'[REQUIRED]', email:'jkennedy@termac.com', role:'Sales oversight, major contract review', bio:'[REQUIRED]' },
+    { name:'Dan Soleau', title:'Operations & Field Supervisor — AllPro', phone:'[REQUIRED]', email:'dsoleau@termac.com', role:'AllPro fabrication and installation contact -- hands-on field supervision from shop fabrication through on-site install, quality control on custom stainless and kitchen hood work', bio:'[REQUIRED — brief bio for bid submissions]', divisionFocus:'AllPro' },
     { name:'Dennis Muracco', title:'Chief Operating Officer', phone:'[REQUIRED]', email:'[REQUIRED]', role:'Operations oversight, contract execution', bio:'[REQUIRED]' },
     { name:'Paul Brahan', title:'General Manager — UniPro', phone:'[REQUIRED]', email:'pbrahan@termac.com', role:'UniPro division management, contract execution', bio:'[REQUIRED]' },
   ],
@@ -19324,10 +19331,29 @@ async function bdGenerateSection(secId, bidId) {
   if (contentEl) contentEl.innerHTML = '<span style="color:#D8690B">🤖 Drafting '+sec.label+'…</span>';
 
   var vault = bidsVaultLoad();
+  // Pull actual titles from vault.personnel rather than letting the AI guess.
+  // Which two people are named depends on the bid's division: an AllPro/
+  // stainless/hood job names Dan Soleau (the real field contact for that
+  // work) instead of Jim Kennedy, who has no fabrication role. Corrected
+  // 2026-07-13 per Ted after an AllPro bid's qualifications summary called
+  // him "Principal" (he's Project & Sales Executive -- Sean/Terence are the
+  // Principals) and named Jim Kennedy for "Operations/Field Supervision"
+  // (that's Dan Soleau's role, and Dan wasn't even in the vault yet).
+  var vaultPersonnel = vault.personnel || [];
+  var tedEntry = vaultPersonnel.find(function(p){ return p.name === 'Ted Scholl'; });
+  var isAllProBid = typeof bidsIsAllPro === 'function' && bidsIsAllPro(b);
+  var secondEntry = vaultPersonnel.find(function(p){
+    return p.name === (isAllProBid ? 'Dan Soleau' : 'Jim Kennedy');
+  });
+  var qualsPeople = [tedEntry, secondEntry].filter(Boolean);
+  var personnelCtx = qualsPeople.map(function(p){
+    return p.name + ' \u2014 ' + (p.bidTitle || p.title) + ' (' + p.role + ')';
+  }).join('; ') || 'Ted Scholl \u2014 Project & Sales Executive';
+
   var vaultCtx = 'Company: Ter-Pro LLC / Capital Suppression Corp · 7330 Tulip St, Philadelphia PA 19136 · ' +
-    'Ted Scholl, 267-421-6336, tscholl@termac.com · PA License #21783 · ' +
-    'GL $1M/$2M · Umbrella $2M · WC $1M · Gannon Insurance (215)396-9000 · ' +
-    'Territory: ' + vault.territory;
+    'PA License #21783 · GL $1M/$2M · Umbrella $2M · WC $1M · Gannon Insurance (215)396-9000 · ' +
+    'Territory: ' + vault.territory + '\n' +
+    'KEY PERSONNEL FOR THIS BID (use these exact names and titles, do not invent or alter titles): ' + personnelCtx;
 
   var scopeCtx = 'Bid: '+b.title+'\nAgency: '+(b.agency||'N/A')+'\nRef#: '+(b.refNo||'N/A')+
     '\nDue: '+(b.dueDate||'TBD')+'\nValue: $'+(b.estValue||0).toLocaleString()+
@@ -19341,7 +19367,7 @@ async function bdGenerateSection(secId, bidId) {
     scope: 'Write a detailed scope response that directly addresses each requirement listed. Reference specific NFPA standards (NFPA 10, NFPA 96, etc.). Be specific about our methodology, technician qualifications, inspection procedures, documentation, and AHJ reporting.',
     technical: 'Write a technical approach section covering: inspection methodology per NFPA standards, technician training and qualifications, equipment and tools used, documentation and reporting process, deficiency notification procedure, emergency response capability. Be specific and compliance-focused.',
     pricing: 'Write a pricing schedule narrative and structure. Include recommended unit pricing approach (per unit, per site, per visit), multi-year discount recommendation if applicable, bundled service pricing note if cross-sell services detected. Include a blank table structure for unit prices. Note: actual per-unit pricing TBD by Ted Scholl based on site survey.',
-    quals: 'Write a company qualifications summary covering: years in business, service divisions and capabilities, geographic territory, team size, NFPA compliance record, key personnel (Ted Scholl, Jim Kennedy). Keep to 1 page. Professional and factual.',
+    quals: 'Write a company qualifications summary covering: years in business, service divisions and capabilities, geographic territory, team size, NFPA compliance record, and a Key Personnel section listing exactly these people with exactly these titles (see KEY PERSONNEL FOR THIS BID above) -- do not add anyone else, do not change or infer a title for anyone. Keep to 1 page. Professional and factual.',
     references: 'Write a references page with 3 reference slots formatted professionally. Use [REFERENCE 1 — AGENCY NAME], [CONTACT], [PHONE/EMAIL], [CONTRACT DESCRIPTION], [VALUE], [PERIOD] format for each. Note at bottom that full references available upon request.',
     compliance: 'Write a compliance checklist / certification page that the company would sign and submit with the bid, confirming: NFPA compliance, insurance coverage, licensing, non-collusion, equal opportunity, etc. Include signature block for Ted Scholl / authorized representative.',
   };
