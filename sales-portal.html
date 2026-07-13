@@ -1679,13 +1679,66 @@ function spBuildAgenda() {
     });
   });
 
-  // ── 5. Merge in persisted manual stops (rep-added) ───────────────────────
+  // ── 5. Follow-ups due today ────────────────────────────────────────────
+  // 2026-07-13 per Ted: a follow-up date set from the touch point modal
+  // needs to actually show up as a real stop on that day, not just sit
+  // as an invisible field. Pulls from all three pools since a follow-up
+  // could've been set on a lead, contact, or account.
+  var todayStrFU = new Date().toISOString().slice(0,10);
+  ['leads','contacts','accounts'].forEach(function(pool){
+    (crmLoad(pool) || []).filter(function(r){
+      return r.followupDate === todayStrFU
+        && (!r.assignedRep || r.assignedRep === repName)
+        && !agenda.some(function(a){ return a.accountId === r.id; });
+    }).forEach(function(r){
+      agenda.push({
+        type:       'followup',
+        id:         'fu_' + r.id,
+        accountId:  r.id,
+        title:      r.business || r.name || 'Follow-up',
+        address:    r.address || '',
+        zip:        r.zip || '',
+        time:       '',
+        notes:      r.followupNote || 'Follow-up due today',
+        phone:      r.phone || '',
+        color:      '#7C3AED',
+        bg:         '#F3E8FF',
+        label:      '📅 Follow-Up Due',
+        action:     pool === 'accounts' ? 'visit' : 'survey',
+        accountType: r.accountType || null,
+      });
+    });
+  });
+
+  // ── 6. Merge in persisted manual stops (rep-added) ───────────────────────
+  // 2026-07-13 per Ted: used to drop a stop from the list entirely once
+  // marked done, meaning there was no way to look back and confirm what
+  // actually got covered today. Kept visible now (still deduped against
+  // anything already in the agenda) -- see the doneToday pass below for
+  // how completion actually gets shown.
   var manual = spLoadPersistedStops().filter(function(s){
-    return !s.done && !agenda.some(function(a){ return a.id === s.id || a.accountId === s.accountId; });
+    return !agenda.some(function(a){ return a.id === s.id || a.accountId === s.accountId; });
   });
   agenda = agenda.concat(manual);
 
-  // ── 6. Optimize route ────────────────────────────────────────────────────
+  // ── 7. Mark every item done-today, uniformly ──────────────────────────
+  // Automatic per Ted: a real touchpoint (call/visit/email/note) logged
+  // today for this account marks the stop done, no separate action
+  // needed. Falls back to the explicit done/status flags manual stops
+  // and appointments already carry, for the case a rep genuinely
+  // stopped by but had nothing worth logging.
+  var todayStrForAppts = new Date().toISOString().slice(0, 10);
+  var apptsForDoneCheck = crmLoad('appointments') || [];
+  agenda.forEach(function (item) {
+    var explicitDone = !!item.done;
+    if (!explicitDone && item.id) {
+      var matchedAppt = apptsForDoneCheck.find(function (a) { return a.id === item.id; });
+      if (matchedAppt && matchedAppt.status === 'complete') explicitDone = true;
+    }
+    item.doneToday = explicitDone || spAccountHasTouchpointToday(item.accountId);
+  });
+
+  // ── 8. Optimize route ────────────────────────────────────────────────────
   return spOptimizeRoute(agenda);
 }
 
@@ -2103,7 +2156,7 @@ function spRenderRecentActivityFeed() {
 function spRenderTodayAgenda() {
   var agenda = spBuildAgenda();
   var todayLabel = new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'});
-  var doneCount  = spLoadPersistedStops().filter(function(s){ return s.done; }).length;
+  var doneCount  = agenda.filter(function(item){ return item.doneToday; }).length;
 
   var headerBtns = '<div style="display:flex;gap:6px;flex-shrink:0">'
     + '<button class="sp-btn sp-btn-red" style="font-size:10px;padding:5px 12px" onclick="spOpenAddStop()">+ Add Stop</button>'
@@ -2141,6 +2194,16 @@ function spRenderTodayAgenda() {
       }
     }
 
+    // 2026-07-13 per Ted: needs to be visually obvious at a glance which
+    // stops are actually done, not just tracked invisibly in data.
+    // doneToday is computed automatically in spBuildAgenda (a real
+    // touchpoint logged today for this account), not a button someone
+    // has to remember to click.
+    var doneBadge = item.doneToday
+      ? ' <span style="background:#166534;color:#fff;border-radius:4px;padding:1px 8px;font-size:10px;font-weight:800;letter-spacing:.03em">✅ COMPLETED</span>'
+      : '';
+    var cardOpacity = item.doneToday ? 'opacity:.6;' : '';
+
     var actionLabel = item.action === 'visit' ? "I\u2019m Here \u2014 Check In \u2192" : "I\u2019m Here \u2014 Start Survey \u2192";
     var actionFn    = item.action === 'visit'
       ? "spAgendaArriveVisit('" + item.accountId + "','" + item.id + "')"
@@ -2150,14 +2213,15 @@ function spRenderTodayAgenda() {
       ? '<button onclick="event.stopPropagation();spRemoveStop(\'' + item.id + '\')" style="background:none;border:none;color:#9CA3AF;font-size:16px;cursor:pointer;padding:2px 4px;line-height:1" title="Remove stop">✕</button>'
       : '';
 
-    return '<div id="agendaStop_' + item.id + '" style="background:' + item.bg + ';border-left:4px solid ' + item.color + ';border-radius:9px;padding:12px 14px;margin-bottom:8px">'
+    return '<div id="agendaStop_' + item.id + '" style="' + cardOpacity + 'background:' + item.bg + ';border-left:4px solid ' + (item.doneToday ? '#166534' : item.color) + ';border-radius:9px;padding:12px 14px;margin-bottom:8px">'
       + '<div style="display:flex;align-items:flex-start;gap:8px">'
         + '<div onclick="spViewRecord(\'' + item.accountId + '\',\'' + (item.action === 'visit' ? 'accounts' : 'leads') + '\')" style="flex:1;min-width:0;cursor:pointer">'
           + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap">'
             + timeStr
-            + '<span style="font-weight:700;font-size:13px;color:var(--ink)">' + escH(item.title) + '</span>'
+            + '<span style="font-weight:700;font-size:13px;color:var(--ink)' + (item.doneToday ? ';text-decoration:line-through' : '') + '">' + escH(item.title) + '</span>'
             + '<span style="background:' + item.color + '20;color:' + item.color + ';border-radius:4px;padding:1px 7px;font-size:10px;font-weight:700">' + item.label + '</span>'
             + acctTypeBadge
+            + doneBadge
           + '</div>'
           + (item.address ? '<div style="font-size:11px;color:var(--soft);margin-bottom:2px">📍 ' + escH(item.address) + '</div>' : '')
           + (item.phone ? '<div style="font-size:11px;color:var(--soft);margin-bottom:2px">📞 <a href="tel:' + escH(item.phone) + '" onclick="event.stopPropagation()" style="color:var(--blue)">' + escH(item.phone) + '</a></div>' : '')
@@ -2170,7 +2234,7 @@ function spRenderTodayAgenda() {
           + actionLabel
         + '</button>'
         + '<button onclick="event.stopPropagation();spOpenCollLog(this)" data-acctid="' + escH(item.accountId||'') + '" data-title="' + escH(item.title) + '" style="background:#1E7B3C;color:#fff;border:none;border-radius:7px;padding:9px 10px;font-size:13px;cursor:pointer" title="Log cash/check collection">💵</button>'
-        + '<button onclick="event.stopPropagation();spCompleteStop(\'' + item.id + '\',\'' + (item.accountId||'') + '\')" style="background:rgba(0,0,0,.06);border:none;border-radius:7px;padding:9px 10px;font-size:13px;cursor:pointer;color:var(--soft)" title="Mark complete - leaving this stop">✅</button>'
+        + '<button onclick="event.stopPropagation();spCompleteStop(\'' + item.id + '\',\'' + (item.accountId||'') + '\')" style="background:rgba(0,0,0,.06);border:none;border-radius:7px;padding:9px 10px;font-size:13px;cursor:pointer;color:var(--soft)" title="Mark complete - leaving this stop with nothing to log">✅</button>'
         + (!item.accountType ? '<button onclick="event.stopPropagation();spSetStopAccountType(\'' + item.id + '\',\'' + (item.accountId||'') + '\')" style="background:rgba(0,0,0,.06);border:none;border-radius:7px;padding:9px 10px;font-size:10px;cursor:pointer;color:var(--soft)" title="Set business type">🏷️</button>' : '')
         + '<button onclick="event.stopPropagation();spOpenIntroScript(\'' + (item.accountId||'') + '\',\'' + (item.action === 'visit' ? 'accounts' : 'leads') + '\',' + JSON.stringify(item.title) + ',' + JSON.stringify(item.address||'') + ')" style="background:rgba(0,0,0,.06);border:none;border-radius:7px;padding:9px 10px;font-size:10px;cursor:pointer;color:var(--soft)" title="AI intro script + violation check">🎤</button>'
       + '</div>'
@@ -3645,6 +3709,10 @@ function spOpenDetail(r, tab) {
       <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--soft);cursor:pointer">
         <input type="checkbox" id="spTpPin" style="width:15px;height:15px"> 📌 Pin to top
       </label>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--soft)">
+        📅 Follow up:
+        <input type="date" id="spTpFollowupDate" style="border:1.5px solid var(--line);border-radius:6px;padding:5px 8px;font-size:12px">
+      </label>
       <button id="spTpSubmitBtn" onclick="spTpSubmit('${r.id}','${tab}')" style="background:var(--red);color:#fff;border:none;border-radius:8px;padding:9px 20px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12px;letter-spacing:.05em;text-transform:uppercase;cursor:pointer">Log Touch Point</button>
     </div>
     <div id="spTpTimeline" style="margin-top:14px;border-top:1px solid var(--line);padding-top:10px">
@@ -3752,6 +3820,22 @@ function spLogTouchpoint(id, tab, opts) {
   r.lastContactDate = new Date().toISOString().slice(0,10);
   r.updated = Date.now();
 
+  // 2026-07-13 per Ted: a follow-up set from the touch point modal needs
+  // to actually surface as a real stop on that future day's agenda, not
+  // just sit as a field nobody sees again. followupDate + a matching
+  // note both land on the record; spBuildAgenda picks up anything due
+  // today (see the Follow-Ups Due Today section there).
+  if (opts.followupDate) {
+    r.followupDate = opts.followupDate;
+    r.followupNote = opts.note || ('Follow up on ' + title);
+    r.activityLog.push({
+      id: 'act_' + Date.now() + Math.random().toString(36).slice(2,6),
+      ts: Date.now(), type: 'system', icon: '📅',
+      title: 'Follow-up scheduled for ' + opts.followupDate,
+      note: opts.note || '', who: (window._spRep && _spRep.name) || 'Rep',
+    });
+  }
+
   // Auto-promote Lead -> Contact the moment a real, tangible conversation
   // happens, so this never depends on a rep remembering to flip a status
   // manually. A call marked Connected, or any logged in-person visit, both
@@ -3781,19 +3865,50 @@ function spTpSubmit(id, tab) {
   const type = window._spTpType || 'call';
   const note = document.getElementById('spTpNote').value.trim();
   const pin  = document.getElementById('spTpPin').checked;
+  const followupDate = document.getElementById('spTpFollowupDate')?.value || '';
 
   if (type === 'email') { spOpenEmailCompose(id, tab); return; }
 
   const outcome = type === 'call' ? (window._spTpOutcome || 'reached') : null;
   if (type !== 'note' && !note && type !== 'call') { spToast('Add a quick note on what happened'); return; }
 
-  const r = spLogTouchpoint(id, tab, { type, note, outcome, pin });
+  const r = spLogTouchpoint(id, tab, { type, note, outcome, pin, followupDate });
   if (!r) return;
   document.getElementById('spTpNote').value = '';
   document.getElementById('spTpPin').checked = false;
+  if (document.getElementById('spTpFollowupDate')) document.getElementById('spTpFollowupDate').value = '';
   document.getElementById('spTpTimeline').innerHTML = spRenderTimeline(r);
   const justPromoted = r.autoPromotedAt && (Date.now() - r.autoPromotedAt < 2000);
-  spToast(justPromoted ? '➡️ Real conversation logged — auto-promoted to Contact' : '✓ Touch point logged');
+  const followupMsg = followupDate ? ' — follow-up set for ' + followupDate : '';
+  spToast(justPromoted ? '➡️ Real conversation logged — auto-promoted to Contact' + followupMsg : '✓ Touch point logged' + followupMsg);
+}
+
+// Per Ted 2026-07-13: agenda completion should be automatic -- the
+// moment a call, visit, email, or note gets logged against an account,
+// that agenda stop is done, full stop, no separate button to remember.
+// Derives this fresh every render instead of a separate flag to keep in
+// sync, by checking whether the account's own activityLog has any real
+// entry from today. Works uniformly across every agenda item type
+// (appointment, opportunity, jeopardy, nearby lead, manual stop) since
+// they all resolve to a real account/lead id with its own activityLog --
+// no per-type wiring needed, and it can never drift out of sync with
+// what actually happened, since it's not a flag anyone has to remember
+// to set.
+function spAccountHasTouchpointToday(accountId) {
+  if (!accountId) return false;
+  var todayStr = new Date().toISOString().slice(0, 10);
+  var pools = ['leads', 'contacts', 'accounts'];
+  for (var i = 0; i < pools.length; i++) {
+    var data = crmLoad(pools[i]);
+    var r = data.find(function (x) { return x.id === accountId; });
+    if (r && Array.isArray(r.activityLog)) {
+      var hit = r.activityLog.some(function (a) {
+        return a.ts && new Date(a.ts).toISOString().slice(0, 10) === todayStr;
+      });
+      if (hit) return true;
+    }
+  }
+  return false;
 }
 
 function spTpTogglePin(id, activityId) {
