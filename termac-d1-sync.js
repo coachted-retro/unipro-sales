@@ -40,7 +40,7 @@
     'trade_partners', 'trade_partner_referrals', 'trade_partner_bids',
     'reference_library', 'allpro_rate_tables', 'notifications',
     'accounts_payable', 'expense_reports', 'customer_orders', 'reorder_requests',
-    'warehouse_alerts'];
+    'warehouse_alerts', 'debriefs'];
 
   async function d1Fetch(method, path, body) {
     try {
@@ -208,6 +208,18 @@
       accountId: 'account_id', expectedClose: 'expected_close',
       closedAt: 'closed_at', assignedRep: 'assigned_rep',
     },
+    // Route Debriefs, added 2026-07-13 per Ted - was 100% localStorage-
+    // only on whichever device a tech submitted from (route-debrief.html),
+    // capped at 60 records and silently truncated, invisible to any GM
+    // on a different device. See gm-dashboard.html for the per-division
+    // routing this enables.
+    debriefs: {
+      submittedAt: 'submitted_at', shiftStart: 'shift_start', shiftEnd: 'shift_end',
+      vanCondition: 'van_condition', fuelLevel: 'fuel_level',
+      suppliesNeeded: 'supplies_needed', vanNotes: 'van_notes',
+      salesLeadsDiscovered: 'sales_leads_discovered', customerComplaints: 'customer_complaints',
+      siteNotes: 'site_notes', shiftRating: 'shift_rating', extraStops: 'extra_stops',
+    },
     // 2026-07-13 FIX: matching the same fix made the same day in
     // termac-os.html's own copy of this map -- bids had no entry here
     // either, meaning every camelCase Bid Pipeline field was silently
@@ -245,6 +257,11 @@
       'job_id', 'division', 'items', 'note', 'confirmed_by', 'confirmed_at',
       'warehouse_notes', 'company', 'warehouse', 'tech', 'item_count',
       'created_at', 'updated_at'],
+    debriefs: ['id', 'date', 'submitted_at', 'tech', 'division', 'shift_start',
+      'shift_end', 'truck', 'odometer', 'van_condition', 'fuel_level',
+      'supplies_needed', 'van_notes', 'sales_leads_discovered',
+      'customer_complaints', 'site_notes', 'blockers', 'shift_rating',
+      'extra_stops', 'created_at', 'updated_at'],
     leads: ['id', 'business', 'address', 'city', 'state', 'zip', 'phone', 'email',
       'contact_name', 'contact_title', 'pricing_tier', 'facility_type', 'division',
       'lifecycle_stage', 'ai_score', 'assigned_rep', 'source', 'notes',

@@ -4995,10 +4995,6 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
           <div id="mgrGrowthTrend"><div style="color:var(--soft);font-size:12px">Loading&hellip;</div></div>
         </div>
       </div>
-      <div style="margin-top:14px;background:#F8F9FA;border:1.5px solid var(--line);border-radius:8px;padding:12px">
-        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;color:var(--dark);margin-bottom:6px">&#128161; Strategic Growth Opportunities <span style="font-weight:600;color:var(--soft);text-transform:none;letter-spacing:0;font-size:10px">&mdash; directional, not a live revenue figure. Needs business validation before commitment.</span></div>
-        <div id="mgrGrowthOpportunities" style="display:grid;gap:8px"></div>
-      </div>
     </div>
 
     <!-- Net 30 Credit Queue (hidden until items exist) -->
@@ -5133,6 +5129,10 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
         </div>
         <a href="route-debrief.html" target="_blank" style="font-size:11px;color:var(--blue);font-weight:600;text-decoration:none">Submit Debrief →</a>
       </div>
+      <!-- 2026-07-13 per Ted: the full list belongs on each GM's own
+           division dashboard (gm-dashboard.html), not the general
+           overview -- this stays a simple company-wide count with a
+           link out, not a duplicate of the per-division detail. -->
       <div id="debriefPanelBody" style="margin-top:10px;font-size:12px;color:#6B7280">Loading…</div>
     </div>
 
@@ -5303,6 +5303,14 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
       </div>
     </div>
 
+    <!-- Strategic Growth Opportunities -- moved to the true bottom of
+         the dashboard 2026-07-13 per Ted. This is a directional note of
+         areas worth exploring, not live data, and doesn't warrant
+         prominent placement above the actual operational panels. -->
+    <div style="margin-top:14px;background:#F8F9FA;border:1.5px solid var(--line);border-radius:8px;padding:12px">
+      <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;color:var(--dark);margin-bottom:6px">&#128161; Strategic Growth Opportunities <span style="font-weight:600;color:var(--soft);text-transform:none;letter-spacing:0;font-size:10px">&mdash; directional, not a live revenue figure. Needs business validation before commitment.</span></div>
+      <div id="mgrGrowthOpportunities" style="display:grid;gap:8px"></div>
+    </div>
 
   </div><!-- /mgrPanel-dashboard -->
 
@@ -13920,8 +13928,28 @@ function renderDebriefPanel() {
   const badge = document.getElementById('debriefBadge');
   if (!body) return;
 
+  // 2026-07-13 fix: was reading a raw localStorage key that never
+  // reached D1 at all -- same bug class as the Bid Pipeline had. One-time
+  // migration folds anything still sitting under the old key into the
+  // real store so nothing already submitted disappears.
   let debriefs = [];
-  try { debriefs = JSON.parse(localStorage.getItem('termac_debriefs') || '[]'); } catch(e) {}
+  try {
+    var legacy = JSON.parse(localStorage.getItem('termac_debriefs') || '[]');
+    if (legacy.length) {
+      var current = crmLoad('debriefs');
+      var existingIds = {};
+      current.forEach(function (d) { if (d && d.id) existingIds[d.id] = true; });
+      var merged = current.slice();
+      var addedAny = false;
+      legacy.forEach(function (d) { if (d && d.id && !existingIds[d.id]) { merged.push(d); existingIds[d.id] = true; addedAny = true; } });
+      if (addedAny) { crmSave('debriefs', merged); }
+      localStorage.removeItem('termac_debriefs');
+      debriefs = merged;
+    } else {
+      debriefs = crmLoad('debriefs');
+    }
+  } catch(e) { debriefs = crmLoad('debriefs'); }
+  debriefs.sort(function(a,b){ return (b.submittedAt||0) - (a.submittedAt||0); });
 
   const today = new Date().toISOString().slice(0,10);
   const todayDebriefs = debriefs.filter(d => d.date === today);
@@ -13936,17 +13964,36 @@ function renderDebriefPanel() {
     return;
   }
 
-  body.innerHTML = debriefs.slice(0,5).map(d => `
-    <div style="background:#F9FAFB;border-radius:7px;padding:8px 12px;margin-bottom:8px">
-      <div style="display:flex;align-items:center;justify-content:space-between">
-        <div style="font-weight:700;font-size:12px">${d.tech} <span style="font-size:10px;color:var(--soft);font-weight:400">· ${d.division}</span></div>
-        <div style="font-size:10px;color:var(--soft)">${new Date(d.submittedAt).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})}</div>
-      </div>
-      <div style="font-size:11px;color:#374151;margin-top:3px">${d.jobsComplete||'?'} jobs · $${d.revenue||0} revenue · Rating: ${d.shiftRating ? '⭐'.repeat(d.shiftRating) : '—'}</div>
-      ${d.salesLeadsDiscovered ? `<div style="font-size:11px;color:#1E7B3C;margin-top:3px">💡 Intel: ${d.salesLeadsDiscovered.slice(0,80)}…</div>` : ''}
-      ${d.customerComplaints ? `<div style="font-size:11px;color:#C8102E;margin-top:3px">⚠️ Complaint: ${d.customerComplaints.slice(0,80)}…</div>` : ''}
-    </div>`).join('') +
-    (debriefs.length > 5 ? `<div style="font-size:11px;color:var(--soft);text-align:center;padding:4px">${debriefs.length-5} more debriefs on file</div>` : '');
+  // 2026-07-13 per Ted: the general Manager Dashboard should show a
+  // simple company-wide count, not the full list -- the real detail
+  // belongs on each GM's own division dashboard now (gm-dashboard.html).
+  var byDivision = {};
+  todayDebriefs.forEach(function (d) {
+    var div = d.division || 'Unassigned';
+    byDivision[div] = (byDivision[div] || 0) + 1;
+  });
+  var divKeys = Object.keys(byDivision).sort();
+  if (!divKeys.length) {
+    body.innerHTML = '<div style="color:var(--soft)">No debriefs submitted yet today. Techs submit at end of shift.</div>';
+    return;
+  }
+  // Maps the actual dropdown values in route-debrief.html to
+  // gm-dashboard.html's actual expected ?division= params -- not a
+  // simple slug (e.g. "UniPro / Quality III" is one combined option,
+  // "Termac Service"/"Termac Driver" both mean the Termac division).
+  var DEBRIEF_DIV_TO_GM = {
+    'UniPro / Quality III': 'unipro', 'GTO': 'gto', 'Filter Man': 'filterman',
+    'AllPro': 'allpro', 'Termac Service': 'termac', 'Termac Driver': 'termac'
+  };
+  body.innerHTML = '<div style="display:flex;flex-wrap:wrap;gap:8px">' +
+    divKeys.map(function (div) {
+      var gmSlug = DEBRIEF_DIV_TO_GM[div] || '';
+      var href = gmSlug ? 'gm-dashboard.html?division=' + encodeURIComponent(gmSlug) : 'gm-dashboard.html';
+      return '<a href="' + href + '" target="_blank" style="text-decoration:none;background:#F9FAFB;border-radius:7px;padding:8px 12px;display:flex;align-items:center;gap:6px">' +
+        '<span style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:16px;color:#1B5FA8">' + byDivision[div] + '</span>' +
+        '<span style="font-size:11px;color:var(--soft)">' + escH(div) + '</span></a>';
+    }).join('') +
+    '</div><div style="font-size:10px;color:var(--soft);margin-top:8px">Full detail lives on each division\'s own GM dashboard.</div>';
 }
 
 // ── SERVICE EXCEPTION PANEL ──────────────────────────────────────────────────
@@ -28689,26 +28736,33 @@ function refreshManagerDashboard() {
   }
 
   // ── JEOPARDY LIST ──
+  // 2026-07-13 per Ted: managers don't need the full list here anymore --
+  // these now route directly to each rep's daily agenda (sales-portal.html,
+  // spBuildAgenda) so they actually get worked instead of sitting in a
+  // list nobody follows up on. This stays a summary: how many, how much
+  // revenue at risk, and a breakdown by rep so a manager can see who's
+  // carrying the load -- not a re-display of the same 200 accounts.
   const jeopList = document.getElementById('mgrJeopardyList');
   if (jeopList) {
     if (jeopAccts.length === 0) {
       jeopList.innerHTML = '<div style="color:var(--green);font-size:12px;font-weight:600;padding:8px">✅ No accounts in jeopardy</div>';
     } else {
-      jeopList.innerHTML = jeopAccts.map(a => {
-        const health = typeof acctCalcHealth === 'function' ? acctCalcHealth(a) : { score: 1 };
-        return `<div style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:#FEF2F2;border-radius:8px;border-left:3px solid var(--red)">
-          <div style="flex:1">
-            <div style="font-weight:700;font-size:13px">${a.name}</div>
-            <div style="font-size:11px;color:var(--soft)">${a.company || ''} · ${a.contact || ''} · ${a.phone || ''}</div>
-          </div>
-          <div style="text-align:center">
-            <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:20px;color:var(--red)">${health.score}/5</div>
-            <div style="font-size:9px;color:var(--soft);text-transform:uppercase;letter-spacing:.06em">Health</div>
-          </div>
-          <div style="font-family:Barlow Condensed,sans-serif;font-weight:700;color:var(--ink);font-size:12px">${a.annualValue ? fmt$(a.annualValue)+'/yr' : '—'}</div>
-          <button onclick="closeOverlay();setTimeout(()=>openAcctDetail('${a.id}'),100)" style="background:var(--red);color:#fff;border:none;border-radius:6px;padding:6px 12px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:10px;text-transform:uppercase;cursor:pointer">View →</button>
-        </div>`;
-      }).join('');
+      const jeopValue = jeopAccts.reduce((s,a) => s + (a.annualValue||0), 0);
+      const byRep = {};
+      jeopAccts.forEach(a => {
+        const rep = a.assignedRep || a.ownedBy || 'Unassigned';
+        byRep[rep] = (byRep[rep]||0) + 1;
+      });
+      const repRows = Object.entries(byRep).sort((a,b)=>b[1]-a[1]).map(([rep,count]) =>
+        `<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px"><span>${escH(rep)}</span><span style="font-weight:700">${count}</span></div>`
+      ).join('');
+      jeopList.innerHTML = `
+        <div style="display:flex;gap:16px;padding:10px 12px;background:#FEF2F2;border-radius:8px;border-left:3px solid var(--red);margin-bottom:8px">
+          <div><div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:22px;color:var(--red)">${jeopAccts.length}</div><div style="font-size:10px;color:var(--soft);text-transform:uppercase">Accounts</div></div>
+          <div><div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:22px;color:var(--red)">${fmt$(jeopValue)}</div><div style="font-size:10px;color:var(--soft);text-transform:uppercase">Annual Value at Risk</div></div>
+        </div>
+        <div style="font-size:10px;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">By Rep — now on each rep's daily agenda (⚠️ At Risk)</div>
+        ${repRows}`;
     }
   }
 

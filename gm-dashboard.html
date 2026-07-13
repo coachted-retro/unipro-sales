@@ -223,11 +223,26 @@ async function renderDashboard(slug, div){
   const app = document.getElementById('app');
   const loading = document.getElementById('loadingBanner');
 
+  // route-debrief.html's division dropdown uses different raw strings
+  // than this file's clean division slugs (one combined "UniPro /
+  // Quality III" option, two Termac options) -- this maps each GM
+  // dashboard slug to every raw debrief-form value that should count
+  // toward it. "UniPro / Quality III" deliberately appears under both,
+  // since the form itself doesn't disambiguate which tech was covering
+  // which side of that combined option.
+  const DEBRIEF_FORM_DIVISIONS = {
+    unipro: ['UniPro / Quality III'], quality3: ['UniPro / Quality III'],
+    allpro: ['AllPro'], gto: ['GTO'], filterman: ['Filter Man'],
+    termac: ['Termac Service', 'Termac Driver'],
+  };
+  const debriefDivisionValues = DEBRIEF_FORM_DIVISIONS[slug] || [];
+  const debriefPlaceholders = debriefDivisionValues.map(() => '?').join(',');
+
   // Fire every data fetch in parallel -- independent panels, no reason
   // to wait on each other, and one failing shouldn't block the rest.
   const [
     accountsRes, oppsRes, bidsRes, jobsTodayRes, deficienciesRes,
-    actualsRes, allproRes, hrRes
+    actualsRes, allproRes, hrRes, debriefsRes
   ] = await Promise.all([
     d1Fetch('GET', `/db/accounts?division=${encodeURIComponent(div.real)}&limit=500`),
     d1Fetch('GET', `/db/opportunities?division=${encodeURIComponent(div.real)}&limit=500`),
@@ -237,6 +252,9 @@ async function renderDashboard(slug, div){
     d1Fetch('GET', `/db/division_actuals?division=${encodeURIComponent(div.real)}&limit=24`),
     div.isAllPro ? d1Query('SELECT stage, COUNT(*) as n, SUM(sale_price) as sale, SUM(actual_cost) as cost FROM allpro_projects GROUP BY stage') : Promise.resolve(null),
     d1Fetch('GET', '/db/hr_data?hr_key=termac_hr_users&limit=1'),
+    debriefDivisionValues.length
+      ? d1Query(`SELECT * FROM debriefs WHERE division IN (${debriefPlaceholders}) ORDER BY submitted_at DESC LIMIT 20`, debriefDivisionValues)
+      : Promise.resolve({ ok: true, results: [] }),
   ]);
 
   loading.style.display='none';
@@ -249,6 +267,7 @@ async function renderDashboard(slug, div){
   const deficiencies = deficienciesRes.ok ? deficienciesRes.results : [];
   const actuals = (actualsRes.ok ? actualsRes.results : []).sort((a,b)=> b.month.localeCompare(a.month));
   const allproStages = allproRes && allproRes.ok ? allproRes.results : null;
+  const debriefs = debriefsRes && debriefsRes.ok ? debriefsRes.results : [];
 
   let team = [];
   if (hrRes.ok && hrRes.results && hrRes.results[0]) {
@@ -287,6 +306,27 @@ async function renderDashboard(slug, div){
         </div>
       </div>`;
   }
+
+  // Route Debriefs, moved here 2026-07-13 per Ted -- this is where the
+  // real per-tech detail belongs now, not the general Manager Dashboard
+  // (which just shows a company-wide count linking here). Real intel/
+  // complaint fields only, no fabricated jobs/revenue numbers the actual
+  // submission form never collects.
+  const debriefsBlock = `
+    <div class="card" style="grid-column:1/-1">
+      <h3>🌙 Route Debriefs — last 20</h3>
+      ${debriefs.length ? debriefs.map(d => `
+        <div style="background:#F9FAFB;border-radius:7px;padding:10px 12px;margin-bottom:8px">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <div style="font-weight:700;font-size:13px">${esc(d.tech||'Unknown')}</div>
+            <div style="font-size:11px;color:var(--soft)">${d.submitted_at ? new Date(d.submitted_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}) : ''}</div>
+          </div>
+          <div style="font-size:12px;color:#374151;margin-top:3px">Shift ${esc(d.shift_start||'?')}–${esc(d.shift_end||'?')} · Truck ${esc(d.truck||'—')} · Rating: ${d.shift_rating ? '⭐'.repeat(d.shift_rating) : '—'}</div>
+          ${d.sales_leads_discovered ? `<div style="font-size:12px;color:#1E7B3C;margin-top:3px">💡 Intel: ${esc(String(d.sales_leads_discovered).slice(0,140))}</div>` : ''}
+          ${d.customer_complaints ? `<div style="font-size:12px;color:#C8102E;margin-top:3px">⚠️ Complaint: ${esc(String(d.customer_complaints).slice(0,140))}</div>` : ''}
+          ${d.blockers ? `<div style="font-size:12px;color:#92400E;margin-top:3px">🚧 Blocker: ${esc(String(d.blockers).slice(0,140))}</div>` : ''}
+        </div>`).join('') : '<div class="empty">No debriefs submitted yet for this division.</div>'}
+    </div>`;
 
   app.innerHTML = `
     <div class="topbar">
@@ -357,6 +397,9 @@ async function renderDashboard(slug, div){
     </div>
 
     <div class="grid">${allproBlock}</div>
+
+    <h2 class="section-title">Field</h2>
+    <div class="grid">${debriefsBlock}</div>
 
     <h2 class="section-title">Team</h2>
     <div class="card">

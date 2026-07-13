@@ -1593,6 +1593,43 @@ function spBuildAgenda() {
     });
   });
 
+  // ── 3b. Jeopardy accounts (health score <= 2) ────────────────────────────
+  // 2026-07-13 per Ted: the ~200-account Jeopardy Queue on the Manager
+  // Dashboard was a manager-only list with no real follow-up mechanism --
+  // these are accounts either about to be marked lost or that need a real
+  // conversation to close out a service relationship. They belong on the
+  // actual rep's daily agenda, not sitting in a big list nobody works.
+  // Capped at 3/day like the other lower-priority categories below, so
+  // a rep with several at-risk accounts gets a steady stream to work
+  // through rather than all of them dumped on one day.
+  accounts.filter(function(a) {
+    var isRep = a.assignedRep === repName || a.ownedBy === repName;
+    if (!isRep || a.status !== 'active') return false;
+    if (agenda.some(function(x){ return x.accountId === a.id; })) return false;
+    if (typeof acctCalcHealth !== 'function') return false;
+    return acctCalcHealth(a).score <= 2;
+  }).slice(0,3).forEach(function(a) {
+    var health = acctCalcHealth(a);
+    agenda.push({
+      type:       'jeopardy',
+      id:         'jp_' + a.id,
+      accountId:  a.id,
+      title:      a.name || a.business || 'Account',
+      address:    a.address || '',
+      zip:        a.zip || '',
+      time:       '',
+      notes:      'At risk (health ' + health.score + '/5) — find out where this account actually stands: renew, or close it out.',
+      phone:      a.phone || '',
+      color:      '#C8102E',
+      bg:         '#FEF2F2',
+      label:      '⚠️ At Risk',
+      action:     'visit',
+      services:   a.services || [],
+      accountType: a.accountType || null,
+      priority:   true,
+    });
+  });
+
   // ── 4. Nearby leads ──────────────────────────────────────────────────────
   var apptZips = agenda.filter(function(a){ return a.type === 'appointment'; })
     .map(function(a){ return a.zip || (a.address.match(/\b\d{5}\b/)||[])[0] || ''; })
