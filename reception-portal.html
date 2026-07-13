@@ -544,7 +544,7 @@ function rcpDefAction(idx, action) {
 }
 
 function rcpRenderCallLog(el){
-  const callLog = JSON.parse(localStorage.getItem('termac_crm_rcp_calls')||'[]');
+  const callLog = (typeof crmLoad === 'function') ? crmLoad('rcp_calls') : JSON.parse(localStorage.getItem('termac_crm_rcp_calls')||'[]');
   el.innerHTML = `
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start">
     <!-- LOG CALL FORM -->
@@ -765,10 +765,16 @@ function rcpLogCall(){
     else if (!zip) { rcpToast('Enter a ZIP so the territory rep can be identified'); return; }
   }
 
-  const call = {ts:Date.now(), callerName:name, company, phone, address, zip, callType:type, routeTo, urgency, notes, loggedBy:_rcpUser?.name||'Reception'};
-  const log = JSON.parse(localStorage.getItem('termac_crm_rcp_calls')||'[]');
+  const call = {id: 'RCP' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2,6), ts:Date.now(), callerName:name, company, phone, address, zip, callType:type, routeTo, urgency, notes, loggedBy:_rcpUser?.name||'Reception'};
+  const log = (typeof crmLoad === 'function') ? crmLoad('rcp_calls') : JSON.parse(localStorage.getItem('termac_crm_rcp_calls')||'[]');
   log.push(call);
-  localStorage.setItem('termac_crm_rcp_calls', JSON.stringify(log));
+  // 2026-07-13 per Ted: was raw localStorage only, no D1 path at all --
+  // any call that didn't happen to match an existing lead/contact by
+  // phone was invisible outside this one device. crmSave here reaches
+  // the real rcp_calls table regardless of whether a match is found
+  // below; the match (if any) is recorded on the call itself too.
+  if (typeof crmSave === 'function') { crmSave('rcp_calls', log); }
+  else { localStorage.setItem('termac_crm_rcp_calls', JSON.stringify(log)); }
 
   // Match this call to an existing lead or contact by phone, so it lands
   // as real history on that record — not just in Reception's own
@@ -782,6 +788,10 @@ function rcpLogCall(){
         note: notes || (urgency ? 'Urgency: ' + urgency : ''),
         who: (_rcpUser && _rcpUser.name) || 'Reception',
       });
+      call.matchedRecordId = matched.record.id;
+      call.matchedPool = matched.pool;
+      if (typeof crmSave === 'function') { crmSave('rcp_calls', log); }
+      else { localStorage.setItem('termac_crm_rcp_calls', JSON.stringify(log)); }
     }
   }
 
@@ -1331,7 +1341,7 @@ function rcpSetFilter(filter) {
     else btn.classList.remove('rcpFltActive');
   });
   // Re-render the list
-  var allCalls = JSON.parse(localStorage.getItem('termac_crm_rcp_calls')||'[]');
+  var allCalls = (typeof crmLoad === 'function') ? crmLoad('rcp_calls') : JSON.parse(localStorage.getItem('termac_crm_rcp_calls')||'[]');
   var filtered = rcpFilteredCalls(allCalls, filter);
   var countEl = document.getElementById('rcpHistCount');
   if (countEl) countEl.textContent = filtered.length;

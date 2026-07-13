@@ -93,6 +93,14 @@ const ALLOWED_TABLES = new Set([
   // on what schedule, without needing a code change + redeploy for
   // every timing tweak.
   'report_settings',
+  // Reception call log, added 2026-07-13 per Ted -- was 100%
+  // localStorage-only with no D1 path at all (not even a partial
+  // sync attempt), meaning any incoming call that didn't happen to
+  // match an existing lead/contact by phone number was invisible
+  // outside the one device that logged it. Covers every call type
+  // (new inquiries, complaints, emergencies, vendor calls, etc.),
+  // not just cold-call-style new business.
+  'rcp_calls',
 ]);
 
 const TABLE_PREFIX = {
@@ -124,6 +132,7 @@ const TABLE_PREFIX = {
   warehouse_alerts:'WHA',
   debriefs:'DBR',
   report_settings:'RPT',
+  rcp_calls:'RCP',
 };
 
 function corsHeaders(origin) {

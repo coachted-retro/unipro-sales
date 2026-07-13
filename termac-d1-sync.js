@@ -40,7 +40,7 @@
     'trade_partners', 'trade_partner_referrals', 'trade_partner_bids',
     'reference_library', 'allpro_rate_tables', 'notifications',
     'accounts_payable', 'expense_reports', 'customer_orders', 'reorder_requests',
-    'warehouse_alerts', 'debriefs'];
+    'warehouse_alerts', 'debriefs', 'rcp_calls'];
 
   async function d1Fetch(method, path, body) {
     try {
@@ -88,6 +88,13 @@
       company: 'division', assignedRep: 'assigned_rep',
       created: 'created_at', followupDate: 'follow_up_date',
       isHot: 'is_hot', isNewLead: 'is_new_lead',
+      // 2026-07-13 per Ted: touch points/notes need to actually reach D1
+      // so a second person logging in sees the same conversation history
+      // -- activityLog had no mapping and no column existed at all,
+      // meaning every touch point ever logged (calls, visits, notes) has
+      // been 100% local to whichever device logged it, across the whole
+      // platform (leads, contacts, accounts, opportunities alike).
+      activityLog: 'activity_log',
     },
     accounts: {
       // 2026-07-10 FIX: previously mapped name -> 'business_name', a
@@ -104,6 +111,7 @@
       lastCheckin: 'last_checkin', certStatus: 'cert_status',
       statusFlag: 'status_flag', lastStatusCheckAt: 'last_status_check_at',
       confirmationStatus: 'confirmation_status',
+      activityLog: 'activity_log',
     },
     contacts: {
       // 2026-07-10 FIX: previous VALID list for this table (location_id,
@@ -119,6 +127,7 @@
       // Contacts tab, which filters contacts by account_id, looked
       // empty even when contacts existed.
       accountId: 'account_id',
+      activityLog: 'activity_log',
     },
     collections: {
       collectedBy: 'collected_by', accountName: 'account_name',
@@ -132,6 +141,7 @@
       ownerEmail: 'owner_email', decisionMaker: 'decision_maker', dmPhone: 'dm_phone',
       dmEmail: 'dm_email', landlordPhone: 'landlord_phone', landlordEmail: 'landlord_email',
       contractExp: 'contract_exp', updated: 'updated_at',
+      activityLog: 'activity_log',
     },
     appointments: {
       accountId: 'account_id', recordId: 'record_id', isFlexStop: 'is_flex_stop',
@@ -207,6 +217,7 @@
     opportunities: {
       accountId: 'account_id', expectedClose: 'expected_close',
       closedAt: 'closed_at', assignedRep: 'assigned_rep',
+      activityLog: 'activity_log',
     },
     // Route Debriefs, added 2026-07-13 per Ted - was 100% localStorage-
     // only on whichever device a tech submitted from (route-debrief.html),
@@ -219,6 +230,17 @@
       suppliesNeeded: 'supplies_needed', vanNotes: 'van_notes',
       salesLeadsDiscovered: 'sales_leads_discovered', customerComplaints: 'customer_complaints',
       siteNotes: 'site_notes', shiftRating: 'shift_rating', extraStops: 'extra_stops',
+    },
+    // Reception call log, added 2026-07-13 per Ted -- previously 100%
+    // localStorage-only, no D1 path at all. callerName/callType/routeTo
+    // are camelCase in the JS object; matchedRecordId/matchedPool are
+    // new fields this fix adds so a call that DID match an existing
+    // lead/contact still shows which one, even though the touchpoint
+    // itself is logged separately onto that record via logTouchpoint.
+    rcp_calls: {
+      callerName: 'caller_name', callType: 'call_type', routeTo: 'route_to',
+      loggedBy: 'logged_by', matchedRecordId: 'matched_record_id',
+      matchedPool: 'matched_pool',
     },
     // 2026-07-13 FIX: matching the same fix made the same day in
     // termac-os.html's own copy of this map -- bids had no entry here
@@ -238,7 +260,7 @@
   var VALID = {
     opportunities: ['id', 'account_id', 'name', 'division', 'stage', 'value',
       'assigned_rep', 'expected_close', 'notes', 'closed_at',
-      'created_at', 'updated_at'],
+      'created_at', 'updated_at', 'activity_log'],
     accounts_payable: ['id', 'vendor', 'amount', 'division', 'category',
       'due_date', 'invoice_num', 'notes', 'status', 'logged_at', 'paid_at',
       'source', 'created_at', 'updated_at'],
@@ -262,20 +284,23 @@
       'supplies_needed', 'van_notes', 'sales_leads_discovered',
       'customer_complaints', 'site_notes', 'blockers', 'shift_rating',
       'extra_stops', 'created_at', 'updated_at'],
+    rcp_calls: ['id', 'ts', 'caller_name', 'company', 'phone', 'address', 'zip',
+      'call_type', 'route_to', 'urgency', 'notes', 'logged_by',
+      'matched_record_id', 'matched_pool', 'created_at', 'updated_at'],
     leads: ['id', 'business', 'address', 'city', 'state', 'zip', 'phone', 'email',
       'contact_name', 'contact_title', 'pricing_tier', 'facility_type', 'division',
       'lifecycle_stage', 'ai_score', 'assigned_rep', 'source', 'notes',
       'follow_up_date', 'last_activity', 'converted_at', 'account_id',
-      'is_hot', 'is_new_lead', 'escalated', 'created_at', 'updated_at'],
+      'is_hot', 'is_new_lead', 'escalated', 'created_at', 'updated_at', 'activity_log'],
     accounts: ['id', 'name', 'business', 'status', 'services', 'annual_value',
       'next_due', 'renewal_date', 'last_service', 'health_score',
       'assigned_rep', 'open_deficiencies', 'city', 'zip', 'last_checkin',
       'cert_status', 'onboarding', 'created_at', 'updated_at', 'source',
       'address', 'state', 'phone', 'contact_name', 'contact_email',
       'billing_cycle', 'territory', 'division', 'cust_num', 'attention_status',
-      'status_flag', 'last_status_check_at', 'confirmation_status'],
+      'status_flag', 'last_status_check_at', 'confirmation_status', 'activity_log'],
     contacts: ['id', 'name', 'company', 'title', 'email', 'phone',
-      'assigned_rep', 'status', 'account_id', 'created_at', 'updated_at'],
+      'assigned_rep', 'status', 'account_id', 'created_at', 'updated_at', 'activity_log'],
     jobs: ['id', 'account_id', 'location_id', 'division', 'service_type', 'tech_id',
       'scheduled_date', 'scheduled_time', 'status', 'notes', 'report_url',
       'square_ref', 'completed_at', 'created_at', 'updated_at',
@@ -301,7 +326,7 @@
       'biz_type', 'pricing_mode', 'address', 'city', 'state', 'zip', 'owner_name',
       'owner_phone', 'owner_email', 'role', 'decision_maker', 'dm_phone', 'dm_email',
       'landlord', 'landlord_phone', 'landlord_email', 'competitor', 'contract_exp',
-      'notes', 'status', 'updated_at', 'created_at'],
+      'notes', 'status', 'updated_at', 'created_at', 'activity_log'],
     rep_cards: ['id', 'rep_slug', 'name', 'title', 'divisions', 'phone', 'email',
       'linkedin', 'bio', 'service_area', 'years_experience', 'photo_url', 'created_at', 'updated_at'],
     appointments: ['id', 'account_id', 'record_id', 'tab', 'title', 'business',

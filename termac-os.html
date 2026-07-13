@@ -2050,7 +2050,8 @@ function d1NormalizeRecord(table, record) {
       name: 'contact_name', score: 'ai_score',
       company: 'division', assignedRep: 'assigned_rep',
       created: 'created_at', followupDate: 'follow_up_date',
-      isHot: 'is_hot', isNewLead: 'is_new_lead'
+      isHot: 'is_hot', isNewLead: 'is_new_lead',
+      activityLog: 'activity_log'
     },
     accounts: {
       assignedRep: 'assigned_rep', created: 'created_at',
@@ -2059,10 +2060,13 @@ function d1NormalizeRecord(table, record) {
       healthScore: 'health_score', openDeficiencies: 'open_deficiencies',
       lastCheckin: 'last_checkin', certStatus: 'cert_status',
       statusFlag: 'status_flag', lastStatusCheckAt: 'last_status_check_at',
-      confirmationStatus: 'confirmation_status'
+      confirmationStatus: 'confirmation_status',
+      activityLog: 'activity_log'
     },
     contacts: {
-      assignedRep: 'assigned_rep', created: 'created_at'
+      assignedRep: 'assigned_rep', created: 'created_at',
+      accountId: 'account_id',
+      activityLog: 'activity_log'
     },
     appointments: {
       accountId: 'account_id', recordId: 'record_id', isFlexStop: 'is_flex_stop',
@@ -2136,6 +2140,22 @@ function d1NormalizeRecord(table, record) {
     opportunities: {
       accountId: 'account_id', expectedClose: 'expected_close',
       closedAt: 'closed_at', assignedRep: 'assigned_rep',
+      activityLog: 'activity_log'
+    },
+    // 2026-07-13 per Ted: double-checked rather than assumed DMS was
+    // actually reaching D1 -- it wasn't. This file has no dms_coldcall
+    // FIELD_MAP/VALID entries at all (separate gap from the shared
+    // termac-d1-sync.js copy, fixed the same day), meaning every
+    // camelCase field pushed from this file for a DMS record was either
+    // silently dropped by the Worker's column-name filter (activityLog
+    // etc.) or passed through unfiltered with no real validation at all.
+    dms_coldcall: {
+      contactName: 'contact_name', parentCompany: 'parent_company', bizType: 'biz_type',
+      pricingMode: 'pricing_mode', ownerName: 'owner_name', ownerPhone: 'owner_phone',
+      ownerEmail: 'owner_email', decisionMaker: 'decision_maker', dmPhone: 'dm_phone',
+      dmEmail: 'dm_email', landlordPhone: 'landlord_phone', landlordEmail: 'landlord_email',
+      contractExp: 'contract_exp', updated: 'updated_at',
+      activityLog: 'activity_log'
     }
   };
   var map = FIELD_MAP[table] || {};
@@ -2145,16 +2165,16 @@ function d1NormalizeRecord(table, record) {
             'contact_name','contact_title','pricing_tier','facility_type','division',
             'lifecycle_stage','ai_score','assigned_rep','source','notes',
             'follow_up_date','last_activity','converted_at','account_id',
-            'is_hot','is_new_lead','escalated','created_at','updated_at'],
+            'is_hot','is_new_lead','escalated','created_at','updated_at','activity_log'],
     accounts: ['id','name','business','status','services','annual_value',
                'next_due','renewal_date','last_service','health_score',
                'assigned_rep','open_deficiencies','city','zip','last_checkin',
                'cert_status','onboarding','created_at','updated_at','source',
                'address','state','phone','contact_name','contact_email',
                'billing_cycle','territory','division','cust_num','attention_status',
-               'status_flag','last_status_check_at','confirmation_status'],
-    contacts: ['id','name','company','title','email','phone',
-               'assigned_rep','status','created_at','updated_at'],
+               'status_flag','last_status_check_at','confirmation_status','activity_log'],
+    contacts: ['id','name','company','title','email','phone','account_id',
+               'assigned_rep','status','created_at','updated_at','activity_log'],
     jobs: ['id','account_id','location_id','division','service_type','tech_id',
            'scheduled_date','scheduled_time','status','notes','report_url',
            'square_ref','completed_at','created_at','updated_at',
@@ -2171,7 +2191,14 @@ function d1NormalizeRecord(table, record) {
            'status','submitted_date','expiration_date','title','agency','source',
            'url','scope_raw','due_date','ref_no','ai_draft','ai_drafted_at',
            'ai_scope','cross_sell_detected','doc_checklist','price_analysis',
-           'outcome_date','scraped_at','created_at','updated_at']
+           'outcome_date','scraped_at','created_at','updated_at'],
+    // 2026-07-13 per Ted: same activity_log fix as leads/accounts/contacts
+    // above, applied here too rather than assumed already covered.
+    dms_coldcall: ['id','business','contact_name','phone','email','parent_company',
+                   'biz_type','pricing_mode','address','city','state','zip','owner_name',
+                   'owner_phone','owner_email','role','decision_maker','dm_phone','dm_email',
+                   'landlord','landlord_phone','landlord_email','competitor','contract_exp',
+                   'notes','status','updated_at','created_at','activity_log']
   };
   var valid = new Set(VALID[table] || []);
   var now = Date.now();
@@ -2285,6 +2312,7 @@ function d1ReverseMapLocal(table, record) {
     opportunities: {
       accountId: 'account_id', expectedClose: 'expected_close',
       closedAt: 'closed_at', assignedRep: 'assigned_rep',
+      activityLog: 'activity_log',
     },
     // 2026-07-13 FIX: matching the write-side fix above - lifecycleStage
     // now correctly reverse-maps from the lifecycle_stage column instead
@@ -2294,7 +2322,8 @@ function d1ReverseMapLocal(table, record) {
       name: 'contact_name', score: 'ai_score',
       company: 'division', assignedRep: 'assigned_rep',
       created: 'created_at', followupDate: 'follow_up_date',
-      isHot: 'is_hot', isNewLead: 'is_new_lead'
+      isHot: 'is_hot', isNewLead: 'is_new_lead',
+      activityLog: 'activity_log'
     },
     accounts: {
       assignedRep: 'assigned_rep', created: 'created_at',
@@ -2303,10 +2332,21 @@ function d1ReverseMapLocal(table, record) {
       healthScore: 'health_score', openDeficiencies: 'open_deficiencies',
       lastCheckin: 'last_checkin', certStatus: 'cert_status',
       statusFlag: 'status_flag', lastStatusCheckAt: 'last_status_check_at',
-      confirmationStatus: 'confirmation_status'
+      confirmationStatus: 'confirmation_status',
+      activityLog: 'activity_log'
     },
     contacts: {
-      assignedRep: 'assigned_rep', created: 'created_at'
+      assignedRep: 'assigned_rep', created: 'created_at',
+      accountId: 'account_id',
+      activityLog: 'activity_log'
+    },
+    dms_coldcall: {
+      contactName: 'contact_name', parentCompany: 'parent_company', bizType: 'biz_type',
+      pricingMode: 'pricing_mode', ownerName: 'owner_name', ownerPhone: 'owner_phone',
+      ownerEmail: 'owner_email', decisionMaker: 'decision_maker', dmPhone: 'dm_phone',
+      dmEmail: 'dm_email', landlordPhone: 'landlord_phone', landlordEmail: 'landlord_email',
+      contractExp: 'contract_exp', updated: 'updated_at',
+      activityLog: 'activity_log'
     },
     appointments: {
       accountId: 'account_id', recordId: 'record_id', isFlexStop: 'is_flex_stop',
