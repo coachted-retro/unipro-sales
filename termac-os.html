@@ -24780,18 +24780,23 @@ function acctRenderTimeline(r) {
 
   // Add system events to timeline
   const events = [];
-  if (r.created) events.push({ ts:r.created, type:'system', icon:'🌟', title:'Account Created', note:`Created by ${r.createdBy||'System'}`, who:'System' });
-  if (r.estimateDate) events.push({ ts:new Date(r.estimateDate).getTime(), type:'rep', icon:'📄', title:'Estimate Presented', note:`Estimate accepted: ${r.estimateAccepted?'Yes':'Pending'}`, who:'Rep' });
-  if (r.onboarded) events.push({ ts:r.updated||r.created, type:'office', icon:'✅', title:'Account Onboarded', note:'Setup complete — office confirmed', who:'Office' });
-  if (r.bundleAgreement) events.push({ ts:new Date(r.bundleAgreement.date||Date.now()).getTime(), type:'rep', icon:'⭐', title:'Bundle Agreement Signed', note:`${r.bundleAgreement.bundle} · ${r.bundleAgreement.term}`, who:'Rep' });
+  if (r.created) events.push({ ts:r.created, type:'system', icon:'🌟', title:'Account Created', note:`Created by ${r.createdBy||'System'}`, who:'System', _synthetic:true });
+  if (r.estimateDate) events.push({ ts:new Date(r.estimateDate).getTime(), type:'rep', icon:'📄', title:'Estimate Presented', note:`Estimate accepted: ${r.estimateAccepted?'Yes':'Pending'}`, who:'Rep', _synthetic:true });
+  if (r.onboarded) events.push({ ts:r.updated||r.created, type:'office', icon:'✅', title:'Account Onboarded', note:'Setup complete — office confirmed', who:'Office', _synthetic:true });
+  if (r.bundleAgreement) events.push({ ts:new Date(r.bundleAgreement.date||Date.now()).getTime(), type:'rep', icon:'⭐', title:'Bundle Agreement Signed', note:`${r.bundleAgreement.bundle} · ${r.bundleAgreement.term}`, who:'Rep', _synthetic:true });
   // Rep history — territory reassignment events
   (r.repHistory||[]).forEach(h => {
     events.push({ ts:h.ts, type:'office', icon:'🔄',
       title:`Territory reassigned: ${h.fromRep} → ${h.toRep}`,
       note:`Changed by ${h.changedBy}${h.reason?' — '+h.reason:''}`,
-      who: h.changedBy });
+      who: h.changedBy, _synthetic:true });
   });
-  log.forEach(a => events.push(a));
+  // Real, deletable entries -- everything actually logged via the
+  // activity modal (calls, visits, emails, texts, surveys), as opposed
+  // to the derived/synthetic events above computed from other fields on
+  // the record (deleting those wouldn't make sense -- they'd just
+  // reappear next render since the underlying field is still true).
+  log.forEach(a => events.push(Object.assign({}, a, { _synthetic:false })));
   // Sort by timestamp desc
   events.sort((a,b) => (b.ts||0)-(a.ts||0));
 
@@ -24811,9 +24816,16 @@ function acctRenderTimeline(r) {
     const outcomeBadge = e.outcome
       ? `<span style="display:inline-block;background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:1px 8px;font-size:10px;font-weight:700;color:var(--soft)">${e.outcome}</span>`
       : '';
-    return `<div class="tl-item">
+    // Delete only offered on real logged entries, not derived/synthetic
+    // ones. Matched by exact timestamp -- activityLog entries don't carry
+    // a separate unique id, but Date.now() at push time is unique enough
+    // in practice for this purpose.
+    const deleteBtn = e._synthetic ? '' :
+      `<span onclick="event.stopPropagation();acctDeleteTimelineEntry(${e.ts})" title="Delete this entry" style="position:absolute;top:0;right:0;cursor:pointer;color:#BFC4CA;font-size:13px;padding:2px 4px">✕</span>`;
+    return `<div class="tl-item" style="position:relative">
+      ${deleteBtn}
       <div class="tl-dot ${dc}">${e.icon||'📌'}</div>
-      <div class="tl-content">
+      <div class="tl-content" style="padding-right:${e._synthetic?'0':'20px'}">
         <div class="tl-title">${e.title||e.note||'Activity'}</div>
         <div class="tl-meta">${date}${e.who?' · '+e.who:''}</div>
         ${e.note&&e.title?`<div class="tl-note">${e.note}</div>`:''}
@@ -24821,6 +24833,37 @@ function acctRenderTimeline(r) {
       </div>
     </div>`;
   }).join('');
+}
+
+// Deletes a single real (non-synthetic) timeline entry by its timestamp.
+// Per Ted 2026-07-13: touchpoints logged by accident or duplicated while
+// learning the system had no way to be removed. Uses the currently-open
+// record's _acctId/_acctTab globals, set whenever the account/contact/
+// opportunity detail overlay opens -- this function only makes sense
+// while that overlay is showing a timeline.
+function acctDeleteTimelineEntry(ts) {
+  if (!_acctId || !_acctTab) return;
+  if (!confirm('Delete this touchpoint? This cannot be undone.')) return;
+  const data = crmLoad(_acctTab);
+  const r = data.find(x => x.id === _acctId);
+  if (!r || !r.activityLog) return;
+  r.activityLog = r.activityLog.filter(a => a.ts !== ts);
+  // If the deleted entry was the most recent activity, recompute
+  // lastActivity/lastCheckin from what's left so the health score and
+  // "last contact" displays don't keep reflecting a touchpoint that no
+  // longer exists.
+  const remaining = [...r.activityLog].sort((a,b) => (b.ts||0)-(a.ts||0));
+  if (remaining.length) {
+    const latest = remaining[0];
+    r.lastActivity = { note: latest.note, outcome: latest.outcome, ts: latest.ts, positive: ['Connected','Interested','Appt Set','Replied','Meeting Booked','Completed','Demo Given'].includes(latest.outcome) };
+    r.lastCheckin = latest.ts;
+  }
+  r.updated = Date.now();
+  crmSave(_acctTab, data);
+  acctRenderTimeline(r);
+  if (typeof acctRenderHealth === 'function') acctRenderHealth(r);
+  if (typeof acctRenderStats === 'function') acctRenderStats(r);
+  if (typeof renderCRMView === 'function') renderCRMView();
 }
 
 // ── RECURRING SERVICES (ServiceTrade-style collapsible rows) ──
