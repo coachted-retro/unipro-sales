@@ -4868,6 +4868,7 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
     <button id="mgrTab-ted" onclick="mgrSwitchTab('ted')" style="background:none;border:none;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.10em;text-transform:uppercase;padding:11px 14px;cursor:pointer;white-space:nowrap;color:#F2B705;border-bottom:2px solid transparent;">⚡ Ted's Performance</button>
     <button id="mgrTab-reports" onclick="mgrSwitchTab('reports')" style="background:none;border:none;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.10em;text-transform:uppercase;padding:11px 14px;cursor:pointer;white-space:nowrap;color:#BFC4CA;border-bottom:2px solid transparent;">📋 Reports</button>
     <button id="mgrTab-quotas" onclick="mgrSwitchTab('quotas')" style="background:none;border:none;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.10em;text-transform:uppercase;padding:11px 14px;cursor:pointer;white-space:nowrap;color:#BFC4CA;border-bottom:2px solid transparent;">🎯 Quota Builder</button>
+    <button id="mgrTab-settings" onclick="mgrSwitchTab('settings')" style="display:none;background:none;border:none;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.10em;text-transform:uppercase;padding:11px 14px;cursor:pointer;white-space:nowrap;color:#BFC4CA;border-bottom:2px solid transparent;" title="Jim Kennedy, Ted Scholl, Tom Pittakas only">🔐 Report Settings</button>
     <button id="lcMgrAlertIcon" onclick="if(typeof openLCAlertModal==='function')openLCAlertModal()" title="Account Alerts" style="position:relative;background:none;border:none;cursor:pointer;padding:6px 8px;color:#BFC4CA;font-size:16px;line-height:1;margin:auto 0">🚨<span id="lcMgrAlertBadge" style="display:none;position:absolute;top:2px;right:0;background:#FF3B30;color:#fff;border-radius:10px;font-size:9px;font-weight:900;padding:1px 5px;min-width:16px;text-align:center;font-family:Barlow Condensed,sans-serif;line-height:14px;border:2px solid #1A1D21"></span></button>
     <button onclick="window.open('user-manuals.html?role=admin','_blank')" style="background:none;border:1px solid #3A3E43;border-radius:6px;color:#BFC4CA;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:10px;letter-spacing:.10em;text-transform:uppercase;padding:6px 12px;cursor:pointer;white-space:nowrap;margin:auto 0 auto 8px">? Help</button>
   </div>
@@ -5720,6 +5721,12 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
     <!-- Rep cards grid -->
     <div id="qbGrid" style="flex:1;overflow-y:auto;padding:18px 18px 30px"></div>
   </div><!-- /mgrPanel-quotas -->
+
+  <!-- ══ REPORT SETTINGS (Jim Kennedy / Ted Scholl / Tom Pittakas only) ══ -->
+  <div id="mgrPanel-settings" class="ov-body" style="display:none;padding:16px;background:var(--bg)">
+    <div style="background:#FFF8E6;border:1px solid #F2B705;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#7A5B00">🔐 Restricted to Jim Kennedy (VP Sales), Ted Scholl (Admin), Tom Pittakas (Sales Manager). Controls which automated reports go out, to whom, and on what schedule.</div>
+    <div id="reportSettingsBody"><div style="color:var(--soft);font-size:13px;padding:20px">Loading…</div></div>
+  </div><!-- /mgrPanel-settings -->
 
 </div><!-- /ovMgr -->
 
@@ -6660,6 +6667,12 @@ function openOverlay(key){
     // Insert alert banner now that the overlay is open
     if (typeof renderRepAlertBanner === 'function') renderRepAlertBanner();
     setTimeout(() => { if(typeof refreshManagerDashboard==='function') refreshManagerDashboard(); if(typeof TermacIntelligence!=='undefined') TermacIntelligence.runDailyIntelligence(); if(typeof renderTIFeed==='function') renderTIFeed(); }, 50);
+    // Report Settings tab is restricted to VP Sales (Jim Kennedy), Admin
+    // (Ted Scholl), Sales Manager (Tom Pittakas) only -- per Ted 2026-07-13.
+    // Checked here (not once at login) so it self-corrects if the logged-in
+    // user changes without a full page reload.
+    var rptTabBtn = document.getElementById('mgrTab-settings');
+    if (rptTabBtn) rptTabBtn.style.display = REPORT_SETTINGS_ADMINS.includes(_currentUser?.email) ? '' : 'none';
   }
   if (key === 'cmd') setTimeout(() => { if(typeof checkAllMetrics==='function') checkAllMetrics(); if(typeof updateFlashReportAlerts==='function') updateFlashReportAlerts(); }, 50);
   if (key === 'ops') setTimeout(() => { if(typeof opsRenderDeficiencyQueue==='function') opsRenderDeficiencyQueue(); }, 50);
@@ -11079,6 +11092,122 @@ async function renderMgrTeamDigest() {
   }
 }
 
+// ══════════════════════════════════════════════════════════════
+//  REPORT SETTINGS ADMIN TAB
+//  Restricted to Jim Kennedy / Ted Scholl / Tom Pittakas (REPORT_SETTINGS_ADMINS).
+//  Backed by the report_settings D1 table; the hourly cron in
+//  unipro-ai-proxy checks send_hour_utc against the current hour and
+//  sends via termac-notify's /send-report endpoint when due.
+// ══════════════════════════════════════════════════════════════
+const REPORT_DAYS = [['MO','Mon'],['TU','Tue'],['WE','Wed'],['TH','Thu'],['FR','Fri'],['SA','Sat'],['SU','Sun']];
+
+async function reportSettingsRender() {
+  var body = document.getElementById('reportSettingsBody');
+  if (!body) return;
+  if (!REPORT_SETTINGS_ADMINS.includes(_currentUser?.email)) {
+    body.innerHTML = '<div style="color:var(--red);font-size:13px">🔒 Restricted to Jim Kennedy, Ted Scholl, or Tom Pittakas.</div>';
+    return;
+  }
+  body.innerHTML = '<div style="color:var(--soft);font-size:13px;padding:20px">Loading…</div>';
+  try {
+    var res = await d1Fetch('GET', '/api/report_settings?limit=50');
+    var reports = (res && res.ok && Array.isArray(res.results)) ? res.results : [];
+    if (!reports.length) {
+      body.innerHTML = '<div style="color:var(--soft);font-size:13px">No reports configured yet.</div>';
+      return;
+    }
+    body.innerHTML = reports.map(reportSettingsCard).join('');
+  } catch (e) {
+    body.innerHTML = '<div style="color:var(--red);font-size:13px">Couldn\'t load report settings right now.</div>';
+  }
+}
+
+function reportSettingsCard(r) {
+  var recipients = [];
+  try { recipients = JSON.parse(r.recipients || '[]'); } catch (e) {}
+  var days = [];
+  try { days = JSON.parse(r.days_of_week || '[]'); } catch (e) {}
+  // Show send time in the browser's local time for clarity, even though
+  // it's stored and checked in UTC server-side.
+  var localHour = new Date(Date.UTC(2000, 0, 1, r.send_hour_utc || 0)).toLocaleTimeString('en-US', { hour: 'numeric', hour12: true });
+  var hourOptions = Array.from({length: 24}, function (_, h) {
+    var label = new Date(Date.UTC(2000, 0, 1, h)).toLocaleTimeString('en-US', { hour: 'numeric', hour12: true });
+    return '<option value="' + h + '"' + (h === r.send_hour_utc ? ' selected' : '') + '>' + label + ' ET-ish (' + h + ':00 UTC)</option>';
+  }).join('');
+  var allUsers = Object.keys(TERMAC_USERS || {});
+  var recipientChecks = allUsers.map(function (email) {
+    var checked = recipients.includes(email) ? ' checked' : '';
+    return '<label style="display:flex;align-items:center;gap:5px;font-size:12px;padding:3px 0"><input type="checkbox" value="' + email + '"' + checked + ' class="rpt-recip-' + r.id + '"> ' + escH(TERMAC_USERS[email].name || email) + '</label>';
+  }).join('');
+  var dayChecks = REPORT_DAYS.map(function (d) {
+    var checked = days.includes(d[0]) ? ' checked' : '';
+    return '<label style="display:inline-flex;align-items:center;gap:3px;font-size:11px;margin-right:8px"><input type="checkbox" value="' + d[0] + '"' + checked + ' class="rpt-day-' + r.id + '"> ' + d[1] + '</label>';
+  }).join('');
+
+  return '<div style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);padding:16px;margin-bottom:14px">' +
+    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">' +
+      '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:14px">' + escH(r.label || r.report_key) + '</div>' +
+      '<label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" id="rpt-enabled-' + r.id + '"' + (r.enabled ? ' checked' : '') + '> Enabled</label>' +
+    '</div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">' +
+      '<div>' +
+        '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--soft);margin-bottom:6px">Recipients</div>' +
+        recipientChecks +
+      '</div>' +
+      '<div>' +
+        '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--soft);margin-bottom:6px">Send Time</div>' +
+        '<select id="rpt-hour-' + r.id + '" style="width:100%;padding:6px;border:1px solid var(--line);border-radius:6px;margin-bottom:12px">' + hourOptions + '</select>' +
+        '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--soft);margin-bottom:6px">Frequency</div>' +
+        '<select id="rpt-freq-' + r.id + '" onchange="reportSettingsToggleFreqFields(\'' + r.id + '\')" style="width:100%;padding:6px;border:1px solid var(--line);border-radius:6px;margin-bottom:8px">' +
+          '<option value="daily"' + (r.frequency === 'daily' ? ' selected' : '') + '>Daily</option>' +
+          '<option value="weekly"' + (r.frequency === 'weekly' ? ' selected' : '') + '>Weekly</option>' +
+          '<option value="monthly"' + (r.frequency === 'monthly' ? ' selected' : '') + '>Monthly</option>' +
+        '</select>' +
+        '<div id="rpt-weekly-' + r.id + '" style="display:' + (r.frequency === 'weekly' ? 'block' : 'none') + '">' + dayChecks + '</div>' +
+        '<div id="rpt-monthly-' + r.id + '" style="display:' + (r.frequency === 'monthly' ? 'block' : 'none') + '">' +
+          '<input type="number" id="rpt-dom-' + r.id + '" min="1" max="28" value="' + (r.day_of_month || 1) + '" style="width:80px;padding:6px;border:1px solid var(--line);border-radius:6px"> day of month' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+    '<div style="margin-top:12px;font-size:11px;color:var(--soft)">' + (r.last_sent_at ? 'Last sent: ' + new Date(r.last_sent_at).toLocaleString() : 'Never sent yet') + '</div>' +
+    '<button onclick="reportSettingsSave(\'' + r.id + '\')" style="margin-top:10px;background:#1E7B3C;color:#fff;border:none;border-radius:7px;padding:8px 16px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">💾 Save</button>' +
+    '<span id="rpt-saved-' + r.id + '" style="margin-left:10px;font-size:11px;color:var(--green);display:none">✓ Saved</span>' +
+  '</div>';
+}
+
+function reportSettingsToggleFreqFields(id) {
+  var freq = document.getElementById('rpt-freq-' + id).value;
+  var weekly = document.getElementById('rpt-weekly-' + id);
+  var monthly = document.getElementById('rpt-monthly-' + id);
+  if (weekly) weekly.style.display = freq === 'weekly' ? 'block' : 'none';
+  if (monthly) monthly.style.display = freq === 'monthly' ? 'block' : 'none';
+}
+
+async function reportSettingsSave(id) {
+  if (!REPORT_SETTINGS_ADMINS.includes(_currentUser?.email)) { alert('🔒 Restricted to Jim Kennedy, Ted Scholl, or Tom Pittakas.'); return; }
+  var recipients = Array.from(document.querySelectorAll('.rpt-recip-' + id + ':checked')).map(function (el) { return el.value; });
+  var days = Array.from(document.querySelectorAll('.rpt-day-' + id + ':checked')).map(function (el) { return el.value; });
+  var payload = {
+    id: id,
+    enabled: document.getElementById('rpt-enabled-' + id).checked ? 1 : 0,
+    recipients: JSON.stringify(recipients),
+    send_hour_utc: parseInt(document.getElementById('rpt-hour-' + id).value, 10),
+    frequency: document.getElementById('rpt-freq-' + id).value,
+    days_of_week: JSON.stringify(days),
+    day_of_month: parseInt(document.getElementById('rpt-dom-' + id).value, 10) || null,
+    updated_by: _currentUser.email,
+    updated_at: Date.now(),
+  };
+  try {
+    await d1Fetch('POST', '/api/report_settings', payload);
+    var savedTag = document.getElementById('rpt-saved-' + id);
+    if (savedTag) { savedTag.style.display = 'inline'; setTimeout(function () { savedTag.style.display = 'none'; }, 2500); }
+  } catch (e) {
+    alert('Save failed. Try again.');
+  }
+}
+
+
 function mgrSwitchTab(tab) {
   // Command Center tab directly opens the full overlay — it has its own full-screen view
   if (tab === 'cmd') {
@@ -11088,7 +11217,7 @@ function mgrSwitchTab(tab) {
     if (typeof openOverlay === 'function') openOverlay('cmd');
     return;
   }
-  ['dashboard','operations','financial','divisions','scorecards','ted','reports','quotas'].forEach(function(t) {
+  ['dashboard','operations','financial','divisions','scorecards','ted','reports','quotas','settings'].forEach(function(t) {
     var btn   = document.getElementById('mgrTab-'+t);
     var panel = document.getElementById('mgrPanel-'+t);
     var isActive = t === tab;
@@ -11110,6 +11239,7 @@ function mgrSwitchTab(tab) {
   if (tab === 'scorecards' && window._mgrInitSc)  window._mgrInitSc();
   if (tab === 'dashboard') { renderMgrTeamDigest(); }
   if (tab === 'ted') { renderTedPerf(); }
+  if (tab === 'settings') { reportSettingsRender(); }
 }
 
 // ── DMS Activity Calendar ──────────────────────────────────────────────────
@@ -16594,6 +16724,14 @@ function bidsSeedIfEmpty(){
 
 // Paste your deployed Worker URL here after deploying bid-scraper-worker.js:
 const BID_SCRAPER_URL = 'https://bid-scraper.termac-one.workers.dev/';
+
+// Report Settings admin tab, added 2026-07-13 per Ted -- access
+// restricted to VP Sales (Jim Kennedy), Admin (Ted Scholl), Sales
+// Manager (Tom Pittakas) only. Same UI-level gating posture as the Bid
+// Pipeline restriction above, not enterprise auth -- consistent with
+// this platform's security model until Azure Entra ID SSO is live.
+const REPORT_SETTINGS_ADMINS = ['tscholl@termac.com', 'jkennedy@termac.com', 'tpittakas@termac.com'];
+const TERMAC_NOTIFY_URL = 'https://termac-notify.termac-one.workers.dev';
 
 // ── BID HARVEST MODAL ────────────────────────────────────────────────────────
 // ── NEW ORDERS QUEUE ──────────────────────────────────────────────────────

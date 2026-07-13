@@ -112,6 +112,29 @@ function escapeHtml(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+// General-purpose version of sendEmail above, for scheduled reports
+// rather than single lead-routing notifications -- same Resend account/
+// key, just a plain {recipients, subject, html} shape instead of the
+// single-notification one. Added 2026-07-13 for the Report Settings
+// admin tab (report_settings table in termac-crm), called from
+// unipro-ai-proxy's hourly cron when a report's configured send time
+// matches the current hour.
+async function sendReportEmail(env, recipients, subject, html) {
+  if (!env.RESEND_API_KEY) return false;
+  if (!Array.isArray(recipients) || !recipients.length) return false;
+  const payload = { from: FROM_ADDRESS, to: recipients, subject, html };
+  try {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + env.RESEND_API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return res.ok;
+  } catch (e) {
+    return false;
+  }
+}
+
 export default {
   async fetch(request, env) {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
@@ -120,6 +143,18 @@ export default {
     const path = url.pathname.replace(/\/+$/, '');
 
     if (path.endsWith('/health')) return json({ ok: true });
+
+    if (path.endsWith('/send-report') && request.method === 'POST') {
+      const body = await request.json();
+      if (!Array.isArray(body.recipients) || !body.recipients.length) {
+        return json({ error: 'recipients (array) required' }, 400);
+      }
+      if (!body.subject || !body.html) {
+        return json({ error: 'subject and html required' }, 400);
+      }
+      const sent = await sendReportEmail(env, body.recipients, body.subject, body.html);
+      return json({ ok: sent, emailSent: sent });
+    }
 
     if (!env.NOTIFS) {
       return json({ error: 'KV binding NOTIFS not configured — see setup steps in the worker source' }, 500);

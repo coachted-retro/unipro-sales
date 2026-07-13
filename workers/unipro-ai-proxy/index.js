@@ -87,6 +87,12 @@ const ALLOWED_TABLES = new Set([
   // silently. A GM on a different device could never see any of it.
   // See the per-division routing fix on gm-dashboard.html the same day.
   'debriefs',
+  // Report Settings admin tab, added 2026-07-13 per Ted -- restricted to
+  // Jim Kennedy (VP Sales), Ted Scholl (Admin), Tom Pittakas (Sales
+  // Manager) only. Controls which automated reports send, to whom, and
+  // on what schedule, without needing a code change + redeploy for
+  // every timing tweak.
+  'report_settings',
 ]);
 
 const TABLE_PREFIX = {
@@ -117,6 +123,7 @@ const TABLE_PREFIX = {
   reorder_requests:'RO',
   warehouse_alerts:'WHA',
   debriefs:'DBR',
+  report_settings:'RPT',
 };
 
 function corsHeaders(origin) {
@@ -292,11 +299,115 @@ export default {
   // where they exist, falling back to sensible defaults only for reps
   // who haven't had targets set through the Quota Builder yet.
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(runDailyDigest(env));
-    ctx.waitUntil(runBusinessStatusCheck(env));
-    ctx.waitUntil(runGrowthSnapshot(env));
+    // Cron is now hourly (see wrangler.toml note), so these three keep
+    // their exact original once-a-day behavior via an explicit hour
+    // check -- none of them were built to run 24x/day safely, and
+    // changing that wasn't in scope of adding report scheduling.
+    if (new Date().getUTCHours() === 11) {
+      ctx.waitUntil(runDailyDigest(env));
+      ctx.waitUntil(runBusinessStatusCheck(env));
+      ctx.waitUntil(runGrowthSnapshot(env));
+    }
+    // Report Settings admin tab, added 2026-07-13 per Ted -- this one
+    // actually needs the hourly cadence, to check each report's real
+    // configured send_hour_utc against the current hour.
+    ctx.waitUntil(runScheduledReports(env));
   },
 };
+
+// -- SCHEDULED REPORTS -- reads report_settings (managed via the Report
+// Settings admin tab, restricted to Jim Kennedy/Ted Scholl/Tom Pittakas)
+// and sends any report whose configured schedule matches right now.
+// last_sent_at guards against double-sending if the Worker somehow gets
+// invoked twice in the same hour window.
+async function runScheduledReports(env) {
+  try {
+    const now = new Date();
+    const currentHour = now.getUTCHours();
+    const currentDow = ['SU','MO','TU','WE','TH','FR','SA'][now.getUTCDay()];
+    const currentDom = now.getUTCDate();
+    const todayStr = now.toISOString().slice(0, 10);
+
+    const due = await env.DB.prepare(
+      `SELECT * FROM report_settings WHERE enabled = 1 AND send_hour_utc = ?`
+    ).bind(currentHour).all();
+
+    for (const report of (due.results || [])) {
+      // Skip if already sent today (covers the rare case of two
+      // invocations landing in the same hour, and covers non-daily
+      // frequencies where "due this hour" isn't enough on its own).
+      if (report.last_sent_at) {
+        const lastSentStr = new Date(report.last_sent_at).toISOString().slice(0, 10);
+        if (lastSentStr === todayStr) continue;
+      }
+
+      if (report.frequency === 'weekly') {
+        let days = [];
+        try { days = JSON.parse(report.days_of_week || '[]'); } catch (e) {}
+        if (!days.includes(currentDow)) continue;
+      } else if (report.frequency === 'monthly') {
+        if (report.day_of_month && currentDom !== report.day_of_month) continue;
+      }
+      // 'daily' frequency has no further check -- send_hour_utc match is enough.
+
+      let recipients = [];
+      try { recipients = JSON.parse(report.recipients || '[]'); } catch (e) {}
+      if (!recipients.length) continue;
+
+      const html = await buildReportHtml(env, report.report_key);
+      if (!html) continue;
+
+      try {
+        await fetch('https://termac-notify.termac-one.workers.dev/send-report', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            recipients,
+            subject: (report.label || report.report_key) + ' — ' + todayStr,
+            html,
+          }),
+        });
+      } catch (e) { continue; }
+
+      await env.DB.prepare(`UPDATE report_settings SET last_sent_at = ? WHERE id = ?`)
+        .bind(Date.now(), report.id).run();
+    }
+  } catch (e) {
+    // Swallow -- a failed report check shouldn't take the worker down.
+  }
+}
+
+// Builds the actual HTML body for a given report_key. Currently only
+// 'daily_digest' is real; add new cases here as new reports are defined
+// through the admin tab rather than needing a full new pipeline each time.
+async function buildReportHtml(env, reportKey) {
+  if (reportKey === 'daily_digest') {
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const rows = await env.DB.prepare(
+        `SELECT * FROM daily_digests WHERE digest_date = ? ORDER BY rep_name`
+      ).bind(today).all();
+      const reps = (rows.results || []).filter(r => r.rep_name !== '__team__');
+      const team = (rows.results || []).find(r => r.rep_name === '__team__');
+      if (!reps.length && !team) return null;
+      let html = '<h2>Daily Rep Digest — ' + today + '</h2>';
+      if (team) html += '<p>' + escapeHtmlLocal(team.message || '') + '</p>';
+      html += '<table style="border-collapse:collapse;width:100%">';
+      html += '<tr><th style="text-align:left;padding:6px;border-bottom:1px solid #ccc">Rep</th><th style="text-align:left;padding:6px;border-bottom:1px solid #ccc">Hot Leads</th><th style="text-align:left;padding:6px;border-bottom:1px solid #ccc">Message</th></tr>';
+      reps.forEach(r => {
+        html += '<tr><td style="padding:6px;border-bottom:1px solid #eee">' + escapeHtmlLocal(r.rep_name) + '</td>' +
+          '<td style="padding:6px;border-bottom:1px solid #eee">' + (r.hot_lead_count || 0) + '</td>' +
+          '<td style="padding:6px;border-bottom:1px solid #eee">' + escapeHtmlLocal(r.message || '') + '</td></tr>';
+      });
+      html += '</table>';
+      return html;
+    } catch (e) { return null; }
+  }
+  return null;
+}
+function escapeHtmlLocal(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
 
 // -- BUSINESS STATUS CHECK -- added 2026-07-11 per Ted. Runs on the same
 // daily cron as the digest above, reusing the same ANTHROPIC_API_KEY
