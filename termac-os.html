@@ -7175,19 +7175,24 @@ document.addEventListener('keydown', e=>{
         <!-- ─── SUB-SCREEN 1: INSPECTION ──────────────────── -->
         <div class="fs-screen active" id="fs-screen1">
           <div class="fs-nav-bar">
-            <div><div class="fs-title">🔥 Fire Safety Compliance Inspection</div><div class="fs-sub">Confirm the customer wants to book the inspection. No pricing beyond the flat rate below — the technician handles the real assessment on-site.</div></div>
+            <div><div class="fs-title">🔥 Fire Safety Compliance Inspection</div><div class="fs-sub">Confirm the customer wants to book the inspection. Pricing and the compliance-work disclaimer are covered together on the final estimate page, not here.</div></div>
           </div>
 
-          <!-- 2026-07-10: simplified per Ted / VP of Sales — reps book the
-               inspection at a flat rate and get a disclaimer acknowledged,
-               nothing more. The old NFPA 96/10/101 Pass/Fail/N/A checklist
-               and itemized pricing wizard (fs-screen2/fs-screen3) that used
-               to live here now belong to the technician, in their own
-               on-site tool (unipro-site-survey-tech.html) — not to sales.
-               Those screens are left in the DOM below, unreachable, rather
-               than deleted, since other code (fsResetWalkthroughState,
-               fsPrefillClientInfo) still references some of their fields
-               and this avoids any risk of breaking those on a rushed edit. -->
+          <!-- 2026-07-13 per Ted: removed the pricing disclaimer that used
+               to sit here. The concern it was raising (technician finds
+               deficiencies, price goes up, customer is blindsided) is real
+               and still fully addressed -- just moved to the one place a
+               customer actually needs it: the final combined estimate,
+               right next to the real number, not buried in an early yes/no
+               step before they've even seen any other pricing. See the
+               UniPro/Quality III line in estBuildLines below, and the
+               existing disclaimer gate on the Scope panel
+               (svBuildEstimateFromScope/svDisclaimerBlock) that already
+               requires client initials before the estimate builds.
+               Customer Initials + a second initials/date capture here were
+               redundant with that gate and have been removed; Preferred
+               Inspection Date is kept since it's real scheduling
+               information, not a pricing acknowledgment. -->
           <div class="fs-card" style="margin-bottom:20px">
             <div class="fs-card-hdr mid"><div class="fs-card-icon">🔥</div><div class="fs-card-hdr-title">Does the customer want to book the inspection?</div></div>
             <div class="fs-card-body">
@@ -7199,22 +7204,34 @@ document.addEventListener('keydown', e=>{
           </div>
 
           <div class="fs-card" id="fsSimpleDisclaimerCard" style="margin-bottom:20px;display:none">
-            <div class="fs-card-hdr amber"><div class="fs-card-icon">📋</div><div class="fs-card-hdr-title">Pricing Disclaimer — Review With Customer</div></div>
             <div class="fs-card-body">
-              <p style="font-size:14px;line-height:1.6;color:var(--ink);margin-bottom:14px">
-                $137.99 + $25 AHJ submission fee for the base semiannual inspection required to keep your system state-compliant.
-                If your technician finds anything that needs to be brought up to code, that work typically runs $300&ndash;$500,
-                and you'll see the price and approve it before any of that work happens &mdash; nothing extra gets charged without your OK first.
-              </p>
-              <div class="fs-grid-2">
-                <div class="fs-field">
-                  <label>Customer Initials</label>
-                  <input type="text" id="fs_disclaimerInitials" maxlength="6" placeholder="Initials" style="text-transform:uppercase">
-                </div>
-                <div class="fs-field">
-                  <label>Preferred Inspection Date</label>
-                  <input type="date" id="fsSimpleApptDate">
-                </div>
+              <div class="fs-field">
+                <label>Preferred Inspection Date</label>
+                <input type="date" id="fsSimpleApptDate">
+              </div>
+            </div>
+          </div>
+
+          <!-- 2026-07-13 per Ted: reps should capture reference photos of
+               the suppression system and extinguishers while on-site, so
+               the technician has a visual reference before they even
+               arrive -- system type, tag currency, hood size, whether the
+               nozzles line up with the equipment underneath. Reuses the
+               exact same AI-vision photo capture already built for the
+               technician's own tool (fsCameraButtonHTML/fsAnalyzeHoodPhoto/
+               fsAnalyzePhoto) rather than building a second system --
+               same photo slots, same AI analysis, same R2 storage. Photos
+               land in svState.surveyData, which already carries through
+               the whole opportunity lifecycle to the office and technician
+               (see buildAccountPhotosArray). -->
+          <div class="fs-card" id="fsSimplePhotosCard" style="margin-bottom:20px;display:none">
+            <div class="fs-card-hdr mid"><div class="fs-card-icon">📸</div><div class="fs-card-hdr-title">Reference Photos (Recommended)</div></div>
+            <div class="fs-card-body">
+              <p style="font-size:12px;color:var(--soft);margin-bottom:12px">Not required, but genuinely helpful — these give the technician a real look at the system before they arrive: what type it is, whether the certification tag is current, the size of the hood, and whether the nozzles actually line up with the equipment underneath.</p>
+              <div id="fsSimpleHoodPhotos"></div>
+              <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line)">
+                <div style="font-size:10px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">🧯 Extinguisher</div>
+                <div id="fsSimpleExtPhoto"></div>
               </div>
             </div>
           </div>
@@ -8177,6 +8194,15 @@ document.addEventListener('keydown', e=>{
              price gets built and presented. -->
         <div class="fs-disclaimer" id="svDisclaimerBlock" style="margin-top:20px">
           <div class="fs-disclaimer-title">⚖️ Estimate Disclaimer — Client Initials Required</div>
+          <!-- 2026-07-13 per Ted: plain-language summary added ahead of the
+               legal paragraph so the actual thing being agreed to is
+               unmistakable in a quick read, not just present somewhere in
+               dense legal text. This is the liability-protection moment --
+               it needs to be genuinely understood, not just technically
+               disclosed. -->
+          <div style="background:#FFF7ED;border:1.5px solid #D97706;border-radius:8px;padding:12px 14px;margin-bottom:12px;font-size:13px;line-height:1.5;color:#7C2D12">
+            <strong>In plain terms:</strong> any price shown as <strong>TBD</strong> above is the standard rate <em>if</em> no additional work is needed — that's the case most of the time, but not guaranteed. If the technician finds something that needs to be fixed to bring your system to code, that work is priced separately and you'll see and approve that price before it's done. Nothing extra gets charged without your sign-off first.
+          </div>
           <div class="fs-disclaimer-text"><strong>IMPORTANT NOTICE REGARDING SCOPE AND PRICING:</strong> The pricing set forth in this estimate constitutes an estimate based upon conditions observed during the initial site survey conducted by Termac. This estimate is not a final or guaranteed price. The parties acknowledge and agree that the total amount due may be adjusted following the technician's on-site service visit to reflect actual findings, including but not limited to: (i) additional deficiencies identified during the service visit that were not observable during the walkthrough; (ii) additional parts, materials, or labor required to bring all systems into full compliance with applicable code, manufacturer, and regulatory requirements; (iii) corrections necessitated by conditions that were concealed, inaccessible, or not apparent at the time of the initial assessment. Termac shall notify the client of any material price adjustment prior to performing additional work. Client acknowledges that inspection fees, compliance fees, and the site visit fee are non-refundable once service has been initiated.</div>
           <div class="fs-initials-row">
             <input type="text" class="fs-initials-input" id="sv_disclaimerInitials" placeholder="Initials" maxlength="4" autocomplete="off" autocapitalize="characters">
@@ -10065,8 +10091,26 @@ function fsSimpleSetWants(wants) {
   document.getElementById('fsSimpleNoBtn').style.cssText = !wants
     ? 'flex:1;padding:16px;border:2px solid #991B1B;border-radius:8px;background:#FEE2E2;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:15px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer;color:#991B1B'
     : 'flex:1;padding:16px;border:2px solid var(--line);border-radius:8px;background:#fff;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:15px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer;color:var(--soft)';
+  // fsSimpleDisclaimerCard now just holds the preferred-date field (the
+  // pricing disclaimer that used to live here moved to the final
+  // estimate page, see the note on fs-screen1 above).
   document.getElementById('fsSimpleDisclaimerCard').style.display = wants ? 'block' : 'none';
   document.getElementById('fsSimpleDeclineCard').style.display = wants ? 'none' : 'block';
+  const photosCard = document.getElementById('fsSimplePhotosCard');
+  if (photosCard) {
+    photosCard.style.display = wants ? 'block' : 'none';
+    // Populate once, not on every toggle -- 'simple' idx keeps this
+    // fully separate from the legacy technician checklist, which loops
+    // fsCameraButtonHTML('hood', i) starting at i=0 for each detected
+    // system and would otherwise collide on element IDs.
+    if (wants && !photosCard.dataset.populated) {
+      photosCard.dataset.populated = '1';
+      const hoodEl = document.getElementById('fsSimpleHoodPhotos');
+      const extEl = document.getElementById('fsSimpleExtPhoto');
+      if (hoodEl && typeof fsCameraButtonHTML === 'function') hoodEl.innerHTML = fsCameraButtonHTML('hood', 'simple');
+      if (extEl && typeof fsCameraButtonHTML === 'function') extEl.innerHTML = fsCameraButtonHTML('ext', 'simple');
+    }
+  }
 }
 
 const UNIPRO_FLAT_INSPECTION_FEE = 137.99;
@@ -10083,28 +10127,18 @@ function fsFinishUniProSurveySimple() {
   const d = svState.surveyData[svc];
 
   if (_fsSimpleWantsInspection) {
-    const initials = document.getElementById('fs_disclaimerInitials')?.value || '';
-    if (!initials.trim()) {
-      alert('Customer initials are required on the pricing disclaimer before continuing.');
-      return;
-    }
+    // 2026-07-13 per Ted: no initials gate here anymore -- pricing and
+    // the compliance-work disclaimer are handled together on the final
+    // estimate page (see estBuildLines below), where the client initials
+    // once via the existing svDisclaimerBlock gate before the estimate
+    // builds, instead of initialing a partial, pre-pricing disclaimer
+    // here and then initialing again at the end.
     d.fs_total = UNIPRO_FLAT_INSPECTION_FEE + UNIPRO_AHJ_SUBMISSION_FEE;
     d.fs_inspection_fee = UNIPRO_FLAT_INSPECTION_FEE;
     d.fs_submission_fee = UNIPRO_AHJ_SUBMISSION_FEE;
-    d.fs_summary = 'Semiannual compliance inspection — flat rate. Additional work, if needed, quoted and approved by the customer on-site with the technician.';
+    d.fs_summary = 'Semiannual compliance inspection — base rate. Additional work, if needed to bring the system to full compliance, is quoted and approved by the customer on-site before it happens.';
     d.fs_apptDate = document.getElementById('fsSimpleApptDate')?.value || '';
     d.wants_inspection = true;
-
-    // Same persistence pattern as fsAcceptProposal's disclaimer capture —
-    // reused deliberately rather than inventing a new field shape.
-    const acctData = crmLoad('accounts');
-    const r = acctData.find(x => x.id === svState.accountId);
-    if (r) {
-      r.surveyDisclaimerInitials = initials.trim().toUpperCase();
-      r.surveyDisclaimerInitialedAt = Date.now();
-      r.surveyDisclaimerText = 'UniPro/Quality III flat-rate inspection disclaimer: $137.99 + $25 AHJ submission fee for the base semiannual inspection. Additional work if needed typically $300-$500, approved by customer before performed.';
-      crmSave('accounts', acctData);
-    }
   } else {
     d.wants_inspection = false;
     d.fs_summary = 'Customer declined inspection at this time.';
@@ -22590,10 +22624,22 @@ function estBuildLines(svc, d){
     const label = svc === 'unipro' ? 'UniPro' : 'Quality III';
     const extQty = parseInt(d.ext_qty) || 0;
     if (d.fs_total > 0) {
-      // Real pricing from the fs-screen3 itemized estimate (suppression,
-      // extinguishers, exit lights, fees, tax all rolled in) -- this is
-      // what "Continue Survey" on the pricing screen actually captured.
-      lines.push({ desc:`${label} — Site Survey Estimate`, detail: d.fs_summary || 'Full itemized pricing in site survey', qty:1, unitPrice: d.fs_total, editable:true });
+      // 2026-07-13 per Ted (revised): the emphasis needs to be on the
+      // pricing being TBD, not on the $162.99 number -- a bold dollar
+      // figure is what a customer anchors on and later argues from
+      // ("you told me $162.99"), even with a caveat sitting under it.
+      // The real number still flows into unitPrice so the running total
+      // stays accurate (it's the correct price the large majority of
+      // visits), but the headline text and the visual treatment in
+      // estRender below now lead with "Final Price: TBD" -- the concrete
+      // $162.99 is present as reference/support, not the star of the line.
+      lines.push({
+        desc: `${label} — Fire Protection Inspection (Final Price: TBD)`,
+        detail: `Standard rate if no compliance work needed: $${UNIPRO_FLAT_INSPECTION_FEE} inspection + $${UNIPRO_AHJ_SUBMISSION_FEE} AHJ submission fee`,
+        note: 'If the technician finds anything needed to bring the system to full NFPA compliance, that work is quoted separately on-site and requires your sign-off before it\'s performed',
+        qty: 1, unitPrice: d.fs_total, editable: true,
+        priceMayIncrease: true,
+      });
     } else {
       if(extQty > 0){
         lines.push({ desc:`${label} — Fire Extinguisher Annual Inspection`, detail:`${extQty} units · per unit rate`, qty:extQty, unitPrice:25, editable:true });
@@ -22760,7 +22806,11 @@ function estRender(){
         <div class="est-line-qty"><input type="number" value="${li.qty||1}" min="1"
           onchange="estUpdateQty('${svc}',${idx},this.value)" style="width:100%;padding:5px 8px;border:1.5px solid var(--line);border-radius:6px;font-size:13px;text-align:center;outline:none"></div>
         <div class="est-line-price" id="estLinePrice_${svc}_${idx}">
-          ${li.unitPrice > 0 ? '$'+((li.qty||1)*(li.unitPrice||0)).toLocaleString() : '<span style="color:var(--soft);font-size:11px">TBD</span>'}
+          ${li.priceMayIncrease
+            ? `<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:16px;color:#D97706;letter-spacing:.02em">TBD</div>
+               <div style="font-size:10px;color:var(--soft);margin-top:2px;line-height:1.3">Standard rate:<br>$${((li.qty||1)*(li.unitPrice||0)).toLocaleString()}</div>`
+            : (li.unitPrice > 0 ? '$'+((li.qty||1)*(li.unitPrice||0)).toLocaleString() : '<span style="color:var(--soft);font-size:11px">TBD</span>')
+          }
         </div>
         <span class="est-line-del" onclick="estRemoveLine('${svc}',${idx})">✕</span>
       </div>`;
