@@ -22303,6 +22303,13 @@ async function svObjSubmit(){
           <div style="grid-column:1/-1"><label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--soft);display:block;margin-bottom:4px">Payable To (verify!) *</label>
             <input type="text" id="pmCheckPayable" style="width:100%;border:1.5px solid var(--line);border-radius:6px;padding:8px 10px;font-size:13px" placeholder="e.g. UniPro Fire Protection"></div>
         </div>
+        <div style="margin-bottom:10px;background:#FFF9E6;border:1.5px solid #F2B705;border-radius:8px;padding:10px 12px">
+          <div style="font-size:11px;font-weight:700;color:#92400E;margin-bottom:6px">📷 CHECK PHOTO — Required</div>
+          <div style="font-size:11px;color:#78350F;margin-bottom:8px">Take a photo of the check before turning it in. This protects you and the office.</div>
+          <input type="file" id="pmCheckPhotoInput" accept="image/*" capture="environment" style="display:none" onchange="estPreviewCheckPhoto(this)">
+          <button type="button" onclick="document.getElementById('pmCheckPhotoInput').click()" style="background:#F2B705;color:#1A1D21;border:none;border-radius:6px;padding:7px 14px;font-size:11px;font-weight:800;cursor:pointer">📷 Take Check Photo</button>
+          <div id="pmCheckPhotoPreview" style="margin-top:8px;display:none"><img id="pmCheckPhotoImg" style="max-width:100%;border-radius:6px;border:1px solid #F2B705" src=""><div style="font-size:10px;color:#1E7B3C;font-weight:700;margin-top:4px">✅ Check photo captured</div></div>
+        </div>
         <button onclick="estLogCheckCollection()" class="est-action-btn blue" style="background:#1B5FA8">🏦 Log Check Collection</button>
       </div>
     </div>
@@ -23858,6 +23865,18 @@ function estLogCashCollection() {
   alert('✅ Cash collection logged — turn in to Catherine within 48 hours.');
 }
 
+function estPreviewCheckPhoto(input) {
+  if (!input.files || !input.files[0]) return;
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    var img = document.getElementById('pmCheckPhotoImg');
+    var preview = document.getElementById('pmCheckPhotoPreview');
+    if (img) img.src = e.target.result;
+    if (preview) preview.style.display = 'block';
+    window._estCheckPhotoData = e.target.result;
+  };
+  reader.readAsDataURL(input.files[0]);
+}
 function estLogCheckCollection() {
   var checkNum = (document.getElementById('pmCheckNum')?.value||'').trim();
   var amt      = parseFloat(document.getElementById('pmCheckAmount')?.value) || 0;
@@ -23865,18 +23884,20 @@ function estLogCheckCollection() {
   if (!checkNum) { alert('Enter the check number.'); return; }
   if (!amt) { alert('Enter the check amount.'); return; }
   if (!payable) { alert('Verify and enter who the check is made out to.'); return; }
+  if (!window._estCheckPhotoData) { alert('Take a photo of the check before saving.'); return; }
   var colls = (typeof crmLoad === 'function' ? crmLoad('collections') : []) || [];
   var rep = (window._spRep && window._spRep.name) || (window._currentUser && window._currentUser.name) || 'Rep';
   var division = (svState && svState.selectedServices && svState.selectedServices[0]) || 'unipro';
   colls.unshift({
     id:'col_'+Date.now(), collectedBy:rep, accountName:svState.bizName||'Account',
     division:division, amount:amt, method:'check', checkNum:checkNum, payableTo:payable,
-    invoiceNum:'', notes:'Collected at time of estimate acceptance', photoData:null,
+    invoiceNum:'', notes:'Collected at time of estimate acceptance', photoData:window._estCheckPhotoData||null,
     status:'collected', collectedAt:Date.now(),
     collectedDate:new Date().toLocaleDateString('en-US'),
     history:[{ts:Date.now(),action:'Check collection logged from estimate',by:rep}]
   });
   if (typeof crmSave === 'function') crmSave('collections', colls);
+  window._estCheckPhotoData = null;
   var chk = document.getElementById('ob_chk2');
   if (chk) { chk.checked = true; chk.nextElementSibling.textContent = 'Check #'+checkNum+' collected — logged to collections queue'; }
   estPaymentDone('check');

@@ -1237,7 +1237,7 @@ function spRecentlyViewed() {
 //  version with month navigation and per-day add/review.
 // ══════════════════════════════════════════════════════
 
-function spCloseCollectModal(){ var m=document.getElementById('spCollectModal'); if(m) m.remove(); }
+function spCloseCollectModal(){ var m=document.getElementById('spCollectModal'); if(m) m.remove(); window._spCheckPhotoData = null; }
 function spCollectMethodToggle(){ var m=document.getElementById('colMethodField'), w=document.getElementById('colCheckWrap'); if(m&&w) w.style.display=(m.value==='check')?'block':'none'; }
 function spOpenCollectModal(accountId, tab, prefillName, prefillDivision){
   var existing=null;
@@ -1264,7 +1264,16 @@ function spOpenCollectModal(accountId, tab, prefillName, prefillDivision){
         +'<div><label style="'+L+'">Amount *</label><input type="number" step="0.01" min="0" id="colAmtField" placeholder="0.00" style="'+F+'"></div>'
         +'<div><label style="'+L+'">Method</label><select id="colMethodField" onchange="spCollectMethodToggle()" style="'+F+'"><option value="cash">Cash</option><option value="check">Check</option></select></div>'
       +'</div>'
-      +'<div id="colCheckWrap" style="display:none"><label style="'+L+'">Check Number</label><input id="colCheckField" placeholder="e.g. 1042" style="'+F+'"></div>'
+      +'<div id="colCheckWrap" style="display:none">'
+        +'<label style="'+L+'">Check Number</label><input id="colCheckField" placeholder="e.g. 1042" style="'+F+'">'
+        +'<div style="margin-top:10px;background:#FFF9E6;border:1.5px solid #F2B705;border-radius:8px;padding:10px 12px">'
+          +'<div style="font-size:11px;font-weight:700;color:#92400E;margin-bottom:6px">\uD83D\uDCF7 CHECK PHOTO \u2014 Required</div>'
+          +'<div style="font-size:11px;color:#78350F;margin-bottom:8px">Take a photo of the check before turning it in. This protects you and the office.</div>'
+          +'<input type="file" id="colCheckPhotoInput" accept="image/*" capture="environment" style="display:none" onchange="spPreviewCollectPhoto(this)">'
+          +'<button type="button" onclick="document.getElementById(\'colCheckPhotoInput\').click()" style="background:#F2B705;color:#1A1D21;border:none;border-radius:6px;padding:7px 14px;font-size:11px;font-weight:800;cursor:pointer">\uD83D\uDCF7 Take Check Photo</button>'
+          +'<div id="colCheckPhotoPreview" style="margin-top:8px;display:none"><img id="colCheckPhotoImg" style="max-width:100%;border-radius:6px;border:1px solid #F2B705" src=""><div style="font-size:10px;color:#1E7B3C;font-weight:700;margin-top:4px">\u2705 Check photo captured</div></div>'
+        +'</div>'
+      +'</div>'
       +'<div><label style="'+L+'">Invoice # (optional)</label><input id="colInvField" placeholder="If known" style="'+F+'"></div>'
       +'<div><label style="'+L+'">Notes (optional)</label><textarea id="colNotesField" rows="2" placeholder="Anything to note for the office..." style="'+F+';resize:none"></textarea></div>'
       +'<div style="display:flex;gap:10px;justify-content:flex-end">'
@@ -1275,6 +1284,18 @@ function spOpenCollectModal(accountId, tab, prefillName, prefillDivision){
   +'</div>';
   document.body.appendChild(modal);
   setTimeout(function(){ try{ document.getElementById('colAmtField').focus(); }catch(e){} },60);
+}
+function spPreviewCollectPhoto(input) {
+  if (!input.files || !input.files[0]) return;
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    var img = document.getElementById('colCheckPhotoImg');
+    var preview = document.getElementById('colCheckPhotoPreview');
+    if (img) img.src = e.target.result;
+    if (preview) preview.style.display = 'block';
+    window._spCheckPhotoData = e.target.result;
+  };
+  reader.readAsDataURL(input.files[0]);
 }
 function spSaveCollection(){
   var modal=document.getElementById('spCollectModal'); if(!modal) return;
@@ -1287,18 +1308,20 @@ function spSaveCollection(){
   if(!biz){ alert('Enter the account or business name.'); return; }
   if(!(amt>0)){ alert('Enter the amount collected.'); return; }
   if(method==='check' && !checkNum){ alert('Enter the check number.'); return; }
+  if(method==='check' && !window._spCheckPhotoData){ alert('Take a photo of the check before saving.'); return; }
   var rep=(typeof _spRep!=='undefined' && _spRep && _spRep.name) ? _spRep.name : 'Rep';
   var colls=(typeof crmLoad==='function'?crmLoad('collections'):[])||[];
   colls.unshift({
     id:'col_'+Date.now(), collectedBy:rep,
     accountName:biz, division:(modal.dataset.division||''), amount:amt, method:method,
     checkNum:checkNum, payableTo:'Termac', invoiceNum:invNum,
-    notes:notes||'Collected by sales rep', photoData:null,
+    notes:notes||'Collected by sales rep', photoData:(method==='check'?(window._spCheckPhotoData||null):null),
     status:'collected', collectedAt:Date.now(),
     collectedDate:new Date().toLocaleDateString('en-US'),
     history:[{ts:Date.now(),action:'Logged from sales portal',by:rep}]
   });
   if(typeof crmSave==='function') crmSave('collections', colls);
+  window._spCheckPhotoData = null;
   spCloseCollectModal();
   if(typeof spToast==='function') spToast('\uD83D\uDCB5 Payment logged \u2014 turn in to the office within 48h');
 }
