@@ -1707,6 +1707,38 @@ function spBuildAgenda(dateStr) {
     });
   });
 
+  // ── 3a. Service due soon (from real ServiceTrade next_due data) ─────────
+  // Added 2026-07-14 per Ted -- a real, dated reason to reach out before
+  // an inspection lapses, not a generic suggestion. next_due is now
+  // populated by servicetrade-sync from actual upcoming job/service
+  // dates, so this is grounded in real data, not a guess.
+  if (isToday) accounts.filter(function(a) {
+    var isRep = a.assignedRep === repName || a.ownedBy === repName;
+    if (!isRep || a.status !== 'active' || !a.next_due) return false;
+    if (agenda.some(function(x){ return x.accountId === a.id; })) return false;
+    var daysOut = (new Date(a.next_due) - Date.now()) / 86400000;
+    return daysOut >= 0 && daysOut <= 21; // due within the next 3 weeks
+  }).sort(function(a, b){ return new Date(a.next_due) - new Date(b.next_due); }).slice(0,3).forEach(function(a) {
+    var daysOut = Math.round((new Date(a.next_due) - Date.now()) / 86400000);
+    agenda.push({
+      type:       'service_due',
+      id:         'sd_' + a.id,
+      accountId:  a.id,
+      title:      a.name || a.business || 'Account',
+      address:    a.address || '',
+      zip:        a.zip || '',
+      time:       '',
+      notes:      'Service due in ' + daysOut + ' day' + (daysOut === 1 ? '' : 's') + ' \u2014 good reason to check in before it lapses',
+      phone:      a.phone || '',
+      color:      '#B45309',
+      bg:         '#FEF3E5',
+      label:      '\u23F0 Service Due Soon',
+      action:     'visit',
+      services:   a.services || [],
+      accountType: a.accountType || null,
+    });
+  });
+
   // ── 3b. Jeopardy accounts (health score <= 2) ────────────────────────────
   // 2026-07-13 per Ted: the ~200-account Jeopardy Queue on the Manager
   // Dashboard was a manager-only list with no real follow-up mechanism --
