@@ -615,7 +615,12 @@ async function runCampaignTrack(env, cfg) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            recipients: [row.recipient_email],
+            // Ted CC'd on every campaign send, added 2026-07-14 per Ted --
+            // so he can see exactly what lands in a real inbox rather than
+            // only reviewing the stored template. Remove this second
+            // recipient once he's satisfied with the format and no longer
+            // wants a live copy of every send.
+            recipients: [row.recipient_email, 'tscholl@termac.com'],
             subject: piece.subject,
             html,
           }),
