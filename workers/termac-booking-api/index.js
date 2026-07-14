@@ -134,7 +134,16 @@ async function notifyRep(env, repId, repName, leadName, notes) {
   } catch (e) { /* email lookup failing should never block the notify attempt below */ }
 
   try {
-    await fetch(NOTIFY_URL, {
+    // 2026-07-14 fix: was a raw fetch() to NOTIFY_URL, termac-notify's
+    // public workers.dev URL -- Cloudflare blocks worker-to-worker fetch
+    // like that (error 1042, not JSON), so this has been silently
+    // failing on every single booking since this worker went live. Same
+    // root cause already found and fixed once on unipro-ai-proxy's
+    // scheduled reports; this file just never got the same fix. Now uses
+    // the NOTIFY_SERVICE binding (see wrangler.toml) the same way
+    // D1_SERVICE is already used above.
+    if (!env.NOTIFY_SERVICE) return;
+    await env.NOTIFY_SERVICE.fetch(NOTIFY_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
