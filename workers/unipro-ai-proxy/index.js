@@ -568,13 +568,22 @@ async function runCampaignTrack(env, cfg) {
   // i.e. never sent, come first) so the backlog clears itself.
   let candidates;
   if (cfg.targetType === 'account') {
+    // 2026-07-14 fix: this used to JOIN contacts on c.location_id and
+    // c.is_primary, columns that don't exist on the live accounts or
+    // contacts tables (accounts has no location_id, contacts has no
+    // is_primary at all -- confirmed via PRAGMA table_info against the
+    // real database, the original schema.sql this was written against
+    // had drifted from what's actually live). That made this query
+    // throw on every run, silently caught by the try/catch around it,
+    // meaning the customer_monthly track never sent a single email since
+    // the campaign went live. accounts already carries its own
+    // contact_email column directly, no join needed at all.
     candidates = await env.DB.prepare(
-      `SELECT a.id AS target_id, c.email AS recipient_email,
+      `SELECT a.id AS target_id, a.contact_email AS recipient_email,
               (SELECT MAX(sent_at) FROM campaign_sends cs WHERE cs.target_type='account' AND cs.target_id=a.id AND cs.campaign=?) AS last_sent_at,
               (SELECT COUNT(*) FROM campaign_sends cs WHERE cs.target_type='account' AND cs.target_id=a.id AND cs.campaign=?) AS send_count
        FROM accounts a
-       JOIN contacts c ON c.location_id = a.location_id AND c.is_primary = 1
-       WHERE a.status = 'active' AND c.email IS NOT NULL AND c.email != ''
+       WHERE a.status = 'active' AND a.contact_email IS NOT NULL AND a.contact_email != ''
          AND a.id NOT IN (SELECT target_id FROM campaign_optouts WHERE target_type='account')
        ORDER BY last_sent_at IS NOT NULL, last_sent_at ASC
        LIMIT ?`
@@ -636,6 +645,36 @@ async function runCampaignTrack(env, cfg) {
       generateId('CS'), cfg.campaign, cfg.targetType, row.target_id,
       piece.id, row.recipient_email, status, Date.now()
     ).run();
+
+    // Log this send as a real touchpoint, added 2026-07-14 per Ted --
+    // uses the same activity_log mechanism logTouchpoint() in
+    // termac-d1-sync.js already writes to for every call, visit, and
+    // note across the platform (entity_type as the plural table name,
+    // action as "icon title", detail as the note, account_id set for
+    // accounts and left null for leads). This is what makes the send
+    // show up in that account or lead's own touchpoint timeline the
+    // next time it's opened, and count toward any touchpoint-based
+    // stat that reads from activity_log, without needing a second,
+    // parallel logging system.
+    if (status === 'sent') {
+      try {
+        await env.DB.prepare(
+          `INSERT INTO activity_log (id, entity_type, entity_id, account_id, user_id, action, detail, created_at) VALUES (?,?,?,?,?,?,?,?)`
+        ).bind(
+          'act_' + Date.now() + '_' + Math.floor(Math.random() * 10000),
+          cfg.targetType === 'account' ? 'accounts' : 'leads',
+          row.target_id,
+          cfg.targetType === 'account' ? row.target_id : null,
+          'Fire Safety Campaign',
+          '\uD83D\uDCE7 Fire Safety Campaign Email Sent',
+          piece.subject,
+          Date.now()
+        ).run();
+      } catch (e) {
+        // A failed touchpoint log should never block the actual send
+        // record above -- the email already went out either way.
+      }
+    }
   }
 }
 

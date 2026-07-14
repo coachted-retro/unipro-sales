@@ -1205,6 +1205,7 @@ function spRecordCard(r, tab) {
         <button class="sp-rec-btn" onclick="spOpenCollectModal('${r.id}','${tab}')" style="background:#1E7B3C;color:#fff;border-color:#1E7B3C">💵 Pay</button>
         ${tab==='accounts' ? `<button class="sp-rec-btn" onclick="spOpenVisitModal('${r.id}')" style="background:#059669;color:#fff;border-color:#059669">📍 Visit</button>` : ''}
         ${(tab==='leads'||tab==='contacts') ? `<a class="sp-rec-btn" href="termac-pitch-tool.html?lead=${r.id}" onclick="event.stopPropagation()" style="background:#C8102E;color:#fff;border-color:#C8102E;text-decoration:none;display:inline-flex;align-items:center">📄 Start Pitch</a>` : ''}
+        ${((tab==='leads'||tab==='contacts'||tab==='opportunities') && r.lifecycleStage==='opportunity') ? `<button class="sp-rec-btn" onclick="event.stopPropagation();spOpenQuickSale('${r.id}','${tab}')" style="background:#F2B705;color:#1A1D21;border-color:#F2B705;font-weight:800">⚡ Quick Sale</button>` : ''}
         <select class="sp-stage-sel" onchange="spSetStage('${r.id}','${tab}',this.value,this)" title="Change stage" style="padding:4px 8px;border:1.5px solid var(--line);border-radius:5px;font-size:11px;font-family:'Barlow Condensed',sans-serif;font-weight:700;background:#fff;color:var(--ink);cursor:pointer">
           ${spStageOptions(r, tab)}
         </select>
@@ -1412,36 +1413,48 @@ function spCheckinDaysFor(account) {
 
 var AGENDA_STORE = 'termac_today_agenda';
 
-// ── Persist today's agenda (manual additions survive refresh) ───────────────
-function spLoadPersistedStops() {
+// ── Agenda date navigation, added 2026-07-14 per Ted -- the agenda used
+// to only ever show today. This is the single piece of state that tracks
+// which day is currently being viewed; every function below that used to
+// hardcode "today" now takes an optional dateStr and falls back to this,
+// so existing call sites (add/remove a stop right now) keep working
+// exactly as before with zero changes, they just implicitly operate on
+// whatever day is on screen instead of always literally today.
+var _spAgendaDate = new Date().toISOString().slice(0,10);
+
+// ── Persist a day's agenda (manual additions survive refresh) ───────────────
+function spLoadPersistedStops(dateStr) {
   try {
     var raw = JSON.parse(localStorage.getItem(AGENDA_STORE) || '{}');
-    var today = new Date().toISOString().slice(0,10);
+    var day   = dateStr || _spAgendaDate;
     var rep   = _spRep ? _spRep.name : '';
-    var key   = rep + '_' + today;
+    var key   = rep + '_' + day;
     return raw[key] || [];
   } catch(e) { return []; }
 }
-function spSavePersistedStops(stops) {
+function spSavePersistedStops(stops, dateStr) {
   try {
     var raw = JSON.parse(localStorage.getItem(AGENDA_STORE) || '{}');
-    var today = new Date().toISOString().slice(0,10);
+    var day   = dateStr || _spAgendaDate;
     var rep   = _spRep ? _spRep.name : '';
-    var key   = rep + '_' + today;
-    // Keep only last 7 days
-    var cutoff = new Date(); cutoff.setDate(cutoff.getDate()-7);
+    var key   = rep + '_' + day;
+    // Keep only the last 60 days of manual stops on either side of today,
+    // now that reps can actually navigate back and add to future days --
+    // 7 days was fine when this only ever wrote to "today".
+    var cutoffPast = new Date(); cutoffPast.setDate(cutoffPast.getDate()-60);
+    var cutoffFuture = new Date(); cutoffFuture.setDate(cutoffFuture.getDate()+60);
     Object.keys(raw).forEach(function(k){
       var d = k.split('_').pop();
-      if (d && new Date(d) < cutoff) delete raw[k];
+      if (d && (new Date(d) < cutoffPast || new Date(d) > cutoffFuture)) delete raw[k];
     });
     raw[key] = stops;
     localStorage.setItem(AGENDA_STORE, JSON.stringify(raw));
   } catch(e) {}
 }
-function spRemovePersistedStop(stopId) {
-  var stops = spLoadPersistedStops();
+function spRemovePersistedStop(stopId, dateStr) {
+  var stops = spLoadPersistedStops(dateStr);
   stops = stops.filter(function(s){ return s.id !== stopId; });
-  spSavePersistedStops(stops);
+  spSavePersistedStops(stops, dateStr);
 }
 
 // ── "Start Fresh" - wipes every persisted agenda stop for this rep across
@@ -1575,14 +1588,16 @@ function spOptimizeRoute(stops) {
 }
 
 // ── Build the agenda ─────────────────────────────────────────────────────────
-function spBuildAgenda() {
-  var today = new Date();
-  var todayStr = today.toISOString().slice(0,10);
+function spBuildAgenda(dateStr) {
+  var viewDate = dateStr || _spAgendaDate;
+  var realTodayStr = new Date().toISOString().slice(0,10);
+  var isToday = viewDate === realTodayStr;
+  var todayStr = viewDate; // kept as todayStr below so every existing date comparison in this function (appointments, follow-ups) transparently targets whichever day is being viewed instead of literally today
   var repName = _spRep ? _spRep.name : '';
 
   var agenda = [];
 
-  // -- 1. Confirmed appointments for today --------------------------------
+  // -- 1. Confirmed appointments for the viewed date -----------------------
   var appts = crmLoad('appointments') || [];
   appts.filter(function(a) {
     return a.date === todayStr && (!a.createdBy || a.createdBy === repName);
@@ -1607,8 +1622,13 @@ function spBuildAgenda() {
   });
 
   // ── 2. Pipeline stage opportunities ──────────────────────────────────────
+  // Live priority suggestions, not tied to a specific date -- only make
+  // sense layered onto today's real agenda. Past/future days show only
+  // what was actually scheduled (appointments, follow-ups), not a
+  // recomputed "right now" priority list, which would be misleading for
+  // a day that already happened or hasn't happened yet.
   var leads = crmLoad('leads');
-  leads.filter(function(r) {
+  if (isToday) leads.filter(function(r) {
     var stage = r.lifecycleStage || '';
     // Fixed 2026-07-11: unassigned records used to count as "everyone's",
     // which meant every rep saw the entire unassigned bulk-import pool on
@@ -1638,8 +1658,10 @@ function spBuildAgenda() {
   });
 
   // ── 3. Existing accounts due for check-in ────────────────────────────────
+  // Same reasoning as above -- "due right now" only means something on
+  // today's real agenda.
   var accounts = crmLoad('accounts');
-  accounts.filter(function(a) {
+  if (isToday) accounts.filter(function(a) {
     // Fixed 2026-07-11: same unassigned-records fix as above.
     var isRep = a.assignedRep === repName || a.ownedBy === repName;
     var cutoff = Date.now() - (spCheckinDaysFor(a) * 86400000);
@@ -1673,7 +1695,7 @@ function spBuildAgenda() {
   // Capped at 3/day like the other lower-priority categories below, so
   // a rep with several at-risk accounts gets a steady stream to work
   // through rather than all of them dumped on one day.
-  accounts.filter(function(a) {
+  if (isToday) accounts.filter(function(a) {
     var isRep = a.assignedRep === repName || a.ownedBy === repName;
     if (!isRep || a.status !== 'active') return false;
     if (agenda.some(function(x){ return x.accountId === a.id; })) return false;
@@ -1706,7 +1728,7 @@ function spBuildAgenda() {
     .map(function(a){ return a.zip || (a.address.match(/\b\d{5}\b/)||[])[0] || ''; })
     .filter(Boolean);
 
-  leads.filter(function(r) {
+  if (isToday) leads.filter(function(r) {
     var stage = r.lifecycleStage || 'lead';
     if (!['lead','contact'].includes(stage)) return false;
     var zip = r.zip || (r.address||'').match(/\b\d{5}\b/)?.[0] || '';
@@ -1737,7 +1759,7 @@ function spBuildAgenda() {
   // needs to actually show up as a real stop on that day, not just sit
   // as an invisible field. Pulls from all three pools since a follow-up
   // could've been set on a lead, contact, or account.
-  var todayStrFU = new Date().toISOString().slice(0,10);
+  var todayStrFU = viewDate;
   ['leads','contacts','accounts'].forEach(function(pool){
     (crmLoad(pool) || []).filter(function(r){
       return r.followupDate === todayStrFU
@@ -1769,7 +1791,7 @@ function spBuildAgenda() {
   // actually got covered today. Kept visible now (still deduped against
   // anything already in the agenda) -- see the doneToday pass below for
   // how completion actually gets shown.
-  var manual = spLoadPersistedStops().filter(function(s){
+  var manual = spLoadPersistedStops(viewDate).filter(function(s){
     return !agenda.some(function(a){ return a.id === s.id || a.accountId === s.accountId; });
   });
   agenda = agenda.concat(manual);
@@ -1780,7 +1802,6 @@ function spBuildAgenda() {
   // needed. Falls back to the explicit done/status flags manual stops
   // and appointments already carry, for the case a rep genuinely
   // stopped by but had nothing worth logging.
-  var todayStrForAppts = new Date().toISOString().slice(0, 10);
   var apptsForDoneCheck = crmLoad('appointments') || [];
   agenda.forEach(function (item) {
     var explicitDone = !!item.done;
@@ -1788,7 +1809,10 @@ function spBuildAgenda() {
       var matchedAppt = apptsForDoneCheck.find(function (a) { return a.id === item.id; });
       if (matchedAppt && matchedAppt.status === 'complete') explicitDone = true;
     }
-    item.doneToday = explicitDone || spAccountHasTouchpointToday(item.accountId);
+    // doneToday keeps its original name for every existing render/complete
+    // call site below, but now reflects "done on the day being viewed",
+    // whichever day that is, via the dateStr passed through here.
+    item.doneToday = explicitDone || spAccountHasTouchpointToday(item.accountId, viewDate);
   });
 
   // ── 8. Optimize route ────────────────────────────────────────────────────
@@ -2207,11 +2231,30 @@ function spRenderRecentActivityFeed() {
 }
 
 function spRenderTodayAgenda() {
-  var agenda = spBuildAgenda();
-  var todayLabel = new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'});
+  var agenda = spBuildAgenda(_spAgendaDate);
+  var realTodayStr = new Date().toISOString().slice(0,10);
+  var viewDateObj = new Date(_spAgendaDate + 'T00:00:00');
+  var dayDiff = Math.round((viewDateObj - new Date(realTodayStr + 'T00:00:00')) / 86400000);
+  var fullLabel = viewDateObj.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'});
+  var todayLabel = dayDiff === 0 ? fullLabel
+    : dayDiff === 1 ? 'Tomorrow \u2014 ' + fullLabel
+    : dayDiff === -1 ? 'Yesterday \u2014 ' + fullLabel
+    : fullLabel;
   var doneCount  = agenda.filter(function(item){ return item.doneToday; }).length;
 
-  var headerBtns = '<div style="display:flex;gap:6px;flex-shrink:0">'
+  // Date navigation, added 2026-07-14 per Ted -- prev/next step one day
+  // at a time and re-render in place; Today jumps straight back to the
+  // real current date from wherever a rep has navigated to. Every other
+  // rep's dashboard uses this same function, so this rolls out for
+  // everyone, not just one person's view.
+  var navBtns = '<div style="display:flex;align-items:center;gap:4px;flex-shrink:0">'
+    + '<button class="sp-btn" style="font-size:12px;padding:5px 10px;background:rgba(0,0,0,.06);border:none;border-radius:5px;cursor:pointer;color:var(--ink)" onclick="spAgendaShiftDay(-1)" title="Previous day">\u2190</button>'
+    + (dayDiff !== 0 ? '<button class="sp-btn" style="font-size:10px;padding:5px 10px;background:rgba(0,0,0,.06);border:none;border-radius:5px;cursor:pointer;color:var(--ink)" onclick="spAgendaGoToday()">Today</button>' : '')
+    + '<button class="sp-btn" style="font-size:12px;padding:5px 10px;background:rgba(0,0,0,.06);border:none;border-radius:5px;cursor:pointer;color:var(--ink)" onclick="spAgendaShiftDay(1)" title="Next day">\u2192</button>'
+  + '</div>';
+
+  var headerBtns = '<div style="display:flex;gap:6px;flex-shrink:0;align-items:center">'
+    + navBtns
     + '<button class="sp-btn sp-btn-red" style="font-size:10px;padding:5px 12px" onclick="spOpenAddStop()">+ Add Stop</button>'
     + '<button class="sp-btn" style="font-size:10px;padding:5px 12px;background:#059669;color:#fff;border:none;border-radius:5px;cursor:pointer" onclick="spGenerateDay()">⚡ Optimize</button>'
     + '</div>';
@@ -2219,13 +2262,13 @@ function spRenderTodayAgenda() {
   if (!agenda.length) {
     return '<div class="sp-card" style="margin-bottom:14px">'
       + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">'
-        + '<div class="sp-card-title" style="margin-bottom:0">📅 Today — ' + todayLabel + '</div>'
+        + '<div class="sp-card-title" style="margin-bottom:0">📅 ' + (dayDiff === 0 ? 'Today \u2014 ' : '') + todayLabel + '</div>'
         + headerBtns
       + '</div>'
       + '<div style="text-align:center;padding:28px;color:var(--soft)">'
         + '<div style="font-size:32px;margin-bottom:10px">📋</div>'
-        + '<div style="font-weight:700;font-size:14px;color:var(--ink);margin-bottom:6px">No stops yet</div>'
-        + '<div style="font-size:12px">Hit Optimize to auto-fill your day, or tap + Add Stop to add a call or visit.</div>'
+        + '<div style="font-weight:700;font-size:14px;color:var(--ink);margin-bottom:6px">No stops ' + (dayDiff === 0 ? 'yet' : (dayDiff > 0 ? 'scheduled' : 'were logged')) + '</div>'
+        + '<div style="font-size:12px">' + (dayDiff === 0 ? 'Hit Optimize to auto-fill your day, or tap + Add Stop to add a call or visit.' : 'Nothing on the books for this day. Tap + Add Stop to add one.') + '</div>'
       + '</div>'
     + '</div>';
   }
@@ -2301,14 +2344,26 @@ function spRenderTodayAgenda() {
   return '<div class="sp-card" style="margin-bottom:14px">'
     + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'
       + '<div>'
-        + '<div class="sp-card-title" style="margin-bottom:2px">📅 Today \u2014 ' + todayLabel + '</div>'
-        + '<div style="font-size:11px;color:var(--soft)">' + agenda.length + ' stops \u00b7 route optimized by area</div>'
+        + '<div class="sp-card-title" style="margin-bottom:2px">📅 ' + (dayDiff === 0 ? 'Today \u2014 ' : '') + todayLabel + '</div>'
+        + '<div style="font-size:11px;color:var(--soft)">' + agenda.length + ' stops \u00b7 ' + (dayDiff === 0 ? 'route optimized by area' : dayDiff > 0 ? 'scheduled so far' : 'logged that day') + '</div>'
       + '</div>'
       + headerBtns
     + '</div>'
     + summaryBar
     + items
   + '</div>';
+}
+
+// ── Agenda date-nav handlers, added 2026-07-14 per Ted ───────────────────
+function spAgendaShiftDay(delta) {
+  var d = new Date(_spAgendaDate + 'T00:00:00');
+  d.setDate(d.getDate() + delta);
+  _spAgendaDate = d.toISOString().slice(0,10);
+  if (typeof spRenderHome === 'function') spRenderHome();
+}
+function spAgendaGoToday() {
+  _spAgendaDate = new Date().toISOString().slice(0,10);
+  if (typeof spRenderHome === 'function') spRenderHome();
 }
 
 // ── ADD STOP MODAL ───────────────────────────────────────────────────────────
@@ -3477,14 +3532,44 @@ function spViewApptDetail(apptId) {
   // The appointment row itself only stores business/location/record_id/division —
   // it does not carry a contact name/phone. Look up the linked account or lead
   // (via record_id) to surface who to actually ask for on site.
-  const linked = a.recordId
-    ? (crmLoad('accounts') || []).concat(crmLoad('leads') || []).find(function(r){ return r.id === a.recordId; })
+  const accountsPool = crmLoad('accounts') || [];
+  const leadsPool = crmLoad('leads') || [];
+  let linked = a.recordId
+    ? accountsPool.concat(leadsPool).find(function(r){ return r.id === a.recordId; })
     : null;
+  let resolvedTab = a.recordId ? (a.tab || (accountsPool.some(r => r.id === a.recordId) ? 'accounts' : 'leads')) : null;
+
+  // Fix, added 2026-07-14 per Ted -- a lot of calendar stops (especially
+  // ones surfaced from route/AI suggestions rather than booked directly
+  // against a record) were never getting record_id set at creation time,
+  // even when the actual account or lead already exists in the system
+  // under the same business name. That left "View Full Account" silently
+  // missing with no way to tell the two cases apart. This does a
+  // best-effort name match as a fallback before concluding nothing
+  // exists, and permanently repairs the appointment's record_id/tab once
+  // a match is found, so this only has to self-heal once per stop.
+  if (!linked && a.business) {
+    const norm = s => String(s||'').trim().toLowerCase();
+    const target = norm(a.business);
+    let match = accountsPool.find(r => norm(r.name || r.business) === target);
+    let matchTab = 'accounts';
+    if (!match) { match = leadsPool.find(r => norm(r.business || r.name) === target); matchTab = 'leads'; }
+    if (match) {
+      linked = match; resolvedTab = matchTab;
+      try {
+        const appts = crmLoad('appointments') || [];
+        const idx = appts.findIndex(x => x.id === apptId);
+        if (idx >= 0) { appts[idx].recordId = match.id; appts[idx].tab = matchTab; crmSave('appointments', appts); }
+      } catch(e) {}
+    }
+  }
+
   const contactName = a.contact || (linked && linked.contactName) || '';
   const phone       = a.phone   || (linked && linked.phone) || '';
   const location     = a.location || a.address || (linked && linked.address) || '';
   const business      = a.business || (linked && (linked.name || linked.business)) || '';
   const division      = a.division || (linked && linked.division) || '';
+  const linkedId       = a.recordId || (linked && linked.id) || null;
 
   var old = document.getElementById('spApptDetailModal');
   if (old) old.remove();
@@ -3509,11 +3594,64 @@ function spViewApptDetail(apptId) {
       + (contactName ? '<div style="font-size:13px;color:var(--ink)">👤 ' + escH(contactName) + '</div>' : '')
       + (phone ? '<div style="font-size:13px;color:var(--ink)">📞 <a href="tel:' + escH(phone) + '" style="color:var(--blue)">' + escH(phone) + '</a></div>' : '')
       + (a.notes ? '<div style="font-size:13px;color:var(--soft);background:#F8F9FA;border-radius:8px;padding:10px 12px;white-space:pre-wrap">' + escH(a.notes) + '</div>' : '')
-      + (a.recordId ? '<button onclick="document.getElementById(\'spApptDetailModal\').remove();spViewRecord(\'' + a.recordId + '\',\'' + (a.tab || 'accounts') + '\')" style="background:#1B5FA8;color:#fff;border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;cursor:pointer;letter-spacing:.05em;text-transform:uppercase">View Full Account →</button>' : '')
+      + (linkedId
+          ? '<button onclick="document.getElementById(\'spApptDetailModal\').remove();spViewRecord(\'' + linkedId + '\',\'' + (resolvedTab || 'accounts') + '\')" style="background:#1B5FA8;color:#fff;border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;cursor:pointer;letter-spacing:.05em;text-transform:uppercase">View Full Account →</button>'
+          // No matching account or lead anywhere in the system yet -- this
+          // is the real "existing customer, not yet migrated" case (data
+          // that only lives in ServiceTrade/another source right now).
+          // Instead of a dead end, one tap creates a real record from
+          // what this stop already knows and takes you straight into it,
+          // so notes and follow-up don't have to wait on the migration.
+          : '<div style="font-size:11px;color:#B45309;background:#FEF3E5;border-radius:7px;padding:8px 10px">⚠️ Not yet in Termac One \u2014 this account only exists elsewhere right now.</div>'
+            + '<button onclick="spQuickCreateFromAppt(\'' + apptId + '\')" style="background:#059669;color:#fff;border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;cursor:pointer;letter-spacing:.05em;text-transform:uppercase">+ Add to Termac One \u2192</button>')
       + '<button onclick="document.getElementById(\'spApptDetailModal\').remove()" style="background:#F3F4F6;color:#6B7280;border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;cursor:pointer;letter-spacing:.05em;text-transform:uppercase;margin-top:4px">Close</button>'
     + '</div>'
   + '</div>';
   document.body.appendChild(wrap);
+}
+
+// Creates a real lead record from a calendar stop that has no linked
+// account/lead yet (the "existing customer, not yet migrated" case),
+// using whatever the stop already knows -- business, address, phone,
+// notes -- then permanently links the appointment to it and jumps
+// straight into the new record so notes and follow-up work immediately
+// instead of waiting on a data migration. Added 2026-07-14 per Ted.
+function spQuickCreateFromAppt(apptId) {
+  const appts = crmLoad('appointments') || [];
+  const idx = appts.findIndex(x => x.id === apptId);
+  if (idx < 0) return;
+  const a = appts[idx];
+  if (!a.business) { spToast('No business name on this stop to create from'); return; }
+
+  const leads = crmLoad('leads') || [];
+  const newId = 'LED-' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).substring(2,6).toUpperCase();
+  const now = Date.now();
+  const rec = {
+    id: newId,
+    business: a.business,
+    address: a.location || a.address || '',
+    phone: a.phone || '',
+    lifecycleStage: 'lead',
+    source: 'Calendar Quick-Add',
+    assignedRep: _spRep ? _spRep.name : '',
+    ownedBy: _spRep ? _spRep.name : '',
+    notes: a.notes || '',
+    created: now,
+    updated: now,
+    activityLog: [{ ts: now, type: 'system', icon: '🆕', title: 'Created from calendar stop', note: 'Auto-created — was not yet in Termac One', who: _spRep ? _spRep.name : 'System' }],
+  };
+  leads.unshift(rec);
+  crmSave('leads', leads);
+
+  a.recordId = newId;
+  a.tab = 'leads';
+  appts[idx] = a;
+  crmSave('appointments', appts);
+
+  const modal = document.getElementById('spApptDetailModal');
+  if (modal) modal.remove();
+  spToast('✅ Added to Termac One');
+  spViewRecord(newId, 'leads');
 }
 
 // ══════════════════════════════════════════════════════
@@ -3948,9 +4086,9 @@ function spTpSubmit(id, tab) {
 // no per-type wiring needed, and it can never drift out of sync with
 // what actually happened, since it's not a flag anyone has to remember
 // to set.
-function spAccountHasTouchpointToday(accountId) {
+function spAccountHasTouchpointToday(accountId, dateStr) {
   if (!accountId) return false;
-  var todayStr = new Date().toISOString().slice(0, 10);
+  var todayStr = dateStr || new Date().toISOString().slice(0, 10);
   var pools = ['leads', 'contacts', 'accounts'];
   for (var i = 0; i < pools.length; i++) {
     var data = crmLoad(pools[i]);
@@ -5385,6 +5523,134 @@ function spSetStage(id, tab, newStage, selectEl) {
     spToast('✅ ' + (SP_STAGES[newStage]?.label || newStage));
     spRenderCRM(tab);
   }
+}
+
+// ══════════════════════════════════════════════════════
+//  QUICK SALE — added 2026-07-14 per Ted. A condensed close for a known
+//  customer who wants one specific service (e.g. "just a fire inspection")
+//  and doesn't need the full termac-pitch-tool.html presentation walked
+//  through first. Deliberately does NOT reinvent how a sale becomes an
+//  account — it sets the service/division/price fields a real close
+//  needs, then calls the exact same spSetStage(id, tab, 'accepted', ...)
+//  path the full pitch flow ends on, so there is exactly one mechanism
+//  that turns an opportunity into a real account, not two that could
+//  drift apart. Only ever available on a record already at the
+//  Opportunity stage — the button itself doesn't render otherwise, so
+//  there's no path to a Quick Sale that skips having a real opportunity
+//  first.
+const QUICK_SALE_DIVISIONS = [
+  { key:'unipro',    label:'UniPro' },
+  { key:'quality3',  label:'Quality III' },
+  { key:'gto',       label:'GTO' },
+  { key:'filterman', label:'Filter Man' },
+  { key:'allpro',    label:'ALLPro' },
+  { key:'termac',    label:'Termac' },
+];
+
+function spOpenQuickSale(id, tab) {
+  const found = spFindRecordAnyPool(id, SP_TAB_POOL[tab]);
+  if (!found) { spToast('Record not found'); return; }
+  const r = found.data[found.idx];
+
+  var old = document.getElementById('spQuickSaleModal');
+  if (old) old.remove();
+  var wrap = document.createElement('div');
+  wrap.id = 'spQuickSaleModal';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9700;display:flex;align-items:center;justify-content:center;padding:20px';
+
+  const divOptions = QUICK_SALE_DIVISIONS.map(function(d){
+    return '<option value="' + d.key + '">' + d.label + '</option>';
+  }).join('');
+
+  wrap.innerHTML = '<div style="background:#fff;border-radius:14px;width:min(440px,94vw);box-shadow:0 20px 60px rgba(0,0,0,.3);overflow:hidden">'
+    + '<div style="background:#F2B705;padding:16px 20px;display:flex;align-items:center;justify-content:space-between">'
+      + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:15px;color:#1A1D21;letter-spacing:.05em;text-transform:uppercase">⚡ Quick Sale</div>'
+      + '<button onclick="spCloseQuickSale()" style="background:none;border:none;color:#1A1D21;font-size:20px;cursor:pointer;line-height:1">✕</button>'
+    + '</div>'
+    + '<div style="padding:20px;display:flex;flex-direction:column;gap:14px">'
+      + '<div style="font-size:16px;font-weight:800;color:var(--ink)">' + escH(r.business || r.name || 'Opportunity') + '</div>'
+      + '<div>'
+        + '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.04em;display:block;margin-bottom:5px">Division</label>'
+        + '<select id="qsDivision" style="width:100%;padding:9px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:14px">' + divOptions + '</select>'
+      + '</div>'
+      + '<div>'
+        + '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.04em;display:block;margin-bottom:5px">Service</label>'
+        + '<input id="qsService" type="text" placeholder="e.g. Fire Extinguisher Inspection" style="width:100%;padding:9px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:14px">'
+      + '</div>'
+      + '<div style="display:flex;gap:10px">'
+        + '<div style="flex:1">'
+          + '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.04em;display:block;margin-bottom:5px">Pricing</label>'
+          + '<select id="qsPricingMode" style="width:100%;padding:9px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:14px">'
+            + '<option value="per_visit">Per Visit</option>'
+            + '<option value="annual">Annual</option>'
+          + '</select>'
+        + '</div>'
+        + '<div style="flex:1">'
+          + '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.04em;display:block;margin-bottom:5px">Price ($)</label>'
+          + '<input id="qsPrice" type="number" min="0" step="0.01" placeholder="0.00" style="width:100%;padding:9px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:14px">'
+        + '</div>'
+      + '</div>'
+      + '<label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--soft);background:#F9FAFB;border-radius:8px;padding:10px 12px;cursor:pointer">'
+        + '<input id="qsAccepted" type="checkbox" style="margin-top:2px">'
+        + '<span>Customer has verbally or physically agreed to this service and price right now \u2014 this creates the real account immediately, same as accepting a full estimate.</span>'
+      + '</label>'
+      + '<button onclick="spSubmitQuickSale(\'' + id + '\',\'' + tab + '\')" style="background:#059669;color:#fff;border:none;border-radius:8px;padding:12px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;cursor:pointer;letter-spacing:.05em;text-transform:uppercase">Close Sale \u2192</button>'
+      + '<button onclick="spCloseQuickSale()" style="background:#F3F4F6;color:#6B7280;border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;cursor:pointer;letter-spacing:.05em;text-transform:uppercase">Cancel</button>'
+    + '</div>'
+  + '</div>';
+  document.body.appendChild(wrap);
+}
+
+function spCloseQuickSale() {
+  var m = document.getElementById('spQuickSaleModal');
+  if (m) m.remove();
+}
+
+function spSubmitQuickSale(id, tab) {
+  const division = document.getElementById('qsDivision').value;
+  const service = (document.getElementById('qsService').value || '').trim();
+  const pricingMode = document.getElementById('qsPricingMode').value;
+  const price = parseFloat(document.getElementById('qsPrice').value) || 0;
+  const accepted = document.getElementById('qsAccepted').checked;
+
+  if (!service) { spToast('Enter the service being sold'); return; }
+  if (!price) { spToast('Enter a price'); return; }
+  if (!accepted) { spToast('Check the acceptance box to close the sale'); return; }
+
+  const found = spFindRecordAnyPool(id, SP_TAB_POOL[tab]);
+  if (!found) { spToast('Record not found'); return; }
+  const { pool, data, idx } = found;
+  const r = data[idx];
+  const divLabel = (QUICK_SALE_DIVISIONS.find(d => d.key === division) || {}).label || division;
+
+  // Set exactly the fields the real close path (spSetStage → 'accepted')
+  // reads when it builds the account record, so a Quick Sale account
+  // looks identical to one closed through the full pitch flow.
+  r.services = [division];
+  r.division = divLabel;
+  r.pricingMode = pricingMode;
+  if (pricingMode === 'annual') r.annualValue = price;
+  r.quickSalePrice = price;
+  r.serviceDescription = service;
+  r.quickSale = true;
+  r.quickSaleClosedAt = Date.now();
+  r.quickSaleClosedBy = _spRep ? _spRep.name : '';
+  r.activityLog = r.activityLog || [];
+  r.activityLog.push({
+    ts: Date.now(), type: 'stage', icon: '⚡',
+    title: 'Quick Sale Closed — ' + divLabel + ': ' + service + ' ($' + price.toFixed(2) + (pricingMode === 'annual' ? '/yr' : '/visit') + ')',
+    who: _spRep ? _spRep.name : '',
+  });
+  data[idx] = r;
+  crmSave(pool, data);
+
+  spCloseQuickSale();
+  // Reuses the exact same account-creation path as the full pitch flow —
+  // see spSetStage's 'accepted' branch above for what this actually does
+  // (creates the account/location, notifies the scheduler, credits any
+  // tech referral bonus).
+  spSetStage(id, tab, 'accepted', null);
+  spToast('⚡ Quick Sale closed — account created');
 }
 
 // ══════════════════════════════════════════════════════
