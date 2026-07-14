@@ -1205,6 +1205,7 @@ function spRecordCard(r, tab) {
         <button class="sp-rec-btn" onclick="spOpenCollectModal('${r.id}','${tab}')" style="background:#1E7B3C;color:#fff;border-color:#1E7B3C">💵 Pay</button>
         ${tab==='accounts' ? `<button class="sp-rec-btn" onclick="spOpenVisitModal('${r.id}')" style="background:#059669;color:#fff;border-color:#059669">📍 Visit</button>` : ''}
         ${(tab==='leads'||tab==='contacts') ? `<a class="sp-rec-btn" href="termac-pitch-tool.html?lead=${r.id}" onclick="event.stopPropagation()" style="background:#C8102E;color:#fff;border-color:#C8102E;text-decoration:none;display:inline-flex;align-items:center">📄 Start Pitch</a>` : ''}
+        ${((tab==='leads'||tab==='contacts'||tab==='opportunities') && r.lifecycleStage==='opportunity') ? `<button class="sp-rec-btn" onclick="event.stopPropagation();spOpenQuickSale('${r.id}','${tab}')" style="background:#F2B705;color:#1A1D21;border-color:#F2B705;font-weight:800">⚡ Quick Sale</button>` : ''}
         <select class="sp-stage-sel" onchange="spSetStage('${r.id}','${tab}',this.value,this)" title="Change stage" style="padding:4px 8px;border:1.5px solid var(--line);border-radius:5px;font-size:11px;font-family:'Barlow Condensed',sans-serif;font-weight:700;background:#fff;color:var(--ink);cursor:pointer">
           ${spStageOptions(r, tab)}
         </select>
@@ -5491,6 +5492,134 @@ function spSetStage(id, tab, newStage, selectEl) {
     spToast('✅ ' + (SP_STAGES[newStage]?.label || newStage));
     spRenderCRM(tab);
   }
+}
+
+// ══════════════════════════════════════════════════════
+//  QUICK SALE — added 2026-07-14 per Ted. A condensed close for a known
+//  customer who wants one specific service (e.g. "just a fire inspection")
+//  and doesn't need the full termac-pitch-tool.html presentation walked
+//  through first. Deliberately does NOT reinvent how a sale becomes an
+//  account — it sets the service/division/price fields a real close
+//  needs, then calls the exact same spSetStage(id, tab, 'accepted', ...)
+//  path the full pitch flow ends on, so there is exactly one mechanism
+//  that turns an opportunity into a real account, not two that could
+//  drift apart. Only ever available on a record already at the
+//  Opportunity stage — the button itself doesn't render otherwise, so
+//  there's no path to a Quick Sale that skips having a real opportunity
+//  first.
+const QUICK_SALE_DIVISIONS = [
+  { key:'unipro',    label:'UniPro' },
+  { key:'quality3',  label:'Quality III' },
+  { key:'gto',       label:'GTO' },
+  { key:'filterman', label:'Filter Man' },
+  { key:'allpro',    label:'ALLPro' },
+  { key:'termac',    label:'Termac' },
+];
+
+function spOpenQuickSale(id, tab) {
+  const found = spFindRecordAnyPool(id, SP_TAB_POOL[tab]);
+  if (!found) { spToast('Record not found'); return; }
+  const r = found.data[found.idx];
+
+  var old = document.getElementById('spQuickSaleModal');
+  if (old) old.remove();
+  var wrap = document.createElement('div');
+  wrap.id = 'spQuickSaleModal';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9700;display:flex;align-items:center;justify-content:center;padding:20px';
+
+  const divOptions = QUICK_SALE_DIVISIONS.map(function(d){
+    return '<option value="' + d.key + '">' + d.label + '</option>';
+  }).join('');
+
+  wrap.innerHTML = '<div style="background:#fff;border-radius:14px;width:min(440px,94vw);box-shadow:0 20px 60px rgba(0,0,0,.3);overflow:hidden">'
+    + '<div style="background:#F2B705;padding:16px 20px;display:flex;align-items:center;justify-content:space-between">'
+      + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:15px;color:#1A1D21;letter-spacing:.05em;text-transform:uppercase">⚡ Quick Sale</div>'
+      + '<button onclick="spCloseQuickSale()" style="background:none;border:none;color:#1A1D21;font-size:20px;cursor:pointer;line-height:1">✕</button>'
+    + '</div>'
+    + '<div style="padding:20px;display:flex;flex-direction:column;gap:14px">'
+      + '<div style="font-size:16px;font-weight:800;color:var(--ink)">' + escH(r.business || r.name || 'Opportunity') + '</div>'
+      + '<div>'
+        + '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.04em;display:block;margin-bottom:5px">Division</label>'
+        + '<select id="qsDivision" style="width:100%;padding:9px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:14px">' + divOptions + '</select>'
+      + '</div>'
+      + '<div>'
+        + '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.04em;display:block;margin-bottom:5px">Service</label>'
+        + '<input id="qsService" type="text" placeholder="e.g. Fire Extinguisher Inspection" style="width:100%;padding:9px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:14px">'
+      + '</div>'
+      + '<div style="display:flex;gap:10px">'
+        + '<div style="flex:1">'
+          + '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.04em;display:block;margin-bottom:5px">Pricing</label>'
+          + '<select id="qsPricingMode" style="width:100%;padding:9px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:14px">'
+            + '<option value="per_visit">Per Visit</option>'
+            + '<option value="annual">Annual</option>'
+          + '</select>'
+        + '</div>'
+        + '<div style="flex:1">'
+          + '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.04em;display:block;margin-bottom:5px">Price ($)</label>'
+          + '<input id="qsPrice" type="number" min="0" step="0.01" placeholder="0.00" style="width:100%;padding:9px 10px;border:1.5px solid var(--line);border-radius:7px;font-size:14px">'
+        + '</div>'
+      + '</div>'
+      + '<label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--soft);background:#F9FAFB;border-radius:8px;padding:10px 12px;cursor:pointer">'
+        + '<input id="qsAccepted" type="checkbox" style="margin-top:2px">'
+        + '<span>Customer has verbally or physically agreed to this service and price right now \u2014 this creates the real account immediately, same as accepting a full estimate.</span>'
+      + '</label>'
+      + '<button onclick="spSubmitQuickSale(\'' + id + '\',\'' + tab + '\')" style="background:#059669;color:#fff;border:none;border-radius:8px;padding:12px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;cursor:pointer;letter-spacing:.05em;text-transform:uppercase">Close Sale \u2192</button>'
+      + '<button onclick="spCloseQuickSale()" style="background:#F3F4F6;color:#6B7280;border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;cursor:pointer;letter-spacing:.05em;text-transform:uppercase">Cancel</button>'
+    + '</div>'
+  + '</div>';
+  document.body.appendChild(wrap);
+}
+
+function spCloseQuickSale() {
+  var m = document.getElementById('spQuickSaleModal');
+  if (m) m.remove();
+}
+
+function spSubmitQuickSale(id, tab) {
+  const division = document.getElementById('qsDivision').value;
+  const service = (document.getElementById('qsService').value || '').trim();
+  const pricingMode = document.getElementById('qsPricingMode').value;
+  const price = parseFloat(document.getElementById('qsPrice').value) || 0;
+  const accepted = document.getElementById('qsAccepted').checked;
+
+  if (!service) { spToast('Enter the service being sold'); return; }
+  if (!price) { spToast('Enter a price'); return; }
+  if (!accepted) { spToast('Check the acceptance box to close the sale'); return; }
+
+  const found = spFindRecordAnyPool(id, SP_TAB_POOL[tab]);
+  if (!found) { spToast('Record not found'); return; }
+  const { pool, data, idx } = found;
+  const r = data[idx];
+  const divLabel = (QUICK_SALE_DIVISIONS.find(d => d.key === division) || {}).label || division;
+
+  // Set exactly the fields the real close path (spSetStage → 'accepted')
+  // reads when it builds the account record, so a Quick Sale account
+  // looks identical to one closed through the full pitch flow.
+  r.services = [division];
+  r.division = divLabel;
+  r.pricingMode = pricingMode;
+  if (pricingMode === 'annual') r.annualValue = price;
+  r.quickSalePrice = price;
+  r.serviceDescription = service;
+  r.quickSale = true;
+  r.quickSaleClosedAt = Date.now();
+  r.quickSaleClosedBy = _spRep ? _spRep.name : '';
+  r.activityLog = r.activityLog || [];
+  r.activityLog.push({
+    ts: Date.now(), type: 'stage', icon: '⚡',
+    title: 'Quick Sale Closed — ' + divLabel + ': ' + service + ' ($' + price.toFixed(2) + (pricingMode === 'annual' ? '/yr' : '/visit') + ')',
+    who: _spRep ? _spRep.name : '',
+  });
+  data[idx] = r;
+  crmSave(pool, data);
+
+  spCloseQuickSale();
+  // Reuses the exact same account-creation path as the full pitch flow —
+  // see spSetStage's 'accepted' branch above for what this actually does
+  // (creates the account/location, notifies the scheduler, credits any
+  // tech referral bonus).
+  spSetStage(id, tab, 'accepted', null);
+  spToast('⚡ Quick Sale closed — account created');
 }
 
 // ══════════════════════════════════════════════════════
