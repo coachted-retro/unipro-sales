@@ -363,11 +363,19 @@ export default {
     // actually needs the hourly cadence, to check each report's real
     // configured send_hour_utc against the current hour.
     ctx.waitUntil(runScheduledReports(env));
-    // Fire Safety Drip Campaign, added 2026-07-14 per Ted -- once daily
-    // is enough here, same reasoning as the digest/status-check jobs
-    // above. 13:00 UTC = 9am ET (8am during EST) -- adjust the hour
-    // below if a different local send time is wanted later.
-    if (new Date().getUTCHours() === 13) {
+    // Fire Safety Drip Campaign, added 2026-07-14 per Ted -- self-healing
+    // daily trigger. Rather than requiring an exact hour match (which
+    // would miss today's run entirely if deployed after the target
+    // hour), this fires on any hourly tick at or after 13:00 UTC (9am
+    // ET), and runFireSafetyCampaigns itself checks whether a batch
+    // already went out today before doing anything -- so it catches up
+    // same-day on a late deploy, but still only actually runs once per
+    // day once it settles into its normal rhythm. This does NOT change
+    // how often any single recipient gets emailed -- that's governed
+    // separately by each track's intervalDays inside runCampaignTrack
+    // (30 days for customers, 14 for prospects), checked per-recipient
+    // regardless of how many times this daily check itself fires.
+    if (new Date().getUTCHours() >= 13) {
       ctx.waitUntil(runFireSafetyCampaigns(env));
     }
   },
@@ -506,6 +514,22 @@ const BANNER_IMG_URL = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
 const BANNER_HTML = '<div style="text-align:center;padding:16px 16px 8px;border-bottom:3px solid #1A1D21"><img src="' + BANNER_IMG_URL + '" alt="Termac Family of Companies" style="max-width:100%;height:auto;display:inline-block"></div>';
 
 async function runFireSafetyCampaigns(env) {
+  // Same-day guard: if either track has already sent at least one email
+  // today (UTC calendar day), skip entirely. This is what keeps the new
+  // >=13 hourly check above from re-running every hour after 13:00 --
+  // it fires once, sends today's batch, and every hourly tick after
+  // that for the rest of the day sees today's row and does nothing.
+  try {
+    const todayStartUtc = new Date();
+    todayStartUtc.setUTCHours(0, 0, 0, 0);
+    const alreadyRanToday = await env.DB.prepare(
+      `SELECT 1 FROM campaign_sends WHERE sent_at >= ? LIMIT 1`
+    ).bind(todayStartUtc.getTime()).first();
+    if (alreadyRanToday) return;
+  } catch (e) {
+    // If this check itself fails, fall through and attempt the send
+    // anyway rather than silently never sending again.
+  }
   try {
     await runCampaignTrack(env, {
       campaign: 'customer_monthly',
