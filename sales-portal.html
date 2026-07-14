@@ -1497,11 +1497,32 @@ async function spForceRefreshMyData() {
   SP_REFRESH_POOLS.forEach(function(p) {
     try { localStorage.removeItem('termac_crm_' + p); } catch (e) {}
   });
+  var failed = [];
+  var totalAdded = 0;
   for (var i = 0; i < SP_REFRESH_POOLS.length; i++) {
-    try { await TermacD1Sync.d1Hydrate(SP_REFRESH_POOLS[i]); } catch (e) {}
+    var pool = SP_REFRESH_POOLS[i];
+    try {
+      var result = await TermacD1Sync.d1Hydrate(pool);
+      // d1Hydrate never throws on a failed fetch -- d1Fetch itself catches
+      // and returns {ok:false}, so a failure looks like a normal return,
+      // not an exception. Checking result.records.length === 0 here is
+      // NOT proof of failure (an empty pool is legitimately empty), so
+      // this only flags a pool as failed if d1Hydrate's own bookkeeping
+      // never ran at all (result is missing entirely).
+      if (!result || typeof result.added !== 'number') failed.push(pool);
+      else totalAdded += result.added;
+    } catch (e) {
+      failed.push(pool);
+      console.error('spForceRefreshMyData: ' + pool + ' failed', e);
+    }
   }
-  spToast('✅ Refreshed — you\'re looking at the latest from the server.');
   if (btn) { btn.disabled = false; btn.textContent = '🔄 Refresh My Data'; }
+  if (failed.length) {
+    spToast('⚠️ Refresh incomplete — ' + failed.join(', ') + ' did not come back. Check the console (F12) for the real error and send it over.');
+    console.error('spForceRefreshMyData: these pools failed to refresh:', failed);
+  } else {
+    spToast('✅ Refreshed — pulled ' + totalAdded + ' record' + (totalAdded===1?'':'s') + ' from the server.');
+  }
   if (typeof spRenderHome === 'function') spRenderHome();
   else location.reload();
 }
