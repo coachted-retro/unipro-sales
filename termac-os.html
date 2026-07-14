@@ -5157,7 +5157,10 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
           <button onclick="harvestRunLiveMD()" style="background:#F2B705;color:#1A1D21;border:none;border-radius:8px;padding:10px 6px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">🌾 MD</button>
           <button onclick="harvestRunLiveCMSFireSafety()" style="background:#DC2626;color:#fff;border:none;border-radius:8px;padding:10px 6px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">🚨 Fire</button>
           <button onclick="openGoogleMapsHarvest()" style="background:#0F9D58;color:#fff;border:none;border-radius:8px;padding:10px 6px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">🌎 Maps</button>
-          <button onclick="openBidHarvestModal()" style="background:#1B5FA8;color:#fff;border:none;border-radius:8px;padding:10px 6px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer;position:relative" title="Harvest open bids from all government and private procurement sources">📋 BIDS</button>
+          <!-- Bid harvesting removed from Manager Portal 2026-07-14 per Ted --
+               stays reachable only from the sales dashboard, so it's only
+               accessible to him. See openBidHarvestModal() / openOverlay('bids')
+               for the still-working entry points elsewhere. -->
           <button onclick="openOrdersQueue()" style="background:#059669;color:#fff;border:none;border-radius:8px;padding:10px 6px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer;position:relative" title="New orders submitted from customer visits">📦 ORDERS<span id="ordersQueueBadge" style="display:none;position:absolute;top:-6px;right:-6px;background:#C8102E;color:#fff;border-radius:10px;font-size:10px;font-weight:900;padding:1px 6px;min-width:16px;text-align:center"></span></button>
         </div>
         <div id="mgrHarvestStatus2" style="display:none;background:#FFF8E6;border-radius:8px;padding:8px 12px;font-size:12px;color:#5A4A00"></div>
@@ -6667,8 +6670,16 @@ function isCommandCenterManagerOnly(){
 }
 
 function openOverlay(key){
-  // Bid Pipeline is restricted to Ted (Bid Manager) — no other manager or rep
-  if (key === 'bids' && _currentUser?.email !== 'tscholl@termac.com') {
+  // Bid Pipeline is restricted to whoever is flagged bidManager in the
+  // user directory (currently Ted). Fixed 2026-07-14 per Ted: this used
+  // to do an exact-string match on _currentUser.email, which silently
+  // locked Ted himself out any time the active session identity didn't
+  // match that literal string byte-for-byte -- a stale saved session, a
+  // different login path, anything. bidManager is the actual flag this
+  // directory already defines for this exact purpose (see USER_DIRECTORY
+  // below), so this now checks that instead of re-deriving the same
+  // permission from a brittle string comparison.
+  if (key === 'bids' && !_currentUser?.bidManager) {
     alert('🔒 The Bid Pipeline is restricted to Ted Scholl (Bid Manager).');
     return;
   }
@@ -14688,7 +14699,7 @@ async function harvestPHLViolations() {
   if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; }
   try {
     const since = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
-    const kw = "(violationcodetitle ILIKE '%fire%' OR violationcodetitle ILIKE '%sprinkler%' OR violationcodetitle ILIKE '%suppress%' OR violationcodetitle ILIKE '%hood%' OR violationcodetitle ILIKE '%exhaust%' OR violationcodetitle ILIKE '%ventilation%' OR violationcodetitle ILIKE '%commercial cooking%' OR violationcodetitle ILIKE '%extinguish%')";
+    const kw = "(violationcodetitle ILIKE '%fire%' OR violationcodetitle ILIKE '%sprinkler%' OR violationcodetitle ILIKE '%suppress%' OR violationcodetitle ILIKE '%hood%' OR violationcodetitle ILIKE '%exhaust%' OR violationcodetitle ILIKE '%ventilation%' OR violationcodetitle ILIKE '%commercial cooking%' OR violationcodetitle ILIKE '%extinguish%' OR violationcodetitle ILIKE '%emergency light%' OR violationcodetitle ILIKE '%exit sign%' OR violationcodetitle ILIKE '%egress%' OR violationcodetitle ILIKE '%exit light%')";
     async function fetchVio(useKw) {
       const sql = "SELECT * FROM violations WHERE violationdate >= '" + since + "'" + (useKw ? (" AND " + kw) : "") + " ORDER BY violationdate DESC LIMIT " + (useKw ? "300" : "2000");
       const target = 'https://phl.carto.com/api/v2/sql?q=' + encodeURIComponent(sql);
@@ -14704,7 +14715,7 @@ async function harvestPHLViolations() {
     const byProp = {};
     rows.forEach(row => {
       const title = (row.violationcodetitle || row.violationtype || row.violationdescription || '').toString();
-      if (!/fire|sprinkler|suppress|hood|exhaust|ventilation|cooking|extinguish/i.test(title)) return;
+      if (!/fire|sprinkler|suppress|hood|exhaust|ventilation|cooking|extinguish|emergency light|exit sign|egress|exit light/i.test(title)) return;
       const addr = (row.address || row.opa_address || '').toString().trim(); if (!addr) return;
       const zip = (row.zip || (addr.match(/\b\d{5}\b/) || [])[0] || '').toString();
       const key = addr.toLowerCase() + '|' + zip;
@@ -16987,7 +16998,7 @@ function advanceOrderStatus(orderId) {
 document.addEventListener('DOMContentLoaded', function(){ setTimeout(updateOrdersQueueBadge, 1500); });
 
 function openBidHarvestModal() {
-  if (_currentUser?.email !== 'tscholl@termac.com') { alert('🔒 Bid harvesting is restricted to Ted Scholl (Bid Manager).'); return; }
+  if (!_currentUser?.bidManager) { alert('🔒 Bid harvesting is restricted to Ted Scholl (Bid Manager).'); return; }
   var modal = document.getElementById('bidHarvestModal');
   if (!modal) {
     modal = document.createElement('div');
@@ -17973,7 +17984,9 @@ function bidsRenderVault() {
 }
 
 async function bidsHarvest(){
-  if (_currentUser?.email !== 'tscholl@termac.com') { alert('🔒 Bid harvesting is restricted to Ted Scholl (Bid Manager).'); return; }
+  // Same fix as openOverlay's 'bids' gate above -- checks the real
+  // bidManager flag instead of an exact email string match.
+  if (!_currentUser?.bidManager) { alert('🔒 Bid harvesting is restricted to Ted Scholl (Bid Manager).'); return; }
   const banner = document.getElementById('bidsHarvestBanner');
   const btn    = document.getElementById('bidsCheckBtn');
 
@@ -26485,7 +26498,7 @@ let _currentUser = null;
 
 function maybeOpenPendingBids(){
   try {
-    if (sessionStorage.getItem('termac_pending_view') === 'bids' && _currentUser && _currentUser.email === 'tscholl@termac.com') {
+    if (sessionStorage.getItem('termac_pending_view') === 'bids' && _currentUser?.bidManager) {
       sessionStorage.removeItem('termac_pending_view');
       setTimeout(function(){ openOverlay('bids'); }, 400);
     }
@@ -26797,7 +26810,8 @@ document.addEventListener('DOMContentLoaded', () => {
         name: 'Ted Scholl',
         role: 'manager',
         division: 'all',
-        pin: 'Termac2025!'
+        pin: 'Termac2025!',
+        bidManager: true
       };
       _currentUser = demoUser;
       sessionStorage.setItem('termacUser', JSON.stringify(demoUser));
@@ -31375,6 +31389,7 @@ window.uvCollectData = uvCollectData;
     <h2>📑 Bid Pipeline</h2>
     <div class="ov-header-btns">
       <button class="ov-btn" id="bidsCheckBtn" onclick="bidsHarvest()">🔄 Check for New Bids</button>
+      <button class="ov-btn" onclick="openBidHarvestModal()" title="Where every bid gets pulled from, free sources to register for, and what to prioritize this week">🌾 Sources</button>
       <button class="ov-btn" onclick="bidsGoHome()">← Home</button>
       <button class="ov-btn close" onclick="bidsGoHome()">✕</button>
     </div>

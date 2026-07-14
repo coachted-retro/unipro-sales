@@ -406,6 +406,21 @@ async function apGoHome() {
         <label>Estimated Project Value</label>
         <input id="npValue" type="number" placeholder="0">
       </div>
+
+      <!-- Loose document/blueprint upload, added 2026-07-14 per Ted --
+           deliberately NOT required and NOT assumed to contain a formal
+           scope. Some uploads are a full RFP with a real scope; some are
+           just a bare floor plan with nothing written down at all (e.g.
+           "they just want extinguishers"). The AI prompt below is written
+           to handle both without forcing a scope where none exists. -->
+      <div class="form-field" style="border-top:1.5px solid var(--line);padding-top:14px;margin-top:4px">
+        <label>📎 Upload a Plan or Document (optional)</label>
+        <div style="font-size:11px;color:var(--soft);margin-bottom:8px">Blueprint, scanned print, RFP, or spec sheet. AI reads whatever scope is actually there, even if that's nothing but a floor plan.</div>
+        <input id="npUploadFile" type="file" accept="image/*,application/pdf" onchange="npHandleUpload(this)">
+        <div id="npUploadStatus" style="font-size:12px;color:var(--soft);margin-top:6px"></div>
+        <div id="npUploadResult" style="display:none;background:var(--bg);border-radius:8px;padding:12px;margin-top:10px;font-size:13px;line-height:1.5"></div>
+      </div>
+
       <button class="btn btn-gold" style="width:100%" onclick="createProject()">Create Project</button>
     </div>
   </div>
@@ -892,6 +907,68 @@ function genId(prefix) {
 function closeModal(id) { document.getElementById(id).style.display = 'none'; }
 function nowTs() { return Date.now(); }
 function escH(s) { return escSp(s); }
+
+// ── New Project document upload + AI read, added 2026-07-14 per Ted ──────
+// Deliberately loose: no assumption a formal scope exists at all. Some
+// uploads are a full RFP, some are just a bare floor plan with nothing
+// written down ("they just want extinguishers"). The prompt below is
+// written to produce something useful either way -- extracting a real
+// scope where one exists, or working out placement/coverage math (e.g.
+// NFPA 10 extinguisher spacing) from the drawing itself when there's no
+// scope to read at all. This never overwrites the form fields on its
+// own -- it shows what it found and Ted decides what to keep, since not
+// every upload maps cleanly onto project type/facility/value.
+var _npUpload = null; // { base64, mediaType, filename, isPdf, aiText }
+
+function npHandleUpload(input) {
+  var file = input.files[0];
+  if (!file) return;
+  var isPdf = (file.type === 'application/pdf');
+  var mediaType = file.type || (isPdf ? 'application/pdf' : 'image/jpeg');
+  var statusEl = document.getElementById('npUploadStatus');
+  var resultEl = document.getElementById('npUploadResult');
+  statusEl.textContent = 'Reading ' + file.name + '...';
+  resultEl.style.display = 'none';
+
+  var reader = new FileReader();
+  reader.onload = async function(e) {
+    var dataUrl = e.target.result;
+    var base64 = dataUrl.split(',')[1];
+    _npUpload = { base64: base64, mediaType: mediaType, filename: file.name, isPdf: isPdf, aiText: '' };
+
+    var prompt = 'You are reading an uploaded document for an AllPro fire suppression / kitchen hood / fabrication project intake, before any formal scope has necessarily been written.\n\n'
+      + 'This could be: a full RFP or spec with a real scope, a blueprint or floor plan with no written scope at all, or something in between. Read whatever is actually there -- do not invent a scope that is not present.\n\n'
+      + 'Provide:\n'
+      + '**What This Document Is** -- one line (e.g. "Kitchen floor plan, no written scope" or "Full suppression system RFP")\n'
+      + '**Facility / Project Type** -- only if the document actually indicates this, otherwise say "Not specified in document"\n'
+      + '**Scope Found** -- the real scope text if one exists in the document, otherwise "No formal scope in this document"\n'
+      + '**If This Is Just a Floor Plan** -- if there is no written scope but the drawing shows a layout, work out what you reasonably can from the drawing itself. For fire extinguishers specifically: estimate placement using NFPA 10 travel-distance spacing (roughly one extinguisher within every 75 feet of travel distance for ordinary/light hazard occupancies, closer together for higher-hazard kitchen areas), and give a rough count based on the visible floor area or dimensions if legible. Always note this is a field-verification estimate, not a certified code compliance layout, an actual site walk and AHJ sign-off still governs final placement.\n'
+      + '**Rough Line Items** -- anything else you can reasonably infer needs pricing (extinguishers, hood suppression, ductwork, fabrication), each flagged as "from document" or "estimated from drawing"\n\n'
+      + 'Be direct and concise. Use the bold headers above, nothing else.';
+
+    try {
+      var content = isPdf
+        ? [{ type: 'document', source: { type: 'base64', media_type: mediaType, data: base64 } }, { type: 'text', text: prompt }]
+        : [{ type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } }, { type: 'text', text: prompt }];
+
+      var res = await fetch('https://unipro-ai-proxy.termac-one.workers.dev', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 800, messages: [{ role: 'user', content: content }] })
+      });
+      var data = await res.json();
+      var text = (data.content || []).map(function(c){ return c.text || ''; }).join('') || 'No response.';
+      _npUpload.aiText = text;
+
+      resultEl.innerHTML = text.replace(/\n/g, '<br>').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+      resultEl.style.display = 'block';
+      statusEl.textContent = '✅ Read ' + file.name + ' -- attach and adjust the fields above as needed.';
+    } catch (err) {
+      statusEl.textContent = '⚠️ Could not reach AI to read this file -- it will still attach to the project as-is.';
+    }
+  };
+  reader.readAsDataURL(file);
+}
 
 /* ═══════════════════════════════════════════════════════════
    PROJECT DETAIL TOOLBAR - Calculators + Reference Library.
@@ -1693,6 +1770,11 @@ function openNewProjectModal() {
   var opps = crmLoad('opportunities');
   oppSel.innerHTML = '<option value="">— none —</option>' + opps.map(function(o){ return '<option value="'+o.id+'">'+(o.name||o.business||o.id)+'</option>'; }).join('');
   document.getElementById('newProjectModal').style.display = 'flex';
+  // Reset any leftover upload state from a previous open of this modal.
+  _npUpload = null;
+  var upStatus = document.getElementById('npUploadStatus'); if (upStatus) upStatus.textContent = '';
+  var upResult = document.getElementById('npUploadResult'); if (upResult) { upResult.style.display = 'none'; upResult.innerHTML = ''; }
+  var upFile = document.getElementById('npUploadFile'); if (upFile) upFile.value = '';
 }
 
 function createProject() {
@@ -1723,12 +1805,61 @@ function createProject() {
     created_at: now,
     updated_at: now
   };
+  // Attach the uploaded plan/document, if any, added 2026-07-14 per Ted --
+  // stores the real file via the same R2 upload path AllPro scans already
+  // use, logs it in the drawing register (the existing field for exactly
+  // this), and seeds scope_summary from whatever the AI actually found,
+  // including a bare-extinguisher-count read off a floor plan with no
+  // written scope at all. Never blocks project creation if the upload
+  // fails -- the project still gets created either way.
+  var pendingUpload = _npUpload;
   var all = loadProjects();
   all.push(p);
   saveProjects(all);
   closeModal('newProjectModal');
   renderAll();
   openDetail(p.id);
+
+  if (pendingUpload) {
+    (async function () {
+      try {
+        var uploadRes = await fetch('https://termac-photo-upload.termac-one.workers.dev/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            accountId: p.id,
+            key: p.id + '_intake_' + Date.now(),
+            base64: pendingUpload.base64,
+            contentType: pendingUpload.mediaType
+          })
+        });
+        var uploadData = await uploadRes.json();
+        var fileUrl = (uploadData && uploadData.ok) ? uploadData.url : '';
+
+        var current = getProject(p.id);
+        if (!current) return;
+        var drawings = current.drawing_register_json ? JSON.parse(current.drawing_register_json) : [];
+        drawings.push({
+          drawing_number: '',
+          title: pendingUpload.filename || 'Intake upload',
+          revision: '',
+          drawing_date: new Date().toISOString().slice(0, 10),
+          status: 'draft',
+          file_link: fileUrl
+        });
+        current.drawing_register_json = JSON.stringify(drawings);
+        if (pendingUpload.aiText) {
+          current.scope_summary = pendingUpload.aiText.replace(/\*\*/g, '').slice(0, 4000);
+        }
+        current.updated_at = Date.now();
+        var arr = loadProjects();
+        var idx = arr.findIndex(function (x) { return x.id === p.id; });
+        if (idx >= 0) { arr[idx] = current; saveProjects(arr); }
+        if (currentProjectId === p.id) { renderDrawingRegister(current); if (typeof renderDetail === 'function') renderDetail(current); }
+      } catch (e) { /* project already exists either way -- upload attach is best-effort */ }
+    })();
+  }
+  _npUpload = null;
 }
 
 // ── KANBAN + KPI ──
