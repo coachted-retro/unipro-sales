@@ -1463,6 +1463,36 @@ function spResetAgendaConfirm() {
   if (typeof spRenderHome === 'function') spRenderHome();
   else location.reload();
 }
+
+// ── "Refresh My Data" — the real fix for a gap that's bitten Ted twice now:
+// d1Hydrate/d1HydrateAll only ADD records this device doesn't already have
+// locally cached; they never overwrite a record this device already knows
+// about, even if it's since changed on the server (another rep logged a
+// call, a manager updated something directly in D1, etc). A normal page
+// reload — even a hard refresh — does NOT clear localStorage, so it does
+// nothing for this. Previously the only fix was manually clearing
+// localStorage in devtools. This clears just the pools this portal
+// actually uses, then re-hydrates each one from scratch so every record
+// comes back fresh from the server, not a stale local copy.
+var SP_REFRESH_POOLS = ['leads','contacts','accounts','appointments',
+  'allpro_projects','allpro_spiffs','collections','customer_orders','reorder_requests','scheduler_queue'];
+async function spForceRefreshMyData() {
+  if (!confirm('Pull your latest calls, visits, and account updates fresh from the server? This can take a few seconds, especially the first time today.')) return;
+  var btn = document.getElementById('spRefreshDataBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '🔄 Refreshing…'; }
+  spToast('🔄 Refreshing your data from the server…');
+  SP_REFRESH_POOLS.forEach(function(p) {
+    try { localStorage.removeItem('termac_crm_' + p); } catch (e) {}
+  });
+  for (var i = 0; i < SP_REFRESH_POOLS.length; i++) {
+    try { await TermacD1Sync.d1Hydrate(SP_REFRESH_POOLS[i]); } catch (e) {}
+  }
+  spToast('✅ Refreshed — you\'re looking at the latest from the server.');
+  if (btn) { btn.disabled = false; btn.textContent = '🔄 Refresh My Data'; }
+  if (typeof spRenderHome === 'function') spRenderHome();
+  else location.reload();
+}
+
 function spMarkStopDone(stopId) {
   var stops = spLoadPersistedStops();
   stops = stops.map(function(s){ if (s.id === stopId) s.done = true; return s; });
@@ -2969,6 +2999,7 @@ function spPlanMyDay() {
       + '<button onclick="spOpenCalendarModal()" style="background:rgba(255,255,255,.15);color:#fff;border:1.5px solid rgba(255,255,255,.3);border-radius:7px;padding:8px 16px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;white-space:nowrap">📅 My Calendar</button>'
       + '<button onclick="spOpenWeekPlanModal()" style="background:rgba(255,255,255,.15);color:#fff;border:1.5px solid rgba(255,255,255,.3);border-radius:7px;padding:8px 16px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;white-space:nowrap">📆 Plan My Week</button>'
       + '<button onclick="spResetAgendaConfirm()" title="Clear old stops and start this week with a clean slate" style="background:none;color:rgba(255,255,255,.65);border:1.5px solid rgba(255,255,255,.3);border-radius:7px;padding:8px 12px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;white-space:nowrap">🧹 Start Fresh</button>'
+      + '<button id="spRefreshDataBtn" onclick="spForceRefreshMyData()" title="Pull the latest calls, visits, and account updates from the server, even if this device already has an older cached copy" style="background:none;color:rgba(255,255,255,.65);border:1.5px solid rgba(255,255,255,.3);border-radius:7px;padding:8px 12px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;white-space:nowrap">🔄 Refresh My Data</button>'
       + '<button onclick="spOpenRouteMap()" style="background:rgba(255,255,255,.15);color:#fff;border:1.5px solid rgba(255,255,255,.3);border-radius:7px;padding:8px 16px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">Route Map →</button>'
     + '</div>'
   + '</div>';
