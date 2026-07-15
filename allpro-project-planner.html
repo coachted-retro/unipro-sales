@@ -360,7 +360,18 @@ async function apGoHome() {
     <div class="modal-body">
       <div class="form-field">
         <label>Account</label>
-        <select id="npAccountId"></select>
+        <div id="npAccountPickerWrap" style="position:relative">
+          <input id="npAccountSearch" type="text" placeholder="Search by business name, address, or phone..."
+            autocomplete="off" oninput="npFilterAccounts(this.value)" onfocus="npFilterAccounts(this.value)">
+          <div id="npAccountResults" style="display:none;position:absolute;top:100%;left:0;right:0;background:#fff;
+            border:1.5px solid var(--line);border-radius:8px;max-height:240px;overflow-y:auto;z-index:50;
+            box-shadow:0 8px 24px rgba(0,0,0,.14);margin-top:2px"></div>
+          <input type="hidden" id="npAccountId">
+          <div id="npAccountChosen" style="display:none;margin-top:8px;background:var(--bg);border-radius:8px;
+            padding:9px 12px;font-size:13px;align-items:center;justify-content:space-between"></div>
+          <div id="npAccountSyncStatus" style="font-size:11px;color:var(--soft);margin-top:5px"></div>
+          <a href="javascript:void(0)" onclick="npManualRefreshAccounts()" style="font-size:11px;color:var(--soft);text-decoration:underline">🔄 Refresh accounts</a>
+        </div>
       </div>
       <div class="form-field">
         <label>Opportunity (optional)</label>
@@ -899,6 +910,146 @@ function saveProjects(arr) {
 }
 function loadCostLines() { return crmLoad('allpro_cost_lines'); }
 function saveCostLines(arr) { crmSave('allpro_cost_lines', arr); }
+
+// ── ACCOUNT PICKER — search-as-you-type by name, address, or phone ─────────
+// Replaces the old plain <select> that listed all 6,000+ accounts with no
+// search, and that also came up completely empty whenever the one-shot
+// hydrate on page load hadn't finished (or failed) before the modal was
+// opened. Added 2026-07-15 per Ted: this was the actual thing blocking
+// him from reaching the upload field below it, which already existed.
+var _npAllAccounts = [];
+var _npAccountsLoadedAt = 0;
+
+function npRefreshAccountCache() {
+  _npAllAccounts = crmLoad('accounts') || [];
+  _npAccountsLoadedAt = Date.now();
+  var statusEl = document.getElementById('npAccountSyncStatus');
+  if (statusEl) {
+    statusEl.textContent = _npAllAccounts.length > 0
+      ? _npAllAccounts.length.toLocaleString() + ' accounts loaded'
+      : '⏳ Syncing accounts from the server — this can take a few seconds on a slow connection.';
+  }
+}
+
+function npFilterAccounts(query) {
+  var resultsEl = document.getElementById('npAccountResults');
+  if (!resultsEl) return;
+  var q = (query || '').trim().toLowerCase();
+
+  var matches = [];
+  if (q.length > 0) {
+    matches = _npAllAccounts.filter(function (a) {
+      var name = (a.business || a.name || '').toLowerCase();
+      var addr = (a.address || '').toLowerCase();
+      var phone = (a.phone || '').replace(/\D/g, '');
+      var qDigits = q.replace(/\D/g, '');
+      return name.indexOf(q) > -1
+        || addr.indexOf(q) > -1
+        || (qDigits.length >= 3 && phone.indexOf(qDigits) > -1);
+    }).slice(0, 20);
+  }
+
+  var rowsHtml = matches.map(function (a) {
+    var label = a.business || a.name || a.address || 'Unnamed account';
+    var sub = [a.address, a.phone].filter(Boolean).join(' · ');
+    return '<div onclick="npSelectAccount(\'' + a.id + '\')" '
+      + 'style="padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--bg)" '
+      + 'onmouseover="this.style.background=\'var(--bg)\'" onmouseout="this.style.background=\'transparent\'">'
+      + '<div style="font-weight:700;font-size:13px">' + escH(label) + '</div>'
+      + (sub ? '<div style="font-size:11px;color:var(--soft)">' + escH(sub) + '</div>' : '')
+      + '</div>';
+  }).join('');
+
+  var createRow = '<div onclick="npStartInlineCreate(\'' + escH(query || '').replace(/'/g, "\\'") + '\')" '
+    + 'style="padding:9px 12px;cursor:pointer;color:var(--gold-dark,#8A6D00);font-weight:700;font-size:12.5px;'
+    + 'border-top:' + (matches.length ? '1.5px solid var(--line)' : 'none') + '">'
+    + '➕ Create new account' + (query ? ' for "' + escH(query) + '"' : '') + '</div>';
+
+  if (q.length === 0 && _npAllAccounts.length === 0) {
+    resultsEl.innerHTML = '<div style="padding:12px;font-size:12px;color:var(--soft)">Still syncing accounts — try typing in a few seconds, or tap Refresh below.</div>';
+  } else if (q.length === 0) {
+    resultsEl.innerHTML = '<div style="padding:10px 12px;font-size:11.5px;color:var(--soft)">Type a business name, address, or phone number to search ' + _npAllAccounts.length.toLocaleString() + ' accounts...</div>';
+  } else {
+    resultsEl.innerHTML = rowsHtml + createRow;
+  }
+  resultsEl.style.display = 'block';
+}
+
+function npSelectAccount(id) {
+  var acct = _npAllAccounts.find(function (a) { return a.id === id; });
+  if (!acct) return;
+  document.getElementById('npAccountId').value = id;
+  document.getElementById('npAccountSearch').style.display = 'none';
+  document.getElementById('npAccountResults').style.display = 'none';
+  var chosen = document.getElementById('npAccountChosen');
+  var label = acct.business || acct.name || acct.address || 'Unnamed account';
+  var sub = [acct.address, acct.phone].filter(Boolean).join(' · ');
+  chosen.style.display = 'flex';
+  chosen.innerHTML = '<div><div style="font-weight:700">' + escH(label) + '</div>'
+    + (sub ? '<div style="font-size:11px;color:var(--soft)">' + escH(sub) + '</div>' : '') + '</div>'
+    + '<button type="button" onclick="npChangeAccount()" style="background:none;border:1px solid var(--line);'
+    + 'border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer;font-weight:700">Change</button>';
+}
+
+function npChangeAccount() {
+  document.getElementById('npAccountId').value = '';
+  document.getElementById('npAccountChosen').style.display = 'none';
+  var searchEl = document.getElementById('npAccountSearch');
+  searchEl.style.display = 'block';
+  searchEl.value = '';
+  searchEl.focus();
+}
+
+// A prospect often doesn't have a proper account yet — sometimes all Ted
+// has at the door is an address. This creates a minimal real account
+// record right from the picker (synced to D1 like any other account) so
+// the project can be linked immediately instead of being blocked.
+function npStartInlineCreate(prefill) {
+  var name = prompt('Business name (leave blank if you only have an address):', /\D/.test(prefill) && !/^\d/.test(prefill.trim()) ? prefill : '');
+  if (name === null) return; // cancelled
+  var address = prompt('Address:', /^\d/.test((prefill || '').trim()) ? prefill : '');
+  if (address === null) return;
+  var phone = prompt('Phone (optional):', '');
+  if (!name && !address) { alert('Enter at least a business name or an address.'); return; }
+
+  var newAcct = {
+    id: genId('ACC'),
+    business: name || null,
+    name: name || address,
+    address: address || null,
+    phone: phone || null,
+    source: 'AllPro Project Planner — quick add',
+    created: Date.now(),
+    status: 'active'
+  };
+  var all = crmLoad('accounts') || [];
+  all.push(newAcct);
+  crmSave('accounts', all);
+  _npAllAccounts = all;
+  npSelectAccount(newAcct.id);
+}
+
+// Click-away closes the results dropdown without selecting anything.
+document.addEventListener('click', function (e) {
+  var wrap = document.getElementById('npAccountPickerWrap');
+  if (wrap && !wrap.contains(e.target)) {
+    var r = document.getElementById('npAccountResults');
+    if (r) r.style.display = 'none';
+  }
+});
+
+function npManualRefreshAccounts() {
+  var statusEl = document.getElementById('npAccountSyncStatus');
+  if (statusEl) statusEl.textContent = '⏳ Refreshing…';
+  if (typeof TermacD1Sync !== 'undefined' && typeof TermacD1Sync.d1Hydrate === 'function') {
+    TermacD1Sync.d1Hydrate('accounts').then(function () {
+      npRefreshAccountCache();
+      npFilterAccounts(document.getElementById('npAccountSearch').value);
+    });
+  } else {
+    npRefreshAccountCache();
+  }
+}
 
 function genId(prefix) {
   return prefix + '-' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).substring(2,6).toUpperCase();
@@ -1763,9 +1914,12 @@ function markRepSpiffsPaid(rep) {
 
 // ── NEW PROJECT ──
 function openNewProjectModal() {
-  var accSel = document.getElementById('npAccountId');
-  var accounts = crmLoad('accounts');
-  accSel.innerHTML = accounts.map(function(a){ return '<option value="'+a.id+'">'+(a.business||a.name||'Account')+'</option>'; }).join('');
+  npRefreshAccountCache();
+  document.getElementById('npAccountId').value = '';
+  document.getElementById('npAccountSearch').value = '';
+  document.getElementById('npAccountSearch').style.display = 'block';
+  document.getElementById('npAccountChosen').style.display = 'none';
+  document.getElementById('npAccountResults').style.display = 'none';
   var oppSel = document.getElementById('npOpportunityId');
   var opps = crmLoad('opportunities');
   oppSel.innerHTML = '<option value="">— none —</option>' + opps.map(function(o){ return '<option value="'+o.id+'">'+(o.name||o.business||o.id)+'</option>'; }).join('');
@@ -2851,6 +3005,23 @@ document.addEventListener('DOMContentLoaded', function() {
   }
   renderAll();
   if (location.hash === '#combined') apNav('combined');
+
+  // 2026-07-15 per Ted: the New Project account picker was coming up
+  // permanently blank whenever the one-shot hydrate above hadn't finished
+  // (or failed) before the modal was opened, with zero feedback and no
+  // retry. This starts a real periodic sweep like sales-portal.html does,
+  // so accounts keep trying to arrive in the background all session long
+  // -- and if the New Project modal happens to be open when a sweep
+  // lands new accounts, the picker's cache and any in-progress search
+  // refresh automatically instead of requiring a reopen.
+  if (typeof TermacD1Sync !== 'undefined' && typeof TermacD1Sync.startCrmSyncSweep === 'function') {
+    TermacD1Sync.startCrmSyncSweep(30000, function (table) {
+      if (table === 'accounts' && document.getElementById('newProjectModal').style.display === 'flex') {
+        npRefreshAccountCache();
+        npFilterAccounts(document.getElementById('npAccountSearch').value);
+      }
+    });
+  }
 });
 </script>
 <!-- TERMAC INTERNAL MESSAGING (shared: termac-chat.js) -->
