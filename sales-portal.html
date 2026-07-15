@@ -326,6 +326,15 @@ body.rail-open .rail-overlay{display:block}
 .sp-tab{background:none;border:none;border-bottom:3px solid transparent;color:#9CA3AF;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.10em;text-transform:uppercase;padding:0 14px;height:48px;cursor:pointer;white-space:nowrap;transition:all .1s}
 .sp-tab:hover{color:#fff}
 .sp-tab.active{color:#fff;border-bottom-color:var(--red)}
+.sp-nav-dropdown{position:relative}
+.sp-nav-dropdown-btn::after{content:'▾';margin-left:5px;font-size:9px}
+.sp-nav-dropdown:has(.sp-tab.active) .sp-nav-dropdown-btn{color:#fff;border-bottom-color:var(--red)}
+.sp-nav-dropdown-menu{display:none;flex-direction:column;position:absolute;top:100%;left:0;background:#22262B;border:1px solid #3A3E43;border-top:none;border-radius:0 0 8px 8px;min-width:190px;z-index:400;padding:4px 0;box-shadow:0 12px 28px rgba(0,0,0,.45)}
+.sp-nav-dropdown-menu.open{display:flex}
+.sp-nav-dropdown-menu .sp-tab{display:block;width:100%;text-align:left;height:auto;padding:11px 16px;border-bottom:none;border-left:3px solid transparent}
+.sp-nav-dropdown-menu .sp-tab.active{border-left-color:var(--red);border-bottom:none;background:rgba(255,255,255,.05)}
+.sp-nav-dropdown-menu a{display:block;padding:11px 16px;color:#9CA3AF;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.10em;text-transform:uppercase;text-decoration:none;white-space:nowrap}
+.sp-nav-dropdown-menu a:hover{color:#fff;background:rgba(255,255,255,.05)}
 .sp-unisearch-wrap{flex:1;display:flex;align-items:center;gap:8px;background:#2A2E33;border-radius:8px;padding:0 12px;height:32px;min-width:200px;max-width:400px}
 .sp-unisearch{background:none;border:none;color:#fff;font-size:12px;flex:1;outline:none}
 .sp-unisearch::placeholder{color:#6B7280}
@@ -529,13 +538,39 @@ body.rail-open .rail-overlay{display:block}
   <div class="sp-tabnav">
     <div class="sp-tabnav-inner">
       <div class="sp-tabnav-tabs">
-        <button class="sp-tab active" id="spTab-home"         onclick="spNav('home')">🏠 Home</button>
-        <button class="sp-tab" id="spTab-leads"        onclick="spNav('leads')">🎯 Leads</button>
-        <button class="sp-tab"        id="spTab-contacts"     onclick="spNav('contacts')">👤 Contacts</button>
-        <button class="sp-tab"        id="spTab-opportunities" onclick="spNav('opportunities')">💼 Opportunities</button>
-        <button class="sp-tab"        id="spTab-accounts"     onclick="spNav('accounts')">🏢 Accounts</button>
-        <button class="sp-tab"        id="spTab-schedule"     onclick="spNav('schedule')">📅 My Schedule</button>
-        <button class="sp-tab"        id="spTab-goals"        onclick="spNav('goals')">🎯 My Goals</button>
+        <button class="sp-tab active" id="spTab-home"         onclick="spNav('home');spCloseNavDropdowns()">🏠 Home</button>
+
+        <div class="sp-nav-dropdown">
+          <button class="sp-tab sp-nav-dropdown-btn" onclick="spToggleNavDropdown('records')">📋 Records</button>
+          <div class="sp-nav-dropdown-menu" id="spNavDropdown-records">
+            <button class="sp-tab" id="spTab-leads"        onclick="spNav('leads');spCloseNavDropdowns()">🎯 Leads</button>
+            <button class="sp-tab" id="spTab-contacts"     onclick="spNav('contacts');spCloseNavDropdowns()">👤 Contacts</button>
+            <button class="sp-tab" id="spTab-opportunities" onclick="spNav('opportunities');spCloseNavDropdowns()">💼 Opportunities</button>
+            <button class="sp-tab" id="spTab-accounts"     onclick="spNav('accounts');spCloseNavDropdowns()">🏢 Accounts</button>
+          </div>
+        </div>
+
+        <!-- 2026-07-15 per Ted: "Quick Sale" isn't in this dropdown --
+             it's a per-record action (spOpenQuickSale needs a specific
+             opportunity id), not a standalone page, so there's no single
+             destination it could link to from here. Left out rather than
+             guessing at a landing page for it. -->
+        <div class="sp-nav-dropdown">
+          <button class="sp-tab sp-nav-dropdown-btn" onclick="spToggleNavDropdown('tools')">🧰 Tools</button>
+          <div class="sp-nav-dropdown-menu" id="spNavDropdown-tools">
+            <a href="unipro-quick-survey.html">🔍 Quick Survey</a>
+            <a href="termac-pitch-tool.html">🎯 Start Pitch</a>
+          </div>
+        </div>
+
+        <div class="sp-nav-dropdown">
+          <button class="sp-tab sp-nav-dropdown-btn" onclick="spToggleNavDropdown('mystuff')">📅 My Stuff</button>
+          <div class="sp-nav-dropdown-menu" id="spNavDropdown-mystuff">
+            <button class="sp-tab" id="spTab-schedule"     onclick="spNav('schedule');spCloseNavDropdowns()">📅 My Schedule</button>
+            <button class="sp-tab" id="spTab-goals"        onclick="spNav('goals');spCloseNavDropdowns()">🎯 My Goals</button>
+          </div>
+        </div>
+
         <button class="sp-tab" onclick="spOpenEmbed('allpro-project-planner.html','AllPro Dashboard')" style="color:var(--purple);border-color:var(--purple)">🟣 AllPro Dashboard</button>
       </div>
       <!-- AI Camera — made prominent (solid color, bigger tap target) since
@@ -944,6 +979,23 @@ const SP_TITLES = {
   accounts:'Accounts', goals:'Goals & Stats', weekly:'Weekly Report',
   queue:'My Queue', employee:'Employee Portal', schedule:'My Schedule'
 };
+
+// 2026-07-15 per Ted: Records/Tools/My Stuff nav dropdowns, added so the
+// rest of the tab bar (Catalog, Force Refresh, Start Pitch, Quick Survey,
+// search, sign out) doesn't get cut off on a tablet held landscape.
+function spToggleNavDropdown(name) {
+  var menu = document.getElementById('spNavDropdown-' + name);
+  if (!menu) return;
+  var wasOpen = menu.classList.contains('open');
+  spCloseNavDropdowns();
+  if (!wasOpen) menu.classList.add('open');
+}
+function spCloseNavDropdowns() {
+  document.querySelectorAll('.sp-nav-dropdown-menu.open').forEach(function(m){ m.classList.remove('open'); });
+}
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('.sp-nav-dropdown')) spCloseNavDropdowns();
+});
 
 function spNav(tab) {
   _spTab = tab;
