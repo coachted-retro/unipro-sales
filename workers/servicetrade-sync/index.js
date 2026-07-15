@@ -69,11 +69,14 @@ const ST_API_BASE = 'https://app.servicetrade.com/api';
 // come back down to ~12.
 const LOCATIONS_PER_BATCH = 300;
 
-// How many batches the nightly cron chains together in one scheduled
-// run. Each batch is a fully separate, bounded unit of work, so this is
-// safe regardless of plan -- it just means the cron makes 3x the
-// progress of a single manual /sync call each night.
-const CRON_BATCHES_PER_RUN = 3;
+// 2026-07-15, bumped after confirming several live batches ran clean
+// (zero errors, ~10 locations per ServiceTrade page regardless of how
+// high LOCATIONS_PER_BATCH is set -- the real page size is controlled
+// by ServiceTrade's own API, not by us). At ~10 locations/call, 100
+// chained batches per night covers roughly 1,000 locations, working
+// through the full ~6,000-location list in well under a week
+// automatically, with no manual /sync clicking required.
+const CRON_BATCHES_PER_RUN = 100;
 
 const SERVICE_LINE_MAP = {
   'Emergency/Exit Light Group': 'unipro',
