@@ -453,11 +453,40 @@ export default {
     // a second time. Remove this route once the /job parsing is fixed.
     if (url.pathname === '/debug-job') {
       const locationId = url.searchParams.get('locationId');
-      if (!locationId) return Response.json({ ok: false, error: 'pass ?locationId=<a real ServiceTrade location id>' }, { status: 400 });
+      const companyId = url.searchParams.get('companyId');
+      if (!locationId) return Response.json({ ok: false, error: 'pass ?locationId=<a real ServiceTrade location id>, optionally &companyId=<company id too>' }, { status: 400 });
       try {
         const authToken = await getServiceTradeAccessToken(env);
-        const raw = await stGet(env, authToken, '/job', { locationId, page: 1 });
-        return Response.json({ ok: true, raw });
+        // 2026-07-15: testing several hypotheses in one call instead of
+        // one slow guess-and-redeploy cycle per idea. Ted confirmed via
+        // the real ServiceTrade UI that this exact location has 4 real
+        // jobs, but a plain locationId query came back completely empty
+        // -- correctly shaped, zero rows. Trying: the same query as
+        // before (control), the location's companyId instead, an
+        // explicit status=all in case a default filter is hiding
+        // history, and locationId as a repeated/array-style param in
+        // case the API expects that shape for a single filter value.
+        const attempts = {};
+        try { attempts.plain_locationId = await stGet(env, authToken, '/job', { locationId, page: 1 }); }
+        catch (e) { attempts.plain_locationId = { error: e.message }; }
+
+        try { attempts.locationId_status_all = await stGet(env, authToken, '/job', { locationId, status: 'all', page: 1 }); }
+        catch (e) { attempts.locationId_status_all = { error: e.message }; }
+
+        if (companyId) {
+          try { attempts.companyId = await stGet(env, authToken, '/job', { companyId, page: 1 }); }
+          catch (e) { attempts.companyId = { error: e.message }; }
+        }
+
+        try {
+          const u = new URL(ST_API_BASE + '/job');
+          u.searchParams.append('locationId[]', locationId);
+          u.searchParams.set('page', '1');
+          const res = await fetch(u.toString(), { headers: { Authorization: `Bearer ${authToken}` } });
+          attempts.locationId_array_syntax = res.ok ? await res.json() : { httpStatus: res.status };
+        } catch (e) { attempts.locationId_array_syntax = { error: e.message }; }
+
+        return Response.json({ ok: true, attempts });
       } catch (e) {
         return Response.json({ ok: false, error: e.message }, { status: 500 });
       }
