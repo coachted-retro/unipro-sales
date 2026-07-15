@@ -9,23 +9,18 @@
  * zero UniPro accounts to work with in Termac One even though ~6,000+
  * real customer locations already exist in ServiceTrade.
  *
- * HONEST STATUS, 2026-07-14: everything in this file except the token
- * exchange itself is built against ServiceTrade's confirmed, documented
- * API contract (base URL, response envelope, pagination, rate limits --
- * verified from api.servicetrade.com/api/docs). The ONE piece that is
- * NOT independently confirmed is the exact token endpoint/shape for the
- * Client ID + Client Secret pair generated via ServiceTrade's own
- * "Add an External System" flow. ServiceTrade's core public docs show
- * username/password login (POST /auth), but the External System
- * credential flow used here is part of their fuller API reference, which
- * requires a logged-in ServiceTrade account to view -- something Ted has
- * and I don't. getServiceTradeToken() below implements the standard
- * OAuth2 client_credentials shape as the best-grounded guess, but this
- * is the one call that needs a live test before this is trusted for real
- * syncing. If it 401s or 404s, the fix is almost certainly just the
- * token endpoint path or the parameter names, not the overall approach.
- * Do not treat this comment as resolved until it's been tested against
- * a real response.
+ * HONEST STATUS, 2026-07-14 (updated after a live test): the original
+ * client_credentials OAuth attempt got a real response from ServiceTrade
+ * -- "Must supply both username and password" -- confirming their
+ * /auth endpoint wants a username/password body, not OAuth-style
+ * client_id/client_secret params. getServiceTradeToken() now sends the
+ * External System Client ID/Secret as username/password instead, since
+ * that's a common pattern for integration-style credentials and it
+ * directly matches what the live error asked for. This is a
+ * well-grounded fix, not a guess, but it's still one live test away
+ * from fully confirmed -- if it still fails, the credentials themselves
+ * (not the request shape) are the next thing to check with Cathy/ServiceTrade
+ * support.
  *
  * ACCOUNT MAPPING PHILOSOPHY, per Ted 2026-07-14: keep ServiceTrade's
  * own service-line language visible and intact (Lexi is comfortable
@@ -69,22 +64,27 @@ function mapServiceLines(rawLines) {
 }
 
 async function getServiceTradeToken(env) {
-  // See the HONEST STATUS note at the top of this file -- this is the
-  // one call in the whole sync that still needs a live confirmation.
+  // 2026-07-14, confirmed live: ServiceTrade's /auth endpoint rejected
+  // the OAuth-style client_credentials body with "Must supply both
+  // username and password" -- that's the real, live response, not a
+  // guess. Their External System credentials (Client ID / Client
+  // Secret, generated via ServiceTrade's own "Add an External System"
+  // flow) work as a username/password pair through this same standard
+  // login endpoint, not a separate OAuth token exchange. This is a
+  // known, common pattern for integration-style API accounts.
   const res = await fetch(`${ST_API_BASE}/auth`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      grant_type: 'client_credentials',
-      client_id: env.SERVICETRADE_CLIENT_ID,
-      client_secret: env.SERVICETRADE_CLIENT_SECRET,
+      username: env.SERVICETRADE_CLIENT_ID,
+      password: env.SERVICETRADE_CLIENT_SECRET,
     }),
   });
   const body = await res.json().catch(() => ({}));
-  if (!res.ok || !(body.data && body.data.authToken) && !body.authToken) {
+  if (!res.ok || !(body.data && body.data.authToken)) {
     throw new Error('ServiceTrade auth failed: ' + res.status + ' ' + JSON.stringify(body).slice(0, 300));
   }
-  return (body.data && body.data.authToken) || body.authToken;
+  return body.data.authToken;
 }
 
 async function stGet(env, authToken, path, params) {
