@@ -442,6 +442,26 @@ export default {
       ).all();
       return Response.json({ ok: true, count: (rows.results || []).length, recent: rows.results || [] });
     }
+    // 2026-07-15 TEMPORARY diagnostic, per Ted: last_service/next_due are
+    // showing null on every single synced account, which isn't plausible
+    // for real active accounts. Same root-cause class as the address bug
+    // -- the /job field names assumed from docs (status/completedOn/
+    // scheduledDate) may not match ServiceTrade's real response, same as
+    // address turned out to be a nested object instead of a flat string.
+    // Returns the RAW, unmodified /job response for one real location so
+    // the actual field names can be seen directly instead of guessed at
+    // a second time. Remove this route once the /job parsing is fixed.
+    if (url.pathname === '/debug-job') {
+      const locationId = url.searchParams.get('locationId');
+      if (!locationId) return Response.json({ ok: false, error: 'pass ?locationId=<a real ServiceTrade location id>' }, { status: 400 });
+      try {
+        const authToken = await getServiceTradeAccessToken(env);
+        const raw = await stGet(env, authToken, '/job', { locationId, page: 1 });
+        return Response.json({ ok: true, raw });
+      } catch (e) {
+        return Response.json({ ok: false, error: e.message }, { status: 500 });
+      }
+    }
     return Response.json({ ok: true, message: 'servicetrade-sync -- POST /sync to run one batch, GET /sync-status to see progress, GET /health to check credentials, POST /webhook to receive ServiceTrade events, GET /webhook-peek to view captured ones' });
   },
 
