@@ -2026,6 +2026,33 @@ async function d1Fetch(method, path, body) {
   } catch(e) { return { ok: false, error: e.message }; }
 }
 
+// 2026-07-15 per Ted's duplicate-lead audit: every harvester below builds
+// its dedupe set from crmLoad('leads') alone -- this browser's local
+// cache. Run the same harvester again later, from a different device or
+// even this one before a full hydrate finishes, and a business already
+// harvested doesn't show up as "existing" locally, so it gets re-inserted
+// as a brand-new lead under a new id. That's exactly what happened with
+// the Merwick Care/Passavant/ExcelCare-style pairs Ted found, about two
+// weeks apart. This pulls a fresh business+zip key set straight from D1
+// (read-only, doesn't touch local storage) so the dedupe check reflects
+// what's REALLY out there, not just what this browser happens to have
+// cached. Callers merge the result into their existing local-cache Set.
+async function harvestFetchD1ExistingKeys() {
+  const keys = new Set();
+  try {
+    for (let page = 0; page < 20; page++) {
+      const res = await d1Fetch('GET', '/api/leads?limit=500&offset=' + (page * 500));
+      if (!res.ok || !Array.isArray(res.results) || !res.results.length) break;
+      res.results.forEach(r => {
+        const biz = (r.business || r.contact_name || '').toLowerCase();
+        if (biz) keys.add(biz + '|' + (r.zip || ''));
+      });
+      if (res.results.length < 500) break;
+    }
+  } catch (e) { /* network hiccup -- caller still has local-only dedupe as a fallback */ }
+  return keys;
+}
+
 function d1NormalizeRecord(table, record) {
   var r = {};
   // Only copy columns that match D1 schema (lowercase, underscores only)
@@ -14446,6 +14473,7 @@ async function harvestRunLive(){
 
     const existing = crmLoad('leads');
     const existingKeys = new Set(existing.map(l => (l.business||'').toLowerCase() + '|' + (l.zip||'')));
+    (await harvestFetchD1ExistingKeys()).forEach(k => existingKeys.add(k));
 
     let added = 0;
     const newLeads = [];
@@ -14553,6 +14581,7 @@ async function harvestPAPermits() {
 
     const existing = crmLoad('leads');
     const existingKeys = new Set(existing.map(l => (l.business || '').toLowerCase() + '|' + (l.zip || '')));
+    (await harvestFetchD1ExistingKeys()).forEach(k => existingKeys.add(k));
     const now = Date.now();
     const newLeads = [];
     let added = 0;
@@ -14726,6 +14755,7 @@ async function harvestPHLViolations() {
     if (!props.length) { harvestAppendStatus(' Philadelphia L&I code violations: 0 fire/hood/cooking violations in the last 90 days.'); logHarvestRun(0, 0, 'phl-violations success-empty'); return; }
     const existing = crmLoad('leads');
     const existingKeys = new Set(existing.map(l => (l.business || '').toLowerCase() + '|' + (l.zip || '')));
+    (await harvestFetchD1ExistingKeys()).forEach(k => existingKeys.add(k));
     const now = Date.now(); const newLeads = []; let added = 0;
     props.forEach((p, i) => {
       const svc = vioServicesPHL(p.titles.join(' '));
@@ -14803,6 +14833,7 @@ async function harvestDEViolations() {
     if (!ests.length) { harvestAppendStatus(' Delaware food-inspection violations: 0 records in the last 120 days.'); logHarvestRun(0, 0, 'de-violations success-empty'); return; }
     const existing = crmLoad('leads');
     const existingKeys = new Set(existing.map(l => (l.business || '').toLowerCase() + '|' + (l.zip || '')));
+    (await harvestFetchD1ExistingKeys()).forEach(k => existingKeys.add(k));
     const now = Date.now(); const newLeads = []; let added = 0;
     ests.forEach((e, i) => {
       const key = e.name.toLowerCase() + '|' + e.zip;
@@ -14911,6 +14942,7 @@ async function harvestRunLiveDE(){
 
     const existing = crmLoad('leads');
     const existingKeys = new Set(existing.map(l => (l.business||'').toLowerCase() + '|' + (l.zip||'')));
+    (await harvestFetchD1ExistingKeys()).forEach(k => existingKeys.add(k));
 
     let added = 0;
     const newLeads = [];
@@ -15015,6 +15047,7 @@ async function harvestRunLiveDC(){
 
     const existing = crmLoad('leads');
     const existingKeys = new Set(existing.map(l => (l.business||'').toLowerCase() + '|' + (l.zip||'')));
+    (await harvestFetchD1ExistingKeys()).forEach(k => existingKeys.add(k));
 
     let added = 0;
     const newLeads = [];
@@ -15198,6 +15231,7 @@ async function harvestRunLiveNJ(){
 
     const existing = crmLoad('leads');
     const existingKeys = new Set(existing.map(l => (l.business||'').toLowerCase() + '|' + (l.zip||'')));
+    (await harvestFetchD1ExistingKeys()).forEach(k => existingKeys.add(k));
 
     let added = 0;
     let blankSkipped = 0;
@@ -15333,6 +15367,7 @@ async function harvestRunLiveMD(){
 
     const existing = crmLoad('leads');
     const existingKeys = new Set(existing.map(l => (l.business||'').toLowerCase() + '|' + (l.zip||'')));
+    (await harvestFetchD1ExistingKeys()).forEach(k => existingKeys.add(k));
 
     let added = 0;
     const newLeads = [];
@@ -15517,6 +15552,7 @@ async function harvestRunLiveCMSFireSafety(){
 
     const existing = crmLoad('leads');
     const existingKeys = new Set(existing.map(l => (l.business||'').toLowerCase() + '|' + (l.zip||'')));
+    (await harvestFetchD1ExistingKeys()).forEach(k => existingKeys.add(k));
 
     let added = 0;
     const newLeads = [];
@@ -15893,6 +15929,7 @@ async function runGoogleMapsHarvest(){
       ...existingColdCall.map(r => (r.business||'').toLowerCase() + '|' + (r.zip||'')),
       ...existing.map(r => (r.business||'').toLowerCase() + '|' + (r.zip||'')),
     ]);
+    (await harvestFetchD1ExistingKeys()).forEach(k => existingKeys.add(k));
     const accounts = crmLoad('accounts');
     const leads    = existing;
     const contacts = crmLoad('contacts');
