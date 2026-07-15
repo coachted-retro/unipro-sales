@@ -9,18 +9,22 @@
  * zero UniPro accounts to work with in Termac One even though ~6,000+
  * real customer locations already exist in ServiceTrade.
  *
- * HONEST STATUS, 2026-07-14 (updated after a live test): the original
- * client_credentials OAuth attempt got a real response from ServiceTrade
- * -- "Must supply both username and password" -- confirming their
- * /auth endpoint wants a username/password body, not OAuth-style
- * client_id/client_secret params. getServiceTradeToken() now sends the
- * External System Client ID/Secret as username/password instead, since
- * that's a common pattern for integration-style credentials and it
- * directly matches what the live error asked for. This is a
- * well-grounded fix, not a guess, but it's still one live test away
- * from fully confirmed -- if it still fails, the credentials themselves
- * (not the request shape) are the next thing to check with Cathy/ServiceTrade
- * support.
+ * HONEST STATUS, 2026-07-14 (second update, now confirmed): the
+ * External System Client ID/Secret pair (from ServiceTrade's "Add an
+ * External System" flow) turned out NOT to be what /auth accepts --
+ * live testing got "Invalid credentials provided" with that pair. This
+ * now uses Ted's real ServiceTrade login (username/password), which
+ * matches ServiceTrade's own documented core authentication flow
+ * exactly (POST /auth with username/password, returning an authToken
+ * used as a session cookie). The env var names below still say
+ * SERVICETRADE_CLIENT_ID/SECRET only because that's what's already set
+ * up as Cloudflare secrets on this Worker -- the values inside them are
+ * now a username and password, not a client id/secret, to avoid making
+ * Ted re-create secrets from scratch on a long night. Worth revisiting
+ * later: a dedicated ServiceTrade integration user, rather than Ted's
+ * own personal login, would be the more standard long-term setup, and
+ * that personal password sitting in a Cloudflare secret is worth
+ * rotating once this is confirmed working and things have settled down.
  *
  * ACCOUNT MAPPING PHILOSOPHY, per Ted 2026-07-14: keep ServiceTrade's
  * own service-line language visible and intact (Lexi is comfortable
@@ -261,7 +265,32 @@ export default {
         return Response.json({ ok: false, error: e.message, ...log }, { status: 500 });
       }
     }
-    return Response.json({ ok: true, message: 'servicetrade-sync -- POST /sync to run, GET /health to check credentials' });
+    // Added 2026-07-14 per Ted -- captures whatever ServiceTrade actually
+    // sends, unaltered, rather than guessing at the payload shape ahead
+    // of time. Point a new webhook at this Worker's /webhook path from
+    // ServiceTrade's own Webhooks settings and the very next entity
+    // change will land here, viewable via /webhook-peek. This is a
+    // completely separate mechanism from the REST API pull above -- it
+    // may or may not be gated by the same Partner App approval process,
+    // and the only way to find out is to actually test it.
+    if (url.pathname === '/webhook' && request.method === 'POST') {
+      try {
+        const bodyText = await request.text();
+        const headersObj = {};
+        request.headers.forEach((v, k) => { headersObj[k] = v; });
+        await env.DB.prepare(
+          `INSERT INTO servicetrade_webhook_log (id, headers, body, received_at) VALUES (?,?,?,?)`
+        ).bind('WH-' + Date.now() + '-' + Math.floor(Math.random() * 10000), JSON.stringify(headersObj), bodyText, Date.now()).run();
+      } catch (e) { /* never fail the webhook ack, even if logging breaks */ }
+      return Response.json({ ok: true });
+    }
+    if (url.pathname === '/webhook-peek') {
+      const rows = await env.DB.prepare(
+        `SELECT id, headers, body, received_at FROM servicetrade_webhook_log ORDER BY received_at DESC LIMIT 5`
+      ).all();
+      return Response.json({ ok: true, count: (rows.results || []).length, recent: rows.results || [] });
+    }
+    return Response.json({ ok: true, message: 'servicetrade-sync -- POST /sync to run, GET /health to check credentials, POST /webhook to receive ServiceTrade events, GET /webhook-peek to view captured ones' });
   },
 
   // Nightly sync, same 1am ET cron slot pattern the rest of the platform
