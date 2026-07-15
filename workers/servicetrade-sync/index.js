@@ -9,22 +9,22 @@
  * zero UniPro accounts to work with in Termac One even though ~6,000+
  * real customer locations already exist in ServiceTrade.
  *
- * HONEST STATUS, 2026-07-14 (second update, now confirmed): the
- * External System Client ID/Secret pair (from ServiceTrade's "Add an
- * External System" flow) turned out NOT to be what /auth accepts --
- * live testing got "Invalid credentials provided" with that pair. This
- * now uses Ted's real ServiceTrade login (username/password), which
- * matches ServiceTrade's own documented core authentication flow
- * exactly (POST /auth with username/password, returning an authToken
- * used as a session cookie). The env var names below still say
- * SERVICETRADE_CLIENT_ID/SECRET only because that's what's already set
- * up as Cloudflare secrets on this Worker -- the values inside them are
- * now a username and password, not a client id/secret, to avoid making
- * Ted re-create secrets from scratch on a long night. Worth revisiting
- * later: a dedicated ServiceTrade integration user, rather than Ted's
- * own personal login, would be the more standard long-term setup, and
- * that personal password sitting in a Cloudflare secret is worth
- * rotating once this is confirmed working and things have settled down.
+ * AUTH STATUS, 2026-07-15 (resolved): after two incorrect guesses --
+ * OAuth-style client_credentials against /auth (rejected, wrong
+ * endpoint), then username/password against /auth (rejected, needs
+ * Partner App-style approval for session auth) -- ServiceTrade Support
+ * confirmed the real path: a dedicated OAuth2 client_credentials flow
+ * against /oauth2/token, using the External System Client ID/Secret
+ * pair Cathy originally set up. That pair was the right credential type
+ * the entire time, it just needed the right endpoint. This is documented
+ * in ServiceTrade's own "Getting Started with OAuth2" support article.
+ * The Cloudflare secrets are still named SERVICETRADE_CLIENT_ID/SECRET
+ * and should now hold the real Client ID/Client Secret pair again (not
+ * the username/password that got tried in between) -- see
+ * getServiceTradeAccessToken() below for the full token exchange and
+ * refresh logic, which persists state in the servicetrade_oauth_state
+ * D1 table since ServiceTrade issues a new refresh_token on every
+ * refresh and expects the old one discarded.
  *
  * ACCOUNT MAPPING PHILOSOPHY, per Ted 2026-07-14: keep ServiceTrade's
  * own service-line language visible and intact (Lexi is comfortable
@@ -74,35 +74,70 @@ function mapServiceLines(rawLines) {
   return { divisions: Array.from(divisions), unmapped };
 }
 
-async function getServiceTradeToken(env) {
-  // 2026-07-14, confirmed live: ServiceTrade's /auth endpoint rejected
-  // the OAuth-style client_credentials body with "Must supply both
-  // username and password" -- that's the real, live response, not a
-  // guess. Their External System credentials (Client ID / Client
-  // Secret, generated via ServiceTrade's own "Add an External System"
-  // flow) work as a username/password pair through this same standard
-  // login endpoint, not a separate OAuth token exchange. This is a
-  // known, common pattern for integration-style API accounts.
-  const res = await fetch(`${ST_API_BASE}/auth`, {
+const ST_OAUTH_ROW_ID = 'main';
+
+// 2026-07-15, confirmed from ServiceTrade Support's own "Getting Started
+// with OAuth2" article, replacing the session-based /auth approach that
+// turned out to be the legacy path (being retired 31 Dec 2026 anyway).
+// Real flow: exchange client_id/client_secret once for an access_token
+// (24hr) + refresh_token, use the access_token as a Bearer header on
+// every call, and refresh with the refresh_token (no secret needed)
+// once it expires. Each refresh issues a brand-new refresh_token that
+// must replace the old one -- ServiceTrade's docs are explicit that
+// reusing a stale refresh_token is not supported, so this persists
+// state in D1 across runs rather than re-deriving it every call.
+async function getServiceTradeAccessToken(env) {
+  const now = Date.now();
+  const row = await env.DB.prepare(
+    `SELECT access_token, refresh_token, expires_at FROM servicetrade_oauth_state WHERE id = ?`
+  ).bind(ST_OAUTH_ROW_ID).first();
+
+  // Still-valid cached access token -- no network call needed at all.
+  if (row && row.access_token && row.expires_at && row.expires_at > now + 60000) {
+    return row.access_token;
+  }
+
+  let tokenBody;
+  if (row && row.refresh_token) {
+    // Refresh path -- no client_secret needed per the docs.
+    tokenBody = new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: env.SERVICETRADE_CLIENT_ID,
+      refresh_token: row.refresh_token,
+    });
+  } else {
+    // First-ever exchange, or refresh_token was never stored.
+    tokenBody = new URLSearchParams({
+      grant_type: 'client_credentials',
+      client_id: env.SERVICETRADE_CLIENT_ID,
+      client_secret: env.SERVICETRADE_CLIENT_SECRET,
+    });
+  }
+
+  const res = await fetch(`${ST_API_BASE}/oauth2/token`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      username: env.SERVICETRADE_CLIENT_ID,
-      password: env.SERVICETRADE_CLIENT_SECRET,
-    }),
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: tokenBody,
   });
   const body = await res.json().catch(() => ({}));
-  if (!res.ok || !(body.data && body.data.authToken)) {
-    throw new Error('ServiceTrade auth failed: ' + res.status + ' ' + JSON.stringify(body).slice(0, 300));
+  if (!res.ok || !body.access_token) {
+    throw new Error('ServiceTrade OAuth2 token exchange failed: ' + res.status + ' ' + JSON.stringify(body).slice(0, 300));
   }
-  return body.data.authToken;
+
+  const expiresAt = now + ((body.expires_in || 86400) * 1000);
+  await env.DB.prepare(
+    `INSERT INTO servicetrade_oauth_state (id, access_token, refresh_token, expires_at, updated_at) VALUES (?,?,?,?,?)
+     ON CONFLICT(id) DO UPDATE SET access_token=excluded.access_token, refresh_token=excluded.refresh_token, expires_at=excluded.expires_at, updated_at=excluded.updated_at`
+  ).bind(ST_OAUTH_ROW_ID, body.access_token, body.refresh_token || (row && row.refresh_token) || null, expiresAt, now).run();
+
+  return body.access_token;
 }
 
-async function stGet(env, authToken, path, params) {
+async function stGet(env, accessToken, path, params) {
   const url = new URL(ST_API_BASE + path);
   Object.entries(params || {}).forEach(([k, v]) => url.searchParams.set(k, v));
   const res = await fetch(url.toString(), {
-    headers: { Cookie: `PHPSESSID=${authToken}` },
+    headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!res.ok) throw new Error(`ServiceTrade GET ${path} failed: ${res.status}`);
   return res.json();
@@ -172,7 +207,7 @@ async function syncAssetsAndHistory(env, authToken, acctId, stLocationId, log) {
 }
 
 async function syncLocations(env, log) {
-  const authToken = await getServiceTradeToken(env);
+  const authToken = await getServiceTradeAccessToken(env);
   let page = 1;
   let totalPages = 1;
   let synced = 0;
