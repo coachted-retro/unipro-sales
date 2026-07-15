@@ -9,22 +9,27 @@
  * zero UniPro accounts to work with in Termac One even though ~6,000+
  * real customer locations already exist in ServiceTrade.
  *
- * AUTH STATUS, 2026-07-15 (resolved): after two incorrect guesses --
- * OAuth-style client_credentials against /auth (rejected, wrong
- * endpoint), then username/password against /auth (rejected, needs
- * Partner App-style approval for session auth) -- ServiceTrade Support
- * confirmed the real path: a dedicated OAuth2 client_credentials flow
- * against /oauth2/token, using the External System Client ID/Secret
- * pair Cathy originally set up. That pair was the right credential type
- * the entire time, it just needed the right endpoint. This is documented
- * in ServiceTrade's own "Getting Started with OAuth2" support article.
- * The Cloudflare secrets are still named SERVICETRADE_CLIENT_ID/SECRET
- * and should now hold the real Client ID/Client Secret pair again (not
- * the username/password that got tried in between) -- see
- * getServiceTradeAccessToken() below for the full token exchange and
- * refresh logic, which persists state in the servicetrade_oauth_state
- * D1 table since ServiceTrade issues a new refresh_token on every
- * refresh and expects the old one discarded.
+ * AUTH STATUS, 2026-07-15 (resolved and confirmed live): OAuth2
+ * client_credentials against /oauth2/token, using the External System
+ * Client ID/Secret pair Cathy originally set up, works -- the first real
+ * token exchange succeeded on the first live /sync call tonight
+ * (confirmed via a populated servicetrade_oauth_state row). The sync
+ * then failed one step later, writing an account/asset row to D1, with
+ * "D1_TYPE_ERROR: Type 'object' not supported for value '[object
+ * Object]'". Root cause: every field pulled from ServiceTrade's real
+ * response (a.type, a.manufacturer, loc.phone, etc.) was written to D1
+ * with a bare `|| ''` fallback, which only catches falsy values -- an
+ * object is truthy, so if ServiceTrade returns a field as a nested
+ * object (e.g. {id, name}) instead of the flat string this code assumed
+ * from the docs, `|| ''` does nothing and D1 rejects the raw object.
+ * Since this was the very first live response ever received, there was
+ * no way to know in advance which field this actually was. Fixed with
+ * sv() below, which JSON-stringifies any object/array value instead of
+ * crashing, applied to every field derived from ServiceTrade's response.
+ * Also isolated per-location errors (try/catch around the account+
+ * contact write, same pattern already used for the asset sync below it)
+ * so one bad location can no longer 500 the entire sync -- it's logged
+ * and skipped, and every other location still gets synced.
  *
  * ACCOUNT MAPPING PHILOSOPHY, per Ted 2026-07-14: keep ServiceTrade's
  * own service-line language visible and intact (Lexi is comfortable
@@ -74,6 +79,24 @@ function mapServiceLines(rawLines) {
   return { divisions: Array.from(divisions), unmapped };
 }
 
+// 2026-07-15: D1 only accepts primitives (string/number/boolean/null) as
+// bind values. ServiceTrade's real response shapes weren't confirmed
+// ahead of time -- the docs implied flat strings for fields like
+// manufacturer, size, phone, etc., but the first live sync proved at
+// least one of those actually comes back as a nested object. Rather
+// than guess which field and patch it one at a time as new ones turn
+// up, every value pulled from a ServiceTrade response goes through this
+// first: objects/arrays get JSON-stringified (so the data is preserved,
+// not lost), everything else passes through as-is, null/undefined
+// becomes null.
+function sv(val) {
+  if (val === undefined || val === null) return null;
+  if (typeof val === 'object') {
+    try { return JSON.stringify(val); } catch (e) { return String(val); }
+  }
+  return val;
+}
+
 const ST_OAUTH_ROW_ID = 'main';
 
 // 2026-07-15, confirmed from ServiceTrade Support's own "Getting Started
@@ -86,6 +109,7 @@ const ST_OAUTH_ROW_ID = 'main';
 // must replace the old one -- ServiceTrade's docs are explicit that
 // reusing a stale refresh_token is not supported, so this persists
 // state in D1 across runs rather than re-deriving it every call.
+// CONFIRMED WORKING 2026-07-15: first live token exchange succeeded.
 async function getServiceTradeAccessToken(env) {
   const now = Date.now();
   const row = await env.DB.prepare(
@@ -128,7 +152,7 @@ async function getServiceTradeAccessToken(env) {
   await env.DB.prepare(
     `INSERT INTO servicetrade_oauth_state (id, access_token, refresh_token, expires_at, updated_at) VALUES (?,?,?,?,?)
      ON CONFLICT(id) DO UPDATE SET access_token=excluded.access_token, refresh_token=excluded.refresh_token, expires_at=excluded.expires_at, updated_at=excluded.updated_at`
-  ).bind(ST_OAUTH_ROW_ID, body.access_token, body.refresh_token || (row && row.refresh_token) || null, expiresAt, now).run();
+  ).bind(ST_OAUTH_ROW_ID, sv(body.access_token), sv(body.refresh_token || (row && row.refresh_token) || null), expiresAt, now).run();
 
   return body.access_token;
 }
@@ -148,14 +172,6 @@ function genId(prefix) {
 }
 
 async function syncAssetsAndHistory(env, authToken, acctId, stLocationId, log) {
-  // Assets: mirrors ServiceTrade's own asset structure directly, per Ted
-  // -- same field names/shape as what's on their Assets tab (asset type,
-  // location in site, manufacturer, install date, maintenance/hydro due
-  // dates), not a re-invented schema. locationId as a filter param
-  // follows the same convention confirmed for /job in ServiceTrade's own
-  // Python SDK docs; not independently re-verified for /asset the same
-  // way the /location and /job endpoints were, worth confirming on the
-  // first live run same as the auth call.
   let page = 1, totalPages = 1;
   const assets = [];
   do {
@@ -169,25 +185,24 @@ async function syncAssetsAndHistory(env, authToken, acctId, stLocationId, log) {
   const now = Date.now();
   for (const a of assets) {
     const assetId = 'STA-' + a.id;
-    await env.DB.prepare(
-      `INSERT INTO account_assets (id, account_id, external_asset_id, asset_type, description, location_in_site, service_line, manufacturer, model, size, install_date, maintenance_due_date, hydrostatic_test_due_date, created_at, updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-       ON CONFLICT(id) DO UPDATE SET description=excluded.description, maintenance_due_date=excluded.maintenance_due_date, hydrostatic_test_due_date=excluded.hydrostatic_test_due_date, updated_at=excluded.updated_at`
-    ).bind(
-      assetId, acctId, String(a.id), a.type || '', a.description || a.name || '',
-      a.locationInSite || '', (a.serviceLine && a.serviceLine.name) || '',
-      a.manufacturer || '', a.model || '', a.size || '',
-      a.installDate || '', a.maintenanceDueDate || '', a.hydrostaticTestDueDate || '',
-      now, now
-    ).run();
+    try {
+      await env.DB.prepare(
+        `INSERT INTO account_assets (id, account_id, external_asset_id, asset_type, description, location_in_site, service_line, manufacturer, model, size, install_date, maintenance_due_date, hydrostatic_test_due_date, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         ON CONFLICT(id) DO UPDATE SET description=excluded.description, maintenance_due_date=excluded.maintenance_due_date, hydrostatic_test_due_date=excluded.hydrostatic_test_due_date, updated_at=excluded.updated_at`
+      ).bind(
+        assetId, acctId, sv(String(a.id)), sv(a.type) || '', sv(a.description || a.name) || '',
+        sv(a.locationInSite) || '', sv(a.serviceLine && a.serviceLine.name) || '',
+        sv(a.manufacturer) || '', sv(a.model) || '', sv(a.size) || '',
+        sv(a.installDate) || '', sv(a.maintenanceDueDate) || '', sv(a.hydrostaticTestDueDate) || '',
+        now, now
+      ).run();
+    } catch (e) {
+      log.assetWriteErrors = (log.assetWriteErrors || 0) + 1;
+    }
   }
   log.assetsSynced = (log.assetsSynced || 0) + assets.length;
 
-  // Recent job/service history: gives a real last_service date, and the
-  // earliest upcoming due date across all jobs becomes next_due on the
-  // account itself -- this is what makes a service-due reminder show up
-  // as a real, dated item on a rep's agenda, the same way a scheduled
-  // appointment or a follow-up already does, not a generic suggestion.
   const jobsResp = await stGet(env, authToken, '/job', { locationId: stLocationId, page: 1 });
   const jobs = (jobsResp.data && jobsResp.data.jobs) || [];
   const completed = jobs.filter((j) => j.status === 'completed' && j.completedOn);
@@ -199,8 +214,8 @@ async function syncAssetsAndHistory(env, authToken, acctId, stLocationId, log) {
     await env.DB.prepare(
       `UPDATE accounts SET last_service = ?, next_due = ?, updated_at = ? WHERE id = ?`
     ).bind(
-      lastService ? lastService.completedOn : null,
-      nextDue ? nextDue.scheduledDate : null,
+      sv(lastService ? lastService.completedOn : null),
+      sv(nextDue ? nextDue.scheduledDate : null),
       now, acctId
     ).run();
   }
@@ -215,72 +230,74 @@ async function syncLocations(env, log) {
   const unmappedLinesSeen = new Set();
 
   do {
-    // "location" is ServiceTrade's real term for a customer site -- this
-    // is the resource that maps most directly onto a Termac "account".
     const resp = await stGet(env, authToken, '/location', { page });
     const locations = (resp.data && resp.data.locations) || [];
     totalPages = (resp.data && resp.data.totalPages) || 1;
 
     for (const loc of locations) {
-      const rawServiceLines = (loc.serviceLines || []).map((s) => s.name || s);
-      const { divisions, unmapped } = mapServiceLines(rawServiceLines);
-      unmapped.forEach((u) => unmappedLinesSeen.add(u));
-
-      const stId = String(loc.id);
-      const acctId = 'ST-' + stId;
-
-      // Standing cross-division dedup rule: check by ServiceTrade source
-      // id first (idempotent re-sync), then by name+address before
-      // inserting a new row, same rule every other import this session
-      // followed.
-      const existing = await env.DB.prepare(
-        `SELECT id FROM accounts WHERE id = ? OR (business = ? AND address = ?)`
-      ).bind(acctId, loc.name || '', loc.address || '').first();
-
-      const now = Date.now();
-      const servicesJson = JSON.stringify(divisions.length ? divisions : ['unipro']);
-      const noteLines = 'ServiceTrade service lines on file: ' + (rawServiceLines.join(', ') || 'none listed');
-      const finalAcctId = existing ? existing.id : acctId;
-
-      if (existing) {
-        await env.DB.prepare(
-          `UPDATE accounts SET business = ?, name = ?, address = ?, city = ?, state = ?, zip = ?, phone = ?, services = ?, updated_at = ? WHERE id = ?`
-        ).bind(loc.name || '', loc.name || '', loc.address || '', loc.city || '', loc.state || '', loc.zip || '', loc.phone || '', servicesJson, now, existing.id).run();
-        skipped++;
-      } else {
-        await env.DB.prepare(
-          `INSERT INTO accounts (id, name, business, status, services, address, city, state, zip, phone, division, cust_num, source, activity_log, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-        ).bind(
-          acctId, loc.name || '', loc.name || '', 'active', servicesJson,
-          loc.address || '', loc.city || '', loc.state || '', loc.zip || '', loc.phone || '',
-          'UniPro', stId, 'ServiceTrade Sync',
-          JSON.stringify([{ ts: now, type: 'system', icon: '🔄', title: 'Synced from ServiceTrade', note: noteLines, who: 'ServiceTrade Sync' }]),
-          now, now
-        ).run();
-        synced++;
-      }
-
-      // Primary contact, if ServiceTrade returned one on the location.
-      if (loc.primaryContact && loc.primaryContact.name) {
-        const contactId = 'ST-C-' + stId;
-        const c = loc.primaryContact;
-        await env.DB.prepare(
-          `INSERT INTO contacts (id, name, company, title, email, phone, account_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)
-           ON CONFLICT(id) DO UPDATE SET name=excluded.name, email=excluded.email, phone=excluded.phone, updated_at=excluded.updated_at`
-        ).bind(contactId, c.name || '', loc.name || '', c.title || '', c.email || '', c.phone || '', acctId, now, now).run();
-      }
-
-      // Assets + service history, added same night per Ted -- pulled
-      // per-location right after the account itself is synced/updated,
-      // using whichever account id this location actually landed on
-      // (the existing one on a re-sync, the freshly created one
-      // otherwise).
       try {
-        await syncAssetsAndHistory(env, authToken, finalAcctId, stId, log);
+        const rawServiceLines = (loc.serviceLines || []).map((s) => s.name || s);
+        const { divisions, unmapped } = mapServiceLines(rawServiceLines);
+        unmapped.forEach((u) => unmappedLinesSeen.add(u));
+
+        const stId = String(loc.id);
+        const acctId = 'ST-' + stId;
+        const locName = sv(loc.name) || '';
+        const locAddress = sv(loc.address) || '';
+
+        const existing = await env.DB.prepare(
+          `SELECT id FROM accounts WHERE id = ? OR (business = ? AND address = ?)`
+        ).bind(acctId, locName, locAddress).first();
+
+        const now = Date.now();
+        const servicesJson = JSON.stringify(divisions.length ? divisions : ['unipro']);
+        const noteLines = 'ServiceTrade service lines on file: ' + (rawServiceLines.join(', ') || 'none listed');
+        const finalAcctId = existing ? existing.id : acctId;
+
+        if (existing) {
+          await env.DB.prepare(
+            `UPDATE accounts SET business = ?, name = ?, address = ?, city = ?, state = ?, zip = ?, phone = ?, services = ?, updated_at = ? WHERE id = ?`
+          ).bind(locName, locName, locAddress, sv(loc.city) || '', sv(loc.state) || '', sv(loc.zip) || '', sv(loc.phone) || '', servicesJson, now, existing.id).run();
+          skipped++;
+        } else {
+          await env.DB.prepare(
+            `INSERT INTO accounts (id, name, business, status, services, address, city, state, zip, phone, division, cust_num, source, activity_log, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+          ).bind(
+            acctId, locName, locName, 'active', servicesJson,
+            locAddress, sv(loc.city) || '', sv(loc.state) || '', sv(loc.zip) || '', sv(loc.phone) || '',
+            'UniPro', stId, 'ServiceTrade Sync',
+            JSON.stringify([{ ts: now, type: 'system', icon: '🔄', title: 'Synced from ServiceTrade', note: noteLines, who: 'ServiceTrade Sync' }]),
+            now, now
+          ).run();
+          synced++;
+        }
+
+        if (loc.primaryContact && loc.primaryContact.name) {
+          const contactId = 'ST-C-' + stId;
+          const c = loc.primaryContact;
+          await env.DB.prepare(
+            `INSERT INTO contacts (id, name, company, title, email, phone, account_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)
+             ON CONFLICT(id) DO UPDATE SET name=excluded.name, email=excluded.email, phone=excluded.phone, updated_at=excluded.updated_at`
+          ).bind(contactId, sv(c.name) || '', locName, sv(c.title) || '', sv(c.email) || '', sv(c.phone) || '', acctId, now, now).run();
+        }
+
+        try {
+          await syncAssetsAndHistory(env, authToken, finalAcctId, stId, log);
+        } catch (e) {
+          log.assetSyncErrors = (log.assetSyncErrors || 0) + 1;
+        }
       } catch (e) {
-        // A failed asset pull for one location shouldn't stop the whole
-        // sync -- the account itself is already saved either way.
-        log.assetSyncErrors = (log.assetSyncErrors || 0) + 1;
+        // 2026-07-15: a single location with an unexpected field shape
+        // (the D1_TYPE_ERROR class of bug) used to 500 the entire sync,
+        // losing every location after it in the same page. Now it's
+        // logged and skipped -- every other location still gets synced,
+        // and the response tells Ted exactly how many locations hit
+        // this so it's visible, not silently swallowed.
+        log.locationSyncErrors = (log.locationSyncErrors || 0) + 1;
+        log.locationSyncErrorSamples = log.locationSyncErrorSamples || [];
+        if (log.locationSyncErrorSamples.length < 5) {
+          log.locationSyncErrorSamples.push({ locationId: loc.id, error: e.message });
+        }
       }
     }
     page++;
@@ -307,14 +324,6 @@ export default {
         return Response.json({ ok: false, error: e.message, ...log }, { status: 500 });
       }
     }
-    // Added 2026-07-14 per Ted -- captures whatever ServiceTrade actually
-    // sends, unaltered, rather than guessing at the payload shape ahead
-    // of time. Point a new webhook at this Worker's /webhook path from
-    // ServiceTrade's own Webhooks settings and the very next entity
-    // change will land here, viewable via /webhook-peek. This is a
-    // completely separate mechanism from the REST API pull above -- it
-    // may or may not be gated by the same Partner App approval process,
-    // and the only way to find out is to actually test it.
     if (url.pathname === '/webhook' && request.method === 'POST') {
       try {
         const bodyText = await request.text();
@@ -335,8 +344,6 @@ export default {
     return Response.json({ ok: true, message: 'servicetrade-sync -- POST /sync to run, GET /health to check credentials, POST /webhook to receive ServiceTrade events, GET /webhook-peek to view captured ones' });
   },
 
-  // Nightly sync, same 1am ET cron slot pattern the rest of the platform
-  // already uses.
   async scheduled(event, env) {
     const log = {};
     try {
