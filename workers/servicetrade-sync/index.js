@@ -35,7 +35,14 @@
  * traceability back to source, not just a silently remapped category.
  */
 
-const ST_API_BASE = 'https://api.servicetrade.com/api';
+// 2026-07-14, confirmed from ServiceTrade's own API reference (the real
+// webhook creation endpoint doc Ted pasted): the actual request host is
+// app.servicetrade.com, not api.servicetrade.com. This was likely the
+// real root cause of "Invalid credentials provided" the whole night --
+// api.servicetrade.com may resolve to something that always rejects
+// auth regardless of what's sent, since we were never hitting the
+// server ServiceTrade's own docs say to use.
+const ST_API_BASE = 'https://app.servicetrade.com/api';
 
 // ServiceTrade service line name -> Termac division. Built from the real
 // "Provided Service Lines" checklist Ted screenshotted for this account
