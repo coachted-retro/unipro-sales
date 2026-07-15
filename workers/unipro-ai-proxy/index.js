@@ -112,6 +112,14 @@ const ALLOWED_TABLES = new Set([
   // opportunity_churn_commission_schema_v2.sql for the full D1 schema.
   'rep_comp_profiles','bonus_tiers','reason_codes',
   'account_rep_assignments','account_churn_events',
+  // 2026-07-15 per Ted's console-error catch: added to the client's
+  // D1_SYNC_TABLES list in termac-d1-sync.js on 2026-07-15 (feeds the
+  // pricing modal on Opportunity creation) but never mirrored here --
+  // same class of bug as the allpro_cost_lines miss on 2026-07-11. Every
+  // GET for this table has been 400ing silently since, meaning the real
+  // 615-row pricing catalog in D1 was unreachable from any device that
+  // didn't already have it cached locally from wherever it was built.
+  'service_pricing_catalog',
 ]);
 
 const TABLE_PREFIX = {
