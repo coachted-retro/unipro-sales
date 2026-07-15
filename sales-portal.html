@@ -1056,14 +1056,22 @@ function spSvcColor(s){
 // so records saved under the previous taxonomy don't vanish or misbehave.
 // Nothing is rewritten in storage — this is applied wherever a stage is
 // read for tab-bucketing, the dropdown, or the pill label.
+// 2026-07-15 per Ted: Opportunity is no longer a stage a lead/contact
+// passes through. It's a real object (the `opportunities` table) that
+// gets created deliberately from a Contact or an Account once there's
+// an actual deal to track, matching how Salesforce/Dynamics handle
+// this (see CLAUDE.md session log). Old stage names that used to fold
+// into 'opportunity' now fold into 'contacted' instead, since that's
+// the equivalent "still working it" bucket in the simplified machine.
 const SP_STAGE_MIGRATION = {
-  qualified: 'opportunity',
+  qualified: 'contacted',
   contact: 'contacted',
   appointment: 'contacted',
-  site_visit: 'opportunity',
-  survey: 'opportunity',
-  survey_done: 'opportunity',
-  proposal: 'opportunity',
+  site_visit: 'contacted',
+  survey: 'contacted',
+  survey_done: 'contacted',
+  proposal: 'contacted',
+  opportunity: 'contacted',
   lost: 'disqualified',
   close: 'active',
   first_service: 'onboarding',
@@ -1075,7 +1083,6 @@ function spNormalizeStage(stage) {
 const SP_STAGES = {
   lead:         {label:'New Lead',     color:'#1B5FA8', bg:'#EBF2FD'},
   contacted:    {label:'Contacted',    color:'#7C3AED', bg:'#F3E8FF'},
-  opportunity:  {label:'Opportunity',  color:'#D97706', bg:'#FEF3C7'},
   accepted:     {label:'Account',      color:'#166534', bg:'#DCFCE7'},
   disqualified: {label:'Disqualified', color:'#C8102E', bg:'#FEE9EC'},
   onboarding:   {label:'Onboarding',   color:'#0D7490', bg:'#E0F2FE'},
@@ -1086,8 +1093,9 @@ const SP_STAGES = {
 
 // One clean forward progression per tab. Picking a stage that belongs to
 // the NEXT tab moves the record there; Disqualified is always available
-// as the passive exit and always lands the record in Opportunities for
-// follow-up, regardless of which stage it was disqualified from.
+// as the passive exit. Opportunity is intentionally absent here now —
+// it's created via the "+ Create Opportunity" button on a Contact or
+// Account record instead of picked from this dropdown.
 const SP_TAB_STAGE_OPTIONS = {
   leads: [
     {key:'lead',         label:'🎯 New Lead'},
@@ -1096,11 +1104,6 @@ const SP_TAB_STAGE_OPTIONS = {
   ],
   contacts: [
     {key:'contacted',    label:'📞 Contacted'},
-    {key:'opportunity',  label:'💼 Move to Opportunity'},
-    {key:'disqualified', label:'🚫 Disqualified'},
-  ],
-  opportunities: [
-    {key:'opportunity',  label:'💼 Opportunity'},
     {key:'accepted',     label:'✅ Convert to Account'},
     {key:'disqualified', label:'🚫 Disqualified'},
   ],
@@ -1118,16 +1121,16 @@ const SP_TAB_STAGE_OPTIONS = {
 // bucket while Contacts used a completely different, disconnected set of
 // stage names, so moving a lead to Contacted never left the Leads tab.
 const SP_TAB_STAGES = {
-  leads:['lead'],
-  contacts:['contacted'],
-  opportunities:['opportunity','disqualified'],
-  accounts:['onboarding','active','renewal','jeopardy'],
+  leads:['lead','disqualified'],
+  contacts:['contacted','disqualified'],
+  accounts:['onboarding','active','renewal','jeopardy','disqualified'],
 };
 
 // ══════════════════════════════════════════════════════
 //  CRM VIEWS — LEADS / CONTACTS / OPPORTUNITIES / ACCOUNTS
 // ══════════════════════════════════════════════════════
 function spRenderCRM(tab) {
+  if (tab === 'opportunities') { spRenderOpportunitiesTab(); return; }
   const el = document.getElementById('spContent');
   const stageKeys = SP_TAB_STAGES[tab] || ['lead'];
 
@@ -1150,14 +1153,6 @@ function spRenderCRM(tab) {
     const legacyC = crmLoad('contacts').filter(r =>
       !data.find(x => x.id === r.id) && stageKeys.includes(spNormalizeStage(r.lifecycleStage || 'contacted')));
     data = [...data, ...legacyC];
-  }
-  if (tab === 'opportunities') {
-    // Disqualified accounts or contacts (a dead deal, or an account that
-    // went bad) park here for passive follow-up, regardless of which
-    // storage pool they physically live in.
-    const legacyO = [...crmLoad('accounts'), ...crmLoad('contacts')].filter(r =>
-      !data.find(x => x.id === r.id) && stageKeys.includes(spNormalizeStage(r.lifecycleStage)));
-    data = [...data, ...legacyO];
   }
 
   // Filter to this rep's records only
@@ -1186,7 +1181,7 @@ function spRenderCRM(tab) {
 
   // Build HTML
   const isMgr = ['accounts'].includes(tab);
-  const addLabel = tab === 'opportunities' ? '+ New Opportunity' : tab === 'accounts' ? '+ New Account' : '+ Add New';
+  const addLabel = tab === 'accounts' ? '+ New Account' : '+ Add New';
 
   let html = `
   <!-- Recently Viewed -->
@@ -1211,7 +1206,6 @@ function spRenderCRM(tab) {
     </select>
     <button class="sp-btn sp-btn-red" onclick="spOpenAdd('${tab}')">+ Add New</button>
     <button class="sp-btn" onclick="spOpenAllProForm()" style="background:#1A1D21;color:#fff;border-color:#1A1D21">🏗️ AllPro / Hood</button>
-    ${tab === 'opportunities' ? '<button class="sp-btn sp-btn-blue" onclick="spOpenAdd(\'opportunity\')">+ New Opportunity</button>' : ''}
   </div>
   <div class="sp-record-grid" id="spRecGrid">`;
 
@@ -3888,32 +3882,64 @@ function spOpenDetail(r, tab) {
   // and the action buttons that used to be scattered in a separate side
   // rail. No hunting across panels for what you're standing there to do.
   const isAccount = tab === 'accounts';
+  const isContact = tab === 'contacts';
   const apptDefaultMode = isAccount ? 'site_visit' : 'appointment';
 
-  // Open opportunities tied to this account — matched by business name
-  // since there's no hard foreign key linking pipeline records to the
-  // account they came from. Shown only on Account pages so a rep can see
-  // everything currently in motion with this customer in one glance.
+  // Opportunities tied to this record — real rows from the `opportunities`
+  // table, linked by a real foreign key (account_id on Account pages,
+  // contact_id on Contact pages), not a fuzzy business-name text match.
+  // Shown on both Account and Contact pages per Ted 2026-07-15: an
+  // opportunity is a deliberately-created object attached to whichever
+  // record it belongs to, not a forced pipeline stage. Every opportunity
+  // here, open or already resolved, shows so the full history (why
+  // something was lost, what's still pending) lives in one place.
   let openOppsHtml = '';
-  if (isAccount) {
-    const bizNorm = (r.business || r.name || '').toLowerCase().trim();
-    const openOpps = bizNorm ? crmLoad('leads').filter(o =>
-      o.id !== r.id &&
-      spNormalizeStage(o.lifecycleStage) === 'opportunity' &&
-      (o.business || o.name || '').toLowerCase().trim() === bizNorm
-    ) : [];
-    if (openOpps.length) {
-      openOppsHtml = `<div style="padding:12px 0;border-bottom:1px solid var(--line);margin-bottom:12px">
-        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:8px">💼 Open Opportunities (${openOpps.length})</div>
-        ${openOpps.map(o => `<div onclick="spViewRecord('${o.id}','leads')" style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:#FEF3C7;border-radius:7px;cursor:pointer;margin-bottom:6px" onmouseover="this.style.background='#FDE9BC'" onmouseout="this.style.background='#FEF3C7'">
-          <div>
-            <div style="font-size:13px;font-weight:700;color:var(--ink)">${escH(o.name || o.contact || 'Opportunity')}</div>
-            <div style="font-size:11px;color:var(--soft)">${(o.services||[]).map(s=>spSvcLabel(s)).join(', ') || 'No services tagged'}${o.notes ? ' · '+escH(o.notes.slice(0,60)) : ''}</div>
+  if (isAccount || isContact) {
+    const allOpps = crmLoad('opportunities') || [];
+    const oppsHere = allOpps.filter(o => isAccount ? o.accountId === r.id : o.contactId === r.id)
+      .sort((a,b) => (b.created||0) - (a.created||0));
+
+    const STATUS_COLOR = { open:'#D97706', won:'#166534', lost:'#C8102E', pending:'#0D7490' };
+    const STATUS_BG    = { open:'#FEF3C7', won:'#DCFCE7', lost:'#FEE9EC', pending:'#E0F2FE' };
+    const STATUS_LABEL = { open:'Open', won:'Won', lost:'Lost', pending:'Pending' };
+
+    const oppRows = oppsHere.map(o => {
+      const status = o.resolutionStatus || 'open';
+      const color = STATUS_COLOR[status] || '#6B7280';
+      const bg = STATUS_BG[status] || '#F3F4F6';
+      const daysOpen = o.created ? Math.floor((Date.now() - o.created) / 86400000) : 0;
+      const slaDays = o.slaDays || 60;
+      const isFlagged = (status === 'open' || status === 'pending') && daysOpen > slaDays;
+      const total = o.serviceType === 'lease' ? (o.monthlyValue||0) * (o.termMonths||1) : (o.value||0);
+      const moneyStr = '$' + Number(total||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+      const resolveButtons = (status === 'open' || status === 'pending') ? `
+          <div style="display:flex;gap:6px;margin-top:8px">
+            <button onclick="event.stopPropagation();spOpenResolveModal('${o.id}','won')" style="flex:1;background:#166534;color:#fff;border:none;border-radius:6px;padding:6px 8px;font-size:11px;font-weight:700;cursor:pointer">✅ Won</button>
+            <button onclick="event.stopPropagation();spOpenResolveModal('${o.id}','pending')" style="flex:1;background:#0D7490;color:#fff;border:none;border-radius:6px;padding:6px 8px;font-size:11px;font-weight:700;cursor:pointer">⏳ Pending</button>
+            <button onclick="event.stopPropagation();spOpenResolveModal('${o.id}','lost')" style="flex:1;background:#C8102E;color:#fff;border:none;border-radius:6px;padding:6px 8px;font-size:11px;font-weight:700;cursor:pointer">🚫 Lost</button>
+          </div>` : '';
+      return `<div style="padding:10px;background:${bg};border-radius:7px;margin-bottom:8px;${isFlagged?'border:1.5px solid #C8102E':''}">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start">
+            <div>
+              <div style="font-size:13px;font-weight:700;color:var(--ink)">${escH(o.name || 'Opportunity')}</div>
+              <div style="font-size:11px;color:var(--soft);margin-top:2px">${escH(o.division||'')} · ${moneyStr}${o.serviceType==='lease' ? ' ('+(o.termMonths||1)+' mo)' : ''}</div>
+              ${o.notes ? `<div style="font-size:11px;color:var(--soft);margin-top:2px">${escH(o.notes.slice(0,90))}</div>` : ''}
+              ${status !== 'open' && o.resolutionNotes ? `<div style="font-size:11px;color:${color};font-weight:600;margin-top:4px">${STATUS_LABEL[status]}: ${escH((o.lostReasonCode||o.pendingReasonCode||'').toString())} — ${escH(o.resolutionNotes.slice(0,90))}</div>` : ''}
+              ${isFlagged ? `<div style="font-size:10px;color:#C8102E;font-weight:800;text-transform:uppercase;margin-top:4px">⚠ ${daysOpen}d open, past ${slaDays}d target</div>` : ''}
+            </div>
+            <span style="font-size:10px;font-weight:800;text-transform:uppercase;color:${color}">${STATUS_LABEL[status]}</span>
           </div>
-          <span style="font-size:11px;color:#92400E;font-weight:700">View →</span>
-        </div>`).join('')}
+          ${resolveButtons}
+        </div>`;
+    }).join('');
+
+    openOppsHtml = `<div style="padding:12px 0;border-bottom:1px solid var(--line);margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft)">💼 Opportunities (${oppsHere.length})</div>
+          <button onclick="spOpenOpportunityModal('${isAccount?'account':'contact'}','${r.id}','${escH(r.business||r.name||'')}')" style="background:#1A1D21;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer">+ Create Opportunity</button>
+        </div>
+        ${oppsHere.length ? oppRows : '<div style="font-size:12px;color:var(--soft)">No opportunities yet, click Create Opportunity when there is a real deal to track.</div>'}
       </div>`;
-    }
   }
 
   // Invoices tied to this account — real invoice records (termac-invoices.js),
@@ -4374,6 +4400,393 @@ function spOpenAdd(tab) {
 //  so an account marked lost here shows up correctly in the Manager
 //  Portal's re-engagement queue too, and vice versa — same shared data.
 // ══════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════
+//  OPPORTUNITIES — real per-Account/per-Contact deal records, added
+//  2026-07-15 per Ted. Opportunity is a deliberately-created object
+//  attached to a Contact or Account (see CLAUDE.md session log), not a
+//  forced pipeline stage every lead passes through. Pricing pulls live
+//  from service_pricing_catalog and auto-detects lease (unit = "Per
+//  Month"), tiered (GTO-style base rate + per-gallon overage past
+//  1,000), or flat per-diem pricing. Won/Lost/Pending reasons reuse
+//  the same SP_LOST_REASONS list already shared with termac-os.html
+//  instead of inventing a second taxonomy, per Ted's explicit
+//  instruction not to build something new on top of what's already
+//  there. SP_PENDING_REASONS is new (nothing equivalent existed) but
+//  matches the same plain-list style.
+// ══════════════════════════════════════════════════════
+const SP_PENDING_REASONS = [
+  'Awaiting customer decision', 'Budget / timing delay',
+  'Contract / paperwork in progress', 'Lost to competing bid, unconfirmed',
+  'Customer gone quiet', 'Other',
+];
+
+function spOppMoney(n) {
+  return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function spOppCatalog() {
+  return (crmLoad('service_pricing_catalog') || []).filter(function(r){ return r.active !== 0; });
+}
+
+// Lease: unit is literally "Per Month" on the catalog row (dish machine
+// rentals, water softener rentals, etc). Tiered: GTO-style base rate
+// with a paired overage row in the same category (grease trap over
+// 1,000 gallons). Everything else is a flat per-diem price.
+function spOppDetectMode(row) {
+  if (!row) return 'per_diem';
+  if (row.unit === 'Per Month') return 'lease';
+  if (row.sku && row.sku.indexOf('LARGE') !== -1) return 'tiered';
+  return 'per_diem';
+}
+
+function spOpenOpportunityModal(parentType, parentId, parentName) {
+  var divisions = [];
+  spOppCatalog().forEach(function(r){ if (r.division && divisions.indexOf(r.division) === -1) divisions.push(r.division); });
+  divisions.sort();
+
+  // Default rep: whoever's already assigned to the parent record, else
+  // the current logged-in rep. Never left blank — an opportunity with
+  // no owner is invisible to SLA and commission reporting.
+  var parentPool = parentType === 'account' ? 'accounts' : 'contacts';
+  var parentRec = (crmLoad(parentPool) || []).find(function(x){ return x.id === parentId; });
+  var defaultRep = (parentRec && parentRec.assignedRep) || _spRep.name;
+
+  var divOpts = divisions.map(function(d){ return '<option value="' + escH(d) + '">' + escH(d) + '</option>'; }).join('');
+
+  var wrap = document.createElement('div');
+  wrap.id = 'spOppModal';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9700;display:flex;align-items:center;justify-content:center;padding:16px;overflow-y:auto';
+  wrap.innerHTML = '<div style="background:#fff;border-radius:12px;max-width:480px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.3);max-height:92vh;overflow-y:auto">' +
+    '<div style="padding:20px">' +
+      '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:18px;color:var(--ink);margin-bottom:4px">💼 Create Opportunity</div>' +
+      '<div style="font-size:12px;color:var(--soft);margin-bottom:16px">For ' + escH(parentName || '') + '</div>' +
+
+      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Division</label>' +
+      '<select id="oppDivision" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:10px" onchange="spOppPopulateEntities()"><option value="">Select division...</option>' + divOpts + '</select>' +
+
+      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Entity</label>' +
+      '<select id="oppEntity" disabled style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:10px" onchange="spOppPopulateCategories()"><option value="">Pick division first</option></select>' +
+
+      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Category</label>' +
+      '<select id="oppCategory" disabled style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:10px" onchange="spOppPopulateSkus()"><option value="">Pick entity first</option></select>' +
+
+      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Item</label>' +
+      '<select id="oppSku" disabled style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:10px" onchange="spOppRenderPricing()"><option value="">Pick category first</option></select>' +
+
+      '<div id="oppPricingPanel" style="display:none;background:#F9FAFB;border-radius:8px;padding:12px;margin-bottom:12px"></div>' +
+
+      '<label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--soft);margin-bottom:10px"><input type="checkbox" id="oppManualToggle" onchange="spOppToggleManual()"> Not in the catalog — enter manually</label>' +
+      '<div id="oppManualFields" style="display:none;margin-bottom:10px">' +
+        '<input id="oppManualDesc" type="text" placeholder="What\'s the job?" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:8px;box-sizing:border-box">' +
+        '<input id="oppManualValue" type="number" step="0.01" placeholder="Amount ($)" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;box-sizing:border-box">' +
+      '</div>' +
+
+      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Rep</label>' +
+      '<input id="oppRep" type="text" value="' + escH(defaultRep) + '" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:10px;box-sizing:border-box">' +
+
+      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Target close date *</label>' +
+      '<input id="oppExpectedClose" type="date" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:10px;box-sizing:border-box">' +
+
+      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Notes</label>' +
+      '<textarea id="oppNotes" placeholder="Contact, context, next step..." rows="2" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;resize:vertical;box-sizing:border-box;margin-bottom:16px"></textarea>' +
+
+      '<div style="display:flex;gap:10px;justify-content:flex-end">' +
+        '<button onclick="document.getElementById(\'spOppModal\').remove()" style="padding:8px 18px;border-radius:7px;border:1.5px solid var(--line);background:#fff;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:700">Cancel</button>' +
+        '<button onclick="spSaveOpportunity(\'' + parentType + '\',\'' + parentId + '\')" style="padding:8px 18px;border-radius:7px;border:none;background:#1A1D21;color:#fff;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:700">Save Opportunity</button>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+  document.body.appendChild(wrap);
+}
+
+function spOppPopulateEntities() {
+  var div = document.getElementById('oppDivision').value;
+  var rows = spOppCatalog().filter(function(r){ return r.division === div; });
+  var ents = [];
+  rows.forEach(function(r){ if (ents.indexOf(r.entity) === -1) ents.push(r.entity); });
+  ents.sort();
+  var sel = document.getElementById('oppEntity');
+  sel.disabled = !div;
+  sel.innerHTML = '<option value="">Select entity...</option>' + ents.map(function(e){ return '<option value="' + escH(e) + '">' + escH(e) + '</option>'; }).join('');
+  document.getElementById('oppCategory').innerHTML = '<option value="">Pick entity first</option>';
+  document.getElementById('oppCategory').disabled = true;
+  document.getElementById('oppSku').innerHTML = '<option value="">Pick category first</option>';
+  document.getElementById('oppSku').disabled = true;
+  document.getElementById('oppPricingPanel').style.display = 'none';
+}
+function spOppPopulateCategories() {
+  var div = document.getElementById('oppDivision').value;
+  var ent = document.getElementById('oppEntity').value;
+  var rows = spOppCatalog().filter(function(r){ return r.division === div && r.entity === ent; });
+  var cats = [];
+  rows.forEach(function(r){ var c = r.categoryLabel || r.category; if (cats.indexOf(c) === -1) cats.push(c); });
+  cats.sort();
+  var sel = document.getElementById('oppCategory');
+  sel.disabled = !ent;
+  sel.innerHTML = '<option value="">Select category...</option>' + cats.map(function(c){ return '<option value="' + escH(c) + '">' + escH(c) + '</option>'; }).join('');
+  document.getElementById('oppSku').innerHTML = '<option value="">Pick category first</option>';
+  document.getElementById('oppSku').disabled = true;
+  document.getElementById('oppPricingPanel').style.display = 'none';
+}
+function spOppPopulateSkus() {
+  var div = document.getElementById('oppDivision').value;
+  var ent = document.getElementById('oppEntity').value;
+  var cat = document.getElementById('oppCategory').value;
+  var rows = spOppCatalog().filter(function(r){ return r.division === div && r.entity === ent && (r.categoryLabel || r.category) === cat; });
+  var sel = document.getElementById('oppSku');
+  sel.disabled = !cat;
+  sel.innerHTML = '<option value="">Select item...</option>' + rows.map(function(r){ return '<option value="' + r.id + '">' + escH(r.description) + ' — ' + spOppMoney(r.price) + ' / ' + escH(r.unit) + '</option>'; }).join('');
+  document.getElementById('oppPricingPanel').style.display = 'none';
+}
+function spOppRenderPricing() {
+  var skuId = document.getElementById('oppSku').value;
+  var row = spOppCatalog().find(function(r){ return r.id === skuId; });
+  var panel = document.getElementById('oppPricingPanel');
+  if (!row) { panel.style.display = 'none'; return; }
+  panel.style.display = 'block';
+  var mode = spOppDetectMode(row);
+  panel.setAttribute('data-mode', mode);
+  panel.setAttribute('data-price', row.price);
+  if (mode === 'lease') {
+    panel.innerHTML = '<div style="font-size:11px;font-weight:700;color:#B45309;text-transform:uppercase;margin-bottom:6px">Lease pricing</div>' +
+      '<div style="font-size:12px;color:var(--soft);margin-bottom:6px">' + spOppMoney(row.price) + ' / month</div>' +
+      '<label style="font-size:11px;color:var(--soft);display:block;margin-bottom:4px">Term (months)</label>' +
+      '<input id="oppLeaseTerm" type="number" value="36" min="1" oninput="spOppRecalc()" style="width:100%;padding:6px 8px;border-radius:6px;border:1.5px solid var(--line);font-size:13px;margin-bottom:6px;box-sizing:border-box">' +
+      '<div style="font-size:13px;font-weight:800" id="oppTotalDisplay">Total: ' + spOppMoney(row.price * 36) + '</div>';
+  } else if (mode === 'tiered') {
+    var overage = spOppCatalog().find(function(r){ return r.division === row.division && r.category === row.category && r.unit && r.unit.toLowerCase().indexOf('over') !== -1; });
+    panel.setAttribute('data-overage', overage ? overage.price : 0);
+    panel.innerHTML = '<div style="font-size:11px;font-weight:700;color:#B45309;text-transform:uppercase;margin-bottom:6px">Tiered / overage pricing</div>' +
+      '<div style="font-size:12px;color:var(--soft);margin-bottom:6px">Base ' + spOppMoney(row.price) + (overage ? ' + ' + spOppMoney(overage.price) + '/gal over 1,000' : '') + '</div>' +
+      '<label style="font-size:11px;color:var(--soft);display:block;margin-bottom:4px">Gallons over 1,000 (0 if none)</label>' +
+      '<input id="oppTieredQty" type="number" value="0" min="0" oninput="spOppRecalc()" style="width:100%;padding:6px 8px;border-radius:6px;border:1.5px solid var(--line);font-size:13px;margin-bottom:6px;box-sizing:border-box">' +
+      '<div style="font-size:13px;font-weight:800" id="oppTotalDisplay">Total: ' + spOppMoney(row.price) + '</div>';
+  } else {
+    panel.innerHTML = '<div style="font-size:11px;font-weight:700;color:#B45309;text-transform:uppercase;margin-bottom:6px">Flat pricing</div>' +
+      '<div style="font-size:13px;font-weight:800" id="oppTotalDisplay">Total: ' + spOppMoney(row.price) + '</div>';
+  }
+}
+function spOppRecalc() {
+  var panel = document.getElementById('oppPricingPanel');
+  var mode = panel.getAttribute('data-mode');
+  var price = parseFloat(panel.getAttribute('data-price')) || 0;
+  var disp = document.getElementById('oppTotalDisplay');
+  if (mode === 'lease') {
+    var term = parseFloat(document.getElementById('oppLeaseTerm').value) || 1;
+    disp.textContent = 'Total: ' + spOppMoney(price * term);
+  } else if (mode === 'tiered') {
+    var overage = parseFloat(panel.getAttribute('data-overage')) || 0;
+    var qty = parseFloat(document.getElementById('oppTieredQty').value) || 0;
+    disp.textContent = 'Total: ' + spOppMoney(price + qty * overage);
+  }
+}
+function spOppToggleManual() {
+  var on = document.getElementById('oppManualToggle').checked;
+  document.getElementById('oppManualFields').style.display = on ? 'block' : 'none';
+  document.getElementById('oppDivision').disabled = on;
+  document.getElementById('oppEntity').disabled = on || !document.getElementById('oppDivision').value;
+  document.getElementById('oppCategory').disabled = on || !document.getElementById('oppEntity').value;
+  document.getElementById('oppSku').disabled = on || !document.getElementById('oppCategory').value;
+  if (on) document.getElementById('oppPricingPanel').style.display = 'none';
+}
+
+function spSaveOpportunity(parentType, parentId) {
+  var manual = document.getElementById('oppManualToggle').checked;
+  var expectedClose = document.getElementById('oppExpectedClose').value;
+  if (!expectedClose) { alert('A target close date is required so this can actually be tracked against an SLA.'); return; }
+
+  var name, division, serviceType, value, monthlyValue, termMonths;
+  if (manual) {
+    name = document.getElementById('oppManualDesc').value.trim() || 'Manual opportunity';
+    division = document.getElementById('oppDivision').value || '';
+    value = parseFloat(document.getElementById('oppManualValue').value) || 0;
+    serviceType = 'per_diem'; monthlyValue = null; termMonths = 1;
+    if (!value) { alert('Enter an amount for this opportunity.'); return; }
+  } else {
+    var skuId = document.getElementById('oppSku').value;
+    var row = spOppCatalog().find(function(r){ return r.id === skuId; });
+    if (!row) { alert('Pick an item from the catalog, or switch to manual entry.'); return; }
+    name = row.description;
+    division = row.division;
+    var mode = spOppDetectMode(row);
+    if (mode === 'lease') {
+      serviceType = 'lease';
+      monthlyValue = row.price;
+      termMonths = parseInt(document.getElementById('oppLeaseTerm').value) || 1;
+      value = monthlyValue * termMonths;
+    } else if (mode === 'tiered') {
+      var panel = document.getElementById('oppPricingPanel');
+      var overage = parseFloat(panel.getAttribute('data-overage')) || 0;
+      var qty = parseFloat(document.getElementById('oppTieredQty').value) || 0;
+      serviceType = 'per_diem'; monthlyValue = null; termMonths = 1;
+      value = row.price + qty * overage;
+    } else {
+      serviceType = 'per_diem'; monthlyValue = null; termMonths = 1;
+      value = row.price;
+    }
+  }
+
+  var rep = document.getElementById('oppRep').value.trim() || _spRep.name;
+  var repProfiles = crmLoad('rep_comp_profiles') || [];
+  var repProfile = repProfiles.find(function(p){ return p.id === rep; });
+  var slaDays = repProfile ? (repProfile.opportunitySlaDays || repProfile.opportunity_sla_days || 60) : 60;
+
+  var opps = crmLoad('opportunities') || [];
+  opps.push({
+    id: 'opp_' + Date.now(),
+    accountId: parentType === 'account' ? parentId : null,
+    contactId: parentType === 'contact' ? parentId : null,
+    name: name,
+    division: division || '',
+    stage: 'opportunity',
+    value: value,
+    assignedRep: rep,
+    expectedClose: expectedClose,
+    notes: document.getElementById('oppNotes').value.trim(),
+    slaDays: slaDays,
+    serviceType: serviceType,
+    monthlyValue: monthlyValue,
+    termMonths: termMonths,
+    resolutionStatus: 'open',
+    created: Date.now(),
+    updated: Date.now(),
+  });
+  crmSave('opportunities', opps);
+  document.getElementById('spOppModal').remove();
+  spToast('💼 Opportunity created');
+  spViewRecord(parentId, parentType === 'account' ? 'accounts' : 'contacts');
+}
+
+// ── RESOLVE (Won / Pending / Lost) ──────────────────────────────────────
+function spOpenResolveModal(id, outcome) {
+  var opps = crmLoad('opportunities') || [];
+  var o = opps.find(function(x){ return x.id === id; });
+  if (!o) return;
+
+  var titleMap = { won:'✅ Mark Opportunity Won', pending:'⏳ Mark Opportunity Pending', lost:'🚫 Mark Opportunity Lost' };
+  var colorMap = { won:'#166534', pending:'#0D7490', lost:'#991B1B' };
+  var reasonList = outcome === 'lost' ? SP_LOST_REASONS : outcome === 'pending' ? SP_PENDING_REASONS : null;
+  var reasonHtml = reasonList ? (
+    '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Reason</label>' +
+    '<select id="oppResolveReason" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:12px"><option value="">— Select a reason —</option>' +
+    reasonList.map(function(r){ return '<option value="' + r + '">' + r + '</option>'; }).join('') + '</select>'
+  ) : '';
+  var pendingDateHtml = outcome === 'pending' ? (
+    '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">New target close date</label>' +
+    '<input id="oppResolveNewDate" type="date" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:12px;box-sizing:border-box">'
+  ) : '';
+
+  var wrap = document.createElement('div');
+  wrap.id = 'spResolveModal';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9800;display:flex;align-items:center;justify-content:center;padding:16px';
+  wrap.innerHTML = '<div style="background:#fff;border-radius:12px;max-width:440px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.3)">' +
+    '<div style="padding:20px">' +
+      '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:18px;color:var(--ink);margin-bottom:4px">' + titleMap[outcome] + '</div>' +
+      '<div style="font-size:12px;color:var(--soft);margin-bottom:16px">' + escH(o.name || 'Opportunity') + '</div>' +
+      reasonHtml + pendingDateHtml +
+      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Notes</label>' +
+      '<textarea id="oppResolveNotes" placeholder="What happened, what was said..." rows="3" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;resize:vertical;box-sizing:border-box;margin-bottom:16px"></textarea>' +
+      '<div style="display:flex;gap:10px;justify-content:flex-end">' +
+        '<button onclick="document.getElementById(\'spResolveModal\').remove()" style="padding:8px 18px;border-radius:7px;border:1.5px solid var(--line);background:#fff;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:700">Cancel</button>' +
+        '<button onclick="spResolveOpportunity(\'' + id + '\',\'' + outcome + '\')" style="padding:8px 18px;border-radius:7px;border:none;background:' + colorMap[outcome] + ';color:#fff;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:700">Confirm</button>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+  document.body.appendChild(wrap);
+}
+
+function spResolveOpportunity(id, outcome) {
+  var opps = crmLoad('opportunities') || [];
+  var o = opps.find(function(x){ return x.id === id; });
+  if (!o) return;
+
+  var notes = (document.getElementById('oppResolveNotes')?.value || '').trim();
+  if (outcome === 'lost' || outcome === 'pending') {
+    var reason = document.getElementById('oppResolveReason')?.value;
+    if (!reason) { alert('Please select a reason.'); return; }
+    if (outcome === 'lost') o.lostReasonCode = reason; else o.pendingReasonCode = reason;
+    if (!notes) { alert('A quick note on context is required — this is what a manager will see when reviewing why this deal is stalled or lost.'); return; }
+  }
+  if (outcome === 'pending') {
+    var newDate = document.getElementById('oppResolveNewDate')?.value;
+    if (!newDate) { alert('A new target close date is required when marking something pending — otherwise it just sits flagged again with no plan.'); return; }
+    o.expectedClose = newDate;
+  }
+
+  o.resolutionStatus = outcome;
+  o.resolutionNotes = notes;
+  o.resolutionDate = new Date().toISOString().slice(0,10);
+  if (outcome === 'won' || outcome === 'lost') o.closedAt = Date.now();
+  o.updated = Date.now();
+
+  crmSave('opportunities', opps);
+  document.getElementById('spResolveModal')?.remove();
+  spToast(outcome === 'won' ? '✅ Marked won' : outcome === 'lost' ? '🚫 Marked lost' : '⏳ Marked pending');
+
+  var parentType = o.accountId ? 'account' : 'contact';
+  var parentId = o.accountId || o.contactId;
+  if (parentId) spViewRecord(parentId, parentType === 'account' ? 'accounts' : 'contacts');
+  else spNav('home');
+}
+
+// ── OPPORTUNITIES TAB — cross-cutting list over the real table ─────────
+// Replaces the old fake stage-bucket view. Every opportunity, whichever
+// Contact or Account it's attached to, shows here with a click-through
+// to its real parent record. This is search/reporting surface only —
+// creation and resolution happen on the parent record itself.
+function spRenderOpportunitiesTab() {
+  var el = document.getElementById('spContent');
+  var opps = (crmLoad('opportunities') || []).filter(function(o){
+    var owner = o.assignedRep || '';
+    return !owner || owner === _spRep.name;
+  });
+
+  var accounts = crmLoad('accounts') || [];
+  var contacts = crmLoad('contacts') || [];
+
+  var q = (document.getElementById('spCrmSearch')?.value || '').trim().toLowerCase();
+  if (q) opps = opps.filter(function(o){ return JSON.stringify(o).toLowerCase().indexOf(q) !== -1; });
+
+  opps.sort(function(a,b){ return (b.created||0) - (a.created||0); });
+
+  var STATUS_COLOR = { open:'#D97706', won:'#166534', lost:'#C8102E', pending:'#0D7490' };
+  var STATUS_BG    = { open:'#FEF3C7', won:'#DCFCE7', lost:'#FEE9EC', pending:'#E0F2FE' };
+  var STATUS_LABEL = { open:'Open', won:'Won', lost:'Lost', pending:'Pending' };
+
+  var rows = opps.map(function(o) {
+    var status = o.resolutionStatus || 'open';
+    var color = STATUS_COLOR[status] || '#6B7280';
+    var bg = STATUS_BG[status] || '#F3F4F6';
+    var parentType = o.accountId ? 'accounts' : 'contacts';
+    var parentId = o.accountId || o.contactId;
+    var parent = parentType === 'accounts' ? accounts.find(function(a){ return a.id === parentId; }) : contacts.find(function(c){ return c.id === parentId; });
+    var parentName = parent ? (parent.business || parent.name || 'Unknown') : 'Unlinked';
+    var daysOpen = o.created ? Math.floor((Date.now() - o.created) / 86400000) : 0;
+    var slaDays = o.slaDays || 60;
+    var isFlagged = (status === 'open' || status === 'pending') && daysOpen > slaDays;
+    var total = o.serviceType === 'lease' ? (o.monthlyValue||0) * (o.termMonths||1) : (o.value||0);
+
+    return '<div onclick="spViewRecord(\'' + parentId + '\',\'' + parentType + '\')" style="background:' + bg + ';border-radius:9px;padding:12px 14px;margin-bottom:8px;cursor:pointer;' + (isFlagged ? 'border:1.5px solid #C8102E' : '') + '">' +
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start">' +
+        '<div>' +
+          '<div style="font-size:13px;font-weight:700;color:var(--ink)">' + escH(o.name || 'Opportunity') + '</div>' +
+          '<div style="font-size:11px;color:var(--soft);margin-top:2px">' + escH(parentName) + ' · ' + escH(o.division||'') + ' · ' + spOppMoney(total) + '</div>' +
+          (isFlagged ? '<div style="font-size:10px;color:#C8102E;font-weight:800;text-transform:uppercase;margin-top:4px">⚠ ' + daysOpen + 'd open, past ' + slaDays + 'd target</div>' : '') +
+        '</div>' +
+        '<span style="font-size:10px;font-weight:800;text-transform:uppercase;color:' + color + '">' + STATUS_LABEL[status] + '</span>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+
+  el.innerHTML =
+    '<div class="sp-filter-bar">' +
+      '<input class="sp-search" id="spCrmSearch" placeholder="Search opportunities…" oninput="spRenderOpportunitiesTab()" value="' + escH(q) + '">' +
+    '</div>' +
+    '<div style="max-width:640px">' +
+      (opps.length ? rows : '<div style="text-align:center;padding:40px;color:var(--soft);font-size:14px"><div style="font-size:32px;margin-bottom:10px">💼</div>No opportunities yet — create one from a Contact or Account record.</div>') +
+    '</div>';
+}
+
 const SP_LOST_REASONS = [
   'Price too high', 'Went with competitor', 'No budget / cut spending',
   'Poor response time', 'Service issue', 'Relationship / personnel change',
@@ -5572,6 +5985,20 @@ function spSetStage(id, tab, newStage, selectEl) {
       });
       crmSave('accounts', accts);
     }
+
+    // Reassign any opportunities that were attached to this contact onto
+    // the new account. The account keeps the same id as the source
+    // record above (accts.push spreads r without overriding id), so this
+    // is a straight accountId backfill, not a lookup by name matching.
+    // contactId is left in place so the opportunity's origin stays
+    // traceable even after the handoff.
+    const allOppsForHandoff = crmLoad('opportunities') || [];
+    let oppsChanged = false;
+    allOppsForHandoff.forEach(o => {
+      if (o.contactId === id && !o.accountId) { o.accountId = id; oppsChanged = true; }
+    });
+    if (oppsChanged) crmSave('opportunities', allOppsForHandoff);
+
     const schedQ = (typeof crmLoad === 'function' ? crmLoad('scheduler_queue') : []) || [];
     if (!schedQ.find(x => x.id === id)) {
       schedQ.push({ id:r.id, business:r.business||r.name, contact:r.contact||r.name, phone:r.phone, address:r.address, services:r.services, acceptedAt:Date.now(), assignedRep:r.assignedRep||_spRep.name, status:'needs_scheduling' });
