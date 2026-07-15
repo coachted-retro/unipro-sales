@@ -285,25 +285,14 @@ button{cursor:pointer}
 
 
 
-<!-- LOGIN -->
+<!-- 2026-07-15 per Ted: PIN login removed entirely. This div is
+     unreachable now (DOMContentLoaded redirects to staff-login.html
+     before this ever shows), left only as a brief "redirecting" state
+     in case that redirect is ever delayed. -->
 <div class="dms-login" id="dmsLogin" style="display:none">
   <div class="dms-login-card">
     <div class="dms-login-logo">Termac One</div>
-    <div class="dms-login-sub">DMS Portal — Call Sheet Access</div>
-    <label class="dms-login-label">Select Your Name</label>
-    <select class="dms-login-sel" id="dmsLoginName">
-      <option value="">— Select name —</option>
-      <option value="Chrystal Bush">Chrystal Bush</option>
-      <option value="Tara Colona">Tara Colona</option>
-      <option value="Amanda McGowan">Amanda McGowan</option>
-      <option value="Gina Kluge">Gina Kluge</option>
-      <option value="Kim Reinhart">Kim Reinhart</option>
-      <option value="Donna Meyer">Donna Meyer</option>
-    </select>
-    <label class="dms-login-label">PIN</label>
-    <input class="dms-login-pin" id="dmsLoginPin" type="password" maxlength="6" placeholder="••••••" onkeydown="if(event.key==='Enter')dmsLogin()">
-    <button class="dms-login-btn" onclick="dmsLogin()">Sign In →</button>
-    <div class="dms-login-err" id="dmsLoginErr">Incorrect PIN — try again</div>
+    <div class="dms-login-sub">Redirecting to sign in…</div>
   </div>
 </div>
 
@@ -545,14 +534,19 @@ button{cursor:pointer}
 function crmLoad(key){ try{ return JSON.parse(localStorage.getItem('termac_crm_'+key)||'[]'); }catch(e){return[];} }
 function escH(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
-// ── AUTH ──
+// 2026-07-15 per Ted: PINs removed entirely, everywhere. This was the
+// actual cause of the "one popup for PIN, one for password" bouncing --
+// this portal had its own separate PIN gate layered on top of the real
+// email+password login, so a rep could clear staff-login.html and still
+// hit a second, redundant PIN screen here. Initials only now, purely
+// cosmetic (avatar chip), no login role left.
 const DMS_STAFF = {
-  'Chrystal Bush':   {pin:'2025',initials:'CB'},
-  'Tara Colona':     {pin:'2025',initials:'TC'},
-  'Amanda McGowan':  {pin:'2025',initials:'AM'},
-  'Gina Kluge':      {pin:'2025',initials:'GK'},
-  'Kim Reinhart':    {pin:'2025',initials:'KR'},
-  'Donna Meyer':     {pin:'2025',initials:'DM'},
+  'Chrystal Bush':   {initials:'CB'},
+  'Tara Colona':     {initials:'TC'},
+  'Amanda McGowan':  {initials:'AM'},
+  'Gina Kluge':      {initials:'GK'},
+  'Kim Reinhart':    {initials:'KR'},
+  'Donna Meyer':     {initials:'DM'},
 };
 let _dmsUser = null;
 let _dmsTab = 'leads';
@@ -563,26 +557,16 @@ function dmsGetSheet() {
   catch(e) { return []; }
 }
 
-function dmsLogin(){
-  const name = document.getElementById('dmsLoginName').value;
-  const pin  = document.getElementById('dmsLoginPin').value.trim();
-  const err  = document.getElementById('dmsLoginErr');
-  err.style.display = 'none';
-  if(!name){err.textContent='Please select your name.';err.style.display='block';return;}
-  const u = DMS_STAFF[name];
-  if(!u||u.pin!==pin){err.textContent='Incorrect PIN — try again.';err.style.display='block';return;}
-  _dmsUser = {name, ...u};
-  sessionStorage.setItem('dms_user', JSON.stringify(_dmsUser));
-  dmsEnterPortal();
-
-  dmsUpdateRail();}
-
+// 2026-07-15 per Ted: dmsLogin() (PIN check) removed entirely -- see the
+// DOMContentLoaded handler below, this page now requires a real
+// staff_auth session before it renders anything, same as every other
+// portal. Real logout: clears the platform session, not just this
+// portal's view, and sends the rep back to the password screen.
 function dmsLogout(){
-  sessionStorage.removeItem('dms_user');
   _dmsUser = null;
-  document.getElementById('dmsLogin').style.display='flex';
-  document.getElementById('dmsNav').style.display='none';
-  document.getElementById('dmsMain').style.display='none';
+  try { localStorage.removeItem('termac_staff_session'); } catch(e) {}
+  try { localStorage.removeItem('termac_current_user'); } catch(e) {}
+  window.location.href = 'staff-login.html';
 }
 
 function dmsEnterPortal(){
@@ -1773,15 +1757,27 @@ function dmsToast(msg,dur=2800){
 
 // ── INIT ──
 document.addEventListener('DOMContentLoaded',()=>{
-  // Use logged-in user from Employee Portal; fall back to first DMS staff member
-  var loggedInName = localStorage.getItem('termac_current_user') || '';
-  if (loggedInName && DMS_STAFF[loggedInName]) {
-    _dmsUser = {...DMS_STAFF[loggedInName], name: loggedInName};
-  } else {
-    // Default: first entry in DMS_STAFF
-    var firstKey = Object.keys(DMS_STAFF)[0];
-    _dmsUser = {...DMS_STAFF[firstKey], name: firstKey};
+  // 2026-07-15 per Ted: PIN screen retired, no fallback default login
+  // either -- this used to auto-enter as the first person in DMS_STAFF
+  // (Chrystal) whenever termac_current_user didn't match anyone, meaning
+  // this page never actually gated access at all. Now it requires the
+  // same real email+password session every other portal requires; if
+  // there isn't one, straight to staff-login.html and back here once
+  // signed in.
+  var session = null;
+  try { session = JSON.parse(localStorage.getItem('termac_staff_session') || 'null'); } catch(e) {}
+  if (!session || !session.name) {
+    var here = window.location.pathname.split('/').pop() + window.location.search;
+    window.location.href = 'staff-login.html?dest=' + encodeURIComponent(here);
+    return;
   }
+
+  var loggedInName = session.name;
+  try { localStorage.setItem('termac_current_user', loggedInName); } catch(e) {}
+  _dmsUser = DMS_STAFF[loggedInName]
+    ? { ...DMS_STAFF[loggedInName], name: loggedInName }
+    : { initials: loggedInName.split(' ').map(function(w){return w[0]||'';}).join('').slice(0,2).toUpperCase(), name: loggedInName };
+
   dmsEnterPortal();
   document.getElementById('dmsModalBg').addEventListener('click',e=>{
     if(e.target.id==='dmsModalBg') dmsCloseModal();

@@ -266,19 +266,13 @@ button{cursor:pointer}
 
 
 <!-- LOGIN -->
+<!-- 2026-07-15 per Ted: PIN login removed entirely. Unreachable now
+     (DOMContentLoaded redirects to staff-login.html first), left only
+     as a brief "redirecting" state in case that redirect is delayed. -->
 <div class="rcp-login" id="rcpLogin" style="display:none">
   <div class="rcp-login-card">
     <div class="rcp-login-logo">Termac One</div>
-    <div class="rcp-login-sub">Reception Portal</div>
-    <label class="rcp-login-label">Select Your Name</label>
-    <select class="rcp-login-sel" id="rcpLoginName">
-      <option value="">— Select name —</option>
-      <option value="Receptionist">Receptionist</option>
-    </select>
-    <label class="rcp-login-label">PIN</label>
-    <input class="rcp-login-pin" id="rcpLoginPin" type="password" maxlength="6" placeholder="••••••" onkeydown="if(event.key==='Enter')rcpLogin()">
-    <button class="rcp-login-btn" onclick="rcpLogin()">Sign In →</button>
-    <div class="rcp-login-err" id="rcpLoginErr">Incorrect PIN — try again</div>
+    <div class="rcp-login-sub">Redirecting to sign in…</div>
   </div>
 </div>
 
@@ -383,32 +377,21 @@ const RCP_DIVISIONS = ['UniPro','Quality III','AllPro','Filter Man','GTO','Terma
 
 function escH(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
-// ── AUTH ──
-const RCP_STAFF = {
-  'Receptionist': {pin:'2025',initials:'RC'},
-};
+// 2026-07-15 per Ted: PINs removed entirely, same as DMS and Sales
+// Portal. This was already dead code in practice (see the "DEMO MODE:
+// auto-enter" note below), but per Ted's explicit instruction there
+// should be zero PIN residue anywhere, not just unreachable code.
+const RCP_STAFF = {};
 let _rcpUser = null;
 let _rcpTab = 'log';
 
-function rcpLogin(){
-  const name = document.getElementById('rcpLoginName').value;
-  const pin  = document.getElementById('rcpLoginPin').value.trim();
-  const err  = document.getElementById('rcpLoginErr');
-  err.style.display='none';
-  if(!name){err.textContent='Please select your name.';err.style.display='block';return;}
-  const u = RCP_STAFF[name];
-  if(!u||u.pin!==pin){err.textContent='Incorrect PIN — try again.';err.style.display='block';return;}
-  _rcpUser={name,...u};
-  sessionStorage.setItem('rcp_user',JSON.stringify(_rcpUser));
-  rcpEnterPortal();
-}
-
+// dmsLogin()-equivalent removed entirely -- this portal now requires a
+// real staff_auth session, see the DOMContentLoaded handler below.
 function rcpLogout(){
-  sessionStorage.removeItem('rcp_user');
-  _rcpUser=null;
-  document.getElementById('rcpLogin').style.display='flex';
-  document.getElementById('rcpNav').style.display='none';
-  document.getElementById('rcpMain').style.display='none';
+  _rcpUser = null;
+  try { localStorage.removeItem('termac_staff_session'); } catch(e) {}
+  try { localStorage.removeItem('termac_current_user'); } catch(e) {}
+  window.location.href = 'staff-login.html';
 }
 
 function rcpEnterPortal(){
@@ -1270,8 +1253,25 @@ function rcpToast(msg,dur=2800){
 
 // ── INIT ──
 document.addEventListener('DOMContentLoaded',()=>{
-  // DEMO MODE: auto-enter
-  _rcpUser={ name:'Receptionist', role:'Reception', initials:'RC' };
+  // 2026-07-15 per Ted: real login required now, same as every other
+  // portal. This used to unconditionally auto-enter as a generic
+  // "Receptionist" placeholder with no session behind it at all --
+  // removed rather than reworked, since shared-station use just means
+  // whoever's at the desk stays logged in until they tap Sign Out, same
+  // persistent-login behavior already in place everywhere else.
+  var session = null;
+  try { session = JSON.parse(localStorage.getItem('termac_staff_session') || 'null'); } catch(e) {}
+  if (!session || !session.name) {
+    var here = window.location.pathname.split('/').pop() + window.location.search;
+    window.location.href = 'staff-login.html?dest=' + encodeURIComponent(here);
+    return;
+  }
+  var loggedInName = session.name;
+  try { localStorage.setItem('termac_current_user', loggedInName); } catch(e) {}
+  _rcpUser = RCP_STAFF[loggedInName]
+    ? { ...RCP_STAFF[loggedInName], name: loggedInName }
+    : { initials: loggedInName.split(' ').map(function(w){return w[0]||'';}).join('').slice(0,2).toUpperCase(), name: loggedInName, role: 'Reception' };
+
   rcpEnterPortal();
   document.addEventListener('click',e=>{
     if(!e.target.closest('.rcp-lookup-wrap')){
