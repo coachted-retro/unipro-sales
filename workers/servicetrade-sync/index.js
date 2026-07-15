@@ -232,19 +232,28 @@ async function syncAssetsAndHistory(env, authToken, acctId, stLocationId, log) {
   }
   log.assetsSynced = (log.assetsSynced || 0) + assets.length;
 
-  const jobsResp = await stGet(env, authToken, '/job', { locationId: stLocationId, page: 1 });
+  // 2026-07-15 FIX: this call used to have no status parameter at all,
+  // and ServiceTrade's /job endpoint silently defaults to something
+  // that excludes real jobs when status isn't specified -- confirmed via
+  // a location with 4 real jobs (visible in the ServiceTrade UI) coming
+  // back completely empty without status=all, then returning real data
+  // once it was added. Also corrected next-due to use `dueBy` (epoch
+  // seconds, matches the "DUE BY" column in ServiceTrade's own UI
+  // exactly) instead of a `scheduledDate` field that doesn't actually
+  // exist on the real job object -- `completedOn` was already right.
+  const jobsResp = await stGet(env, authToken, '/job', { locationId: stLocationId, status: 'all', page: 1 });
   const jobs = (jobsResp.data && jobsResp.data.jobs) || [];
   const completed = jobs.filter((j) => j.status === 'completed' && j.completedOn);
-  const upcoming = jobs.filter((j) => j.status !== 'completed' && j.scheduledDate);
-  const lastService = completed.sort((a, b) => new Date(b.completedOn) - new Date(a.completedOn))[0];
-  const nextDue = upcoming.sort((a, b) => new Date(a.scheduledDate) - new Date(b.scheduledDate))[0];
+  const upcoming = jobs.filter((j) => j.status !== 'completed' && j.dueBy);
+  const lastService = completed.sort((a, b) => b.completedOn - a.completedOn)[0];
+  const nextDue = upcoming.sort((a, b) => a.dueBy - b.dueBy)[0];
 
   if (lastService || nextDue) {
     await env.DB.prepare(
       `UPDATE accounts SET last_service = ?, next_due = ?, updated_at = ? WHERE id = ?`
     ).bind(
-      sv(lastService ? lastService.completedOn : null),
-      sv(nextDue ? nextDue.scheduledDate : null),
+      sv(lastService ? new Date(lastService.completedOn * 1000).toISOString().slice(0, 10) : null),
+      sv(nextDue ? new Date(nextDue.dueBy * 1000).toISOString().slice(0, 10) : null),
       now, acctId
     ).run();
   }
@@ -506,6 +515,28 @@ export default {
       try {
         const authToken = await getServiceTradeAccessToken(env);
         const raw = await stGet(env, authToken, '/location/' + locationId, {});
+        return Response.json({ ok: true, raw });
+      } catch (e) {
+        return Response.json({ ok: false, error: e.message }, { status: 500 });
+      }
+    }
+    // 2026-07-15 TEMPORARY diagnostic, per Ted: asset manufacturer/model/
+    // dates are blank in D1 even though ServiceTrade's own UI clearly
+    // shows them (Manufacturer: Pyro chem, Model: PCL-350, Manufacture
+    // Date: Apr 2014, etc). The asset itself IS syncing correctly
+    // (description matches), so this is likely a nested `properties`
+    // object that varies by asset type rather than flat top-level
+    // fields -- ServiceTrade's own docs mention an "asset definition"
+    // endpoint that defines per-type properties, which fits what the UI
+    // shows (extinguishers and suppression systems have different spec
+    // fields). Returns the raw /asset response for one real location so
+    // the actual shape can be seen before fixing this blind a third time.
+    if (url.pathname === '/debug-asset') {
+      const locationId = url.searchParams.get('locationId');
+      if (!locationId) return Response.json({ ok: false, error: 'pass ?locationId=<a real ServiceTrade location id>' }, { status: 400 });
+      try {
+        const authToken = await getServiceTradeAccessToken(env);
+        const raw = await stGet(env, authToken, '/asset', { locationId, page: 1 });
         return Response.json({ ok: true, raw });
       } catch (e) {
         return Response.json({ ok: false, error: e.message }, { status: 500 });
