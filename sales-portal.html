@@ -801,6 +801,10 @@ let _spEditId = null;
 // ══════════════════════════════════════════════════════
 //  LOGIN / LOGOUT
 // ══════════════════════════════════════════════════════
+// 2026-07-15: PIN login retired, see the DOMContentLoaded handler below --
+// this page now requires a real staff_auth session before it ever renders.
+// spLogin()/the PIN form markup are left in place but unreachable rather
+// than ripped out, to avoid a risky large HTML edit right before rollout.
 function spLogin() {
   const name = document.getElementById('spLoginName').value;
   const pin  = document.getElementById('spLoginPin').value.trim();
@@ -812,20 +816,18 @@ function spLogin() {
   if (!rep || rep.pin !== pin) { err.textContent = 'Incorrect PIN — try again.'; err.style.display = 'block'; return; }
 
   _spRep = { name, ...rep };
-  // Persist to the SAME localStorage key every other Termac One portal reads
-  // (termac_current_user), not sessionStorage — sessionStorage is scoped to
-  // a single tab and clears the moment that tab closes, which was forcing a
-  // fresh login every time the tab was closed and reopened even though the
-  // computer itself never logged out of anything.
   try { localStorage.setItem('termac_current_user', name); } catch(e) {}
   spEnterPortal();
 }
 
+// Real logout: clears the platform session (not just this tab's view) and
+// sends the rep back to the password login screen. Nothing else in
+// Termac One calls spLogin() anymore, so this is the only way back in.
 function spLogout() {
   _spRep = null;
+  try { localStorage.removeItem('termac_staff_session'); } catch(e) {}
   try { localStorage.removeItem('termac_current_user'); } catch(e) {}
-  document.getElementById('spLogin').style.display = 'flex';
-  document.getElementById('spMain').style.display = 'none';
+  window.location.href = 'staff-login.html';
 }
 
 function spEnterPortal() {
@@ -7243,11 +7245,29 @@ function spToast(msg, duration=2800) {
 //  INIT
 // ══════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', () => {
-  // Use logged-in user from Employee Portal; fall back to Ted Scholl
-  var loggedInName = localStorage.getItem('termac_current_user') || 'Ted Scholl';
+  // 2026-07-15 per Ted: PIN-based login retired. Sales Portal now requires
+  // the same real email+password staff_auth login as the rest of Termac
+  // One -- no more silent fallback to "Ted Scholl" when nobody's actually
+  // logged in. If there's no valid session on this device, bounce
+  // straight to staff-login.html and come right back here once signed in.
+  // Once logged in, the session persists on the device (see
+  // staff-login.html) until spLogout() runs -- no PIN, no repeated
+  // password prompts out in the field.
+  var session = null;
+  try { session = JSON.parse(localStorage.getItem('termac_staff_session') || 'null'); } catch(e) {}
+  if (!session || !session.name) {
+    var here = window.location.pathname.split('/').pop() + window.location.search;
+    window.location.href = 'staff-login.html?dest=' + encodeURIComponent(here);
+    return;
+  }
+
+  var loggedInName = session.name;
   _spRep = SP_REPS[loggedInName]
     ? { ...SP_REPS[loggedInName], name: loggedInName }
-    : { ...SP_REPS['Ted Scholl'], name: loggedInName, initials: loggedInName.split(' ').map(function(w){return w[0]||'';}).join('').slice(0,2).toUpperCase() };
+    : { initials: loggedInName.split(' ').map(function(w){return w[0]||'';}).join('').slice(0,2).toUpperCase(), territory: [], division: session.division || '', name: loggedInName };
+  // Keep the platform-wide name in sync for the other helpers in this file
+  // that still read termac_current_user as a fallback.
+  try { localStorage.setItem('termac_current_user', loggedInName); } catch(e) {}
   spEnterPortal();
 
   // Rail collapsed state
