@@ -462,6 +462,26 @@ export default {
         return Response.json({ ok: false, error: e.message }, { status: 500 });
       }
     }
+    // 2026-07-15 TEMPORARY diagnostic, per Ted: /job returns a correctly-
+    // shaped but completely EMPTY result for a location confirmed (via
+    // screenshots of the real ServiceTrade UI) to have 4 real jobs. Since
+    // the response shape itself is right, this isn't a field-parsing bug
+    // like address was -- it's a scoping mismatch. ServiceTrade's own
+    // docs show a location can carry both a modern `id` and a separate
+    // `legacyId` (see the /appointment example in their API reference).
+    // This pulls the raw /location/<id> object directly to check whether
+    // that's what's happening here before guessing at a second fix.
+    if (url.pathname === '/debug-location') {
+      const locationId = url.searchParams.get('locationId');
+      if (!locationId) return Response.json({ ok: false, error: 'pass ?locationId=<a real ServiceTrade location id>' }, { status: 400 });
+      try {
+        const authToken = await getServiceTradeAccessToken(env);
+        const raw = await stGet(env, authToken, '/location/' + locationId, {});
+        return Response.json({ ok: true, raw });
+      } catch (e) {
+        return Response.json({ ok: false, error: e.message }, { status: 500 });
+      }
+    }
     return Response.json({ ok: true, message: 'servicetrade-sync -- POST /sync to run one batch, GET /sync-status to see progress, GET /health to check credentials, POST /webhook to receive ServiceTrade events, GET /webhook-peek to view captured ones' });
   },
 
