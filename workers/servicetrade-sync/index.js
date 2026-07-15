@@ -11,25 +11,40 @@
  *
  * AUTH STATUS, 2026-07-15 (resolved and confirmed live): OAuth2
  * client_credentials against /oauth2/token, using the External System
- * Client ID/Secret pair Cathy originally set up, works -- the first real
- * token exchange succeeded on the first live /sync call tonight
- * (confirmed via a populated servicetrade_oauth_state row). The sync
- * then failed one step later, writing an account/asset row to D1, with
- * "D1_TYPE_ERROR: Type 'object' not supported for value '[object
- * Object]'". Root cause: every field pulled from ServiceTrade's real
- * response (a.type, a.manufacturer, loc.phone, etc.) was written to D1
- * with a bare `|| ''` fallback, which only catches falsy values -- an
- * object is truthy, so if ServiceTrade returns a field as a nested
- * object (e.g. {id, name}) instead of the flat string this code assumed
- * from the docs, `|| ''` does nothing and D1 rejects the raw object.
- * Since this was the very first live response ever received, there was
- * no way to know in advance which field this actually was. Fixed with
- * sv() below, which JSON-stringifies any object/array value instead of
- * crashing, applied to every field derived from ServiceTrade's response.
- * Also isolated per-location errors (try/catch around the account+
- * contact write, same pattern already used for the asset sync below it)
- * so one bad location can no longer 500 the entire sync -- it's logged
- * and skipped, and every other location still gets synced.
+ * Client ID/Secret pair Cathy originally set up, works and is confirmed
+ * live -- a real token exchange succeeded on the first live /sync call.
+ *
+ * DATA-SHAPE FIX, 2026-07-15 (resolved and confirmed live): the first
+ * real sync crashed with "D1_TYPE_ERROR: Type 'object' not supported"
+ * because at least one field ServiceTrade actually returns is a nested
+ * object where the docs implied a flat string. sv() below JSON-
+ * stringifies any object/array value instead of crashing, applied to
+ * every field pulled from a ServiceTrade response. Per-location and
+ * per-asset writes are also individually try/caught now, so one bad
+ * record can't take down the whole run.
+ *
+ * BATCHING, 2026-07-15 (this fix): the second real sync attempt, after
+ * the data-shape fix, got real results (45 assets synced, 7 asset
+ * errors safely caught) but then hit Cloudflare's own per-invocation
+ * subrequest ceiling ("Too many subrequests by single Worker
+ * invocation") -- Workers on the Free plan cap out at 50 external
+ * fetch() calls per invocation, and a location plus its assets plus its
+ * job history is 2-3 external calls each, so a single invocation could
+ * only ever get partway into the first page of ~6,000+ locations no
+ * matter what. Fixed by batching: each /sync call now processes a
+ * bounded number of locations (LOCATIONS_PER_BATCH) and persists exactly
+ * where it left off in servicetrade_sync_progress (D1 table, not
+ * localStorage, per standing platform rule), so calling /sync again
+ * picks up right where the last call stopped instead of restarting from
+ * scratch or blowing the same ceiling again. This works regardless of
+ * which Cloudflare plan the account is on -- if it turns out to be on
+ * Workers Paid ($5/mo, 10,000 external subrequests per invocation by
+ * default as of Cloudflare's Feb 2026 change), batching just means each
+ * call finishes faster than the ceiling allows; if it's on Free, this is
+ * what makes the sync completable at all. The nightly cron below now
+ * runs a small chained loop of batches (see runBatchedSync) rather than
+ * one unbounded call, so it makes steady progress on its own without
+ * needing every night's run to be manually triggered.
  *
  * ACCOUNT MAPPING PHILOSOPHY, per Ted 2026-07-14: keep ServiceTrade's
  * own service-line language visible and intact (Lexi is comfortable
@@ -40,22 +55,21 @@
  * traceability back to source, not just a silently remapped category.
  */
 
-// 2026-07-14, confirmed from ServiceTrade's own API reference (the real
-// webhook creation endpoint doc Ted pasted): the actual request host is
-// app.servicetrade.com, not api.servicetrade.com. This was likely the
-// real root cause of "Invalid credentials provided" the whole night --
-// api.servicetrade.com may resolve to something that always rejects
-// auth regardless of what's sent, since we were never hitting the
-// server ServiceTrade's own docs say to use.
 const ST_API_BASE = 'https://app.servicetrade.com/api';
 
-// ServiceTrade service line name -> Termac division. Built from the real
-// "Provided Service Lines" checklist Ted screenshotted for this account
-// (Emergency/Exit Lights, Fire Suppression, Kitchen Suppression, Portable
-// Fire Extinguishers -- all under the UniPro/Quality III umbrella for
-// this particular ServiceTrade account). Extend this list if a synced
-// location shows a service line not covered here rather than silently
-// dropping it -- see the "unmapped" bucket in mapServiceLines() below.
+// Conservative: 1 external call to fetch the location page itself, plus
+// up to 2-3 external calls per location (asset pull, possible extra
+// asset pagination, job pull). 12 locations per batch keeps total
+// external calls comfortably under the Free plan's 50-call ceiling even
+// in the worst case, with real margin left over.
+const LOCATIONS_PER_BATCH = 12;
+
+// How many batches the nightly cron chains together in one scheduled
+// run. Each batch is a fully separate, bounded unit of work, so this is
+// safe regardless of plan -- it just means the cron makes ~5x the
+// progress of a single manual /sync call each night.
+const CRON_BATCHES_PER_RUN = 5;
+
 const SERVICE_LINE_MAP = {
   'Emergency/Exit Light Group': 'unipro',
   'Emergency/Exit Light': 'unipro',
@@ -79,16 +93,8 @@ function mapServiceLines(rawLines) {
   return { divisions: Array.from(divisions), unmapped };
 }
 
-// 2026-07-15: D1 only accepts primitives (string/number/boolean/null) as
-// bind values. ServiceTrade's real response shapes weren't confirmed
-// ahead of time -- the docs implied flat strings for fields like
-// manufacturer, size, phone, etc., but the first live sync proved at
-// least one of those actually comes back as a nested object. Rather
-// than guess which field and patch it one at a time as new ones turn
-// up, every value pulled from a ServiceTrade response goes through this
-// first: objects/arrays get JSON-stringified (so the data is preserved,
-// not lost), everything else passes through as-is, null/undefined
-// becomes null.
+// D1 only accepts primitives as bind values. See DATA-SHAPE FIX note
+// above -- objects/arrays get JSON-stringified instead of crashing.
 function sv(val) {
   if (val === undefined || val === null) return null;
   if (typeof val === 'object') {
@@ -98,39 +104,26 @@ function sv(val) {
 }
 
 const ST_OAUTH_ROW_ID = 'main';
+const PROGRESS_ROW_ID = 'main';
 
-// 2026-07-15, confirmed from ServiceTrade Support's own "Getting Started
-// with OAuth2" article, replacing the session-based /auth approach that
-// turned out to be the legacy path (being retired 31 Dec 2026 anyway).
-// Real flow: exchange client_id/client_secret once for an access_token
-// (24hr) + refresh_token, use the access_token as a Bearer header on
-// every call, and refresh with the refresh_token (no secret needed)
-// once it expires. Each refresh issues a brand-new refresh_token that
-// must replace the old one -- ServiceTrade's docs are explicit that
-// reusing a stale refresh_token is not supported, so this persists
-// state in D1 across runs rather than re-deriving it every call.
-// CONFIRMED WORKING 2026-07-15: first live token exchange succeeded.
 async function getServiceTradeAccessToken(env) {
   const now = Date.now();
   const row = await env.DB.prepare(
     `SELECT access_token, refresh_token, expires_at FROM servicetrade_oauth_state WHERE id = ?`
   ).bind(ST_OAUTH_ROW_ID).first();
 
-  // Still-valid cached access token -- no network call needed at all.
   if (row && row.access_token && row.expires_at && row.expires_at > now + 60000) {
     return row.access_token;
   }
 
   let tokenBody;
   if (row && row.refresh_token) {
-    // Refresh path -- no client_secret needed per the docs.
     tokenBody = new URLSearchParams({
       grant_type: 'refresh_token',
       client_id: env.SERVICETRADE_CLIENT_ID,
       refresh_token: row.refresh_token,
     });
   } else {
-    // First-ever exchange, or refresh_token was never stored.
     tokenBody = new URLSearchParams({
       grant_type: 'client_credentials',
       client_id: env.SERVICETRADE_CLIENT_ID,
@@ -167,8 +160,27 @@ async function stGet(env, accessToken, path, params) {
   return res.json();
 }
 
-function genId(prefix) {
-  return prefix + '-' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 6).toUpperCase();
+async function getProgress(env) {
+  const row = await env.DB.prepare(
+    `SELECT current_page, offset_in_page, total_synced, total_updated, total_asset_errors, total_location_errors, completed_at FROM servicetrade_sync_progress WHERE id = ?`
+  ).bind(PROGRESS_ROW_ID).first();
+  if (row) return row;
+  return { current_page: 1, offset_in_page: 0, total_synced: 0, total_updated: 0, total_asset_errors: 0, total_location_errors: 0, completed_at: null };
+}
+
+async function saveProgress(env, p) {
+  const now = Date.now();
+  await env.DB.prepare(
+    `INSERT INTO servicetrade_sync_progress (id, current_page, offset_in_page, total_synced, total_updated, total_asset_errors, total_location_errors, last_run_at, completed_at)
+     VALUES (?,?,?,?,?,?,?,?,?)
+     ON CONFLICT(id) DO UPDATE SET current_page=excluded.current_page, offset_in_page=excluded.offset_in_page,
+       total_synced=excluded.total_synced, total_updated=excluded.total_updated,
+       total_asset_errors=excluded.total_asset_errors, total_location_errors=excluded.total_location_errors,
+       last_run_at=excluded.last_run_at, completed_at=excluded.completed_at`
+  ).bind(
+    PROGRESS_ROW_ID, p.current_page, p.offset_in_page, p.total_synced, p.total_updated,
+    p.total_asset_errors, p.total_location_errors, now, p.completed_at || null
+  ).run();
 }
 
 async function syncAssetsAndHistory(env, authToken, acctId, stLocationId, log) {
@@ -221,92 +233,115 @@ async function syncAssetsAndHistory(env, authToken, acctId, stLocationId, log) {
   }
 }
 
-async function syncLocations(env, log) {
+async function syncOneLocation(env, authToken, loc, log) {
+  const rawServiceLines = (loc.serviceLines || []).map((s) => s.name || s);
+  const { divisions, unmapped } = mapServiceLines(rawServiceLines);
+  unmapped.forEach((u) => (log.unmappedLinesSeen = log.unmappedLinesSeen || new Set()).add(u));
+
+  const stId = String(loc.id);
+  const acctId = 'ST-' + stId;
+  const locName = sv(loc.name) || '';
+  const locAddress = sv(loc.address) || '';
+
+  const existing = await env.DB.prepare(
+    `SELECT id FROM accounts WHERE id = ? OR (business = ? AND address = ?)`
+  ).bind(acctId, locName, locAddress).first();
+
+  const now = Date.now();
+  const servicesJson = JSON.stringify(divisions.length ? divisions : ['unipro']);
+  const noteLines = 'ServiceTrade service lines on file: ' + (rawServiceLines.join(', ') || 'none listed');
+  const finalAcctId = existing ? existing.id : acctId;
+
+  if (existing) {
+    await env.DB.prepare(
+      `UPDATE accounts SET business = ?, name = ?, address = ?, city = ?, state = ?, zip = ?, phone = ?, services = ?, updated_at = ? WHERE id = ?`
+    ).bind(locName, locName, locAddress, sv(loc.city) || '', sv(loc.state) || '', sv(loc.zip) || '', sv(loc.phone) || '', servicesJson, now, existing.id).run();
+    log.updated = (log.updated || 0) + 1;
+  } else {
+    await env.DB.prepare(
+      `INSERT INTO accounts (id, name, business, status, services, address, city, state, zip, phone, division, cust_num, source, activity_log, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    ).bind(
+      acctId, locName, locName, 'active', servicesJson,
+      locAddress, sv(loc.city) || '', sv(loc.state) || '', sv(loc.zip) || '', sv(loc.phone) || '',
+      'UniPro', stId, 'ServiceTrade Sync',
+      JSON.stringify([{ ts: now, type: 'system', icon: '🔄', title: 'Synced from ServiceTrade', note: noteLines, who: 'ServiceTrade Sync' }]),
+      now, now
+    ).run();
+    log.synced = (log.synced || 0) + 1;
+  }
+
+  if (loc.primaryContact && loc.primaryContact.name) {
+    const contactId = 'ST-C-' + stId;
+    const c = loc.primaryContact;
+    await env.DB.prepare(
+      `INSERT INTO contacts (id, name, company, title, email, phone, account_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)
+       ON CONFLICT(id) DO UPDATE SET name=excluded.name, email=excluded.email, phone=excluded.phone, updated_at=excluded.updated_at`
+    ).bind(contactId, sv(c.name) || '', locName, sv(c.title) || '', sv(c.email) || '', sv(c.phone) || '', acctId, now, now).run();
+  }
+
+  try {
+    await syncAssetsAndHistory(env, authToken, finalAcctId, stId, log);
+  } catch (e) {
+    log.assetSyncErrors = (log.assetSyncErrors || 0) + 1;
+  }
+}
+
+// Processes one bounded batch (LOCATIONS_PER_BATCH locations) starting
+// from wherever servicetrade_sync_progress left off, then saves the new
+// position. Returns { done, batchLog, cumulativeTotals }.
+async function runOneBatch(env) {
   const authToken = await getServiceTradeAccessToken(env);
-  let page = 1;
-  let totalPages = 1;
-  let synced = 0;
-  let skipped = 0;
-  const unmappedLinesSeen = new Set();
+  const progress = await getProgress(env);
+  let { current_page: page, offset_in_page: offset } = progress;
 
-  do {
-    const resp = await stGet(env, authToken, '/location', { page });
-    const locations = (resp.data && resp.data.locations) || [];
-    totalPages = (resp.data && resp.data.totalPages) || 1;
+  const batchLog = { synced: 0, updated: 0, assetsSynced: 0, assetWriteErrors: 0, assetSyncErrors: 0, locationSyncErrors: 0, locationSyncErrorSamples: [] };
 
-    for (const loc of locations) {
-      try {
-        const rawServiceLines = (loc.serviceLines || []).map((s) => s.name || s);
-        const { divisions, unmapped } = mapServiceLines(rawServiceLines);
-        unmapped.forEach((u) => unmappedLinesSeen.add(u));
+  const resp = await stGet(env, authToken, '/location', { page });
+  const locations = (resp.data && resp.data.locations) || [];
+  const totalPages = (resp.data && resp.data.totalPages) || 1;
 
-        const stId = String(loc.id);
-        const acctId = 'ST-' + stId;
-        const locName = sv(loc.name) || '';
-        const locAddress = sv(loc.address) || '';
+  if (locations.length === 0 && page > totalPages) {
+    // Nothing left at all -- fully done.
+    progress.completed_at = Date.now();
+    await saveProgress(env, progress);
+    return { done: true, batchLog, progress };
+  }
 
-        const existing = await env.DB.prepare(
-          `SELECT id FROM accounts WHERE id = ? OR (business = ? AND address = ?)`
-        ).bind(acctId, locName, locAddress).first();
-
-        const now = Date.now();
-        const servicesJson = JSON.stringify(divisions.length ? divisions : ['unipro']);
-        const noteLines = 'ServiceTrade service lines on file: ' + (rawServiceLines.join(', ') || 'none listed');
-        const finalAcctId = existing ? existing.id : acctId;
-
-        if (existing) {
-          await env.DB.prepare(
-            `UPDATE accounts SET business = ?, name = ?, address = ?, city = ?, state = ?, zip = ?, phone = ?, services = ?, updated_at = ? WHERE id = ?`
-          ).bind(locName, locName, locAddress, sv(loc.city) || '', sv(loc.state) || '', sv(loc.zip) || '', sv(loc.phone) || '', servicesJson, now, existing.id).run();
-          skipped++;
-        } else {
-          await env.DB.prepare(
-            `INSERT INTO accounts (id, name, business, status, services, address, city, state, zip, phone, division, cust_num, source, activity_log, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-          ).bind(
-            acctId, locName, locName, 'active', servicesJson,
-            locAddress, sv(loc.city) || '', sv(loc.state) || '', sv(loc.zip) || '', sv(loc.phone) || '',
-            'UniPro', stId, 'ServiceTrade Sync',
-            JSON.stringify([{ ts: now, type: 'system', icon: '🔄', title: 'Synced from ServiceTrade', note: noteLines, who: 'ServiceTrade Sync' }]),
-            now, now
-          ).run();
-          synced++;
-        }
-
-        if (loc.primaryContact && loc.primaryContact.name) {
-          const contactId = 'ST-C-' + stId;
-          const c = loc.primaryContact;
-          await env.DB.prepare(
-            `INSERT INTO contacts (id, name, company, title, email, phone, account_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)
-             ON CONFLICT(id) DO UPDATE SET name=excluded.name, email=excluded.email, phone=excluded.phone, updated_at=excluded.updated_at`
-          ).bind(contactId, sv(c.name) || '', locName, sv(c.title) || '', sv(c.email) || '', sv(c.phone) || '', acctId, now, now).run();
-        }
-
-        try {
-          await syncAssetsAndHistory(env, authToken, finalAcctId, stId, log);
-        } catch (e) {
-          log.assetSyncErrors = (log.assetSyncErrors || 0) + 1;
-        }
-      } catch (e) {
-        // 2026-07-15: a single location with an unexpected field shape
-        // (the D1_TYPE_ERROR class of bug) used to 500 the entire sync,
-        // losing every location after it in the same page. Now it's
-        // logged and skipped -- every other location still gets synced,
-        // and the response tells Ted exactly how many locations hit
-        // this so it's visible, not silently swallowed.
-        log.locationSyncErrors = (log.locationSyncErrors || 0) + 1;
-        log.locationSyncErrorSamples = log.locationSyncErrorSamples || [];
-        if (log.locationSyncErrorSamples.length < 5) {
-          log.locationSyncErrorSamples.push({ locationId: loc.id, error: e.message });
-        }
+  const slice = locations.slice(offset, offset + LOCATIONS_PER_BATCH);
+  for (const loc of slice) {
+    try {
+      await syncOneLocation(env, authToken, loc, batchLog);
+    } catch (e) {
+      batchLog.locationSyncErrors++;
+      if (batchLog.locationSyncErrorSamples.length < 5) {
+        batchLog.locationSyncErrorSamples.push({ locationId: loc.id, error: e.message });
       }
     }
-    page++;
-  } while (page <= totalPages);
+  }
 
-  log.synced = synced;
-  log.updated = skipped;
-  log.unmappedServiceLines = Array.from(unmappedLinesSeen);
-  return log;
+  let nextOffset = offset + slice.length;
+  let nextPage = page;
+  let done = false;
+  if (nextOffset >= locations.length) {
+    // Finished this page. Move to the next one, or finish entirely.
+    if (page >= totalPages) {
+      done = true;
+    } else {
+      nextPage = page + 1;
+      nextOffset = 0;
+    }
+  }
+
+  progress.current_page = nextPage;
+  progress.offset_in_page = nextOffset;
+  progress.total_synced = (progress.total_synced || 0) + (batchLog.synced || 0);
+  progress.total_updated = (progress.total_updated || 0) + (batchLog.updated || 0);
+  progress.total_asset_errors = (progress.total_asset_errors || 0) + (batchLog.assetSyncErrors || 0) + (batchLog.assetWriteErrors || 0);
+  progress.total_location_errors = (progress.total_location_errors || 0) + (batchLog.locationSyncErrors || 0);
+  progress.completed_at = done ? Date.now() : null;
+  await saveProgress(env, progress);
+
+  return { done, batchLog, progress };
 }
 
 export default {
@@ -315,14 +350,32 @@ export default {
     if (url.pathname === '/health') {
       return Response.json({ ok: true, hasCredentials: !!(env.SERVICETRADE_CLIENT_ID && env.SERVICETRADE_CLIENT_SECRET) });
     }
+    // Single bounded batch per call -- call this repeatedly to work
+    // through the full location list. Response tells you exactly where
+    // it left off and whether it's done.
     if (url.pathname === '/sync' && request.method === 'POST') {
-      const log = {};
       try {
-        await syncLocations(env, log);
-        return Response.json({ ok: true, ...log });
+        const result = await runOneBatch(env);
+        return Response.json({
+          ok: true,
+          done: result.done,
+          thisBatch: result.batchLog,
+          cumulative: {
+            totalSynced: result.progress.total_synced,
+            totalUpdated: result.progress.total_updated,
+            totalAssetErrors: result.progress.total_asset_errors,
+            totalLocationErrors: result.progress.total_location_errors,
+          },
+          resumePosition: { page: result.progress.current_page, offsetInPage: result.progress.offset_in_page },
+          message: result.done ? 'Sync fully complete.' : 'Batch complete. Call /sync again to continue from where this left off.',
+        });
       } catch (e) {
-        return Response.json({ ok: false, error: e.message, ...log }, { status: 500 });
+        return Response.json({ ok: false, error: e.message }, { status: 500 });
       }
+    }
+    if (url.pathname === '/sync-status') {
+      const progress = await getProgress(env);
+      return Response.json({ ok: true, progress });
     }
     if (url.pathname === '/webhook' && request.method === 'POST') {
       try {
@@ -341,17 +394,23 @@ export default {
       ).all();
       return Response.json({ ok: true, count: (rows.results || []).length, recent: rows.results || [] });
     }
-    return Response.json({ ok: true, message: 'servicetrade-sync -- POST /sync to run, GET /health to check credentials, POST /webhook to receive ServiceTrade events, GET /webhook-peek to view captured ones' });
+    return Response.json({ ok: true, message: 'servicetrade-sync -- POST /sync to run one batch, GET /sync-status to see progress, GET /health to check credentials, POST /webhook to receive ServiceTrade events, GET /webhook-peek to view captured ones' });
   },
 
+  // Nightly cron: chains a few batches together so real progress happens
+  // on its own without Ted needing to trigger every batch by hand. Each
+  // batch is still fully bounded and independent -- if one throws, the
+  // loop just stops for the night and picks back up tomorrow from the
+  // saved cursor, nothing is lost or re-done.
   async scheduled(event, env) {
-    const log = {};
     try {
-      await syncLocations(env, log);
+      for (let i = 0; i < CRON_BATCHES_PER_RUN; i++) {
+        const result = await runOneBatch(env);
+        if (result.done) break;
+      }
     } catch (e) {
-      // Swallow here -- a failed scheduled run shouldn't crash the cron,
-      // but /health and manual /sync calls will surface the same error
-      // for debugging.
+      // Swallow -- a failed scheduled run shouldn't crash the cron, next
+      // night picks up from the last saved cursor.
     }
   },
 };
