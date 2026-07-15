@@ -57,18 +57,23 @@
 
 const ST_API_BASE = 'https://app.servicetrade.com/api';
 
-// Conservative: 1 external call to fetch the location page itself, plus
-// up to 2-3 external calls per location (asset pull, possible extra
-// asset pagination, job pull). 12 locations per batch keeps total
-// external calls comfortably under the Free plan's 50-call ceiling even
-// in the worst case, with real margin left over.
-const LOCATIONS_PER_BATCH = 12;
+// 2026-07-15, updated after Ted upgraded the termac-one Cloudflare
+// account to Workers Paid: the per-invocation external-subrequest
+// ceiling jumps from 50 (Free) to 10,000 by default. Each location
+// costs roughly 2-3 external calls (asset pull, possible extra asset
+// pagination, job pull), plus 1 call for the location page itself.
+// 300 locations/batch keeps total external calls (~600-900) comfortably
+// under the new ceiling with real margin, while cutting a full sync of
+// ~6,000 locations down to roughly 20 manual /sync calls instead of
+// ~500. If the account ever drops back to Free, this would need to
+// come back down to ~12.
+const LOCATIONS_PER_BATCH = 300;
 
 // How many batches the nightly cron chains together in one scheduled
 // run. Each batch is a fully separate, bounded unit of work, so this is
-// safe regardless of plan -- it just means the cron makes ~5x the
+// safe regardless of plan -- it just means the cron makes 3x the
 // progress of a single manual /sync call each night.
-const CRON_BATCHES_PER_RUN = 5;
+const CRON_BATCHES_PER_RUN = 3;
 
 const SERVICE_LINE_MAP = {
   'Emergency/Exit Light Group': 'unipro',
