@@ -1190,7 +1190,6 @@ function spRenderCRM(tab) {
 
   // Build HTML
   const isMgr = ['accounts'].includes(tab);
-  const addLabel = tab === 'accounts' ? '+ New Account' : '+ Add New';
 
   let html = `
   <!-- Recently Viewed -->
@@ -1213,9 +1212,17 @@ function spRenderCRM(tab) {
       <option value="">All Statuses</option>
       <option>new</option><option>hot</option><option>warm</option><option>cold</option><option>active</option>
     </select>
-    <button class="sp-btn sp-btn-red" onclick="spOpenAdd('${tab}')">+ Add New</button>
-    <button class="sp-btn" onclick="spOpenAllProForm()" style="background:#1A1D21;color:#fff;border-color:#1A1D21">🏗️ AllPro / Hood</button>
+    ${tab === 'accounts' ? '' : `<button class="sp-btn sp-btn-red" onclick="spOpenAdd('${tab}')">+ Add New</button>
+    <button class="sp-btn" onclick="spOpenAllProForm()" style="background:#1A1D21;color:#fff;border-color:#1A1D21">🏗️ AllPro / Hood</button>`}
   </div>
+  <!-- 2026-07-15 per Ted: no manual "add account" entry point, anywhere.
+       An Account only ever gets created one way -- winning an Opportunity
+       (see spSetStage's 'accepted' handoff and promoteLeadToAccountIfNeeded).
+       A direct add-account button here was a duplicate-account trap: two
+       reps, or one rep twice, could each spin up a separate account for
+       the same real business with no link between them. If a business
+       needs to be worked, it starts as a Lead. -->
+  ${tab === 'accounts' ? `<div style="font-size:11px;color:var(--soft);margin:-4px 0 12px;padding:8px 12px;background:#F8F9FA;border-radius:7px">Accounts are created automatically when an Opportunity is marked Won \u2014 there's no manual add here on purpose, to keep one account per real business.</div>` : ''}
   <div class="sp-record-grid" id="spRecGrid">`;
 
   if (!data.length) {
@@ -4746,7 +4753,7 @@ function spResolveOpportunity(id, outcome) {
   if (outcome === 'won' && parentType === 'contact' && parentId) {
     spToast('✅ Marked won');
     setTimeout(function() {
-      if (confirm('This opportunity is attached to a Contact, not yet an Account.\n\nConvert this contact to an Account now?')) {
+      if (confirm('This is new business \u2014 there\'s no Account yet.\n\nCreate the Account from this win now? The contact will move onto it.')) {
         spSetStage(parentId, 'contacts', 'accepted', null);
       } else {
         spViewRecord(parentId, 'contacts');
@@ -5149,7 +5156,7 @@ function spBuildRepForm(r) {
     '</div>' +
 
     // Addresses
-    '<div class="sp-form-full"><label>Business Address</label><input id="spf_address" value="' + v('address') + '" placeholder="Street address" autocomplete="off"></div>' +
+    '<div class="sp-form-full"><label>Business Address</label><input id="spf_address" value="' + v('address') + '" placeholder="Street address" autocomplete="off" oninput="spDupeCheck(this.value,\'address\')"><div id="spf_dupe_addr" style="display:none;margin-top:4px"></div></div>' +
     '<div class="sp-form-full" style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:10px">' +
       '<div><label>City</label><input id="spf_city" value="' + v('city') + '" placeholder="City"></div>' +
       '<div><label>State</label><select id="spf_state">' +
@@ -5428,11 +5435,12 @@ function spCloseModal() {
 //  DUPLICATE DETECTION
 // ══════════════════════════════════════════════════════
 function spDupeCheck(val, field) {
-  const containerId = field === 'business' ? 'spf_dupe_biz' : 'spf_dupe_phone';
+  const containerId = field === 'business' ? 'spf_dupe_biz' : field === 'address' ? 'spf_dupe_addr' : 'spf_dupe_phone';
   const el = document.getElementById(containerId);
   if (!el) return;
   const q = (val || '').trim().toLowerCase();
   if (q.length < 3) { el.style.display = 'none'; return; }
+  const qNorm = spNormForDupe(q);
 
   const matches = [];
   const seenIds = new Set();
@@ -5442,7 +5450,11 @@ function spDupeCheck(val, field) {
       const biz = (r.business || r.name || '').toLowerCase();
       const phone = (r.phone || '').replace(/\D/g,'');
       const qPhone = q.replace(/\D/g,'');
-      const hit = field === 'business' ? biz.includes(q) : (phone && qPhone.length >= 5 && phone.includes(qPhone));
+      const addrNorm = spNormForDupe(r.address || '');
+      let hit;
+      if (field === 'business') hit = biz.includes(q);
+      else if (field === 'address') hit = qNorm.length > 6 && addrNorm && addrNorm.includes(qNorm);
+      else hit = (phone && qPhone.length >= 5 && phone.includes(qPhone));
       if (hit) { seenIds.add(r.id); matches.push({ r, pool }); }
     });
   });
@@ -5680,9 +5692,51 @@ function spSyncSiteContactFromOwner(){
 }
 
 
-// ── PROMOTE LEAD TO ACCOUNT ON THE SPOT (used when a survey starts from an opportunity
-// that hasn't formally closed yet, e.g. a rep starting a site survey straight from the
-// Opportunities tab without walking through every stage first) ──
+// ── ACCOUNT DUPLICATE GUARD ──────────────────────────────────────────────
+// 2026-07-15 per Ted: since an Account can now ONLY be created by winning
+// an Opportunity (no manual add button anymore), this is the one real
+// chokepoint to guard. Checks name, phone, AND address (spDupeCheck, the
+// inline live-typing warning on the lead form, only ever checked name and
+// phone) -- a norm'd address match catches the same business entered
+// under a slightly different name that name/phone alone would miss.
+// Returns the best-matching existing account, or null.
+function spNormForDupe(s) {
+  return (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+function spCheckAccountDupe(bizName, phone, address) {
+  const nName = spNormForDupe(bizName);
+  const nPhone = (phone || '').replace(/\D/g, '');
+  const nAddr = spNormForDupe(address);
+  if (!nName && !nPhone && !nAddr) return null;
+
+  const accts = crmLoad('accounts') || [];
+  for (const a of accts) {
+    const aName = spNormForDupe(a.business || a.name || '');
+    const aPhone = (a.phone || '').replace(/\D/g, '');
+    const aAddr = spNormForDupe(a.address || '');
+    const nameHit = nName && aName && (aName.includes(nName) || nName.includes(aName));
+    const phoneHit = nPhone && nPhone.length >= 7 && aPhone && aPhone.includes(nPhone);
+    const addrHit = nAddr && aAddr && nAddr.length > 6 && (aAddr.includes(nAddr) || nAddr.includes(aAddr));
+    if (nameHit || phoneHit || addrHit) return a;
+  }
+  return null;
+}
+// Hard stop-and-confirm gate, called right before an Account gets created.
+// Returns true if it's safe to proceed (no dupe found, or rep confirmed
+// anyway), false if the rep backed out.
+function spConfirmNoAccountDupe(bizName, phone, address) {
+  const existing = spCheckAccountDupe(bizName, phone, address);
+  if (!existing) return true;
+  return confirm(
+    '⚠️ An account already exists that looks like this one:\n\n' +
+    (existing.business || existing.name || 'Unnamed account') +
+    (existing.address ? '\n' + existing.address : '') +
+    (existing.phone ? '\n' + existing.phone : '') +
+    '\n\nAre you sure you want to create a new, separate account instead of using the existing one?'
+  );
+}
+
+
 function promoteLeadToAccountIfNeeded(leadOrAcctId){
   let accts = crmLoad('accounts');
   let acct = accts.find(a => a.id === leadOrAcctId);
@@ -5696,6 +5750,9 @@ function promoteLeadToAccountIfNeeded(leadOrAcctId){
   const bizName = r.business || r.name || '';
   const parentName = (r.parentCompany || '').trim();
   const accountName = parentName || bizName;
+
+  if (!spConfirmNoAccountDupe(accountName, r.phone || '', r.address || '')) return null;
+
   const newLocation = {
     id: 'loc_' + Date.now(),
     name: bizName || accountName,
@@ -5993,6 +6050,17 @@ function spSetStage(id, tab, newStage, selectEl) {
       const bizName = r.business || r.name || '';
       const parentName = (r.parentCompany || '').trim();
       const accountName = parentName || bizName;
+
+      // 2026-07-15 per Ted: hard stop here, not just a soft warning. If the
+      // rep backs out, abort the WHOLE stage change (not just skip account
+      // creation) -- otherwise this record would end up marked 'accepted',
+      // a stage that belongs to no tab, and just vanish from view with no
+      // real account behind it. That's worse than not converting at all.
+      if (!spConfirmNoAccountDupe(accountName, r.phone || '', r.address || '')) {
+        if (selectEl) selectEl.value = oldStage;
+        return;
+      }
+
       const newLocation = {
         id: 'loc_' + Date.now(),
         name: bizName || accountName,
