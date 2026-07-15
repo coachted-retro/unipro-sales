@@ -40,7 +40,14 @@
     'trade_partners', 'trade_partner_referrals', 'trade_partner_bids',
     'reference_library', 'allpro_rate_tables', 'notifications',
     'accounts_payable', 'expense_reports', 'customer_orders', 'reorder_requests',
-    'warehouse_alerts', 'debriefs', 'rcp_calls'];
+    'warehouse_alerts', 'debriefs', 'rcp_calls',
+    // 2026-07-15 per Ted: read-only reference data (dish machine rentals,
+    // GTO tiered pricing, chemicals, etc.) feeding the opportunity
+    // creation modal in sales-portal.html. Reps only ever read this,
+    // never write it through the UI, but it syncs the same way as any
+    // other table so it hydrates automatically instead of needing a
+    // one-off fetch path.
+    'service_pricing_catalog', 'rep_comp_profiles'];
 
   async function d1Fetch(method, path, body) {
     try {
@@ -215,9 +222,15 @@
     // unfiltered) but wasn't robust - explicit now, matching the real
     // D1 columns.
     opportunities: {
-      accountId: 'account_id', expectedClose: 'expected_close',
+      accountId: 'account_id', contactId: 'contact_id',
+      expectedClose: 'expected_close',
       closedAt: 'closed_at', assignedRep: 'assigned_rep',
       activityLog: 'activity_log',
+      slaDays: 'sla_days', serviceType: 'service_type',
+      monthlyValue: 'monthly_value', termMonths: 'term_months',
+      resolutionStatus: 'resolution_status', resolutionDate: 'resolution_date',
+      lostReasonCode: 'lost_reason_code', pendingReasonCode: 'pending_reason_code',
+      resolutionNotes: 'resolution_notes', flaggedAt: 'flagged_at',
     },
     // Route Debriefs, added 2026-07-13 per Ted - was 100% localStorage-
     // only on whichever device a tech submitted from (route-debrief.html),
@@ -258,8 +271,16 @@
   };
 
   var VALID = {
-    opportunities: ['id', 'account_id', 'name', 'division', 'stage', 'value',
+    // 2026-07-15 per Ted: opportunity is now a real object attachable to
+    // either a Contact (contact_id) or an Account (account_id), with a
+    // full resolution lifecycle -- SLA aging, won/lost/pending outcome,
+    // reason, and the lease/tiered/per-diem pricing model. See
+    // opportunity_churn_commission_schema_v2.sql for the D1 side.
+    opportunities: ['id', 'account_id', 'contact_id', 'name', 'division', 'stage', 'value',
       'assigned_rep', 'expected_close', 'notes', 'closed_at',
+      'sla_days', 'service_type', 'monthly_value', 'term_months',
+      'resolution_status', 'resolution_date', 'lost_reason_code',
+      'pending_reason_code', 'resolution_notes', 'flagged_at',
       'created_at', 'updated_at', 'activity_log'],
     accounts_payable: ['id', 'vendor', 'amount', 'division', 'category',
       'due_date', 'invoice_num', 'notes', 'status', 'logged_at', 'paid_at',
