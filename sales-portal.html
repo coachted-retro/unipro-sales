@@ -4731,10 +4731,31 @@ function spResolveOpportunity(id, outcome) {
 
   crmSave('opportunities', opps);
   document.getElementById('spResolveModal')?.remove();
-  spToast(outcome === 'won' ? '✅ Marked won' : outcome === 'lost' ? '🚫 Marked lost' : '⏳ Marked pending');
 
   var parentType = o.accountId ? 'account' : 'contact';
   var parentId = o.accountId || o.contactId;
+
+  // 2026-07-15 per Ted's lifecycle deep-dive: marking an opportunity Won
+  // used to just flip its own badge and drop the rep back on the parent
+  // record -- if that parent was still a Contact (not yet converted), it
+  // stayed sitting in Contacts indefinitely with no signal anything was
+  // unfinished. A rep could win the deal and reasonably think they were
+  // done. This closes that gap without forcing anything automatically:
+  // the rep still makes the call, but now they're actually asked instead
+  // of the system staying silent.
+  if (outcome === 'won' && parentType === 'contact' && parentId) {
+    spToast('✅ Marked won');
+    setTimeout(function() {
+      if (confirm('This opportunity is attached to a Contact, not yet an Account.\n\nConvert this contact to an Account now?')) {
+        spSetStage(parentId, 'contacts', 'accepted', null);
+      } else {
+        spViewRecord(parentId, 'contacts');
+      }
+    }, 200);
+    return;
+  }
+
+  spToast(outcome === 'won' ? '✅ Marked won' : outcome === 'lost' ? '🚫 Marked lost' : '⏳ Marked pending');
   if (parentId) spViewRecord(parentId, parentType === 'account' ? 'accounts' : 'contacts');
   else spNav('home');
 }
@@ -7148,15 +7169,21 @@ function spRenderGoals() {
   let quota = { revQuota:50000, acctTarget:12, callTarget:50, visitTarget:10, commRate:8 };
   try { const all = JSON.parse(localStorage.getItem(GOALS_QUOTA)||'{}'); quota = { ...quota, ...(all[qKey]||{}) }; } catch(e){}
 
-  // 2026-07-10: commission tracker. This existed in termac-os.html's
-  // separate Manager Portal overlay but was never reachable from here --
-  // reps only ever use this file, not that one, so it effectively didn't
-  // exist for them. revClosed is an estimate (sum of estimatedValue
-  // across accounts that have reached active/closed stages) since the
-  // full win/loss revenue ledger lives in a separate tracking system in
-  // termac-os.html not yet ported here -- labeled as an estimate below
-  // rather than presented as exact.
-  const revClosed = myAccts.reduce((s, r) => s + (r.estimatedValue || 0), 0);
+  // 2026-07-15 per Ted's lifecycle deep-dive: revClosed used to sum
+  // estimatedValue across active/closed accounts, but nothing in this file
+  // (or the whole app) ever WRITES estimatedValue -- it's read in exactly
+  // two places (here and the Team Leaderboard) and set nowhere, so this
+  // was always $0 for every rep regardless of real deals closed. The real
+  // dollar figure lives on the opportunities table (o.value, or
+  // monthlyValue*termMonths for leases), set at creation and confirmed at
+  // Won. Now sums directly from opportunities this rep closed Won, same
+  // source the Won badge on a contact/account page already shows.
+  const myWonOpps = (crmLoad('opportunities') || []).filter(function(o) {
+    return o.resolutionStatus === 'won' && (o.assignedRep || '') === repName;
+  });
+  const revClosed = myWonOpps.reduce(function(s, o) {
+    return s + (o.serviceType === 'lease' ? (o.monthlyValue||0) * (o.termMonths||1) : (o.value||0));
+  }, 0);
   const commission = Math.round(revClosed * (quota.commRate / 100));
   const mySpiffs = (typeof crmLoad === 'function' ? crmLoad('allpro_spiffs') : []).filter(s => s.repName === repName);
   const spiffsPending = mySpiffs.filter(s => s.status === 'pending');
@@ -7230,7 +7257,7 @@ function spRenderGoals() {
       <div style="flex:1;min-width:160px;text-align:center;padding:14px;background:var(--bg);border-radius:8px">
         <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:26px;color:var(--ink)">$${commissionPlusSpiffs.toLocaleString()}</div>
         <div style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-top:2px">Total Expected</div>
-        <div style="font-size:10px;color:var(--soft);margin-top:4px">${quota.commRate}% commission on ~$${revClosed.toLocaleString()} closed (estimate)</div>
+        <div style="font-size:10px;color:var(--soft);margin-top:4px">${quota.commRate}% commission on $${revClosed.toLocaleString()} won</div>
       </div>
       ${mySpiffs.length ? `<div style="flex:1;min-width:160px;text-align:center;padding:14px;background:#FFFBEA;border-radius:8px">
         <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:26px;color:var(--orange)">$${spiffTotal.toLocaleString()}</div>
@@ -7317,16 +7344,21 @@ function spRenderGoals() {
 // ══════════════════════════════════════════════════════
 function spRenderLeaderboard() {
   const el = document.getElementById('spContent');
-  const all = crmLoad('leads');
-  const WON_STAGES = ['active','close','onboarding','first_service','renewal'];
+  // 2026-07-15 per Ted's lifecycle deep-dive: switched from summing
+  // estimatedValue (never written anywhere in the app, always $0) to
+  // summing real Won opportunities per rep -- same fix and same reasoning
+  // as revClosed in spRenderGoals just above. Keeping both in sync since
+  // this total is supposed to match what each rep sees on their own tab.
+  const allOpps = crmLoad('opportunities') || [];
 
   const repStats = Object.keys(SP_REPS).map(function(repName) {
-    const mine = all.filter(function(r) {
-      return (r.ownedBy || r.assignedRep || r.createdBy || '') === repName
-        && WON_STAGES.includes(r.lifecycleStage || '');
+    const won = allOpps.filter(function(o) {
+      return o.resolutionStatus === 'won' && (o.assignedRep || '') === repName;
     });
-    const revenue = mine.reduce(function(s, r) { return s + (Number(r.estimatedValue) || 0); }, 0);
-    return { name: repName, revenue: revenue, deals: mine.length };
+    const revenue = won.reduce(function(s, o) {
+      return s + (o.serviceType === 'lease' ? (o.monthlyValue||0) * (o.termMonths||1) : (o.value||0));
+    }, 0);
+    return { name: repName, revenue: revenue, deals: won.length };
   }).filter(function(r) { return r.revenue > 0 || r.deals > 0; })
     .sort(function(a, b) { return b.revenue - a.revenue; });
 
@@ -7356,7 +7388,7 @@ function spRenderLeaderboard() {
     + '</div>';
   }).join('');
 
-  html += '<div style="font-size:11px;color:var(--soft);text-align:center;margin-top:14px">Revenue is the sum of estimated value across each rep\'s active/closed accounts \u2014 same number shown on their own Goals tab.</div>';
+  html += '<div style="font-size:11px;color:var(--soft);text-align:center;margin-top:14px">Revenue is the sum of each rep\'s Won opportunities \u2014 same number shown on their own Goals tab.</div>';
   html += '</div>';
   el.innerHTML = html;
 }
