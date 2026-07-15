@@ -107,6 +107,11 @@ const ALLOWED_TABLES = new Set([
   // Resend integration (termac-notify's /send-report), bypassing Brevo
   // entirely until that gets set up. See fire-safety-campaign-schema.sql.
   'campaign_content','campaign_sends','campaign_optouts',
+  // Opportunity lifecycle / SLA tracking + churn revenue + rep commission
+  // structure, added 2026-07-15 per Ted. See
+  // opportunity_churn_commission_schema_v2.sql for the full D1 schema.
+  'rep_comp_profiles','bonus_tiers','reason_codes',
+  'account_rep_assignments','account_churn_events',
 ]);
 
 const TABLE_PREFIX = {
@@ -142,6 +147,11 @@ const TABLE_PREFIX = {
   campaign_content:'CC',
   campaign_sends:'CS',
   campaign_optouts:'CO2',
+  rep_comp_profiles:'RCM',
+  bonus_tiers:'BTR',
+  reason_codes:'RSN',
+  account_rep_assignments:'ARA',
+  account_churn_events:'ACE',
 };
 
 function corsHeaders(origin) {
