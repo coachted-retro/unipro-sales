@@ -111,6 +111,15 @@ function sv(val) {
   return val;
 }
 
+// 2026-07-15: same normalization used for the GTO/FilterMan/UniPro CSV
+// import -- uppercase, strip everything but letters/digits, collapse
+// whitespace. Used to catch "XYZ CAFE" vs "XYZ Cafe LLC" as the same
+// business when they share a zip, instead of the old exact-string
+// comparison that let real duplicates straight through.
+function normalizeForMatch(s) {
+  return (s || '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
+}
+
 const ST_OAUTH_ROW_ID = 'main';
 const PROGRESS_ROW_ID = 'main';
 
@@ -249,11 +258,42 @@ async function syncOneLocation(env, authToken, loc, log) {
   const stId = String(loc.id);
   const acctId = 'ST-' + stId;
   const locName = sv(loc.name) || '';
-  const locAddress = sv(loc.address) || '';
 
-  const existing = await env.DB.prepare(
-    `SELECT id FROM accounts WHERE id = ? OR (business = ? AND address = ?)`
-  ).bind(acctId, locName, locAddress).first();
+  // 2026-07-15 FIX: loc.address is a real structured object from
+  // ServiceTrade (street/city/state/postalCode), not a flat string like
+  // originally assumed. The first live sync stored the whole object as
+  // one garbled JSON blob in `address` and left city/state/zip empty,
+  // since it was reading those as separate top-level fields that don't
+  // exist on the real response. 40 accounts synced before this fix were
+  // repaired directly in D1; this unpacks it properly going forward.
+  const addr = (loc.address && typeof loc.address === 'object') ? loc.address : {};
+  const locStreet = sv(addr.street) || '';
+  const locCity = sv(addr.city) || '';
+  const locState = sv(addr.state) || '';
+  const locZip = sv(addr.postalCode) || '';
+
+  // 2026-07-15 FIX: matching used to be an exact string comparison on
+  // business name + the (broken) address blob, which almost never
+  // caught real duplicates -- "XYZ CAFE" vs "XYZ Cafe LLC" at the
+  // identical address sailed past each other as different accounts.
+  // Now pulls every existing account at the same zip (cheap, zip is
+  // indexed-cardinality small even in dense areas) and compares names
+  // normalized the same way the GTO/FilterMan/UniPro CSV import does --
+  // uppercase, strip punctuation -- catching the same class of near-
+  // duplicate that a pure exact match misses.
+  const normName = normalizeForMatch(locName);
+  let existing = null;
+  if (locZip) {
+    const candidates = await env.DB.prepare(
+      `SELECT id, name FROM accounts WHERE zip = ? AND id != ?`
+    ).bind(locZip, acctId).all();
+    const rows = (candidates && candidates.results) || [];
+    const match = rows.find((r) => normalizeForMatch(r.name) === normName);
+    if (match) existing = { id: match.id };
+  }
+  if (!existing) {
+    existing = await env.DB.prepare(`SELECT id FROM accounts WHERE id = ?`).bind(acctId).first();
+  }
 
   const now = Date.now();
   const servicesJson = JSON.stringify(divisions.length ? divisions : ['unipro']);
@@ -263,14 +303,14 @@ async function syncOneLocation(env, authToken, loc, log) {
   if (existing) {
     await env.DB.prepare(
       `UPDATE accounts SET business = ?, name = ?, address = ?, city = ?, state = ?, zip = ?, phone = ?, services = ?, updated_at = ? WHERE id = ?`
-    ).bind(locName, locName, locAddress, sv(loc.city) || '', sv(loc.state) || '', sv(loc.zip) || '', sv(loc.phone) || '', servicesJson, now, existing.id).run();
+    ).bind(locName, locName, locStreet, locCity, locState, locZip, sv(loc.phone) || '', servicesJson, now, existing.id).run();
     log.updated = (log.updated || 0) + 1;
   } else {
     await env.DB.prepare(
       `INSERT INTO accounts (id, name, business, status, services, address, city, state, zip, phone, division, cust_num, source, activity_log, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     ).bind(
       acctId, locName, locName, 'active', servicesJson,
-      locAddress, sv(loc.city) || '', sv(loc.state) || '', sv(loc.zip) || '', sv(loc.phone) || '',
+      locStreet, locCity, locState, locZip, sv(loc.phone) || '',
       'UniPro', stId, 'ServiceTrade Sync',
       JSON.stringify([{ ts: now, type: 'system', icon: '🔄', title: 'Synced from ServiceTrade', note: noteLines, who: 'ServiceTrade Sync' }]),
       now, now
