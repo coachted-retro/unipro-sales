@@ -1563,8 +1563,18 @@ function spResetAgendaConfirm() {
 // localStorage in devtools. This clears just the pools this portal
 // actually uses, then re-hydrates each one from scratch so every record
 // comes back fresh from the server, not a stale local copy.
+// 2026-07-16 FIX: service_pricing_catalog, opportunities, and
+// rep_comp_profiles were added to the shared D1_SYNC_TABLES list in
+// termac-d1-sync.js when the opportunity/catalog features were built,
+// but this page's OWN separate hydration list never got updated to
+// match -- meaning the pricing catalog never actually loaded into this
+// browser at all. That's why the Division/Category/Item dropdowns in
+// Create Opportunity looked completely dead: they had zero real options
+// to show, not a broken click handler. Adding the missing tables here
+// is the actual fix, not a UI patch.
 var SP_REFRESH_POOLS = ['leads','contacts','accounts','appointments',
-  'allpro_projects','allpro_spiffs','collections','customer_orders','reorder_requests','scheduler_queue'];
+  'allpro_projects','allpro_spiffs','collections','customer_orders','reorder_requests','scheduler_queue',
+  'service_pricing_catalog','opportunities','rep_comp_profiles'];
 async function spForceRefreshMyData() {
   if (!confirm('Pull your latest calls, visits, and account updates fresh from the server? This can take a few seconds, especially the first time today.')) return;
   var btn = document.getElementById('spRefreshDataBtn');
@@ -4477,6 +4487,14 @@ function spOpenOpportunityModal(parentType, parentId, parentName) {
   spOppCatalog().forEach(function(r){ if (r.division && divisions.indexOf(r.division) === -1) divisions.push(r.division); });
   divisions.sort();
 
+  // 2026-07-16 FIX: if the pricing catalog genuinely hasn't finished
+  // loading yet (very first page load, slow connection), the Division
+  // dropdown used to just sit there with nothing in it -- looked exactly
+  // like a broken click handler even though nothing was actually wrong,
+  // it just had zero data yet. Now it says so plainly and starts in
+  // manual-entry mode instead of a dropdown with no options.
+  var catalogNotReady = divisions.length === 0;
+
   // Default rep: whoever's already assigned to the parent record, else
   // the current logged-in rep. Never left blank — an opportunity with
   // no owner is invisible to SLA and commission reporting.
@@ -4503,8 +4521,10 @@ function spOpenOpportunityModal(parentType, parentId, parentName) {
       '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:18px;color:var(--ink);margin-bottom:4px">💼 Create Opportunity</div>' +
       '<div style="font-size:12px;color:var(--soft);margin-bottom:16px">For ' + escH(parentName || '') + '</div>' +
 
+      (catalogNotReady ? '<div style="background:#FEF3C7;color:#92400E;border-radius:7px;padding:10px 12px;font-size:12px;margin-bottom:12px">⚠ The pricing catalog is still loading on this device. Use manual entry below for now, or close this and try again in a few seconds.</div>' : '') +
+
       '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Division</label>' +
-      '<select id="oppDivision" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:10px" onchange="spOppPopulateEntities()"><option value="">Select division...</option>' + divOpts + '</select>' +
+      '<select id="oppDivision"' + (catalogNotReady ? ' disabled' : '') + ' style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:10px" onchange="spOppPopulateEntities()"><option value="">' + (catalogNotReady ? 'Catalog still loading…' : 'Select division...') + '</option>' + divOpts + '</select>' +
 
       '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Entity</label>' +
       '<select id="oppEntity" disabled style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:10px" onchange="spOppPopulateCategories()"><option value="">Pick division first</option></select>' +
@@ -4517,8 +4537,8 @@ function spOpenOpportunityModal(parentType, parentId, parentName) {
 
       '<div id="oppPricingPanel" style="display:none;background:#F9FAFB;border-radius:8px;padding:12px;margin-bottom:12px"></div>' +
 
-      '<label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--soft);margin-bottom:10px"><input type="checkbox" id="oppManualToggle" onchange="spOppToggleManual()"> Not in the catalog — enter manually</label>' +
-      '<div id="oppManualFields" style="display:none;margin-bottom:10px">' +
+      '<label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--soft);margin-bottom:10px"><input type="checkbox" id="oppManualToggle" onchange="spOppToggleManual()"' + (catalogNotReady ? ' checked' : '') + '> Not in the catalog — enter manually</label>' +
+      '<div id="oppManualFields" style="' + (catalogNotReady ? 'display:block' : 'display:none') + ';margin-bottom:10px">' +
         '<input id="oppManualDesc" type="text" placeholder="What\'s the job?" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:8px;box-sizing:border-box">' +
         '<input id="oppManualValue" type="number" step="0.01" placeholder="Amount ($)" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;box-sizing:border-box">' +
       '</div>' +
