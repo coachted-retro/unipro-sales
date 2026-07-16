@@ -200,6 +200,33 @@ async function saveProgress(env, p) {
   ).run();
 }
 
+// 2026-07-15 FIX: asset detail fields (manufacturer, model, install date,
+// hydrostatic test date) live in a nested `properties` object, and the
+// property key names are prefixed by asset type -- a kitchen_cylinder
+// asset has cylinder_manufacturer/cylinder_model/etc, an extinguisher
+// will have its own different prefix, and so on for every asset type
+// ServiceTrade defines. Rather than hardcode every type's exact prefix
+// (fragile, and would silently miss any type not seen yet), this
+// searches the properties object generically for any key containing the
+// given keyword, so it works across every asset type automatically.
+// Also fixes location_in_site, which was assumed to be a flat top-level
+// field but is actually inside properties too on most asset types.
+function findProp(properties, keyword) {
+  if (!properties || typeof properties !== 'object') return null;
+  const key = Object.keys(properties).find((k) => k.toLowerCase().includes(keyword));
+  return key ? properties[key] : null;
+}
+
+// Several property values are epoch-seconds timestamps (confirmed via
+// cylinder_manufacture_date in a real response), same convention as the
+// job dates fixed earlier tonight. Converts to a plain date string;
+// passes through anything that isn't a bare number unchanged.
+function toDateStr(val) {
+  if (val === null || val === undefined) return '';
+  if (typeof val === 'number') return new Date(val * 1000).toISOString().slice(0, 10);
+  return String(val);
+}
+
 async function syncAssetsAndHistory(env, authToken, acctId, stLocationId, log) {
   let page = 1, totalPages = 1;
   const assets = [];
@@ -214,16 +241,24 @@ async function syncAssetsAndHistory(env, authToken, acctId, stLocationId, log) {
   const now = Date.now();
   for (const a of assets) {
     const assetId = 'STA-' + a.id;
+    const props = a.properties || {};
+    const locationInSite = findProp(props, 'location_in_site') || a.locationInSite || '';
+    const manufacturer = findProp(props, 'manufacturer');
+    const model = findProp(props, 'model');
+    const size = findProp(props, 'size');
+    const installDate = findProp(props, 'install');
+    const maintenanceDue = findProp(props, 'maintenance');
+    const hydroDue = findProp(props, 'hydro');
     try {
       await env.DB.prepare(
         `INSERT INTO account_assets (id, account_id, external_asset_id, asset_type, description, location_in_site, service_line, manufacturer, model, size, install_date, maintenance_due_date, hydrostatic_test_due_date, created_at, updated_at)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-         ON CONFLICT(id) DO UPDATE SET description=excluded.description, maintenance_due_date=excluded.maintenance_due_date, hydrostatic_test_due_date=excluded.hydrostatic_test_due_date, updated_at=excluded.updated_at`
+         ON CONFLICT(id) DO UPDATE SET description=excluded.description, location_in_site=excluded.location_in_site, service_line=excluded.service_line, manufacturer=excluded.manufacturer, model=excluded.model, size=excluded.size, install_date=excluded.install_date, maintenance_due_date=excluded.maintenance_due_date, hydrostatic_test_due_date=excluded.hydrostatic_test_due_date, updated_at=excluded.updated_at`
       ).bind(
         assetId, acctId, sv(String(a.id)), sv(a.type) || '', sv(a.description || a.name) || '',
-        sv(a.locationInSite) || '', sv(a.serviceLine && a.serviceLine.name) || '',
-        sv(a.manufacturer) || '', sv(a.model) || '', sv(a.size) || '',
-        sv(a.installDate) || '', sv(a.maintenanceDueDate) || '', sv(a.hydrostaticTestDueDate) || '',
+        sv(locationInSite) || '', sv(a.serviceLine && a.serviceLine.name) || '',
+        sv(manufacturer) || '', sv(model) || '', sv(size) || '',
+        sv(toDateStr(installDate)) || '', sv(toDateStr(maintenanceDue)) || '', sv(toDateStr(hydroDue)) || '',
         now, now
       ).run();
     } catch (e) {
