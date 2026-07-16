@@ -1771,6 +1771,58 @@ function saveLead() {
     }
     crmSave('leads', leads);
 
+    // 2026-07-16 per Ted: the pitch tool (or the plain intake form, when
+    // it's used instead) is where the opportunity actually starts --
+    // the rep is already checking off which divisions the customer is
+    // interested in right here. Making them go re-select the same
+    // divisions a second time in a separate "Create Opportunity" step
+    // is exactly the double entry Ted flagged. So the moment this
+    // intake saves with services checked, one open Opportunity gets
+    // created per division automatically, unpriced (value: 0) since
+    // there's no quote-building step in the pitch tool yet -- a rep or
+    // manager fills in real pricing afterward from the Opportunity
+    // panel on the contact record, same multi-division picker as
+    // everywhere else. This is the trigger; pricing is still a
+    // deliberate follow-up action, not fabricated here.
+    if (_selectedSvcs && _selectedSvcs.length) {
+      try {
+        var PT_SVC_LABELS = { unipro:'UniPro', quality3:'Quality III', allpro:'ALLPro', filterman:'Filter Man', gto:'GTO', termac:'Termac' };
+        var repProfiles = crmLoad('rep_comp_profiles') || [];
+        var repProfile = repProfiles.find(function(p){ return p.id === rec.assignedRep; });
+        var slaDays = repProfile ? (repProfile.opportunitySlaDays || repProfile.opportunity_sla_days || 60) : 60;
+        var opps = crmLoad('opportunities') || [];
+        var existingDivs = opps.filter(function(o){
+          var status = o.resolutionStatus || 'open';
+          return o.contactId === rec.id && (status === 'open' || status === 'pending');
+        }).map(function(o){ return o.division; });
+        var oppNow = Date.now();
+        _selectedSvcs.forEach(function(svcKey, idx) {
+          var divLabel = PT_SVC_LABELS[svcKey] || svcKey;
+          if (existingDivs.indexOf(divLabel) !== -1) return; // already tracked, don't duplicate
+          opps.push({
+            id: 'opp_' + (oppNow + idx),
+            accountId: null,
+            contactId: rec.id,
+            name: (business || name || 'New opportunity') + ' — ' + divLabel,
+            division: divLabel,
+            stage: 'opportunity',
+            value: 0,
+            assignedRep: rec.assignedRep,
+            expectedClose: '',
+            notes: 'Auto-created from Pitch Tool intake — add pricing to finish setting this up.',
+            slaDays: slaDays,
+            serviceType: 'per_diem',
+            monthlyValue: null,
+            termMonths: 1,
+            resolutionStatus: 'open',
+            created: oppNow + idx,
+            updated: oppNow + idx,
+          });
+        });
+        crmSave('opportunities', opps);
+      } catch (e) { console.warn('Auto-opportunity creation error:', e); }
+    }
+
     // Store context for the site survey handoff — same key/shape as the
     // rest of the platform expects when launching a survey from a lead.
     sessionStorage.setItem('termac_survey_prefill', JSON.stringify({

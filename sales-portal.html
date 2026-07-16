@@ -5624,6 +5624,51 @@ function spSaveRecord() {
   }
   crmSave('leads', data);
 
+  // 2026-07-16 per Ted: same trigger as the Pitch Tool -- whichever path
+  // a rep actually uses to do the intake, checking a service box here IS
+  // what starts the opportunity, so it shouldn't require a second manual
+  // "Create Opportunity" pass re-picking the same divisions. Skipped for
+  // AllPro leads, which intentionally route to a site survey before any
+  // pricing/quoting happens (see the AllPro branch above) rather than
+  // through the account/contact Opportunity flow.
+  if (_spFormType !== 'allpro' && rec.services && rec.services.length) {
+    try {
+      var repProfiles2 = crmLoad('rep_comp_profiles') || [];
+      var repProfile2 = repProfiles2.find(function(p){ return p.id === rec.assignedRep; });
+      var slaDays2 = repProfile2 ? (repProfile2.opportunitySlaDays || repProfile2.opportunity_sla_days || 60) : 60;
+      var opps2 = crmLoad('opportunities') || [];
+      var existingDivs2 = opps2.filter(function(o){
+        var status = o.resolutionStatus || 'open';
+        return o.contactId === rec.id && (status === 'open' || status === 'pending');
+      }).map(function(o){ return o.division; });
+      var oppNow2 = Date.now();
+      rec.services.forEach(function(svcKey, idx) {
+        var divLabel = spSvcLabel(svcKey);
+        if (existingDivs2.indexOf(divLabel) !== -1) return;
+        opps2.push({
+          id: 'opp_' + (oppNow2 + idx),
+          accountId: null,
+          contactId: rec.id,
+          name: (business || name || 'New opportunity') + ' — ' + divLabel,
+          division: divLabel,
+          stage: 'opportunity',
+          value: 0,
+          assignedRep: rec.assignedRep,
+          expectedClose: '',
+          notes: 'Auto-created from intake form — add pricing to finish setting this up.',
+          slaDays: slaDays2,
+          serviceType: 'per_diem',
+          monthlyValue: null,
+          termMonths: 1,
+          resolutionStatus: 'open',
+          created: oppNow2 + idx,
+          updated: oppNow2 + idx,
+        });
+      });
+      crmSave('opportunities', opps2);
+    } catch (e) { console.warn('Auto-opportunity creation error:', e); }
+  }
+
   spCloseModal();
   spToast(_spEditId ? 'Record updated' : 'Record added');
   spRenderCRM(_spTab);
