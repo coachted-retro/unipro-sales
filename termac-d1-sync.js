@@ -382,7 +382,15 @@
     // existed on whichever single device entered it. Confirmed by cross-
     // referencing every updateProjectField() call in the planner against
     // this list.
+    // 2026-07-16 FIX per Ted: opportunity_id was referenced by the New
+    // Project modal's "Opportunity (optional)" picker since the planner
+    // first shipped, but was never in this list -- meaning every attempt
+    // to link a project to an Opportunity was silently dropped before
+    // ever reaching D1 (and the column didn't even exist in the D1 table
+    // until today's migration). intake_business_name is new today, for
+    // proposal-stage projects that don't have an Account yet.
     allpro_projects: ['id', 'folder_number', 'location_name', 'account_id',
+      'opportunity_id', 'intake_business_name',
       'accounting_job_number', 'project_type', 'project_description',
       'lead_generation_type', 'project_ntp', 'project_start', 'project_completed',
       'total_quoted_value', 'job_notes', 'stage', 'project_name',

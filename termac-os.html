@@ -2192,7 +2192,7 @@ function d1NormalizeRecord(table, record) {
     opportunities: {
       accountId: 'account_id', expectedClose: 'expected_close',
       closedAt: 'closed_at', assignedRep: 'assigned_rep',
-      activityLog: 'activity_log'
+      activityLog: 'activity_log', contactId: 'contact_id'
     },
     // 2026-07-13 per Ted: double-checked rather than assumed DMS was
     // actually reaching D1 -- it wasn't. This file has no dms_coldcall
@@ -2364,7 +2364,7 @@ function d1ReverseMapLocal(table, record) {
     opportunities: {
       accountId: 'account_id', expectedClose: 'expected_close',
       closedAt: 'closed_at', assignedRep: 'assigned_rep',
-      activityLog: 'activity_log',
+      activityLog: 'activity_log', contactId: 'contact_id',
     },
     // 2026-07-13 FIX: matching the write-side fix above - lifecycleStage
     // now correctly reverse-maps from the lifecycle_stage column instead
@@ -25680,13 +25680,26 @@ var OPP_STAGE_COLORS = {
 };
 
 function acctRenderOpportunities(r) {
+  // 2026-07-16 fix per Ted: this always filtered on accountId, even when
+  // r is a Contact record opened via openAcctDetail(id,'contacts'). A
+  // Contact's id never matches any opportunity's accountId, so every
+  // Contact's Opportunities tab showed "None yet" even when real
+  // contact-linked opportunities existed (sales-portal.html creates
+  // those with contactId, matching the real Lead -> Contact ->
+  // Opportunity -> Account pipeline). Branch on which record type is
+  // actually open.
+  var isContactRecord = (_acctTab === 'contacts');
   var opps = (typeof crmLoad === 'function' ? crmLoad('opportunities') : [])
-    .filter(function(o){ return o.accountId === r.id || o.account_id === r.id; })
+    .filter(function(o){
+      return isContactRecord
+        ? (o.contactId === r.id || o.contact_id === r.id)
+        : (o.accountId === r.id || o.account_id === r.id);
+    })
     .sort(function(a,b){ return (b.updated_at||b.created_at||0) - (a.updated_at||a.created_at||0); });
   var el = document.getElementById('acctOpportunitiesList');
   if (!el) return;
   if (!opps.length) {
-    el.innerHTML = '<div style="color:var(--soft);font-size:13px;text-align:center;padding:30px">No opportunities on this account yet. Click "+ New Opportunity" to start one.</div>';
+    el.innerHTML = '<div style="color:var(--soft);font-size:13px;text-align:center;padding:30px">No opportunities on this ' + (isContactRecord ? 'contact' : 'account') + ' yet. Click "+ New Opportunity" to start one.</div>';
     return;
   }
   el.innerHTML = opps.map(function(o) {
@@ -25750,9 +25763,11 @@ function saveOpportunity() {
   var wasClosed = false;
   var existing = id ? opps.find(function(x){ return x.id === id; }) : null;
   if (existing && existing.stage !== stage && (stage === 'accepted' || stage === 'lost')) wasClosed = true;
+  var isContactRecord = (_acctTab === 'contacts');
   var record = {
     id: id || ('OPP' + now.toString(36).toUpperCase()),
-    accountId: _acctId,
+    accountId: isContactRecord ? (existing ? existing.accountId : '') : _acctId,
+    contactId: isContactRecord ? _acctId : (existing ? existing.contactId : ''),
     name: name,
     division: document.getElementById('oppDivision').value,
     stage: stage,
