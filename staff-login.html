@@ -122,18 +122,13 @@ function hideMsg(){
   document.getElementById('okBox').style.display = 'none';
 }
 
-var PORTAL_URLS = {
-  sales_rep: 'sales-portal.html',
-  dms: 'dms-portal.html',
-  reception: 'reception-portal.html',
-  scheduler: 'scheduler-v2.html',
-  dispatch: 'dispatch-v2.html',
-  tech: 'tech-portal-unified.html',
-  warehouse: 'warehouse-portal.html',
-  manager: 'termac-os.html',
-  admin: 'termac-os.html',
-  gm_dashboard: 'gm-dashboard.html',
-};
+// 2026-07-16 per Ted: this used to be a second, hand-duplicated copy of
+// the exact same PORTAL_URLS map and routing logic that lives in
+// termac-staff-auth's index.js -- a real drift risk (invite links and
+// actual post-login redirects could silently disagree if only one copy
+// got edited). The Worker's /login response now returns the resolved
+// destination directly (session.dest), computed server-side by the
+// same function that builds invite links, so this just uses that.
 
 function redirectAfterLogin(session){
   // 2026-07-15 per Ted: switched from sessionStorage to localStorage.
@@ -146,24 +141,15 @@ function redirectAfterLogin(session){
   // someone explicitly logs out.
   localStorage.setItem('termac_staff_session', JSON.stringify({
     id: session.id, name: session.name, email: session.email,
-    role: session.role, loginAt: Date.now(),
+    role: session.role, division: session.division || '', loginAt: Date.now(),
   }));
-  // 2026-07-15 per Ted: landing everyone on Employee Portal first was
-  // confusing for single-role staff (sales reps especially) -- they had
-  // to navigate away from a page they don't need every single login just
-  // to reach the one dashboard they actually use. Now: someone with
-  // exactly one portal (the normal case -- a sales rep, a dispatcher,
-  // etc.) goes straight to that portal's dashboard. Someone with several
-  // portals, or full access, still lands on Employee Portal, since that
-  // tile chooser IS their real home in that case, not a fallback. A
-  // prior return_to (bounced here from a specific portal because they
-  // weren't logged in yet) still takes priority over either of those.
-  var portals = Array.isArray(session.portals) ? session.portals : [];
-  var fullAccess = session.role === 'admin' || session.role === 'owner' || portals.indexOf('admin') !== -1;
-  var dest = 'employee-portal.html';
-  if (!fullAccess && portals.length === 1 && PORTAL_URLS[portals[0]]) {
-    dest = PORTAL_URLS[portals[0]];
-  }
+  // A prior return_to (bounced here from a specific portal because they
+  // weren't logged in yet -- see the auth gate in sales-portal.html and
+  // termac-os.html) still takes priority over the server's resolved
+  // destination, since that's a page this exact person was already
+  // trying to reach in this exact session, a stronger signal than their
+  // general role-based home.
+  var dest = session.dest || 'employee-portal.html';
   var returnTo = sessionStorage.getItem('termac_staff_return_to');
   if (returnTo) { sessionStorage.removeItem('termac_staff_return_to'); dest = returnTo; }
   window.location.href = dest;
