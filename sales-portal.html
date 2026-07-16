@@ -539,11 +539,12 @@ body.rail-open .rail-overlay{display:block}
     <div class="sp-tabnav-inner">
       <div class="sp-tabnav-tabs">
         <button class="sp-tab active" id="spTab-home"         onclick="spNav('home');spCloseNavDropdowns()">🏠 Home</button>
+        <button class="sp-tab" id="spTab-leads"        onclick="spNav('leads');spCloseNavDropdowns()">🎯 Leads</button>
 
         <div class="sp-nav-dropdown">
           <button class="sp-tab sp-nav-dropdown-btn" onclick="spToggleNavDropdown('records')">📋 Records</button>
           <div class="sp-nav-dropdown-menu" id="spNavDropdown-records">
-            <button class="sp-tab" id="spTab-leads"        onclick="spNav('leads');spCloseNavDropdowns()">🎯 Leads</button>
+            <button class="sp-tab" id="spTab-locations"    onclick="spNav('locations');spCloseNavDropdowns()">📍 Locations</button>
             <button class="sp-tab" id="spTab-contacts"     onclick="spNav('contacts');spCloseNavDropdowns()">👤 Contacts</button>
             <button class="sp-tab" id="spTab-opportunities" onclick="spNav('opportunities');spCloseNavDropdowns()">💼 Opportunities</button>
             <button class="sp-tab" id="spTab-accounts"     onclick="spNav('accounts');spCloseNavDropdowns()">🏢 Accounts</button>
@@ -988,7 +989,7 @@ function spAutoCloseDrawer() {
 }
 
 const SP_TITLES = {
-  home:'Home', leads:'Leads', contacts:'Contacts', opportunities:'Opportunities',
+  home:'Home', leads:'Leads', locations:'Locations', contacts:'Contacts', opportunities:'Opportunities',
   accounts:'Accounts', goals:'Goals & Stats', weekly:'Weekly Report',
   queue:'My Queue', employee:'Employee Portal', schedule:'My Schedule',
   leaderboard:'Team Leaderboard'
@@ -1041,6 +1042,7 @@ function spRender(tab) {
   el.innerHTML = '';
   if      (tab === 'home')          { spRenderHome(); setTimeout(processCrossSellAlerts, 0); }
   else if (tab === 'leads')         spRenderCRM('leads');
+  else if (tab === 'locations')     spRenderLocationsTab();
   else if (tab === 'contacts')      spRenderCRM('contacts');
   else if (tab === 'opportunities') spRenderCRM('opportunities');
   else if (tab === 'accounts')      spRenderCRM('accounts');
@@ -3881,7 +3883,7 @@ function spNeedsAttention() {
 // ══════════════════════════════════════════════════════
 function spViewRecord(id, tab) {
   // Track recently viewed
-  const pools = ['leads','contacts','accounts'];
+  const pools = ['leads','contacts','accounts','locations'];
   let r = null; let foundTab = tab;
   for (const p of pools) {
     r = crmLoad(p).find(x => x.id === id);
@@ -3922,6 +3924,7 @@ function spResendInvoice(invoiceId) {
 
 function spOpenDetail(r, tab) {
   _spDetailOpen = true;
+  if (tab === 'locations') { spOpenLocationDetail(r); return; }
   const stage = SP_STAGES[spNormalizeStage(r.lifecycleStage)] || SP_STAGES.lead;
   const svcs = (r.services || []).map(s => { const c = spSvcColor(s); return `<span style="background:${c.bg};color:${c.color};border-radius:4px;padding:3px 9px;font-size:11px;font-weight:700">${spSvcLabel(s)}</span>`; }).join(' ');
   const extraContacts = (r.extraContacts || []).map((c,i) => `<div style="border-top:1px dashed var(--line);padding-top:8px;margin-top:8px">
@@ -3960,7 +3963,12 @@ function spOpenDetail(r, tab) {
   let openOppsHtml = '';
   if (isAccount || isContact) {
     const allOpps = crmLoad('opportunities') || [];
-    const oppsHere = allOpps.filter(o => isAccount ? o.accountId === r.id : o.contactId === r.id)
+    // For accounts: also catch opportunities still open at one of this
+    // account's locations that haven't won (and so don't have accountId
+    // set on them yet) — otherwise a live pitch at an existing account's
+    // new site is invisible from the account page until it closes.
+    const acctLocIds = isAccount ? (crmLoad('locations')||[]).filter(l => l.accountId === r.id).map(l => l.id) : [];
+    const oppsHere = allOpps.filter(o => isAccount ? (o.accountId === r.id || acctLocIds.includes(o.locationId)) : o.contactId === r.id)
       .sort((a,b) => (b.created||0) - (a.created||0));
 
     const STATUS_COLOR = { open:'#D97706', won:'#166534', lost:'#C8102E', pending:'#0D7490' };
@@ -4014,6 +4022,26 @@ function spOpenDetail(r, tab) {
           ${createBtnHtml}
         </div>
         ${oppsHere.length ? oppRows : '<div style="font-size:12px;color:var(--soft)">No opportunities yet, click Create Opportunity when there is a real deal to track.</div>'}
+      </div>`;
+  }
+
+  // Locations panel — accounts only. Real linked table (locations.accountId),
+  // not the old dead locations[] array that used to get written once at
+  // account-creation and never touched again. One account (Cintas, a
+  // franchise group) can hold several locations, added here as they come.
+  let locationsHtml = '';
+  if (isAccount) {
+    const acctLocs = (crmLoad('locations') || []).filter(l => l.accountId === r.id);
+    const locRows = acctLocs.map(l => `<div style="padding:9px 10px;background:#F8F9FA;border-radius:7px;margin-bottom:6px;cursor:pointer" onclick="spViewRecord('${l.id}','locations')">
+        <div style="font-size:13px;font-weight:700;color:var(--ink)">📍 ${escH(l.name||'')}</div>
+        ${l.address ? `<div style="font-size:11px;color:var(--soft)">${escH(l.address)}${l.city?', '+escH(l.city):''}</div>` : ''}
+      </div>`).join('');
+    locationsHtml = `<div style="padding:12px 0;border-bottom:1px solid var(--line);margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft)">📍 Locations (${acctLocs.length})</div>
+          <button onclick="spOpenAddLocationModal('${r.id}','${escH(r.business||r.name||'')}')" style="background:#1A1D21;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer">+ Add Location</button>
+        </div>
+        ${acctLocs.length ? locRows : '<div style="font-size:12px;color:var(--soft)">No locations added yet, e.g. a second job site under this account.</div>'}
       </div>`;
   }
 
@@ -4082,6 +4110,7 @@ function spOpenDetail(r, tab) {
     </div>
 
     ${openOppsHtml}
+    ${locationsHtml}
     ${invoicesHtml}
 
     <!-- Stage + action buttons, right on the card -->
@@ -4135,6 +4164,142 @@ function spOpenDetail(r, tab) {
 }
 
 // ── ACTIVITY TIMELINE: rendering, sort (pinned first), pin toggle ──
+// ══════════════════════════════════════════════════════
+//  LOCATION DETAIL — a location is a real physical site: contacts
+//  (people) and opportunities (deals) both attach here directly, not to
+//  each other. Account only appears once an opportunity here wins.
+// ══════════════════════════════════════════════════════
+function spOpenLocationDetail(r) {
+  const contacts = (crmLoad('contacts') || []).filter(c => c.locationId === r.id);
+  const opps = (crmLoad('opportunities') || []).filter(o => o.locationId === r.id)
+    .sort((a,b) => (b.created||0) - (a.created||0));
+  const linkedAccount = r.accountId ? (crmLoad('accounts') || []).find(a => a.id === r.accountId) : null;
+
+  const contactRows = contacts.map(c => `<div style="padding:10px;background:#F8F9FA;border-radius:7px;margin-bottom:8px;cursor:pointer" onclick="spOpenAddContactModal('${r.id}','${c.id}')">
+      <div style="font-size:13px;font-weight:700;color:var(--ink)">${escH(c.name||'')}</div>
+      ${c.title ? `<div style="font-size:11px;color:var(--soft)">${escH(c.title)}</div>` : ''}
+      ${c.phone ? `<a href="tel:${escH(c.phone)}" onclick="event.stopPropagation()" style="font-size:12px;color:var(--blue)">${escH(c.phone)}</a>` : ''}
+      ${c.email ? `<a href="mailto:${escH(c.email)}" onclick="event.stopPropagation()" style="font-size:12px;color:var(--blue);display:block">${escH(c.email)}</a>` : ''}
+    </div>`).join('');
+
+  const STATUS_COLOR = { open:'#D97706', won:'#166534', lost:'#C8102E', pending:'#0D7490' };
+  const STATUS_BG    = { open:'#FEF3C7', won:'#DCFCE7', lost:'#FEE9EC', pending:'#E0F2FE' };
+  const STATUS_LABEL = { open:'Open', won:'Won', lost:'Lost', pending:'Pending' };
+  const oppRows = opps.map(o => {
+    const status = o.resolutionStatus || 'open';
+    const color = STATUS_COLOR[status] || '#6B7280';
+    const bg = STATUS_BG[status] || '#F3F4F6';
+    const total = o.serviceType === 'lease' ? (o.monthlyValue||0) * (o.termMonths||1) : (o.value||0);
+    const moneyStr = spOppMoney(total);
+    const resolveButtons = (status === 'open' || status === 'pending') ? `
+        <div style="display:flex;gap:6px;margin-top:8px">
+          <button onclick="event.stopPropagation();spOpenResolveModal('${o.id}','won')" style="flex:1;background:#166534;color:#fff;border:none;border-radius:6px;padding:6px 8px;font-size:11px;font-weight:700;cursor:pointer">✅ Won</button>
+          <button onclick="event.stopPropagation();spOpenResolveModal('${o.id}','pending')" style="flex:1;background:#0D7490;color:#fff;border:none;border-radius:6px;padding:6px 8px;font-size:11px;font-weight:700;cursor:pointer">⏳ Pending</button>
+          <button onclick="event.stopPropagation();spOpenResolveModal('${o.id}','lost')" style="flex:1;background:#C8102E;color:#fff;border:none;border-radius:6px;padding:6px 8px;font-size:11px;font-weight:700;cursor:pointer">🚫 Lost</button>
+        </div>` : '';
+    return `<div style="padding:10px;background:${bg};border-radius:7px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+          <div>
+            <div style="font-size:13px;font-weight:700;color:var(--ink)">${escH(o.name || 'Opportunity')}</div>
+            <div style="font-size:11px;color:var(--soft);margin-top:2px">${escH(o.division||'')} · ${moneyStr}</div>
+          </div>
+          <span style="font-size:10px;font-weight:800;text-transform:uppercase;color:${color}">${STATUS_LABEL[status]}</span>
+        </div>
+        ${resolveButtons}
+      </div>`;
+  }).join('');
+
+  const el = document.getElementById('spContent');
+  el.innerHTML = `<div class="sp-card">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">
+      <div>
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:20px;color:var(--ink)">📍 ${escH(r.name||'Unnamed Location')}</div>
+        ${r.parentCompany ? `<div style="font-size:13px;color:var(--soft)">${escH(r.parentCompany)}</div>` : ''}
+      </div>
+      <div style="display:flex;gap:8px">
+        <button onclick="spOpenAddLocationModal(null,null,'${r.id}')" style="background:#F3F4F6;color:var(--ink);border:none;border-radius:6px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer">✏️ Edit</button>
+        ${linkedAccount ? `<button onclick="spViewRecord('${linkedAccount.id}','accounts')" style="background:#DCFCE7;color:#166534;border:none;border-radius:6px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer">✅ View Account →</button>` : ''}
+      </div>
+    </div>
+    ${r.address ? `<div style="font-size:13px;color:var(--soft);margin-top:4px">${escH(r.address)}${r.city?', '+escH(r.city):''}${r.state?', '+escH(r.state):''} ${escH(r.zip||'')}</div>` : ''}
+    ${r.phone ? `<a href="tel:${escH(r.phone)}" style="font-size:13px;color:var(--blue);display:block;margin-top:2px">${escH(r.phone)}</a>` : ''}
+    <div style="font-size:11px;color:var(--soft);margin-top:8px">Assigned: ${escH(r.assignedRep||'Unassigned')}</div>
+
+    <div style="padding:12px 0;border-top:1px solid var(--line);margin-top:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft)">👤 Contacts (${contacts.length})</div>
+        <button onclick="spOpenAddContactModal('${r.id}')" style="background:#1A1D21;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer">+ Add Contact</button>
+      </div>
+      ${contacts.length ? contactRows : '<div style="font-size:12px;color:var(--soft)">No contacts yet at this location.</div>'}
+    </div>
+
+    <div style="padding:12px 0;border-top:1px solid var(--line)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft)">💼 Opportunities (${opps.length})</div>
+        <button onclick="spOpenOpportunityModal('location','${r.id}','${escH(r.name||'')}')" style="background:#1A1D21;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer">+ Create Opportunity</button>
+      </div>
+      ${opps.length ? oppRows : '<div style="font-size:12px;color:var(--soft)">No opportunities yet, click Create Opportunity when there is a real deal to track.</div>'}
+    </div>
+  </div>`;
+}
+
+function spOpenAddContactModal(locationId, editContactId) {
+  var existing = editContactId ? (crmLoad('contacts')||[]).find(c => c.id === editContactId) : null;
+  var wrap = document.createElement('div');
+  wrap.id = 'spContactModal';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9700;display:flex;align-items:center;justify-content:center;padding:16px';
+  wrap.innerHTML = '<div style="background:#fff;border-radius:12px;max-width:400px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.3)">' +
+    '<div style="padding:20px">' +
+      '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:18px;color:var(--ink);margin-bottom:16px">👤 ' + (existing ? 'Edit Contact' : 'Add Contact') + '</div>' +
+      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Name *</label>' +
+      '<input id="contName" type="text" value="' + (existing ? escH(existing.name||'') : '') + '" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:10px;box-sizing:border-box">' +
+      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Role / Relationship to Location</label>' +
+      '<input id="contTitle" type="text" list="contTitleOptions" value="' + (existing ? escH(existing.title||'') : '') + '" placeholder="e.g. Property Manager, Owner" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:10px;box-sizing:border-box">' +
+      '<datalist id="contTitleOptions"><option value="Owner"><option value="General Manager"><option value="Property Manager"><option value="Manager"><option value="Chef"><option value="Maintenance"></datalist>' +
+      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Phone <span style="font-weight:400;text-transform:none">(optional)</span></label>' +
+      '<input id="contPhone" type="text" value="' + (existing ? escH(existing.phone||'') : '') + '" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:10px;box-sizing:border-box">' +
+      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Email <span style="font-weight:400;text-transform:none">(optional)</span></label>' +
+      '<input id="contEmail" type="text" value="' + (existing ? escH(existing.email||'') : '') + '" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:14px;box-sizing:border-box">' +
+      '<div style="display:flex;gap:8px">' +
+        '<button onclick="document.getElementById(\'spContactModal\').remove()" style="flex:1;background:#fff;border:1.5px solid var(--line);border-radius:8px;padding:10px;font-weight:700;font-size:13px;cursor:pointer">Cancel</button>' +
+        '<button onclick="spSaveContactToLocation(\'' + locationId + '\',' + (existing ? "'"+existing.id+"'" : 'null') + ')" style="flex:1;background:var(--red);color:#fff;border:none;border-radius:8px;padding:10px;font-weight:700;font-size:13px;cursor:pointer">Save</button>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+  document.body.appendChild(wrap);
+}
+
+function spSaveContactToLocation(locationId, editContactId) {
+  var name = document.getElementById('contName').value.trim();
+  if (!name) { alert('Enter a name.'); return; }
+  var now = Date.now();
+  var contacts = crmLoad('contacts') || [];
+  var vals = {
+    name: name,
+    title: document.getElementById('contTitle').value.trim(),
+    phone: document.getElementById('contPhone').value.trim(),
+    email: document.getElementById('contEmail').value.trim(),
+    locationId: locationId,
+    updated: now,
+  };
+  if (editContactId) {
+    var idx = contacts.findIndex(c => c.id === editContactId);
+    if (idx !== -1) Object.assign(contacts[idx], vals);
+  } else {
+    contacts.push(Object.assign({
+      id: 'con_' + now,
+      assignedRep: _spRep.name,
+      status: 'contacted',
+      created: now,
+    }, vals));
+  }
+  crmSave('contacts', contacts);
+  document.getElementById('spContactModal').remove();
+  spToast(editContactId ? '👤 Contact updated' : '👤 Contact added');
+  spViewRecord(locationId, 'locations');
+}
+
+
 function spRenderTimeline(r) {
   const log = r.activityLog || [];
   if (!log.length) return '<div style="color:var(--soft);font-size:13px">No activity yet. Log a touch point above to get started.</div>';
@@ -4517,6 +4682,128 @@ function spOppDetectMode(row) {
 
 function spOppSafeKey(div) { return (div || '').replace(/[^a-zA-Z0-9]/g, '_'); }
 
+// ══════════════════════════════════════════════════════
+//  LOCATIONS — real standalone entity, added 2026-07-16 per Ted.
+//  Correct lifecycle: Lead (standalone) -> Location (a lead becomes a
+//  real physical site) -> Contact (a person at that location) ->
+//  Opportunity (attaches to the location) -> Account (created/matched
+//  only when an opportunity at a location wins). Same card-grid layout
+//  as every other tab, on purpose — no more building one tab's list
+//  different from everyone else's.
+// ══════════════════════════════════════════════════════
+function spRenderLocationsTab() {
+  const el = document.getElementById('spContent');
+  let data = crmLoad('locations') || [];
+
+  const q = (document.getElementById('spCrmSearch')?.value || '').trim().toLowerCase();
+  if (q) data = data.filter(r => JSON.stringify(r).toLowerCase().includes(q));
+
+  data.sort((a,b) => (b.updated_at||b.updatedAt||b.created_at||b.createdAt||0) - (a.updated_at||a.updatedAt||a.created_at||a.createdAt||0));
+
+  let html = `
+  <div class="sp-filter-bar">
+    <input class="sp-search" id="spCrmSearch" placeholder="Search by name, address, parent company…" oninput="spRenderLocationsTab()" value="${escH(q)}">
+    <button class="sp-btn sp-btn-red" onclick="spOpenAddLocationModal()">+ Add Location</button>
+  </div>
+  <div class="sp-record-grid" id="spRecGrid">`;
+
+  if (!data.length) {
+    html += `<div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--soft);font-size:14px">
+      <div style="font-size:32px;margin-bottom:10px">📍</div>
+      No locations yet. A location is created from a completed pitch, or click <strong>+ Add Location</strong> directly.
+    </div>`;
+  } else {
+    html += data.map(spLocationCard).join('');
+  }
+  html += `</div>`;
+  el.innerHTML = html;
+  if (q) document.getElementById('spCrmSearch').value = q;
+}
+
+function spLocationCard(loc) {
+  const contactCount = (crmLoad('contacts')||[]).filter(c => c.locationId === loc.id).length;
+  const oppCount = (crmLoad('opportunities')||[]).filter(o => o.locationId === loc.id).length;
+  const parent = loc.parentCompany || loc.parent_company || '';
+  return `<div class="sp-card" style="cursor:pointer" onclick="spViewRecord('${loc.id}','locations')">
+    <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:15px;color:var(--ink)">📍 ${escH(loc.name||'Unnamed Location')}</div>
+    ${parent ? `<div style="font-size:11px;color:var(--soft);margin-top:1px">${escH(parent)}</div>` : ''}
+    ${loc.address ? `<div style="font-size:12px;color:var(--soft);margin-top:4px">${escH(loc.address)}${loc.city ? ', '+escH(loc.city) : ''}${loc.state ? ', '+escH(loc.state) : ''}</div>` : ''}
+    <div style="font-size:11px;color:var(--soft);margin-top:8px">👤 ${contactCount} contact${contactCount===1?'':'s'} · 💼 ${oppCount} opportunit${oppCount===1?'y':'ies'}</div>
+    ${loc.accountId ? `<div style="font-size:10px;font-weight:700;color:#166534;text-transform:uppercase;margin-top:6px">✅ Linked to an account</div>` : ''}
+  </div>`;
+}
+
+function spOpenAddLocationModal(prefillAccountId, prefillAccountName, editLocationId) {
+  var existing = editLocationId ? (crmLoad('locations')||[]).find(l => l.id === editLocationId) : null;
+  var v = function(k){ return existing ? escH(existing[k]||'') : ''; };
+  var wrap = document.createElement('div');
+  wrap.id = 'spLocModal';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9700;display:flex;align-items:center;justify-content:center;padding:16px;overflow-y:auto';
+  wrap.innerHTML = '<div style="background:#fff;border-radius:12px;max-width:440px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.3);max-height:92vh;overflow-y:auto">' +
+    '<div style="padding:20px">' +
+      '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:18px;color:var(--ink);margin-bottom:16px">📍 ' + (existing ? 'Edit Location' : 'Add Location') + '</div>' +
+      (prefillAccountName ? '<div style="font-size:12px;color:var(--soft);margin-bottom:12px">New site under <strong>' + escH(prefillAccountName) + '</strong></div>' : '') +
+      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Parent Company / Franchise Group</label>' +
+      '<input id="locParent" type="text" value="' + v('parentCompany') + '" placeholder="e.g. Cintas, XYZ Food Service (leave blank if independent)" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:10px;box-sizing:border-box">' +
+      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Location Name / Site * <span style="font-weight:400;text-transform:none">(generally the business name)</span></label>' +
+      '<input id="locName" type="text" value="' + v('name') + '" placeholder="e.g. Burger King #412" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:10px;box-sizing:border-box">' +
+      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Address</label>' +
+      '<input id="locAddress" type="text" value="' + v('address') + '" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:10px;box-sizing:border-box">' +
+      '<div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:8px;margin-bottom:10px">' +
+        '<input id="locCity" type="text" value="' + v('city') + '" placeholder="City" style="padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;box-sizing:border-box">' +
+        '<input id="locState" type="text" value="' + v('state') + '" placeholder="State" style="padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;box-sizing:border-box">' +
+        '<input id="locZip" type="text" value="' + v('zip') + '" placeholder="Zip" style="padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;box-sizing:border-box">' +
+      '</div>' +
+      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Phone</label>' +
+      '<input id="locPhone" type="text" value="' + v('phone') + '" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:14px;box-sizing:border-box">' +
+      '<div style="display:flex;gap:8px">' +
+        '<button onclick="document.getElementById(\'spLocModal\').remove()" style="flex:1;background:#fff;border:1.5px solid var(--line);border-radius:8px;padding:10px;font-weight:700;font-size:13px;cursor:pointer">Cancel</button>' +
+        '<button onclick="spSaveNewLocation(' + (prefillAccountId ? "'"+prefillAccountId+"'" : 'null') + ',' + (existing ? "'"+existing.id+"'" : 'null') + ')" style="flex:1;background:var(--red);color:#fff;border:none;border-radius:8px;padding:10px;font-weight:700;font-size:13px;cursor:pointer">Save</button>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+  document.body.appendChild(wrap);
+}
+
+function spSaveNewLocation(prefillAccountId, editLocationId) {
+  var name = document.getElementById('locName').value.trim();
+  if (!name) { alert('Enter a location name.'); return; }
+  var now = Date.now();
+  var locs = crmLoad('locations') || [];
+  var vals = {
+    name: name,
+    parentCompany: document.getElementById('locParent').value.trim(),
+    address: document.getElementById('locAddress').value.trim(),
+    city: document.getElementById('locCity').value.trim(),
+    state: document.getElementById('locState').value.trim(),
+    zip: document.getElementById('locZip').value.trim(),
+    phone: document.getElementById('locPhone').value.trim(),
+    updatedAt: now,
+  };
+  var rec;
+  if (editLocationId) {
+    var idx = locs.findIndex(l => l.id === editLocationId);
+    if (idx !== -1) { Object.assign(locs[idx], vals); rec = locs[idx]; }
+  } else {
+    rec = Object.assign({
+      id: 'loc_' + now,
+      accountId: prefillAccountId || null,
+      assignedRep: _spRep.name,
+      source: 'manual',
+      status: 'active',
+      createdAt: now,
+    }, vals);
+    locs.push(rec);
+  }
+  crmSave('locations', locs);
+  document.getElementById('spLocModal').remove();
+  if (!rec) { spToast('⚠ Could not find that location to update'); return; }
+  spToast(editLocationId ? '📍 Location updated' : '📍 Location added');
+  spViewRecord(rec.id, 'locations');
+}
+
+
+
 // Rebuilt 2026-07-16 per Ted: one conversation with a customer often
 // covers several divisions at once (Filter Man + UniPro + GTO all in
 // one stop), and the old modal only ever let a rep pick one division
@@ -4538,6 +4825,8 @@ function spOpenOpportunityModal(parentType, parentId, parentName) {
   var parentRec = null;
   if (parentType === 'account') {
     parentRec = (crmLoad('accounts') || []).find(function(x){ return x.id === parentId; });
+  } else if (parentType === 'location') {
+    parentRec = (crmLoad('locations') || []).find(function(x){ return x.id === parentId; });
   } else {
     parentRec = (crmLoad('contacts') || []).find(function(x){ return x.id === parentId; })
       || (crmLoad('leads') || []).find(function(x){ return x.id === parentId; });
@@ -4558,7 +4847,7 @@ function spOpenOpportunityModal(parentType, parentId, parentName) {
   var existingOpps = (crmLoad('opportunities') || []).filter(function(o){
     var status = o.resolutionStatus || 'open';
     if (status !== 'open' && status !== 'pending') return false;
-    return parentType === 'account' ? o.accountId === parentId : o.contactId === parentId;
+    return parentType === 'account' ? o.accountId === parentId : (parentType === 'location' ? o.locationId === parentId : o.contactId === parentId);
   });
   var existingNote = existingOpps.length
     ? '<div style="background:#EFF6FF;color:#1E40AF;border-radius:7px;padding:9px 12px;font-size:12px;margin-bottom:12px">ℹ️ ' + existingOpps.length + ' open opportunity' + (existingOpps.length===1?'':'ies') + ' already tracked below on this record (' + existingOpps.map(function(o){return o.division||'—';}).join(', ') + ') — only check divisions here that aren\'t already covered.</div>'
@@ -4771,6 +5060,8 @@ function spSaveOpportunity(parentType, parentId) {
   var repProfile = repProfiles.find(function(p){ return p.id === rep; });
   var slaDays = repProfile ? (repProfile.opportunitySlaDays || repProfile.opportunity_sla_days || 60) : 60;
 
+  var locRec = parentType === 'location' ? (crmLoad('locations') || []).find(function(x){ return x.id === parentId; }) : null;
+
   var toCreate = [];
 
   var blocks = document.querySelectorAll('#oppDivBlocks [data-div]');
@@ -4832,8 +5123,9 @@ function spSaveOpportunity(parentType, parentId) {
   toCreate.forEach(function(c, idx) {
     opps.push({
       id: 'opp_' + (now + idx),
-      accountId: parentType === 'account' ? parentId : null,
+      accountId: parentType === 'account' ? parentId : (locRec ? locRec.accountId : null),
       contactId: parentType === 'contact' ? parentId : null,
+      locationId: parentType === 'location' ? parentId : null,
       name: c.name,
       division: c.division || '',
       stage: 'opportunity',
@@ -4853,7 +5145,7 @@ function spSaveOpportunity(parentType, parentId) {
   crmSave('opportunities', opps);
   document.getElementById('spOppModal').remove();
   spToast('💼 ' + toCreate.length + ' opportunit' + (toCreate.length === 1 ? 'y' : 'ies') + ' created');
-  spViewRecord(parentId, parentType === 'account' ? 'accounts' : 'contacts');
+  spViewRecord(parentId, parentType === 'account' ? 'accounts' : (parentType === 'location' ? 'locations' : 'contacts'));
 }
 
 
@@ -4952,8 +5244,67 @@ function spResolveOpportunity(id, outcome) {
   crmSave('opportunities', opps);
   document.getElementById('spResolveModal')?.remove();
 
-  var parentType = o.accountId ? 'account' : 'contact';
-  var parentId = o.accountId || o.contactId;
+  var parentType = o.accountId ? 'account' : (o.locationId ? 'location' : 'contact');
+  var parentId = o.accountId || o.locationId || o.contactId;
+
+  // 2026-07-16 per Ted's lifecycle rebuild: Account is created or matched
+  // ONLY when an Opportunity at a Location wins -- this replaces the
+  // 2026-07-15 contact-based version of this same idea, since a contact
+  // is just a person, not what an opportunity should hang off of.
+  // One parent company can have several locations (Cintas job sites,
+  // burger-chain units under one franchise group) that should all roll
+  // up to the SAME account, not spawn a duplicate one each -- so this
+  // first checks whether any other location sharing this location's
+  // parentCompany text is already linked to an account, and reuses that
+  // one instead of creating a new "Cintas" every time a new site wins.
+  if (outcome === 'won' && parentType === 'location' && parentId) {
+    var loc = (crmLoad('locations') || []).find(function(x){ return x.id === parentId; });
+    if (loc && !loc.accountId) {
+      spToast('✅ Marked won');
+      setTimeout(function() {
+        if (!confirm('This location has no Account yet.\n\nCreate/match the Account from this win now?')) {
+          spViewRecord(parentId, 'locations');
+          return;
+        }
+        var accts = crmLoad('accounts') || [];
+        var matchedAcct = null;
+        if (loc.parentCompany) {
+          var siblingLoc = (crmLoad('locations') || []).find(function(l){
+            return l.id !== loc.id && l.accountId &&
+              (l.parentCompany||'').trim().toLowerCase() === loc.parentCompany.trim().toLowerCase();
+          });
+          if (siblingLoc) matchedAcct = accts.find(function(a){ return a.id === siblingLoc.accountId; });
+        }
+        var acctId;
+        if (matchedAcct) {
+          acctId = matchedAcct.id;
+        } else {
+          acctId = 'acc_' + Date.now();
+          accts.push({
+            id: acctId,
+            name: loc.parentCompany || loc.name,
+            business: loc.name,
+            address: loc.address, city: loc.city, state: loc.state, zip: loc.zip, phone: loc.phone,
+            status: 'active', lifecycleStage: 'onboarding',
+            assignedRep: loc.assignedRep || _spRep.name,
+            created: Date.now(), updated: Date.now(),
+          });
+          crmSave('accounts', accts);
+        }
+        var locs = crmLoad('locations') || [];
+        var l2 = locs.find(function(x){ return x.id === loc.id; });
+        if (l2) { l2.accountId = acctId; l2.updatedAt = Date.now(); crmSave('locations', locs); }
+        // Keep the opportunity's own accountId in sync too, so the
+        // account page's existing Opportunities panel (which still
+        // filters on o.accountId directly) picks this up immediately.
+        var opps2 = crmLoad('opportunities') || [];
+        var o2 = opps2.find(function(x){ return x.id === id; });
+        if (o2) { o2.accountId = acctId; crmSave('opportunities', opps2); }
+        spViewRecord(acctId, 'accounts');
+      }, 200);
+      return;
+    }
+  }
 
   // 2026-07-15 per Ted's lifecycle deep-dive: marking an opportunity Won
   // used to just flip its own badge and drop the rep back on the parent
@@ -4976,7 +5327,7 @@ function spResolveOpportunity(id, outcome) {
   }
 
   spToast(outcome === 'won' ? '✅ Marked won' : outcome === 'lost' ? '🚫 Marked lost' : '⏳ Marked pending');
-  if (parentId) spViewRecord(parentId, parentType === 'account' ? 'accounts' : 'contacts');
+  if (parentId) spViewRecord(parentId, parentType === 'account' ? 'accounts' : (parentType === 'location' ? 'locations' : 'contacts'));
   else spNav('home');
 }
 
@@ -5291,12 +5642,18 @@ function spBuildAllProForm(r) {
       '<div style="font-size:11px;color:#8A909A;margin-top:2px">Capture what they\'re interested in — a technician or project manager handles the actual site survey and measurements.</div>' +
     '</div>' +
 
+    // Parent Company — always comes first, since one parent company
+    // (a franchise group, a management company) can have multiple
+    // locations under it. Matches the standard rep form's convention.
+    '<div class="sp-form-full"><label>Parent Company / Franchise Group</label>' +
+      '<input id="spf_parent" value="' + v('parentCompany') + '" placeholder="e.g. Darden, AIMCO (leave blank if independent)"></div>' +
+
     // Business
     '<div class="sp-form-full">' +
       '<label>Business / Location Name *</label>' +
       '<input id="spf_business" value="' + (v('business')||v('contact')||'') + '" oninput="spDupeCheck(this.value,\'business\')" autocomplete="off" placeholder="e.g. Harbor View Hotel Kitchen">' +
       '<div id="spf_dupe_biz" style="display:none;margin-top:4px"></div>' +
-    '</div>' +
+    '</div>'  +
 
     // Address
     '<div class="sp-form-full"><label>Site Address</label>' +

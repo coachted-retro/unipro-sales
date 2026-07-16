@@ -1302,6 +1302,13 @@ var TERMAC_PRODUCTS = [
 // it, and completing the full flyer flow later fills in the rest.
 var _quickCapture = {};
 var _quickCaptureLeadId = null;
+// 2026-07-16 per Ted: a lead becomes a real Location, and the person
+// captured on-site becomes a Contact tied to it -- these track which
+// location/contact THIS pitch session is updating, same purpose as
+// _quickCaptureLeadId above, so continuing a pitch updates the same
+// records instead of duplicating them.
+var _quickCaptureLocationId = null;
+var _quickCaptureContactId = null;
 var _preloadedLead = null;
 
 // A rep who already has a cold-call contact logged (name, phone, address)
@@ -1856,10 +1863,62 @@ function saveLead() {
     }
     crmSave('leads', leads);
 
+    // 2026-07-16 per Ted: correct lifecycle is Lead (standalone) ->
+    // Location (a lead becomes a real physical site) -> Contact (a
+    // person at that location) -> Opportunity (attaches to the
+    // location, not the contact). The Lead record above stays for
+    // backward compatibility with existing dashboard "Start Pitch"
+    // links and Recently Viewed, but the real artifacts this pitch
+    // produces from here on are the Location and the Contact.
+    var locId = _quickCaptureLocationId || ('loc_' + now);
+    var locs = crmLoad('locations');
+    var locIdx = locs.findIndex(function(l){ return l.id === locId; });
+    var locRec = {
+      id: locId,
+      name: business,
+      parentCompany: v('cf-parent'),
+      address: v('cf-address'), city: v('cf-city'),
+      state: document.getElementById('cf-state')?.value || '', zip: v('cf-zip'),
+      phone: v('cf-phone'),
+      leadId: rec.id,
+      assignedRep: rec.assignedRep,
+      source: 'pitch_tool',
+      status: 'active',
+      createdAt: locIdx !== -1 ? (locs[locIdx].createdAt || now) : now,
+      updatedAt: now,
+    };
+    if (locIdx !== -1) locs[locIdx] = locRec; else locs.push(locRec);
+    crmSave('locations', locs);
+    _quickCaptureLocationId = locId;
+
+    // Contact captured on-site — a person, never a stage or a deal.
+    if (name) {
+      var contacts = crmLoad('contacts');
+      var contactId = _quickCaptureContactId || ('con_' + now);
+      var cIdx = contacts.findIndex(function(c){ return c.id === contactId; });
+      var contactRec = {
+        id: contactId,
+        name: name,
+        phone: v('cf-phone'),
+        email: v('cf-email'),
+        locationId: locId,
+        assignedRep: rec.assignedRep,
+        status: 'contacted',
+        created: cIdx !== -1 ? (contacts[cIdx].created || now) : now,
+        updated: now,
+      };
+      if (cIdx !== -1) contacts[cIdx] = contactRec; else contacts.push(contactRec);
+      crmSave('contacts', contacts);
+      _quickCaptureContactId = contactId;
+    }
+
     // Store context for the site survey handoff — same key/shape as the
     // rest of the platform expects when launching a survey from a lead.
+    // locationId added so the opportunity that comes out of this survey
+    // attaches to the location, per the corrected lifecycle above.
     sessionStorage.setItem('termac_survey_prefill', JSON.stringify({
       leadId: rec.id,
+      locationId: locId,
       services: rec.services,
       source: 'pitch_tool',
     }));

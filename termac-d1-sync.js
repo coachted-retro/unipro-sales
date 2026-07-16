@@ -44,7 +44,7 @@
   // since this reference data is needed immediately for a core feature,
   // not a nice-to-have that can wait its turn.
   var D1_SYNC_TABLES = ['service_pricing_catalog', 'rep_comp_profiles',
-    'accounts', 'leads', 'contacts', 'opportunities', 'bids',
+    'accounts', 'leads', 'contacts', 'locations', 'opportunities', 'bids',
     'jobs', 'deficiencies', 'collections', 'dms_coldcall',
     'allpro_projects', 'allpro_cost_lines', 'appointments', 'allpro_design_projects',
     'broadcasts', 'dispatch_msgs', 'wh_requisitions', 'wh_ready_handoffs', 'parts_requests',
@@ -112,6 +112,10 @@
       // been 100% local to whichever device logged it, across the whole
       // platform (leads, contacts, accounts, opportunities alike).
       activityLog: 'activity_log',
+      // 2026-07-16 per Ted: a lead stays standalone until it's connected
+      // to a location as a contact -- locationId records what location
+      // it converted into, once it does.
+      locationId: 'location_id',
     },
     accounts: {
       // 2026-07-10 FIX: previously mapped name -> 'business_name', a
@@ -144,6 +148,9 @@
       // Contacts tab, which filters contacts by account_id, looked
       // empty even when contacts existed.
       accountId: 'account_id',
+      // 2026-07-16 per Ted: a contact is a person tied to a location,
+      // never a stage or a deal -- this is the new primary parent link.
+      locationId: 'location_id',
       activityLog: 'activity_log',
     },
     collections: {
@@ -233,6 +240,10 @@
     // D1 columns.
     opportunities: {
       accountId: 'account_id', contactId: 'contact_id',
+      // 2026-07-16 per Ted: an opportunity attaches to a location, not
+      // to the contact or the account directly. Account only gets
+      // created/matched once an opportunity at a location wins.
+      locationId: 'location_id',
       expectedClose: 'expected_close',
       closedAt: 'closed_at', assignedRep: 'assigned_rep',
       activityLog: 'activity_log',
@@ -242,6 +253,20 @@
       lostReasonCode: 'lost_reason_code', pendingReasonCode: 'pending_reason_code',
       resolutionNotes: 'resolution_notes', flaggedAt: 'flagged_at',
       lostPriceDivision: 'lost_price_division',
+    },
+    // Location entity, added 2026-07-16 per Ted. A lead becomes a real
+    // physical site when it converts; contacts and opportunities attach
+    // here, not directly to an account. accountId stays null until an
+    // opportunity at this location wins, then gets set (matching an
+    // existing account for the same parent company, or creating a new
+    // one) -- one account can hold many locations, e.g. Cintas as a
+    // single billed account with several job-site locations under it.
+    locations: {
+      parentCompany: 'parent_company', companyId: 'company_id',
+      accountId: 'account_id',
+      leadId: 'lead_id', assignedRep: 'assigned_rep',
+      createdAt: 'created_at', updatedAt: 'updated_at',
+      activityLog: 'activity_log',
     },
     // Route Debriefs, added 2026-07-13 per Ted - was 100% localStorage-
     // only on whichever device a tech submitted from (route-debrief.html),
@@ -287,13 +312,16 @@
     // full resolution lifecycle -- SLA aging, won/lost/pending outcome,
     // reason, and the lease/tiered/per-diem pricing model. See
     // opportunity_churn_commission_schema_v2.sql for the D1 side.
-    opportunities: ['id', 'account_id', 'contact_id', 'name', 'division', 'stage', 'value',
+    opportunities: ['id', 'account_id', 'contact_id', 'location_id', 'name', 'division', 'stage', 'value',
       'assigned_rep', 'expected_close', 'notes', 'closed_at',
       'sla_days', 'service_type', 'monthly_value', 'term_months',
       'resolution_status', 'resolution_date', 'lost_reason_code',
       'pending_reason_code', 'resolution_notes', 'flagged_at',
       'lost_price_division',
       'created_at', 'updated_at', 'activity_log'],
+    locations: ['id', 'name', 'parent_company', 'company_id', 'account_id', 'lead_id',
+      'address', 'city', 'state', 'zip', 'division', 'phone', 'assigned_rep', 'source',
+      'status', 'notes', 'activity_log', 'created_at', 'updated_at'],
     accounts_payable: ['id', 'vendor', 'amount', 'division', 'category',
       'due_date', 'invoice_num', 'notes', 'status', 'logged_at', 'paid_at',
       'source', 'created_at', 'updated_at'],
@@ -323,7 +351,7 @@
     leads: ['id', 'business', 'address', 'city', 'state', 'zip', 'phone', 'email',
       'contact_name', 'contact_title', 'pricing_tier', 'facility_type', 'division',
       'lifecycle_stage', 'ai_score', 'assigned_rep', 'source', 'notes',
-      'follow_up_date', 'last_activity', 'converted_at', 'account_id',
+      'follow_up_date', 'last_activity', 'converted_at', 'account_id', 'location_id',
       'is_hot', 'is_new_lead', 'escalated', 'created_at', 'updated_at', 'activity_log'],
     accounts: ['id', 'name', 'business', 'status', 'services', 'annual_value',
       'next_due', 'renewal_date', 'last_service', 'health_score',
@@ -333,7 +361,7 @@
       'billing_cycle', 'territory', 'division', 'cust_num', 'attention_status',
       'status_flag', 'last_status_check_at', 'confirmation_status', 'activity_log'],
     contacts: ['id', 'name', 'company', 'title', 'email', 'phone',
-      'assigned_rep', 'status', 'account_id', 'created_at', 'updated_at', 'activity_log'],
+      'assigned_rep', 'status', 'account_id', 'location_id', 'created_at', 'updated_at', 'activity_log'],
     jobs: ['id', 'account_id', 'location_id', 'division', 'service_type', 'tech_id',
       'scheduled_date', 'scheduled_time', 'status', 'notes', 'report_url',
       'square_ref', 'completed_at', 'created_at', 'updated_at',
