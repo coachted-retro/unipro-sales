@@ -22,6 +22,7 @@ const LIB_CACHE = `${CACHE_VERSION}-libs`;
 
 const SHELL_URLS = [
   'termac-os.html',
+  'staff-login.html',
   'tech-portal.html',
   'office-portal.html',
   'scheduler-unipro.html',
@@ -117,8 +118,19 @@ self.addEventListener('fetch', (event) => {
       } catch (e) {
         const cached = await caches.match(req);
         if (cached) return cached;
-        // Last resort: offline, nothing cached for this exact page -- send
-        // them to the hub shell rather than a browser error screen.
+        // 2026-07-16 per Ted: falling back to termac-os.html on ANY failed
+        // navigation used to include navigations to staff-login.html
+        // itself. Once termac-os.html got a real auth gate that redirects
+        // straight back to staff-login.html for anyone without a session,
+        // that fallback created an actual redirect loop -- a failed login
+        // page load would silently serve the gated hub page, which
+        // immediately tried to bounce back to the login page again. Never
+        // do that specific substitution; a failed login-page load should
+        // fail honestly, not loop.
+        if (req.url.endsWith('staff-login.html')) return Response.error();
+        // Last resort for every other page: offline, nothing cached for
+        // this exact page -- send them to the hub shell rather than a
+        // browser error screen.
         const fallback = await caches.match('termac-os.html');
         return fallback || Response.error();
       }
