@@ -391,6 +391,15 @@ function updateBadges() {
 
 // ── INIT ─────────────────────────────────────────────────────
 function init() {
+  // 2026-07-16 per Ted: pages like allpro-project-planner.html get
+  // opened two ways -- standalone in their own tab (needs this widget),
+  // or embedded in an iframe inside sales-portal.html (which already
+  // shows its own "Messages" pill via termac-messaging.js). Loading
+  // this widget in the embedded case put a second floating chat button
+  // -- a red circle -- on screen at the same time as the parent's
+  // pill, which is exactly the "two team message bubbles" Ted flagged.
+  // Skip entirely when framed; standalone tabs are untouched.
+  if (window.self !== window.top) return;
   injectCSS();
   injectHTML();
   // Load unread counts from localStorage
