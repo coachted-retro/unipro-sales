@@ -2,11 +2,27 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<script>
+// 2026-07-16 per Ted: this page had no login check at all -- anyone
+// could open it directly, logged in or not. Same proven gate as
+// termac-os.html and sales-portal.html: check for a real session before
+// anything else runs, bounce to staff-login.html if there isn't one,
+// come right back here (via ?dest=) once signed in.
+(function () {
+  var session = null;
+  try { session = JSON.parse(localStorage.getItem('termac_staff_session') || 'null'); } catch (e) {}
+  if (!session || !session.name) {
+    var here = window.location.pathname.split('/').pop() + window.location.search;
+    document.write('<style>body{visibility:hidden!important}</style>');
+    window.location.replace('staff-login.html?dest=' + encodeURIComponent(here));
+  }
+})();
+</script>
 <script src="termac-intelligence.js"></script>
 <script src="termac-notify.js"></script>
 <link rel="icon" type="image/png" href="termac-one-logo.png">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>UniPro — Scheduler Dashboard</title>
+<title>Termac One — Scheduler Dashboard</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -703,12 +719,26 @@ var SCHEDULER_DIVISIONS = {
 };
 
 // Resolve which division the logged-in scheduler belongs to
+// 2026-07-16 per Ted: was matching by name against a hardcoded per-
+// division list (several divisions, including AllPro, had this list
+// completely empty -- "schedulers: [], // TBD") which meant anyone not
+// on that list silently defaulted to UniPro regardless of their real
+// division. Now reads the real division straight from the actual login
+// session first (the same field gm-dashboard.html already locks people
+// to), and only falls back to the old name list for anyone signed in
+// under the legacy flow this file's own comment already flagged for
+// replacement.
 function getSchedulerDivision() {
+  var session = null;
+  try { session = JSON.parse(localStorage.getItem('termac_staff_session') || 'null'); } catch (e) {}
+  if (session && session.division && SCHEDULER_DIVISIONS[session.division]) {
+    return session.division;
+  }
   var name = localStorage.getItem('termac_current_user') || '';
   // Check explicit division override (set by admin or Azure SSO group)
   var override = sessionStorage.getItem('scheduler_division');
   if (override && SCHEDULER_DIVISIONS[override]) return override;
-  // Match by name in scheduler lists
+  // Legacy fallback: match by name in the old scheduler lists
   for (var div in SCHEDULER_DIVISIONS) {
     if (SCHEDULER_DIVISIONS[div].schedulers.includes(name)) return div;
   }
