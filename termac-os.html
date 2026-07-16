@@ -5780,6 +5780,7 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
       <button class="rpt-cat-btn" id="rptCat-operations" onclick="rptSetCat('operations')">🔧 Operations</button>
       <button class="rpt-cat-btn" id="rptCat-sales" onclick="rptSetCat('sales')">📈 Sales Pipeline</button>
       <button class="rpt-cat-btn" id="rptCat-health" onclick="rptSetCat('health')">❤️ Customer Health</button>
+      <button class="rpt-cat-btn" id="rptCat-intel" onclick="rptSetCat('intel')">🧠 Sales Intelligence</button>
       <button class="rpt-cat-btn" id="rptCat-custom" onclick="rptSetCat('custom')">⚙️ Custom Report</button>
     </div>
     <div id="rptOutput"></div>
@@ -13628,7 +13629,141 @@ function rptBuildHealth(filters) {
     </div>`;
 }
 
-// ── CUSTOM REPORT BUILDER ────────────────────────────────────────────────────
+// ── SALES INTELLIGENCE REPORT ────────────────────────────────────────────────
+// Added 2026-07-16 per Ted's request for better pricing/pipeline
+// visibility. Every number here is computed from real records already
+// in D1 (opportunities, accounts.services) -- nothing fabricated or
+// placeholder. Where there isn't enough real data yet (this is all
+// brand-new tracking as of today), it says so plainly instead of
+// showing a misleading zero, matching the standing rule against fake
+// metrics (see the old Command Center tab's removed demo numbers).
+function rptBuildIntelligence(filters) {
+  const accounts = rptGetAccounts(filters);
+  const opps = (crmLoad('opportunities') || []).filter(function(o) {
+    if (filters.cutoff > 0 && (o.created||0) < filters.cutoff) return false;
+    if (filters.rep !== 'all' && (o.assignedRep||'') !== filters.rep) return false;
+    if (filters.company !== 'all' && (o.division||'') !== filters.company) return false;
+    return true;
+  });
+
+  const resolved = opps.filter(function(o){ return o.resolutionStatus === 'won' || o.resolutionStatus === 'lost'; });
+  const won  = opps.filter(function(o){ return o.resolutionStatus === 'won'; });
+  const lost = opps.filter(function(o){ return o.resolutionStatus === 'lost'; });
+  const winRate = resolved.length ? (won.length / resolved.length * 100) : null;
+
+  const byDivWin = {};
+  resolved.forEach(function(o){
+    const div = o.division || 'Unspecified';
+    if (!byDivWin[div]) byDivWin[div] = { won:0, lost:0 };
+    if (o.resolutionStatus === 'won') byDivWin[div].won++; else byDivWin[div].lost++;
+  });
+
+  const closedWithDates = won.filter(function(o){ return o.created && o.closedAt; });
+  const avgDaysToClose = closedWithDates.length
+    ? Math.round(closedWithDates.reduce(function(s,o){ return s + (o.closedAt - o.created) / 86400000; }, 0) / closedWithDates.length)
+    : null;
+  const stillOpen = opps.filter(function(o){ return (o.resolutionStatus||'open') === 'open' || o.resolutionStatus === 'pending'; });
+  const avgDaysOpen = stillOpen.length
+    ? Math.round(stillOpen.reduce(function(s,o){ return s + (Date.now() - (o.created||Date.now())) / 86400000; }, 0) / stillOpen.length)
+    : null;
+
+  // Price competitiveness -- direct payoff of today's lost_price_division
+  // capture. Will be sparse until reps have logged more losses with it.
+  const priceLost = lost.filter(function(o){ return o.lostReasonCode === 'Price too high'; });
+  const byDivPriceLoss = {};
+  priceLost.forEach(function(o){
+    const div = o.lostPriceDivision || 'Unspecified';
+    if (!byDivPriceLoss[div]) byDivPriceLoss[div] = { count:0, revenue:0 };
+    byDivPriceLoss[div].count++;
+    byDivPriceLoss[div].revenue += Number(o.value) || 0;
+  });
+
+  // Cross-sell penetration -- real service counts per active account,
+  // no assumed/default values.
+  const activeAccts = accounts.filter(function(a){ return a.status === 'active'; });
+  const svcBuckets = { '1 service':0, '2 services':0, '3+ services':0 };
+  let totalSvcs = 0;
+  activeAccts.forEach(function(a){
+    const n = (a.services||[]).length;
+    totalSvcs += n;
+    if (n <= 1) svcBuckets['1 service']++;
+    else if (n === 2) svcBuckets['2 services']++;
+    else svcBuckets['3+ services']++;
+  });
+  const avgServices = activeAccts.length ? (totalSvcs / activeAccts.length) : null;
+
+  _rptCurrentData = opps.map(function(o){ return {
+    'Opportunity': o.name || '—',
+    'Division': o.division || '—',
+    'Status': o.resolutionStatus || 'open',
+    'Value': o.value || 0,
+    'Lost Reason': o.lostReasonCode || '—',
+    'Priced-Too-High Service': o.lostPriceDivision || '—',
+    'Rep': o.assignedRep || '—',
+    'Created': o.created ? new Date(o.created).toLocaleDateString() : '—',
+  }; });
+
+  return `
+    <div class="rpt-kpi-grid" style="background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08);margin-bottom:16px">
+      <div class="rpt-kpi"><div class="rpt-kpi-val ${winRate===null?'':winRate>=50?'green':'red'}">${winRate===null?'No resolved deals yet':rptFmtPct(winRate)}</div><div class="rpt-kpi-lbl">Win Rate</div></div>
+      <div class="rpt-kpi"><div class="rpt-kpi-val">${avgDaysToClose===null?'—':avgDaysToClose+'d'}</div><div class="rpt-kpi-lbl">Avg Days to Close (Won)</div></div>
+      <div class="rpt-kpi"><div class="rpt-kpi-val">${avgDaysOpen===null?'—':avgDaysOpen+'d'}</div><div class="rpt-kpi-lbl">Avg Days Open (Active)</div></div>
+      <div class="rpt-kpi"><div class="rpt-kpi-val">${priceLost.length}</div><div class="rpt-kpi-lbl">Lost on Price</div></div>
+      <div class="rpt-kpi"><div class="rpt-kpi-val">${avgServices===null?'—':avgServices.toFixed(1)}</div><div class="rpt-kpi-lbl">Avg Services / Active Account</div></div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">
+      <div class="rpt-card">
+        <div class="rpt-card-hdr"><span class="rpt-card-title">🏆 Win Rate by Division</span></div>
+        <table class="rpt-table">
+          <thead><tr><th>Division</th><th>Won</th><th>Lost</th><th>Win Rate</th></tr></thead>
+          <tbody>${Object.entries(byDivWin).sort(function(a,b){ return (b[1].won+b[1].lost)-(a[1].won+a[1].lost); }).map(function(e){
+            var div=e[0], d=e[1]; var rate = (d.won+d.lost) ? (d.won/(d.won+d.lost)*100) : 0;
+            return '<tr><td><strong>'+div+'</strong></td><td>'+d.won+'</td><td>'+d.lost+'</td><td>'+rptBadge(rate.toFixed(0)+'%', rate>=50?'green':'red')+'</td></tr>';
+          }).join('') || '<tr><td colspan="4" style="text-align:center;color:var(--soft);padding:16px">No resolved opportunities in this period yet</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+      <div class="rpt-card">
+        <div class="rpt-card-hdr"><span class="rpt-card-title">💸 Priced Too High, by Service</span></div>
+        <table class="rpt-table">
+          <thead><tr><th>Service</th><th>Deals Lost</th><th>Revenue Lost</th></tr></thead>
+          <tbody>${Object.entries(byDivPriceLoss).sort(function(a,b){ return b[1].count-a[1].count; }).map(function(e){
+            var div=e[0], d=e[1];
+            return '<tr><td><strong>'+div+'</strong></td><td>'+rptBadge(d.count,'red')+'</td><td>'+rptFmt$(d.revenue)+'</td></tr>';
+          }).join('') || '<tr><td colspan="3" style="text-align:center;color:var(--soft);padding:16px">No price-related losses logged yet — this fills in as reps use the new "which service" field</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="rpt-card" style="margin-bottom:16px">
+      <div class="rpt-card-hdr"><span class="rpt-card-title">🔗 Cross-Sell Penetration (Active Accounts)</span></div>
+      <table class="rpt-table">
+        <thead><tr><th>Services on File</th><th>Accounts</th><th>%</th></tr></thead>
+        <tbody>${Object.entries(svcBuckets).map(function(e){
+          var label=e[0], n=e[1];
+          return '<tr><td>'+label+'</td><td>'+n+'</td><td>'+(activeAccts.length?(n/activeAccts.length*100).toFixed(1)+'%':'—')+'</td></tr>';
+        }).join('') || '<tr><td colspan="3" style="text-align:center;color:var(--soft);padding:16px">No active accounts in this period</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="rpt-card">
+      <div class="rpt-card-hdr"><span class="rpt-card-title">📋 All Opportunities in Period</span></div>
+      <table class="rpt-table">
+        <thead><tr><th>Opportunity</th><th>Division</th><th>Status</th><th>Value</th><th>Rep</th><th>Created</th></tr></thead>
+        <tbody>${opps.sort(function(a,b){ return (b.created||0)-(a.created||0); }).map(function(o){
+          var status = o.resolutionStatus || 'open';
+          var color = status==='won'?'green':status==='lost'?'red':status==='pending'?'amber':'gray';
+          return '<tr><td><strong>'+(o.name||'—')+'</strong></td><td>'+(o.division||'—')+'</td><td>'+rptBadge(status,color)+'</td><td>'+rptFmt$(o.value||0)+'</td><td>'+(o.assignedRep||'—')+'</td><td>'+(o.created?new Date(o.created).toLocaleDateString():'—')+'</td></tr>';
+        }).join('') || '<tr><td colspan="6" style="text-align:center;color:var(--soft);padding:20px">No opportunities in selected period</td></tr>'}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+
 function rptBuildCustom(filters) {
   return `
     <div class="rpt-card">
@@ -13766,6 +13901,7 @@ function rptRender() {
       else if (_rptCurrentCat === 'operations') html = rptBuildOperations(filters);
       else if (_rptCurrentCat === 'sales')      html = rptBuildSales(filters);
       else if (_rptCurrentCat === 'health')     html = rptBuildHealth(filters);
+      else if (_rptCurrentCat === 'intel')      html = rptBuildIntelligence(filters);
       else if (_rptCurrentCat === 'custom')     html = rptBuildCustom(filters);
       out.innerHTML = html;
       if (_rptCurrentCat === 'custom') { rptBuildCustomColumns(); }
