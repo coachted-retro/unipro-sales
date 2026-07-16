@@ -99,6 +99,18 @@ function generateResetCode() {
 // becomes a gm-dashboard.html slug. If a portal or division is ever added
 // there, mirror it here too, or invite links will point at the wrong page
 // (or the old generic one) while the tile chooser is already correct.
+// 2026-07-16 per Ted: this map used to be hand-duplicated in
+// staff-login.html too, which is exactly the kind of drift risk that
+// caused real login/routing problems -- if one copy got edited without
+// the other, invite links and actual post-login redirects could
+// silently disagree. This is now the ONLY copy; handleLogin() below
+// returns the resolved destination directly in the /login response, and
+// staff-login.html just uses it instead of recomputing its own.
+// Added `hr` here after finding two real provisioned accounts
+// (Terence O'Reilly, Jim Kennedy) already carry an `hr` portal that had
+// no dashboard mapped at all -- not currently visible since both have
+// several other portals too, but a real gap waiting for the first
+// HR-only account. Matches employee-portal.html's own HR tile link.
 const PORTAL_URLS = {
   sales_rep: 'sales-portal.html',
   dms: 'dms-portal.html',
@@ -110,6 +122,7 @@ const PORTAL_URLS = {
   manager: 'termac-os.html',
   admin: 'termac-os.html',
   gm_dashboard: 'gm-dashboard.html',
+  hr: 'hr-portal.html',
 };
 const DIVISION_SLUG = {
   'UniPro': 'unipro', 'AllPro': 'allpro', 'Quality III': 'quality3',
@@ -221,13 +234,24 @@ async function handleLogin(request, env) {
   let portals = [];
   try { portals = JSON.parse(user.portals || '[]'); } catch (e) {}
 
+  // 2026-07-16 per Ted: this is the actual fix for the login-routing
+  // reliability problem. dest is computed here, server-side, using the
+  // exact same resolveDestinationUrl() this file already uses to build
+  // invite links -- one function, one place, used for both. The client
+  // (staff-login.html) just uses this value directly instead of keeping
+  // its own separate copy of PORTAL_URLS that could silently drift out
+  // of sync with this one.
+  const dest = resolveDestinationUrl(user.role, user.division, portals);
+
   return jsonResponse({
     ok: true,
     id: user.id,
     name: user.name,
     email: user.email,
     role: user.role,
+    division: user.division || '',
     portals: portals,
+    dest: dest,
     mustReset: !!user.must_reset,
   });
 }
