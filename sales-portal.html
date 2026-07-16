@@ -4504,26 +4504,26 @@ function spOppDetectMode(row) {
   return 'per_diem';
 }
 
+function spOppSafeKey(div) { return (div || '').replace(/[^a-zA-Z0-9]/g, '_'); }
+
+// Rebuilt 2026-07-16 per Ted: one conversation with a customer often
+// covers several divisions at once (Filter Man + UniPro + GTO all in
+// one stop), and the old modal only ever let a rep pick one division
+// per save -- meaning three separate trips through the whole form for
+// what is really one interaction. Now every interested division gets
+// its own catalog picker in the SAME modal, pre-checked from whatever
+// the intake form or the Pitch Tool's flyer checkboxes already
+// captured on this record (both write to the same r.services field,
+// so there's only ever one source of truth to read from here, not two
+// to reconcile). Save creates one real Opportunity per checked
+// division in a single click.
 function spOpenOpportunityModal(parentType, parentId, parentName) {
   var divisions = [];
   spOppCatalog().forEach(function(r){ if (r.division && divisions.indexOf(r.division) === -1) divisions.push(r.division); });
   divisions.sort();
 
-  // 2026-07-16 FIX: if the pricing catalog genuinely hasn't finished
-  // loading yet (very first page load, slow connection), the Division
-  // dropdown used to just sit there with nothing in it -- looked exactly
-  // like a broken click handler even though nothing was actually wrong,
-  // it just had zero data yet. Now it says so plainly and starts in
-  // manual-entry mode instead of a dropdown with no options.
   var catalogNotReady = divisions.length === 0;
 
-  // Default rep: whoever's already assigned to the parent record, else
-  // the current logged-in rep. Never left blank — an opportunity with
-  // no owner is invisible to SLA and commission reporting.
-  // 2026-07-16 FIX: same root cause as the isContact fix above — a
-  // contact-stage record may still physically live in the `leads` pool,
-  // so search both when parentType is 'contact' instead of assuming
-  // 'contacts' specifically.
   var parentRec = null;
   if (parentType === 'account') {
     parentRec = (crmLoad('accounts') || []).find(function(x){ return x.id === parentId; });
@@ -4533,213 +4533,318 @@ function spOpenOpportunityModal(parentType, parentId, parentName) {
   }
   var defaultRep = (parentRec && parentRec.assignedRep) || _spRep.name;
 
-  var divOpts = divisions.map(function(d){ return '<option value="' + escH(d) + '">' + escH(d) + '</option>'; }).join('');
+  // Pre-check divisions the customer already showed interest in, per
+  // r.services (unipro/quality3/allpro/filterman/gto/termac) -- written
+  // by both the manual intake form and the Pitch Tool's flyer
+  // checkboxes, so this reflects whichever one was actually used.
+  var interestedLabels = ((parentRec && parentRec.services) || []).map(spSvcLabel);
+  var preselected = divisions.filter(function(d){
+    return interestedLabels.some(function(lbl){ return lbl.toLowerCase() === d.toLowerCase(); });
+  });
+
+  // Existing open opportunities on this record -- shown as a heads-up,
+  // not a block, since a second genuinely separate deal later is real.
+  var existingOpps = (crmLoad('opportunities') || []).filter(function(o){
+    var status = o.resolutionStatus || 'open';
+    if (status !== 'open' && status !== 'pending') return false;
+    return parentType === 'account' ? o.accountId === parentId : o.contactId === parentId;
+  });
+  var existingNote = existingOpps.length
+    ? '<div style="background:#EFF6FF;color:#1E40AF;border-radius:7px;padding:9px 12px;font-size:12px;margin-bottom:12px">ℹ️ ' + existingOpps.length + ' open opportunity' + (existingOpps.length===1?'':'ies') + ' already tracked below on this record (' + existingOpps.map(function(o){return o.division||'—';}).join(', ') + ') — only check divisions here that aren\'t already covered.</div>'
+    : '';
+
+  var divCheckboxes = divisions.map(function(d){
+    var key = spOppSafeKey(d);
+    var checked = preselected.indexOf(d) !== -1;
+    return '<label style="display:inline-flex;align-items:center;gap:6px;background:' + (checked?'#EBF2FD':'#F9FAFB') + ';border:1.5px solid ' + (checked?'#1B5FA8':'var(--line)') + ';border-radius:20px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;margin:0 6px 6px 0">' +
+      '<input type="checkbox" data-div="' + escH(d) + '" onchange="spOppToggleDivisionBlock(this)" ' + (checked?'checked':'') + ' style="cursor:pointer"> ' + escH(d) +
+    '</label>';
+  }).join('');
 
   var wrap = document.createElement('div');
   wrap.id = 'spOppModal';
   wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9700;display:flex;align-items:center;justify-content:center;padding:16px;overflow-y:auto';
-  wrap.innerHTML = '<div style="background:#fff;border-radius:12px;max-width:480px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.3);max-height:92vh;overflow-y:auto">' +
+  wrap.innerHTML = '<div style="background:#fff;border-radius:12px;max-width:520px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.3);max-height:92vh;overflow-y:auto">' +
     '<div style="padding:20px">' +
       '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:18px;color:var(--ink);margin-bottom:4px">💼 Create Opportunity</div>' +
-      '<div style="font-size:12px;color:var(--soft);margin-bottom:16px">For ' + escH(parentName || '') + '</div>' +
+      '<div style="font-size:12px;color:var(--soft);margin-bottom:12px">For ' + escH(parentName || '') + '</div>' +
 
+      existingNote +
       (catalogNotReady ? '<div style="background:#FEF3C7;color:#92400E;border-radius:7px;padding:10px 12px;font-size:12px;margin-bottom:12px">⚠ The pricing catalog is still loading on this device. Use manual entry below for now, or close this and try again in a few seconds.</div>' : '') +
 
-      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Division</label>' +
-      '<select id="oppDivision"' + (catalogNotReady ? ' disabled' : '') + ' style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:10px" onchange="spOppPopulateEntities()"><option value="">' + (catalogNotReady ? 'Catalog still loading…' : 'Select division...') + '</option>' + divOpts + '</select>' +
+      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">Which services are they interested in?' + (preselected.length ? ' <span style="font-weight:400;text-transform:none;color:#1B5FA8">(pre-checked from intake/pitch)</span>' : '') + '</label>' +
+      '<div style="margin-bottom:14px">' + (divisions.length ? divCheckboxes : '<div style="font-size:12px;color:var(--soft)">Catalog still loading — use manual entry below.</div>') + '</div>' +
 
-      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Entity</label>' +
-      '<select id="oppEntity" disabled style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:10px" onchange="spOppPopulateCategories()"><option value="">Pick division first</option></select>' +
+      '<div id="oppDivBlocks"></div>' +
 
-      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Category</label>' +
-      '<select id="oppCategory" disabled style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:10px" onchange="spOppPopulateSkus()"><option value="">Pick entity first</option></select>' +
+      (catalogNotReady ? (
+        '<label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--soft);margin-bottom:10px"><input type="checkbox" id="oppManualToggleFallback" checked disabled> Not in the catalog — enter manually</label>' +
+        '<div style="margin-bottom:10px">' +
+          '<input id="oppManualDescFallback" type="text" placeholder="What\'s the job?" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:8px;box-sizing:border-box">' +
+          '<select id="oppManualDivFallback" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:8px">' + spSvcListOptions() + '</select>' +
+          '<input id="oppManualValueFallback" type="number" step="0.01" placeholder="Amount ($)" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;box-sizing:border-box">' +
+        '</div>'
+      ) : '') +
 
-      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Item</label>' +
-      '<select id="oppSku" disabled style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:10px" onchange="spOppRenderPricing()"><option value="">Pick category first</option></select>' +
-
-      '<div id="oppPricingPanel" style="display:none;background:#F9FAFB;border-radius:8px;padding:12px;margin-bottom:12px"></div>' +
-
-      '<label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--soft);margin-bottom:10px"><input type="checkbox" id="oppManualToggle" onchange="spOppToggleManual()"' + (catalogNotReady ? ' checked' : '') + '> Not in the catalog — enter manually</label>' +
-      '<div id="oppManualFields" style="' + (catalogNotReady ? 'display:block' : 'display:none') + ';margin-bottom:10px">' +
-        '<input id="oppManualDesc" type="text" placeholder="What\'s the job?" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:8px;box-sizing:border-box">' +
-        '<input id="oppManualValue" type="number" step="0.01" placeholder="Amount ($)" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;box-sizing:border-box">' +
-      '</div>' +
-
-      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Rep</label>' +
+      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px;margin-top:6px">Rep</label>' +
       '<input id="oppRep" type="text" value="' + escH(defaultRep) + '" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:10px;box-sizing:border-box">' +
 
       '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Target close date *</label>' +
       '<input id="oppExpectedClose" type="date" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:10px;box-sizing:border-box">' +
 
-      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Notes</label>' +
+      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Notes <span style="font-weight:400;text-transform:none">(applies to every opportunity created here)</span></label>' +
       '<textarea id="oppNotes" placeholder="Contact, context, next step..." rows="2" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;resize:vertical;box-sizing:border-box;margin-bottom:16px"></textarea>' +
 
       '<div style="display:flex;gap:10px;justify-content:flex-end">' +
         '<button onclick="document.getElementById(\'spOppModal\').remove()" style="padding:8px 18px;border-radius:7px;border:1.5px solid var(--line);background:#fff;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:700">Cancel</button>' +
-        '<button onclick="spSaveOpportunity(\'' + parentType + '\',\'' + parentId + '\')" style="padding:8px 18px;border-radius:7px;border:none;background:#1A1D21;color:#fff;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:700">Save Opportunity</button>' +
+        '<button onclick="spSaveOpportunity(\'' + parentType + '\',\'' + parentId + '\')" style="padding:8px 18px;border-radius:7px;border:none;background:#1A1D21;color:#fff;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:700">Save Opportunit' + (preselected.length > 1 ? 'ies' : 'y') + '</button>' +
       '</div>' +
     '</div>' +
   '</div>';
   document.body.appendChild(wrap);
+
+  // Auto-expand a picker block for every pre-checked division so the
+  // rep sees them ready to price immediately, no extra click needed.
+  preselected.forEach(function(d){ spOppAddDivBlock(d); });
 }
 
-function spOppPopulateEntities() {
-  var div = document.getElementById('oppDivision').value;
+function spSvcListOptions() {
+  return '<option value="">Which division?</option>' + SVCS_LIST.map(function(s){ return '<option value="' + spSvcLabel(s) + '">' + spSvcLabel(s) + '</option>'; }).join('');
+}
+
+function spOppToggleDivisionBlock(checkboxEl) {
+  var div = checkboxEl.getAttribute('data-div');
+  if (checkboxEl.checked) spOppAddDivBlock(div);
+  else spOppRemoveDivBlock(div);
+  // Update the label pill styling and the Save button's wording live
+  var label = checkboxEl.closest('label');
+  if (label) {
+    label.style.background = checkboxEl.checked ? '#EBF2FD' : '#F9FAFB';
+    label.style.borderColor = checkboxEl.checked ? '#1B5FA8' : 'var(--line)';
+  }
+}
+
+function spOppAddDivBlock(div) {
+  var key = spOppSafeKey(div);
+  if (document.getElementById('oppDivBlock_' + key)) return; // already present
+  var container = document.getElementById('oppDivBlocks');
+  if (!container) return;
+  var block = document.createElement('div');
+  block.id = 'oppDivBlock_' + key;
+  block.setAttribute('data-div', div);
+  block.style.cssText = 'border:1.5px solid var(--line);border-radius:9px;padding:12px;margin-bottom:12px;background:#FAFBFC';
+  block.innerHTML =
+    '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;color:var(--ink);margin-bottom:8px">' + escH(div) + '</div>' +
+
+    '<label style="font-size:10px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Entity</label>' +
+    '<select id="oppEntity_' + key + '" style="width:100%;padding:7px 9px;border-radius:6px;border:1.5px solid var(--line);font-size:12px;margin-bottom:8px" onchange="spOppPopulateCategories(\'' + key + '\',\'' + escH(div).replace(/'/g,"\\'") + '\')"><option value="">Select entity...</option></select>' +
+
+    '<label style="font-size:10px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Category</label>' +
+    '<select id="oppCategory_' + key + '" disabled style="width:100%;padding:7px 9px;border-radius:6px;border:1.5px solid var(--line);font-size:12px;margin-bottom:8px" onchange="spOppPopulateSkus(\'' + key + '\',\'' + escH(div).replace(/'/g,"\\'") + '\')"><option value="">Pick entity first</option></select>' +
+
+    '<label style="font-size:10px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Item</label>' +
+    '<select id="oppSku_' + key + '" disabled style="width:100%;padding:7px 9px;border-radius:6px;border:1.5px solid var(--line);font-size:12px;margin-bottom:8px" onchange="spOppRenderPricing(\'' + key + '\')"><option value="">Pick category first</option></select>' +
+
+    '<div id="oppPricingPanel_' + key + '" style="display:none;background:#F3F4F6;border-radius:7px;padding:10px;margin-bottom:8px"></div>' +
+
+    '<label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--soft);margin-bottom:6px"><input type="checkbox" id="oppManualToggle_' + key + '" onchange="spOppToggleManual(\'' + key + '\')"> Not in the catalog — enter manually</label>' +
+    '<div id="oppManualFields_' + key + '" style="display:none">' +
+      '<input id="oppManualDesc_' + key + '" type="text" placeholder="What\'s the job?" style="width:100%;padding:7px 9px;border-radius:6px;border:1.5px solid var(--line);font-size:12px;margin-bottom:6px;box-sizing:border-box">' +
+      '<input id="oppManualValue_' + key + '" type="number" step="0.01" placeholder="Amount ($)" style="width:100%;padding:7px 9px;border-radius:6px;border:1.5px solid var(--line);font-size:12px;box-sizing:border-box">' +
+    '</div>';
+  container.appendChild(block);
+
+  // Populate entities immediately for this division
   var rows = spOppCatalog().filter(function(r){ return r.division === div; });
   var ents = [];
   rows.forEach(function(r){ if (ents.indexOf(r.entity) === -1) ents.push(r.entity); });
   ents.sort();
-  var sel = document.getElementById('oppEntity');
-  sel.disabled = !div;
-  sel.innerHTML = '<option value="">Select entity...</option>' + ents.map(function(e){ return '<option value="' + escH(e) + '">' + escH(e) + '</option>'; }).join('');
-  document.getElementById('oppCategory').innerHTML = '<option value="">Pick entity first</option>';
-  document.getElementById('oppCategory').disabled = true;
-  document.getElementById('oppSku').innerHTML = '<option value="">Pick category first</option>';
-  document.getElementById('oppSku').disabled = true;
-  document.getElementById('oppPricingPanel').style.display = 'none';
+  var entSel = document.getElementById('oppEntity_' + key);
+  entSel.innerHTML = '<option value="">Select entity...</option>' + ents.map(function(e){ return '<option value="' + escH(e) + '">' + escH(e) + '</option>'; }).join('');
 }
-function spOppPopulateCategories() {
-  var div = document.getElementById('oppDivision').value;
-  var ent = document.getElementById('oppEntity').value;
+
+function spOppRemoveDivBlock(div) {
+  var key = spOppSafeKey(div);
+  var block = document.getElementById('oppDivBlock_' + key);
+  if (block) block.remove();
+}
+
+function spOppPopulateCategories(key, div) {
+  var ent = document.getElementById('oppEntity_' + key).value;
   var rows = spOppCatalog().filter(function(r){ return r.division === div && r.entity === ent; });
   var cats = [];
   rows.forEach(function(r){ var c = r.categoryLabel || r.category; if (cats.indexOf(c) === -1) cats.push(c); });
   cats.sort();
-  var sel = document.getElementById('oppCategory');
+  var sel = document.getElementById('oppCategory_' + key);
   sel.disabled = !ent;
   sel.innerHTML = '<option value="">Select category...</option>' + cats.map(function(c){ return '<option value="' + escH(c) + '">' + escH(c) + '</option>'; }).join('');
-  document.getElementById('oppSku').innerHTML = '<option value="">Pick category first</option>';
-  document.getElementById('oppSku').disabled = true;
-  document.getElementById('oppPricingPanel').style.display = 'none';
+  var skuSel = document.getElementById('oppSku_' + key);
+  skuSel.innerHTML = '<option value="">Pick category first</option>';
+  skuSel.disabled = true;
+  document.getElementById('oppPricingPanel_' + key).style.display = 'none';
 }
-function spOppPopulateSkus() {
-  var div = document.getElementById('oppDivision').value;
-  var ent = document.getElementById('oppEntity').value;
-  var cat = document.getElementById('oppCategory').value;
+
+function spOppPopulateSkus(key, div) {
+  var ent = document.getElementById('oppEntity_' + key).value;
+  var cat = document.getElementById('oppCategory_' + key).value;
   var rows = spOppCatalog().filter(function(r){ return r.division === div && r.entity === ent && (r.categoryLabel || r.category) === cat; });
-  var sel = document.getElementById('oppSku');
+  var sel = document.getElementById('oppSku_' + key);
   sel.disabled = !cat;
   sel.innerHTML = '<option value="">Select item...</option>' + rows.map(function(r){ return '<option value="' + r.id + '">' + escH(r.description) + ' — ' + spOppMoney(r.price) + ' / ' + escH(r.unit) + '</option>'; }).join('');
-  document.getElementById('oppPricingPanel').style.display = 'none';
+  document.getElementById('oppPricingPanel_' + key).style.display = 'none';
 }
-function spOppRenderPricing() {
-  var skuId = document.getElementById('oppSku').value;
+
+function spOppRenderPricing(key) {
+  var skuId = document.getElementById('oppSku_' + key).value;
   var row = spOppCatalog().find(function(r){ return r.id === skuId; });
-  var panel = document.getElementById('oppPricingPanel');
+  var panel = document.getElementById('oppPricingPanel_' + key);
   if (!row) { panel.style.display = 'none'; return; }
   panel.style.display = 'block';
   var mode = spOppDetectMode(row);
   panel.setAttribute('data-mode', mode);
   panel.setAttribute('data-price', row.price);
   if (mode === 'lease') {
-    panel.innerHTML = '<div style="font-size:11px;font-weight:700;color:#B45309;text-transform:uppercase;margin-bottom:6px">Lease pricing</div>' +
-      '<div style="font-size:12px;color:var(--soft);margin-bottom:6px">' + spOppMoney(row.price) + ' / month</div>' +
-      '<label style="font-size:11px;color:var(--soft);display:block;margin-bottom:4px">Term (months)</label>' +
-      '<input id="oppLeaseTerm" type="number" value="36" min="1" oninput="spOppRecalc()" style="width:100%;padding:6px 8px;border-radius:6px;border:1.5px solid var(--line);font-size:13px;margin-bottom:6px;box-sizing:border-box">' +
-      '<div style="font-size:13px;font-weight:800" id="oppTotalDisplay">Total: ' + spOppMoney(row.price * 36) + '</div>';
+    panel.innerHTML = '<div style="font-size:10px;font-weight:700;color:#B45309;text-transform:uppercase;margin-bottom:5px">Lease pricing</div>' +
+      '<div style="font-size:11px;color:var(--soft);margin-bottom:5px">' + spOppMoney(row.price) + ' / month</div>' +
+      '<label style="font-size:10px;color:var(--soft);display:block;margin-bottom:3px">Term (months)</label>' +
+      '<input id="oppLeaseTerm_' + key + '" type="number" value="36" min="1" oninput="spOppRecalc(\'' + key + '\')" style="width:100%;padding:6px 8px;border-radius:6px;border:1.5px solid var(--line);font-size:12px;margin-bottom:5px;box-sizing:border-box">' +
+      '<div style="font-size:12px;font-weight:800" id="oppTotalDisplay_' + key + '">Total: ' + spOppMoney(row.price * 36) + '</div>';
   } else if (mode === 'tiered') {
     var overage = spOppCatalog().find(function(r){ return r.division === row.division && r.category === row.category && r.unit && r.unit.toLowerCase().indexOf('over') !== -1; });
     panel.setAttribute('data-overage', overage ? overage.price : 0);
-    panel.innerHTML = '<div style="font-size:11px;font-weight:700;color:#B45309;text-transform:uppercase;margin-bottom:6px">Tiered / overage pricing</div>' +
-      '<div style="font-size:12px;color:var(--soft);margin-bottom:6px">Base ' + spOppMoney(row.price) + (overage ? ' + ' + spOppMoney(overage.price) + '/gal over 1,000' : '') + '</div>' +
-      '<label style="font-size:11px;color:var(--soft);display:block;margin-bottom:4px">Gallons over 1,000 (0 if none)</label>' +
-      '<input id="oppTieredQty" type="number" value="0" min="0" oninput="spOppRecalc()" style="width:100%;padding:6px 8px;border-radius:6px;border:1.5px solid var(--line);font-size:13px;margin-bottom:6px;box-sizing:border-box">' +
-      '<div style="font-size:13px;font-weight:800" id="oppTotalDisplay">Total: ' + spOppMoney(row.price) + '</div>';
+    panel.innerHTML = '<div style="font-size:10px;font-weight:700;color:#B45309;text-transform:uppercase;margin-bottom:5px">Tiered / overage pricing</div>' +
+      '<div style="font-size:11px;color:var(--soft);margin-bottom:5px">Base ' + spOppMoney(row.price) + (overage ? ' + ' + spOppMoney(overage.price) + '/gal over 1,000' : '') + '</div>' +
+      '<label style="font-size:10px;color:var(--soft);display:block;margin-bottom:3px">Gallons over 1,000 (0 if none)</label>' +
+      '<input id="oppTieredQty_' + key + '" type="number" value="0" min="0" oninput="spOppRecalc(\'' + key + '\')" style="width:100%;padding:6px 8px;border-radius:6px;border:1.5px solid var(--line);font-size:12px;margin-bottom:5px;box-sizing:border-box">' +
+      '<div style="font-size:12px;font-weight:800" id="oppTotalDisplay_' + key + '">Total: ' + spOppMoney(row.price) + '</div>';
   } else {
-    panel.innerHTML = '<div style="font-size:11px;font-weight:700;color:#B45309;text-transform:uppercase;margin-bottom:6px">Flat pricing</div>' +
-      '<div style="font-size:13px;font-weight:800" id="oppTotalDisplay">Total: ' + spOppMoney(row.price) + '</div>';
+    panel.innerHTML = '<div style="font-size:10px;font-weight:700;color:#B45309;text-transform:uppercase;margin-bottom:5px">Flat pricing</div>' +
+      '<div style="font-size:12px;font-weight:800" id="oppTotalDisplay_' + key + '">Total: ' + spOppMoney(row.price) + '</div>';
   }
 }
-function spOppRecalc() {
-  var panel = document.getElementById('oppPricingPanel');
+
+function spOppRecalc(key) {
+  var panel = document.getElementById('oppPricingPanel_' + key);
   var mode = panel.getAttribute('data-mode');
   var price = parseFloat(panel.getAttribute('data-price')) || 0;
-  var disp = document.getElementById('oppTotalDisplay');
+  var disp = document.getElementById('oppTotalDisplay_' + key);
   if (mode === 'lease') {
-    var term = parseFloat(document.getElementById('oppLeaseTerm').value) || 1;
+    var term = parseFloat(document.getElementById('oppLeaseTerm_' + key).value) || 1;
     disp.textContent = 'Total: ' + spOppMoney(price * term);
   } else if (mode === 'tiered') {
     var overage = parseFloat(panel.getAttribute('data-overage')) || 0;
-    var qty = parseFloat(document.getElementById('oppTieredQty').value) || 0;
+    var qty = parseFloat(document.getElementById('oppTieredQty_' + key).value) || 0;
     disp.textContent = 'Total: ' + spOppMoney(price + qty * overage);
   }
 }
-function spOppToggleManual() {
-  var on = document.getElementById('oppManualToggle').checked;
-  document.getElementById('oppManualFields').style.display = on ? 'block' : 'none';
-  document.getElementById('oppDivision').disabled = on;
-  document.getElementById('oppEntity').disabled = on || !document.getElementById('oppDivision').value;
-  document.getElementById('oppCategory').disabled = on || !document.getElementById('oppEntity').value;
-  document.getElementById('oppSku').disabled = on || !document.getElementById('oppCategory').value;
-  if (on) document.getElementById('oppPricingPanel').style.display = 'none';
+
+function spOppToggleManual(key) {
+  var on = document.getElementById('oppManualToggle_' + key).checked;
+  document.getElementById('oppManualFields_' + key).style.display = on ? 'block' : 'none';
+  document.getElementById('oppEntity_' + key).disabled = on;
+  document.getElementById('oppCategory_' + key).disabled = on || !document.getElementById('oppEntity_' + key).value;
+  document.getElementById('oppSku_' + key).disabled = on || !document.getElementById('oppCategory_' + key).value;
+  if (on) document.getElementById('oppPricingPanel_' + key).style.display = 'none';
 }
 
+// Saves one Opportunity record per division block currently in the
+// modal -- everything checked gets created together in one action,
+// instead of the rep repeating this whole form once per division.
 function spSaveOpportunity(parentType, parentId) {
-  var manual = document.getElementById('oppManualToggle').checked;
   var expectedClose = document.getElementById('oppExpectedClose').value;
   if (!expectedClose) { alert('A target close date is required so this can actually be tracked against an SLA.'); return; }
 
-  var name, division, serviceType, value, monthlyValue, termMonths;
-  if (manual) {
-    name = document.getElementById('oppManualDesc').value.trim() || 'Manual opportunity';
-    division = document.getElementById('oppDivision').value || '';
-    value = parseFloat(document.getElementById('oppManualValue').value) || 0;
-    serviceType = 'per_diem'; monthlyValue = null; termMonths = 1;
-    if (!value) { alert('Enter an amount for this opportunity.'); return; }
-  } else {
-    var skuId = document.getElementById('oppSku').value;
-    var row = spOppCatalog().find(function(r){ return r.id === skuId; });
-    if (!row) { alert('Pick an item from the catalog, or switch to manual entry.'); return; }
-    name = row.description;
-    division = row.division;
-    var mode = spOppDetectMode(row);
-    if (mode === 'lease') {
-      serviceType = 'lease';
-      monthlyValue = row.price;
-      termMonths = parseInt(document.getElementById('oppLeaseTerm').value) || 1;
-      value = monthlyValue * termMonths;
-    } else if (mode === 'tiered') {
-      var panel = document.getElementById('oppPricingPanel');
-      var overage = parseFloat(panel.getAttribute('data-overage')) || 0;
-      var qty = parseFloat(document.getElementById('oppTieredQty').value) || 0;
-      serviceType = 'per_diem'; monthlyValue = null; termMonths = 1;
-      value = row.price + qty * overage;
-    } else {
-      serviceType = 'per_diem'; monthlyValue = null; termMonths = 1;
-      value = row.price;
-    }
-  }
-
   var rep = document.getElementById('oppRep').value.trim() || _spRep.name;
+  var notes = document.getElementById('oppNotes').value.trim();
   var repProfiles = crmLoad('rep_comp_profiles') || [];
   var repProfile = repProfiles.find(function(p){ return p.id === rep; });
   var slaDays = repProfile ? (repProfile.opportunitySlaDays || repProfile.opportunity_sla_days || 60) : 60;
 
+  var toCreate = [];
+
+  var blocks = document.querySelectorAll('#oppDivBlocks [data-div]');
+  for (var i = 0; i < blocks.length; i++) {
+    var block = blocks[i];
+    var div = block.getAttribute('data-div');
+    var key = spOppSafeKey(div);
+    var manual = document.getElementById('oppManualToggle_' + key)?.checked;
+    var name, serviceType, value, monthlyValue, termMonths;
+
+    if (manual) {
+      name = document.getElementById('oppManualDesc_' + key).value.trim() || (div + ' opportunity');
+      value = parseFloat(document.getElementById('oppManualValue_' + key).value) || 0;
+      serviceType = 'per_diem'; monthlyValue = null; termMonths = 1;
+      if (!value) { alert('Enter an amount for the ' + div + ' opportunity, or pick a catalog item.'); return; }
+    } else {
+      var skuId = document.getElementById('oppSku_' + key).value;
+      var row = spOppCatalog().find(function(r){ return r.id === skuId; });
+      if (!row) { alert('Pick an item from the catalog for ' + div + ', or switch it to manual entry.'); return; }
+      name = row.description;
+      var mode = spOppDetectMode(row);
+      if (mode === 'lease') {
+        serviceType = 'lease';
+        monthlyValue = row.price;
+        termMonths = parseInt(document.getElementById('oppLeaseTerm_' + key).value) || 1;
+        value = monthlyValue * termMonths;
+      } else if (mode === 'tiered') {
+        var panel = document.getElementById('oppPricingPanel_' + key);
+        var overage = parseFloat(panel.getAttribute('data-overage')) || 0;
+        var qty = parseFloat(document.getElementById('oppTieredQty_' + key).value) || 0;
+        serviceType = 'per_diem'; monthlyValue = null; termMonths = 1;
+        value = row.price + qty * overage;
+      } else {
+        serviceType = 'per_diem'; monthlyValue = null; termMonths = 1;
+        value = row.price;
+      }
+    }
+
+    toCreate.push({ division: div, name: name, serviceType: serviceType, value: value, monthlyValue: monthlyValue, termMonths: termMonths });
+  }
+
+  // Fallback path: catalog wasn't loaded at all, only the single manual
+  // form showed (no per-division blocks exist in that case).
+  if (!toCreate.length) {
+    var fbDesc = document.getElementById('oppManualDescFallback');
+    if (fbDesc) {
+      var fbDiv = document.getElementById('oppManualDivFallback').value;
+      var fbVal = parseFloat(document.getElementById('oppManualValueFallback').value) || 0;
+      if (!fbDiv) { alert('Select which division this opportunity is for.'); return; }
+      if (!fbVal) { alert('Enter an amount for this opportunity.'); return; }
+      toCreate.push({ division: fbDiv, name: fbDesc.value.trim() || (fbDiv + ' opportunity'), serviceType: 'per_diem', value: fbVal, monthlyValue: null, termMonths: 1 });
+    }
+  }
+
+  if (!toCreate.length) { alert('Check at least one service the customer is interested in.'); return; }
+
   var opps = crmLoad('opportunities') || [];
-  opps.push({
-    id: 'opp_' + Date.now(),
-    accountId: parentType === 'account' ? parentId : null,
-    contactId: parentType === 'contact' ? parentId : null,
-    name: name,
-    division: division || '',
-    stage: 'opportunity',
-    value: value,
-    assignedRep: rep,
-    expectedClose: expectedClose,
-    notes: document.getElementById('oppNotes').value.trim(),
-    slaDays: slaDays,
-    serviceType: serviceType,
-    monthlyValue: monthlyValue,
-    termMonths: termMonths,
-    resolutionStatus: 'open',
-    created: Date.now(),
-    updated: Date.now(),
+  var now = Date.now();
+  toCreate.forEach(function(c, idx) {
+    opps.push({
+      id: 'opp_' + (now + idx),
+      accountId: parentType === 'account' ? parentId : null,
+      contactId: parentType === 'contact' ? parentId : null,
+      name: c.name,
+      division: c.division || '',
+      stage: 'opportunity',
+      value: c.value,
+      assignedRep: rep,
+      expectedClose: expectedClose,
+      notes: notes,
+      slaDays: slaDays,
+      serviceType: c.serviceType,
+      monthlyValue: c.monthlyValue,
+      termMonths: c.termMonths,
+      resolutionStatus: 'open',
+      created: now + idx,
+      updated: now + idx,
+    });
   });
   crmSave('opportunities', opps);
   document.getElementById('spOppModal').remove();
-  spToast('💼 Opportunity created');
+  spToast('💼 ' + toCreate.length + ' opportunit' + (toCreate.length === 1 ? 'y' : 'ies') + ' created');
   spViewRecord(parentId, parentType === 'account' ? 'accounts' : 'contacts');
 }
+
 
 // ── RESOLVE (Won / Pending / Lost) ──────────────────────────────────────
 function spOpenResolveModal(id, outcome) {
