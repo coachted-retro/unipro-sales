@@ -1491,6 +1491,49 @@ function spCheckinDaysFor(account) {
 
 var AGENDA_STORE = 'termac_today_agenda';
 
+// 2026-07-16 per Ted: the agenda used to auto-inject suggested stops
+// (open opportunities, accounts due check-in, service due soon,
+// jeopardy accounts, nearby leads) the moment a rep landed on Home,
+// with no way to opt out. Per Ted this pisses people off who want to
+// run their own day -- the agenda should start blank except for what's
+// actually real (confirmed appointments, follow-ups someone actually
+// set a date on, stops the rep manually added), and only pull in
+// suggestions once a rep explicitly taps Plan My Day. Keyed by
+// rep+date, same pattern as AGENDA_STORE, so it naturally resets every
+// new day without any cleanup job needed.
+var PLANNED_DAYS_STORE = 'termac_planned_days';
+function spIsDayPlanned(dateStr) {
+  try {
+    var raw = JSON.parse(localStorage.getItem(PLANNED_DAYS_STORE) || '{}');
+    var rep = _spRep ? _spRep.name : '';
+    return !!raw[rep + '_' + dateStr];
+  } catch(e) { return false; }
+}
+function spMarkDayPlanned(dateStr) {
+  try {
+    var raw = JSON.parse(localStorage.getItem(PLANNED_DAYS_STORE) || '{}');
+    var rep = _spRep ? _spRep.name : '';
+    raw[rep + '_' + dateStr] = true;
+    localStorage.setItem(PLANNED_DAYS_STORE, JSON.stringify(raw));
+  } catch(e) {}
+}
+function spUnmarkDayPlanned(dateStr) {
+  try {
+    var raw = JSON.parse(localStorage.getItem(PLANNED_DAYS_STORE) || '{}');
+    var rep = _spRep ? _spRep.name : '';
+    delete raw[rep + '_' + dateStr];
+    localStorage.setItem(PLANNED_DAYS_STORE, JSON.stringify(raw));
+  } catch(e) {}
+}
+// Called from the agenda card once suggestions are actually wanted --
+// marks the viewed day planned and re-renders so the suggestion
+// sections in spBuildAgenda switch on.
+function spPlanMyDayNow() {
+  spMarkDayPlanned(_spAgendaDate);
+  spToast('🧭 Day planned — suggested stops added below');
+  if (typeof spRenderHome === 'function') spRenderHome();
+}
+
 // ── Agenda date navigation, added 2026-07-14 per Ted -- the agenda used
 // to only ever show today. This is the single piece of state that tracks
 // which day is currently being viewed; every function below that used to
@@ -1549,6 +1592,17 @@ function spResetAgendaConfirm() {
       if (k.indexOf(repName + '_') === 0) delete raw[k];
     });
     localStorage.setItem(AGENDA_STORE, JSON.stringify(raw));
+  } catch(e) {}
+  // Also un-plan every day for this rep, so Start Fresh genuinely goes
+  // back to blank (real appointments only) instead of clearing manual
+  // stops while suggested ones from an earlier Plan My Day tap keep
+  // showing.
+  try {
+    var plannedRaw = JSON.parse(localStorage.getItem(PLANNED_DAYS_STORE) || '{}');
+    Object.keys(plannedRaw).forEach(function(k) {
+      if (k.indexOf(repName + '_') === 0) delete plannedRaw[k];
+    });
+    localStorage.setItem(PLANNED_DAYS_STORE, JSON.stringify(plannedRaw));
   } catch(e) {}
   spToast('🧹 Agenda cleared - starting fresh');
   if (typeof spRenderHome === 'function') spRenderHome();
@@ -1706,6 +1760,15 @@ function spBuildAgenda(dateStr) {
 
   var agenda = [];
 
+  // 2026-07-16 per Ted: suggestions (opportunities, check-ins, service
+  // due, jeopardy, nearby leads) only ever show once the rep has
+  // explicitly asked for them via Plan My Day -- never automatically.
+  // Real commitments (appointments, follow-ups someone set a date on,
+  // manually-added stops) always show regardless, those aren't "auto
+  // populated," the rep or someone else already put them there on
+  // purpose.
+  var planned = isToday && spIsDayPlanned(viewDate);
+
   // -- 1. Confirmed appointments for the viewed date -----------------------
   var appts = crmLoad('appointments') || [];
   appts.filter(function(a) {
@@ -1737,7 +1800,7 @@ function spBuildAgenda(dateStr) {
   // recomputed "right now" priority list, which would be misleading for
   // a day that already happened or hasn't happened yet.
   var leads = crmLoad('leads');
-  if (isToday) leads.filter(function(r) {
+  if (planned) leads.filter(function(r) {
     var stage = r.lifecycleStage || '';
     // Fixed 2026-07-11: unassigned records used to count as "everyone's",
     // which meant every rep saw the entire unassigned bulk-import pool on
@@ -1770,7 +1833,7 @@ function spBuildAgenda(dateStr) {
   // Same reasoning as above -- "due right now" only means something on
   // today's real agenda.
   var accounts = crmLoad('accounts');
-  if (isToday) accounts.filter(function(a) {
+  if (planned) accounts.filter(function(a) {
     // Fixed 2026-07-11: same unassigned-records fix as above.
     var isRep = a.assignedRep === repName || a.ownedBy === repName;
     var cutoff = Date.now() - (spCheckinDaysFor(a) * 86400000);
@@ -1800,7 +1863,7 @@ function spBuildAgenda(dateStr) {
   // an inspection lapses, not a generic suggestion. next_due is now
   // populated by servicetrade-sync from actual upcoming job/service
   // dates, so this is grounded in real data, not a guess.
-  if (isToday) accounts.filter(function(a) {
+  if (planned) accounts.filter(function(a) {
     var isRep = a.assignedRep === repName || a.ownedBy === repName;
     if (!isRep || a.status !== 'active' || !a.next_due) return false;
     if (agenda.some(function(x){ return x.accountId === a.id; })) return false;
@@ -1836,7 +1899,7 @@ function spBuildAgenda(dateStr) {
   // Capped at 3/day like the other lower-priority categories below, so
   // a rep with several at-risk accounts gets a steady stream to work
   // through rather than all of them dumped on one day.
-  if (isToday) accounts.filter(function(a) {
+  if (planned) accounts.filter(function(a) {
     var isRep = a.assignedRep === repName || a.ownedBy === repName;
     if (!isRep || a.status !== 'active') return false;
     if (agenda.some(function(x){ return x.accountId === a.id; })) return false;
@@ -1869,7 +1932,7 @@ function spBuildAgenda(dateStr) {
     .map(function(a){ return a.zip || (a.address.match(/\b\d{5}\b/)||[])[0] || ''; })
     .filter(Boolean);
 
-  if (isToday) leads.filter(function(r) {
+  if (planned) leads.filter(function(r) {
     var stage = r.lifecycleStage || 'lead';
     if (!['lead','contact'].includes(stage)) return false;
     var zip = r.zip || (r.address||'').match(/\b\d{5}\b/)?.[0] || '';
@@ -2397,7 +2460,7 @@ function spRenderTodayAgenda() {
   var headerBtns = '<div style="display:flex;gap:6px;flex-shrink:0;align-items:center">'
     + navBtns
     + '<button class="sp-btn sp-btn-red" style="font-size:10px;padding:5px 12px" onclick="spOpenAddStop()">+ Add Stop</button>'
-    + '<button class="sp-btn" style="font-size:10px;padding:5px 12px;background:#059669;color:#fff;border:none;border-radius:5px;cursor:pointer" onclick="spGenerateDay()">⚡ Optimize</button>'
+    + (isToday && !planned ? '<button class="sp-btn" style="font-size:10px;padding:5px 12px;background:#059669;color:#fff;border:none;border-radius:5px;cursor:pointer" onclick="spPlanMyDayNow()">🧭 Plan My Day</button>' : '')
     + '</div>';
 
   if (!agenda.length) {
@@ -2409,7 +2472,7 @@ function spRenderTodayAgenda() {
       + '<div style="text-align:center;padding:28px;color:var(--soft)">'
         + '<div style="font-size:32px;margin-bottom:10px">📋</div>'
         + '<div style="font-weight:700;font-size:14px;color:var(--ink);margin-bottom:6px">No stops ' + (dayDiff === 0 ? 'yet' : (dayDiff > 0 ? 'scheduled' : 'were logged')) + '</div>'
-        + '<div style="font-size:12px">' + (dayDiff === 0 ? 'Hit Optimize to auto-fill your day, or tap + Add Stop to add a call or visit.' : 'Nothing on the books for this day. Tap + Add Stop to add one.') + '</div>'
+        + '<div style="font-size:12px">' + (dayDiff === 0 ? 'Run your own day with + Add Stop, or tap Plan My Day above for suggested stops (open opportunities, check-ins due, nearby leads).' : 'Nothing on the books for this day. Tap + Add Stop to add one.') + '</div>'
       + '</div>'
     + '</div>';
   }
@@ -2872,9 +2935,14 @@ async function spOpenRouteMap() {
 
 
 function spGenerateDay() {
-  spNav('leads');
-  var count = spBuildAgenda().length;
-  spToast('📅 Route optimized \u2014 ' + count + ' stops');
+  // 2026-07-16 per Ted: this used to call spNav('leads') -- navigating
+  // clean away from Home to the Leads tab, and to a fake toast, on
+  // every add/remove stop -- neither of which have anything to do with
+  // leads. Real route sequencing already happens automatically inside
+  // spBuildAgenda (spOptimizeRoute, step 8), and real driving-distance
+  // optimization lives in the separate Route Map feature. This just
+  // needs to re-render the agenda in place.
+  if (typeof spRenderHome === 'function') spRenderHome();
 }
 
 // ── ARRIVAL HANDLERS ─────────────────────────────────────────────────────────
@@ -3194,7 +3262,7 @@ function spPlanMyDay() {
   return '<div style="background:linear-gradient(135deg,#1B5FA8,#0F3E73);border-radius:12px;padding:14px 18px;color:#fff;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:14px">'
     + '<div>'
       + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:15px;margin-bottom:2px">🧭 Plan My Day</div>'
-      + '<div style="font-size:11px;color:rgba(255,255,255,.75)">Auto-fills today with appointments, nearby leads & account check-ins</div>'
+      + '<div style="font-size:11px;color:rgba(255,255,255,.75)">Add your own appointments, or tap Plan My Day on today\'s agenda card for suggested stops</div>'
     + '</div>'
     + '<div style="display:flex;gap:8px;flex-wrap:wrap">'
       + '<button onclick="spOpenApptModal(null,null,\'appointment\',null)" style="background:#fff;color:#1B5FA8;border:none;border-radius:7px;padding:8px 16px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;white-space:nowrap">+ Add Appointment</button>'
