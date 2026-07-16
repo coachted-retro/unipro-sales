@@ -1458,8 +1458,93 @@ function renderFlyerSvcChecks() {
   if (btn) btn.disabled = _selectedSvcs.length === 0;
 }
 
+// 2026-07-16 per Ted, correcting an earlier pass: the opportunity does
+// NOT start when contact info gets saved -- at that point we don't
+// actually know yet whether there's real interest. It starts right
+// here, the moment the rep leaves this screen, because checking a
+// service box on the flyer WITH the customer standing there IS the
+// signal ("this is who we are, these are some of our services, are
+// you interested in any of these?" -- they check them off, that's the
+// trigger). The opportunity then sits open in the background through
+// the rest of the walkthrough; it isn't resolved Won/Lost/Pending
+// until the rep goes back to it afterward (spOpenResolveModal on the
+// account/contact page already handles that: mandatory reason + notes
+// for Lost, and the 60-day pending check-in already built earlier
+// tonight).
+//
+// If this is a brand-new cold-call lead with no id yet (no
+// _quickCaptureLeadId), a minimal draft lead record is created right
+// now so the opportunity has something real to attach to -- saveLead()
+// later fills in the rest of the contact details onto this SAME
+// record instead of creating a second one, exactly like the existing
+// quick-capture mechanism already does.
+var PT_SVC_LABELS = { unipro:'UniPro', quality3:'Quality III', allpro:'ALLPro', filterman:'Filter Man', gto:'GTO', termac:'Termac' };
+
+function pitchToolCreateOpportunities() {
+  try {
+    if (!_quickCaptureLeadId) {
+      var draftNow = Date.now();
+      var draft = {
+        id: 'PT' + String(draftNow).slice(-6),
+        name: '', contactName: '', business: '',
+        services: _selectedSvcs.slice(),
+        status: 'hot',
+        formType: 'rep',
+        source: 'pitch_tool',
+        lifecycleStage: 'contact',
+        assignedRep: currentRepName(),
+        ownedBy: currentRepName(),
+        createdBy: currentRepName(),
+        created: draftNow,
+        updated: draftNow,
+      };
+      var leads = crmLoad('leads');
+      leads.unshift(draft);
+      crmSave('leads', leads);
+      _quickCaptureLeadId = draft.id;
+      _contactData.leadId = draft.id;
+    }
+
+    var repProfiles = crmLoad('rep_comp_profiles') || [];
+    var repProfile = repProfiles.find(function(p){ return p.id === currentRepName(); });
+    var slaDays = repProfile ? (repProfile.opportunitySlaDays || repProfile.opportunity_sla_days || 60) : 60;
+    var opps = crmLoad('opportunities') || [];
+    var existingDivs = opps.filter(function(o){
+      var status = o.resolutionStatus || 'open';
+      return o.contactId === _quickCaptureLeadId && (status === 'open' || status === 'pending');
+    }).map(function(o){ return o.division; });
+    var oppNow = Date.now();
+    var bizName = (_preloadedLead && (_preloadedLead.business || _preloadedLead.name)) || 'New opportunity';
+    _selectedSvcs.forEach(function(svcKey, idx) {
+      var divLabel = PT_SVC_LABELS[svcKey] || svcKey;
+      if (existingDivs.indexOf(divLabel) !== -1) return; // already tracked, don't duplicate
+      opps.push({
+        id: 'opp_' + (oppNow + idx),
+        accountId: null,
+        contactId: _quickCaptureLeadId,
+        name: bizName + ' — ' + divLabel,
+        division: divLabel,
+        stage: 'opportunity',
+        value: 0,
+        assignedRep: currentRepName(),
+        expectedClose: '',
+        notes: 'Auto-created from Pitch Tool — customer confirmed interest live, add pricing once known.',
+        slaDays: slaDays,
+        serviceType: 'per_diem',
+        monthlyValue: null,
+        termMonths: 1,
+        resolutionStatus: 'open',
+        created: oppNow + idx,
+        updated: oppNow + idx,
+      });
+    });
+    crmSave('opportunities', opps);
+  } catch (e) { console.warn('Pitch Tool opportunity creation error:', e); }
+}
+
 function goToContactFromFlyer() {
   if (_selectedSvcs.length === 0) { showToast('Select at least one service to continue.'); return; }
+  pitchToolCreateOpportunities();
   buildContactStrip();
   goTo('s-contact');
   validateContactForm();
@@ -1770,58 +1855,6 @@ function saveLead() {
       leads.unshift(rec);
     }
     crmSave('leads', leads);
-
-    // 2026-07-16 per Ted: the pitch tool (or the plain intake form, when
-    // it's used instead) is where the opportunity actually starts --
-    // the rep is already checking off which divisions the customer is
-    // interested in right here. Making them go re-select the same
-    // divisions a second time in a separate "Create Opportunity" step
-    // is exactly the double entry Ted flagged. So the moment this
-    // intake saves with services checked, one open Opportunity gets
-    // created per division automatically, unpriced (value: 0) since
-    // there's no quote-building step in the pitch tool yet -- a rep or
-    // manager fills in real pricing afterward from the Opportunity
-    // panel on the contact record, same multi-division picker as
-    // everywhere else. This is the trigger; pricing is still a
-    // deliberate follow-up action, not fabricated here.
-    if (_selectedSvcs && _selectedSvcs.length) {
-      try {
-        var PT_SVC_LABELS = { unipro:'UniPro', quality3:'Quality III', allpro:'ALLPro', filterman:'Filter Man', gto:'GTO', termac:'Termac' };
-        var repProfiles = crmLoad('rep_comp_profiles') || [];
-        var repProfile = repProfiles.find(function(p){ return p.id === rec.assignedRep; });
-        var slaDays = repProfile ? (repProfile.opportunitySlaDays || repProfile.opportunity_sla_days || 60) : 60;
-        var opps = crmLoad('opportunities') || [];
-        var existingDivs = opps.filter(function(o){
-          var status = o.resolutionStatus || 'open';
-          return o.contactId === rec.id && (status === 'open' || status === 'pending');
-        }).map(function(o){ return o.division; });
-        var oppNow = Date.now();
-        _selectedSvcs.forEach(function(svcKey, idx) {
-          var divLabel = PT_SVC_LABELS[svcKey] || svcKey;
-          if (existingDivs.indexOf(divLabel) !== -1) return; // already tracked, don't duplicate
-          opps.push({
-            id: 'opp_' + (oppNow + idx),
-            accountId: null,
-            contactId: rec.id,
-            name: (business || name || 'New opportunity') + ' — ' + divLabel,
-            division: divLabel,
-            stage: 'opportunity',
-            value: 0,
-            assignedRep: rec.assignedRep,
-            expectedClose: '',
-            notes: 'Auto-created from Pitch Tool intake — add pricing to finish setting this up.',
-            slaDays: slaDays,
-            serviceType: 'per_diem',
-            monthlyValue: null,
-            termMonths: 1,
-            resolutionStatus: 'open',
-            created: oppNow + idx,
-            updated: oppNow + idx,
-          });
-        });
-        crmSave('opportunities', opps);
-      } catch (e) { console.warn('Auto-opportunity creation error:', e); }
-    }
 
     // Store context for the site survey handoff — same key/shape as the
     // rest of the platform expects when launching a survey from a lead.
