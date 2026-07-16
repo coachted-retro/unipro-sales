@@ -4223,10 +4223,11 @@ function spOpenLocationDetail(r) {
       </div>`;
   }).join('');
 
-  const assetRows = assets.map(a => `<div style="padding:9px 10px;background:#F8F9FA;border-radius:7px;margin-bottom:6px">
+  const assetRows = assets.map(a => `<div style="padding:9px 10px;background:#F8F9FA;border-radius:7px;margin-bottom:6px;cursor:pointer" onclick="spOpenAddAssetModal('${r.id}','${a.id}')">
       <div style="font-size:13px;font-weight:700;color:var(--ink)">${escH(a.assetType||a.asset_type||'Asset')}${a.description ? ' — '+escH(a.description) : ''}</div>
       <div style="font-size:11px;color:var(--soft);margin-top:2px">${[a.manufacturer, a.model, a.size].filter(Boolean).map(escH).join(' · ')}${a.locationInSite||a.location_in_site ? ' · '+escH(a.locationInSite||a.location_in_site) : ''}</div>
       ${a.maintenanceDueDate||a.maintenance_due_date ? `<div style="font-size:11px;color:#B45309;margin-top:2px">Maintenance due: ${escH(a.maintenanceDueDate||a.maintenance_due_date)}</div>` : ''}
+      ${(a.source||'manual') !== 'ServiceTrade Sync' ? '' : '<div style="font-size:10px;color:var(--soft);margin-top:2px;font-style:italic">Synced from ServiceTrade</div>'}
     </div>`).join('');
 
   const orderRows = orders.map(o => `<div style="padding:9px 10px;background:#F8F9FA;border-radius:7px;margin-bottom:6px">
@@ -4271,9 +4272,12 @@ function spOpenLocationDetail(r) {
     </div>
 
     <div style="padding:12px 0;border-top:1px solid var(--line)">
-      <div onclick="spToggleCollapse('spLocAssets')" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer">
-        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft)">🔧 Equipment / Assets (${assets.length})</div>
-        <span id="spLocAssets-chevron" style="font-size:11px;color:var(--soft)">▸</span>
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div onclick="spToggleCollapse('spLocAssets')" style="display:flex;align-items:center;gap:8px;cursor:pointer;flex:1">
+          <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft)">🔧 Equipment / Assets (${assets.length})</div>
+          <span id="spLocAssets-chevron" style="font-size:11px;color:var(--soft)">▸</span>
+        </div>
+        <button onclick="event.stopPropagation();spOpenAddAssetModal('${r.id}')" style="background:#1A1D21;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer">+ Add Asset</button>
       </div>
       <div id="spLocAssets" style="display:none;margin-top:8px">
         ${assets.length ? assetRows : '<div style="font-size:12px;color:var(--soft)">No equipment on file for this location yet.</div>'}
@@ -4286,8 +4290,9 @@ function spOpenLocationDetail(r) {
         <span id="spLocOrders-chevron" style="font-size:11px;color:var(--soft)">▸</span>
       </div>
       <div id="spLocOrders" style="display:none;margin-top:8px">
-        ${orders.length ? orderRows : '<div style="font-size:12px;color:var(--soft)">No orders on file for this location yet.</div>'}
+        ${orders.length ? orderRows : '<div style="font-size:12px;color:var(--soft)">No orders on file for this location yet. Orders are read from rep site visits (inventory + order builder), tagged to this location once a visit starts from here.</div>'}
       </div>
+      ${linkedAccount ? `<button onclick="spOpenVisitModal('${linkedAccount.id}','${r.id}')" style="margin-top:8px;padding:8px 14px;background:#D8690B;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">📍 I'm Here — Start Visit</button>` : `<div style="margin-top:8px;font-size:11px;color:var(--soft)">Site visits and orders need an Account behind this location first — win an opportunity here to create one.</div>`}
     </div>
   </div>`;
 }
@@ -4299,6 +4304,75 @@ function spToggleCollapse(id) {
   var isOpen = body.style.display !== 'none';
   body.style.display = isOpen ? 'none' : 'block';
   if (chevron) chevron.textContent = isOpen ? '▸' : '▾';
+}
+
+function spOpenAddAssetModal(locationId, editAssetId) {
+  var existing = editAssetId ? (crmLoad('account_assets')||[]).find(a => a.id === editAssetId) : null;
+  var v = function(k){ return existing ? escH(existing[k]||'') : ''; };
+  var wrap = document.createElement('div');
+  wrap.id = 'spAssetModal';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9700;display:flex;align-items:center;justify-content:center;padding:16px;overflow-y:auto';
+  wrap.innerHTML = '<div style="background:#fff;border-radius:12px;max-width:420px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.3);max-height:92vh;overflow-y:auto">' +
+    '<div style="padding:20px">' +
+      '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:18px;color:var(--ink);margin-bottom:16px">🔧 ' + (existing ? 'Edit Asset' : 'Add Asset') + '</div>' +
+      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Type *</label>' +
+      '<input id="astType" type="text" list="astTypeOptions" value="' + v('assetType') + '" placeholder="e.g. Hood System, Fire Extinguisher, Emergency Light, Dishwasher" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:10px;box-sizing:border-box">' +
+      '<datalist id="astTypeOptions"><option value="Hood System"><option value="Fire Extinguisher"><option value="Emergency Light"><option value="Dishwasher"><option value="Grease Trap"><option value="Ansul System"></datalist>' +
+      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Description</label>' +
+      '<input id="astDesc" type="text" value="' + v('description') + '" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:10px;box-sizing:border-box">' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px">' +
+        '<input id="astManufacturer" type="text" placeholder="Manufacturer" value="' + v('manufacturer') + '" style="padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;box-sizing:border-box">' +
+        '<input id="astModel" type="text" placeholder="Model" value="' + v('model') + '" style="padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;box-sizing:border-box">' +
+        '<input id="astSize" type="text" placeholder="Size" value="' + v('size') + '" style="padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;box-sizing:border-box">' +
+      '</div>' +
+      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Where on site</label>' +
+      '<input id="astLocationInSite" type="text" value="' + v('locationInSite') + '" placeholder="e.g. Kitchen line, back hallway" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:10px;box-sizing:border-box">' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">' +
+        '<div><label style="font-size:10px;color:var(--soft);display:block;margin-bottom:3px">Install Date</label><input id="astInstallDate" type="date" value="' + v('installDate') + '" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;box-sizing:border-box"></div>' +
+        '<div><label style="font-size:10px;color:var(--soft);display:block;margin-bottom:3px">Maintenance Due</label><input id="astMaintenanceDue" type="date" value="' + v('maintenanceDueDate') + '" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;box-sizing:border-box"></div>' +
+      '</div>' +
+      '<div style="display:flex;gap:8px">' +
+        '<button onclick="document.getElementById(\'spAssetModal\').remove()" style="flex:1;background:#fff;border:1.5px solid var(--line);border-radius:8px;padding:10px;font-weight:700;font-size:13px;cursor:pointer">Cancel</button>' +
+        '<button onclick="spSaveAsset(\'' + locationId + '\',' + (existing ? "'"+existing.id+"'" : 'null') + ')" style="flex:1;background:var(--red);color:#fff;border:none;border-radius:8px;padding:10px;font-weight:700;font-size:13px;cursor:pointer">Save</button>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+  document.body.appendChild(wrap);
+}
+
+function spSaveAsset(locationId, editAssetId) {
+  var assetType = document.getElementById('astType').value.trim();
+  if (!assetType) { alert('Enter a type for this asset.'); return; }
+  var now = Date.now();
+  var assets = crmLoad('account_assets') || [];
+  var loc = (crmLoad('locations')||[]).find(l => l.id === locationId);
+  var vals = {
+    assetType: assetType,
+    description: document.getElementById('astDesc').value.trim(),
+    manufacturer: document.getElementById('astManufacturer').value.trim(),
+    model: document.getElementById('astModel').value.trim(),
+    size: document.getElementById('astSize').value.trim(),
+    locationInSite: document.getElementById('astLocationInSite').value.trim(),
+    installDate: document.getElementById('astInstallDate').value,
+    maintenanceDueDate: document.getElementById('astMaintenanceDue').value,
+    locationId: locationId,
+    accountId: loc ? loc.accountId : null,
+    updatedAt: now,
+  };
+  if (editAssetId) {
+    var idx = assets.findIndex(a => a.id === editAssetId);
+    if (idx !== -1) Object.assign(assets[idx], vals);
+  } else {
+    assets.push(Object.assign({
+      id: 'ast_' + now,
+      source: 'manual',
+      createdAt: now,
+    }, vals));
+  }
+  crmSave('account_assets', assets);
+  document.getElementById('spAssetModal').remove();
+  spToast(editAssetId ? '🔧 Asset updated' : '🔧 Asset added');
+  spViewRecord(locationId, 'locations');
 }
 
 function spOpenAddContactModal(locationId, editContactId) {
@@ -10937,6 +11011,13 @@ document.addEventListener('click', function(e) {
 ════════════════════════════════════════════════ */
 
 var _svAcctId = null;
+// 2026-07-16 per Ted: site visits/orders were only ever reachable from
+// the Account page, tagging everything to the account with no way to
+// tell which specific location (for a multi-location account) the
+// visit actually happened at. Set only when Start Visit is launched
+// from a Location page; stays null for the existing account-page entry
+// point, so nothing here changes for single-location accounts.
+var _svLocationId = null;
 var _svStep = 1;
 var _svInventory = [];   // [{productId, name, size, onHandQty}]
 var _svOrderLines = [];  // [{productId, name, size, unitPrice, qty, lineTotal}]
@@ -10955,8 +11036,9 @@ const SV_STEPS = [
   {n:6, label:'Done'},
 ];
 
-function spOpenVisitModal(accountId) {
+function spOpenVisitModal(accountId, locationId) {
   _svAcctId = accountId || null;
+  _svLocationId = locationId || null;
   _svStep = 1;
   _svInventory = [];
   _svOrderLines = [];
@@ -11082,6 +11164,10 @@ function svStep1(body, footer) {
 
 function svOnAcctChange(id) {
   _svAcctId = id;
+  // If the rep manually switches accounts here, whatever location this
+  // visit was launched from (if any) no longer applies to the new
+  // account -- clear it rather than tag an order to the wrong site.
+  _svLocationId = null;
   const accounts = svGetAccounts();
   const acct = accounts.find(a => a.id === id);
   const infoEl = document.getElementById('svAcctInfo');
@@ -11789,6 +11875,7 @@ function svSubmitVisit() {
     orders.unshift({
       id: orderId,
       accountId: _svAcctId,
+      locationId: _svLocationId || null,
       accountName: acct.name || acct.business || '',
       address: acct.address || '',
       siteNotes: acct.siteNotes || '',
