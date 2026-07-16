@@ -358,24 +358,59 @@ async function apGoHome() {
       <button class="modal-close" onclick="closeModal('newProjectModal')">&times;</button>
     </div>
     <div class="modal-body">
+      <!-- Mode toggle, added 2026-07-16 per Ted: a proposal/backdated quote
+           has no Account yet -- it's still an Opportunity. Forcing an
+           Account pick here was the hard block. -->
       <div class="form-field">
-        <label>Account</label>
-        <div id="npAccountPickerWrap" style="position:relative">
-          <input id="npAccountSearch" type="text" placeholder="Search by business name, address, or phone..."
-            autocomplete="off" oninput="npFilterAccounts(this.value)" onfocus="npFilterAccounts(this.value)">
-          <div id="npAccountResults" style="display:none;position:absolute;top:100%;left:0;right:0;background:#fff;
-            border:1.5px solid var(--line);border-radius:8px;max-height:240px;overflow-y:auto;z-index:50;
-            box-shadow:0 8px 24px rgba(0,0,0,.14);margin-top:2px"></div>
-          <input type="hidden" id="npAccountId">
-          <div id="npAccountChosen" style="display:none;margin-top:8px;background:var(--bg);border-radius:8px;
-            padding:9px 12px;font-size:13px;align-items:center;justify-content:space-between"></div>
-          <div id="npAccountSyncStatus" style="font-size:11px;color:var(--soft);margin-top:5px"></div>
-          <a href="javascript:void(0)" onclick="npManualRefreshAccounts()" style="font-size:11px;color:var(--soft);text-decoration:underline">🔄 Refresh accounts</a>
+        <label>What is this?</label>
+        <div style="display:flex;gap:8px">
+          <button type="button" id="npModeBtnExisting" class="btn" onclick="npSetMode('existing')" style="flex:1">Existing Account</button>
+          <button type="button" id="npModeBtnNew" class="btn" onclick="npSetMode('new')" style="flex:1">New Proposal (no Account yet)</button>
         </div>
       </div>
-      <div class="form-field">
-        <label>Opportunity (optional)</label>
-        <select id="npOpportunityId"><option value="">— none —</option></select>
+      <div id="npExistingBlock">
+        <div class="form-field">
+          <label>Account</label>
+          <div id="npAccountPickerWrap" style="position:relative">
+            <input id="npAccountSearch" type="text" placeholder="Search by business name, address, or phone..."
+              autocomplete="off" oninput="npFilterAccounts(this.value)" onfocus="npFilterAccounts(this.value)">
+            <div id="npAccountResults" style="display:none;position:absolute;top:100%;left:0;right:0;background:#fff;
+              border:1.5px solid var(--line);border-radius:8px;max-height:240px;overflow-y:auto;z-index:50;
+              box-shadow:0 8px 24px rgba(0,0,0,.14);margin-top:2px"></div>
+            <input type="hidden" id="npAccountId">
+            <div id="npAccountChosen" style="display:none;margin-top:8px;background:var(--bg);border-radius:8px;
+              padding:9px 12px;font-size:13px;align-items:center;justify-content:space-between"></div>
+            <div id="npAccountSyncStatus" style="font-size:11px;color:var(--soft);margin-top:5px"></div>
+            <a href="javascript:void(0)" onclick="npManualRefreshAccounts()" style="font-size:11px;color:var(--soft);text-decoration:underline">🔄 Refresh accounts</a>
+          </div>
+        </div>
+        <div class="form-field">
+          <label>Opportunity (optional)</label>
+          <select id="npOpportunityId"><option value="">— none —</option></select>
+        </div>
+      </div>
+      <div id="npNewBlock" style="display:none">
+        <div style="font-size:11px;color:var(--soft);margin-bottom:8px">This creates a Contact and an Opportunity (stage: Proposal Sent) and attaches this project to that Opportunity. No Account is created yet -- that happens automatically once the Opportunity is marked Won on the sales side.</div>
+        <div class="form-row">
+          <div class="form-field">
+            <label>Business Name</label>
+            <input id="npNewBusiness" placeholder="e.g. Corner Diner">
+          </div>
+          <div class="form-field">
+            <label>Contact Name</label>
+            <input id="npNewContact" placeholder="Who signed / who you're dealing with">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-field">
+            <label>Phone</label>
+            <input id="npNewPhone" placeholder="">
+          </div>
+          <div class="form-field">
+            <label>Email</label>
+            <input id="npNewEmail" placeholder="">
+          </div>
+        </div>
       </div>
       <div class="form-row">
         <div class="form-field">
@@ -898,6 +933,26 @@ var currentTab = 'overview';
 var typeFilter = 'all';
 
 function loadProjects() { return crmLoad('allpro_projects'); }
+
+// Added per Ted, 2026-07-16: proposals/backdated quotes get entered as a
+// project tied to an Opportunity before any Account exists. Anywhere the
+// board used to show the Account name, fall back to the linked
+// Opportunity's business name, then to whatever intake info was typed in
+// when the project was created, so these never render as blank/Unknown.
+function projDisplayName(p) {
+  if (p.account_id) {
+    var accts = crmLoad('accounts');
+    var a = accts.filter(function (x) { return x.id === p.account_id; })[0];
+    if (a) return a.business || a.name || 'Unknown Account';
+  }
+  if (p.opportunity_id) {
+    var opps = crmLoad('opportunities');
+    var o = opps.filter(function (x) { return x.id === p.opportunity_id; })[0];
+    if (o) return (o.business || o.name || 'Opportunity') + ' — proposal, not yet an account';
+  }
+  if (p.intake_business_name) return p.intake_business_name + ' — proposal, not yet an account';
+  return 'Unnamed Proposal';
+}
 function saveProjects(arr) {
   crmSave('allpro_projects', arr);
   // Was localStorage-only before this fix -- allpro_projects is already a
@@ -1913,6 +1968,18 @@ function markRepSpiffsPaid(rep) {
 }
 
 // ── NEW PROJECT ──
+function npSetMode(mode) {
+  var existingBlock = document.getElementById('npExistingBlock');
+  var newBlock = document.getElementById('npNewBlock');
+  var btnExisting = document.getElementById('npModeBtnExisting');
+  var btnNew = document.getElementById('npModeBtnNew');
+  existingBlock.style.display = (mode === 'existing') ? '' : 'none';
+  newBlock.style.display = (mode === 'new') ? '' : 'none';
+  btnExisting.style.background = (mode === 'existing') ? 'var(--gold)' : '';
+  btnNew.style.background = (mode === 'new') ? 'var(--gold)' : '';
+  document.getElementById('newProjectModal').dataset.npMode = mode;
+}
+
 function openNewProjectModal() {
   npRefreshAccountCache();
   document.getElementById('npAccountId').value = '';
@@ -1923,6 +1990,11 @@ function openNewProjectModal() {
   var oppSel = document.getElementById('npOpportunityId');
   var opps = crmLoad('opportunities');
   oppSel.innerHTML = '<option value="">— none —</option>' + opps.map(function(o){ return '<option value="'+o.id+'">'+(o.name||o.business||o.id)+'</option>'; }).join('');
+  document.getElementById('npNewBusiness').value = '';
+  document.getElementById('npNewContact').value = '';
+  document.getElementById('npNewPhone').value = '';
+  document.getElementById('npNewEmail').value = '';
+  npSetMode('existing');
   document.getElementById('newProjectModal').style.display = 'flex';
   // Reset any leftover upload state from a previous open of this modal.
   _npUpload = null;
@@ -1932,21 +2004,82 @@ function openNewProjectModal() {
 }
 
 function createProject() {
-  var accountId = document.getElementById('npAccountId').value;
-  if (!accountId) { alert('Select an account first.'); return; }
+  var mode = document.getElementById('newProjectModal').dataset.npMode || 'existing';
   var now = Date.now();
   var typeVal = document.getElementById('npType').value;
   var typedName = document.getElementById('npName').value.trim();
+  var accountId = '';
+  var opportunityId = document.getElementById('npOpportunityId').value || null;
+  var intakeBusiness = '';
+
+  if (mode === 'existing') {
+    accountId = document.getElementById('npAccountId').value;
+    if (!accountId) { alert('Select an account, or switch to "New Proposal" above if there is no account yet.'); return; }
+  } else {
+    // New Proposal path, added 2026-07-16 per Ted: no Account exists yet
+    // for a proposal -- create the Contact and the Opportunity (stage:
+    // proposal, matching "Proposal Sent" in the sales dashboard) so this
+    // job is trackable from day one, and attach the project to the
+    // Opportunity instead of an Account. Converting the Opportunity to
+    // Won on the sales side creates the Account normally; this project
+    // then self-heals its account_id the next time the board renders
+    // (see npReconcileConvertedOpportunities).
+    intakeBusiness = document.getElementById('npNewBusiness').value.trim();
+    var contactName = document.getElementById('npNewContact').value.trim();
+    if (!intakeBusiness || !contactName) { alert('Business Name and Contact Name are required to create a proposal.'); return; }
+    var contactRecord = {
+      id: genId('CON'),
+      name: contactName,
+      company: intakeBusiness,
+      title: '',
+      phone: document.getElementById('npNewPhone').value.trim(),
+      email: document.getElementById('npNewEmail').value.trim(),
+      accountId: '',
+      status: 'active',
+      created_at: now,
+      updated_at: now
+    };
+    var contacts = crmLoad('contacts');
+    contacts.push(contactRecord);
+    crmSave('contacts', contacts);
+
+    var oppRecord = {
+      id: 'OPP' + now.toString(36).toUpperCase(),
+      accountId: '',
+      contactId: contactRecord.id,
+      business: intakeBusiness,
+      name: (typedName || (intakeBusiness + ' \u2014 ' + (TYPE_LABELS[typeVal] || 'Project'))),
+      division: 'allpro',
+      stage: 'proposal',
+      value: Number(document.getElementById('npValue').value) || null,
+      expectedClose: '',
+      assignedRep: '',
+      notes: 'Created from AllPro Project Planner as a backdated/existing proposal, per Ted.',
+      closedAt: null,
+      created_at: now,
+      updated_at: now
+    };
+    var opps = crmLoad('opportunities');
+    opps.push(oppRecord);
+    crmSave('opportunities', opps);
+    opportunityId = oppRecord.id;
+  }
+
   var smartDefaultName = typedName;
   if (!smartDefaultName) {
-    var acct = crmLoad('accounts').filter(function (x) { return x.id === accountId; })[0];
-    var acctName = acct ? (acct.business || acct.name) : null;
-    smartDefaultName = acctName ? (acctName + ' \u2014 ' + (TYPE_LABELS[typeVal] || 'Project')) : 'Untitled Project';
+    if (accountId) {
+      var acct = crmLoad('accounts').filter(function (x) { return x.id === accountId; })[0];
+      var acctName = acct ? (acct.business || acct.name) : null;
+      smartDefaultName = acctName ? (acctName + ' \u2014 ' + (TYPE_LABELS[typeVal] || 'Project')) : 'Untitled Project';
+    } else {
+      smartDefaultName = intakeBusiness ? (intakeBusiness + ' \u2014 ' + (TYPE_LABELS[typeVal] || 'Project')) : 'Untitled Project';
+    }
   }
   var p = {
     id: genId('APR'),
-    account_id: accountId,
-    opportunity_id: document.getElementById('npOpportunityId').value || null,
+    account_id: accountId || null,
+    opportunity_id: opportunityId,
+    intake_business_name: intakeBusiness || null,
     project_name: smartDefaultName,
     project_type: typeVal,
     facility_type: document.getElementById('npFacility').value,
@@ -2088,7 +2221,7 @@ function renderFinancials() {
           underMargin.map(function(x) {
             return '<tr class="ap-list-row" onclick="openDetail(\'' + x.p.id + '\')">' +
               '<td><b>' + x.p.project_name + '</b></td>' +
-              '<td>' + accName(x.p.account_id) + '</td>' +
+              '<td>' + projDisplayName(x.p) + '</td>' +
               '<td><span class="ap-list-stage-badge" style="background:' + STAGE_COLORS[x.p.stage] + '">' + STAGE_LABELS[x.p.stage] + '</span></td>' +
               '<td class="' + (x.margin>=20?'margin-good':'margin-bad') + '">' + x.margin.toFixed(1) + '%</td>' +
             '</tr>';
@@ -2103,7 +2236,7 @@ function renderFinancials() {
           overVariance.map(function(x) {
             return '<tr class="ap-list-row" onclick="openDetail(\'' + x.p.id + '\')">' +
               '<td><b>' + x.p.project_name + '</b></td>' +
-              '<td>' + accName(x.p.account_id) + '</td>' +
+              '<td>' + projDisplayName(x.p) + '</td>' +
               '<td>' + x.p.estimated_duct_ft + ' ft</td>' +
               '<td>' + x.p.actual_duct_ft + ' ft</td>' +
               '<td class="' + (Math.abs(x.variance)>10?'margin-bad':'margin-good') + '">' + (x.variance>0?'+':'') + x.variance.toFixed(1) + '%</td>' +
@@ -2127,7 +2260,7 @@ function renderFinancials() {
             return '<tr class="ap-list-row" onclick="openDetail(\'' + x.p.id + '\')">' +
               '<td><b>' + x.sub.company + '</b></td>' +
               '<td>' + x.p.project_name + '</td>' +
-              '<td>' + accName(x.p.account_id) + '</td>' +
+              '<td>' + projDisplayName(x.p) + '</td>' +
               '<td class="margin-bad">' + issues.join(', ') + '</td>' +
             '</tr>';
           }).join('') + '</tbody></table>'
@@ -2135,8 +2268,25 @@ function renderFinancials() {
     '</div>';
 }
 
+// Added 2026-07-16 per Ted: once an Opportunity created from a proposal is
+// marked Won on the sales side, it gets a real accountId. Any AllPro
+// project still sitting on that Opportunity with no account_id gets
+// backfilled here so it links up automatically -- no manual re-entry.
+function npReconcileConvertedOpportunities(projects) {
+  var opps = null, changed = false;
+  projects.forEach(function (p) {
+    if (p.opportunity_id && !p.account_id) {
+      if (!opps) opps = crmLoad('opportunities');
+      var o = opps.filter(function (x) { return x.id === p.opportunity_id; })[0];
+      if (o && o.accountId) { p.account_id = o.accountId; p.updated_at = Date.now(); changed = true; }
+    }
+  });
+  if (changed) saveProjects(projects);
+  return projects;
+}
+
 function renderAll() {
-  var projects = loadProjects();
+  var projects = npReconcileConvertedOpportunities(loadProjects());
   renderKPIs(projects);
   renderStageChart(projects);
   renderTypeFilters();
@@ -2207,7 +2357,7 @@ function renderProjectList(projects) {
     var daysCell = days > 14 ? '<span class="ap-list-overdue">' + days + 'd</span>' : days + 'd';
     return '<tr class="ap-list-row" onclick="openDetail(\'' + p.id + '\')">' +
       '<td><b>' + p.project_name + '</b></td>' +
-      '<td>' + accName(p.account_id) + '</td>' +
+      '<td>' + projDisplayName(p) + '</td>' +
       '<td><span class="ap-list-stage-badge" style="background:' + STAGE_COLORS[p.stage] + '">' + STAGE_LABELS[p.stage] + '</span></td>' +
       '<td>' + (TYPE_LABELS[p.project_type]||p.project_type) + '</td>' +
       '<td>' + daysCell + '</td>' +
@@ -2258,7 +2408,9 @@ function renderKanban(projects) {
         : '<div style="margin-top:6px;font-size:10px;color:var(--soft)">' + days + 'd in stage</div>';
       return '<div class="pj-card" draggable="true" ondragstart="handleCardDragStart(event,\''+p.id+'\')" onclick="openDetail(\''+p.id+'\')">' +
         '<div class="pj-card-name">'+p.project_name+'</div>' +
-        '<div class="pj-card-acc" onclick="event.stopPropagation();window.open(\'termac-os.html?open=accounts&id=\'+encodeURIComponent(\''+p.account_id+'\'),\'_blank\')" style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted" title="Open this account\'s live record">'+accName(p.account_id)+' ↗</div>' +
+        (p.account_id
+          ? '<div class="pj-card-acc" onclick="event.stopPropagation();window.open(\'termac-os.html?open=accounts&id=\'+encodeURIComponent(\''+p.account_id+'\'),\'_blank\')" style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted" title="Open this account\'s live record">'+projDisplayName(p)+' ↗</div>'
+          : '<div class="pj-card-acc" style="color:var(--amber)" title="No Account yet -- this is still a proposal/opportunity">'+projDisplayName(p)+'</div>') +
         '<div class="pj-card-meta">' +
           '<span class="pj-type-badge" style="background:'+typeColor+'22;color:'+typeColor+'">'+TYPE_LABELS[p.project_type]+'</span>' +
           '<span class="pj-value">$'+Math.round((p.estimated_value||p.sale_price||0)/1000)+'K</span>' +
