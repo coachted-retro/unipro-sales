@@ -32,7 +32,19 @@
 
   var D1_API_URL = 'https://unipro-ai-proxy.termac-one.workers.dev';
   var D1_API_SECRET = 'termac2026';
-  var D1_SYNC_TABLES = ['accounts', 'leads', 'contacts', 'opportunities', 'bids',
+  // 2026-07-16 FIX: service_pricing_catalog and rep_comp_profiles used to
+  // sit at the very end of this list. d1HydrateAll works through it
+  // sequentially, one table at a time, so anything at the end only
+  // finishes loading after every other table ahead of it -- on a cold
+  // cache that can take a while. The Create Opportunity modal reads
+  // service_pricing_catalog synchronously the moment it's opened, so if
+  // someone opened it early in a session, before that far-down table had
+  // its turn, every dropdown looked completely dead: not a broken click
+  // handler, just genuinely zero data loaded yet. Moved to the front
+  // since this reference data is needed immediately for a core feature,
+  // not a nice-to-have that can wait its turn.
+  var D1_SYNC_TABLES = ['service_pricing_catalog', 'rep_comp_profiles',
+    'accounts', 'leads', 'contacts', 'opportunities', 'bids',
     'jobs', 'deficiencies', 'collections', 'dms_coldcall',
     'allpro_projects', 'allpro_cost_lines', 'appointments', 'allpro_design_projects',
     'broadcasts', 'dispatch_msgs', 'wh_requisitions', 'wh_ready_handoffs', 'parts_requests',
@@ -40,14 +52,7 @@
     'trade_partners', 'trade_partner_referrals', 'trade_partner_bids',
     'reference_library', 'allpro_rate_tables', 'notifications',
     'accounts_payable', 'expense_reports', 'customer_orders', 'reorder_requests',
-    'warehouse_alerts', 'debriefs', 'rcp_calls',
-    // 2026-07-15 per Ted: read-only reference data (dish machine rentals,
-    // GTO tiered pricing, chemicals, etc.) feeding the opportunity
-    // creation modal in sales-portal.html. Reps only ever read this,
-    // never write it through the UI, but it syncs the same way as any
-    // other table so it hydrates automatically instead of needing a
-    // one-off fetch path.
-    'service_pricing_catalog', 'rep_comp_profiles'];
+    'warehouse_alerts', 'debriefs', 'rcp_calls'];
 
   async function d1Fetch(method, path, body) {
     try {
