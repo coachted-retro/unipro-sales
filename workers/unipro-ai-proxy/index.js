@@ -126,6 +126,12 @@ const ALLOWED_TABLES = new Set([
   // 615-row pricing catalog in D1 was unreachable from any device that
   // didn't already have it cached locally from wherever it was built.
   'service_pricing_catalog',
+  // account_assets, added 2026-07-16 -- existed since the ServiceTrade
+  // sync build (77 real rows: hood systems, fire extinguishers,
+  // emergency lights, etc.) but was never opened up to any client,
+  // written only by workers/servicetrade-sync directly against D1.
+  // Surfacing it read-only on the Location detail page per Ted.
+  'account_assets',
 ]);
 
 const TABLE_PREFIX = {
@@ -166,6 +172,7 @@ const TABLE_PREFIX = {
   reason_codes:'RSN',
   account_rep_assignments:'ARA',
   account_churn_events:'ACE',
+  account_assets:'AST',
 };
 
 function corsHeaders(origin) {

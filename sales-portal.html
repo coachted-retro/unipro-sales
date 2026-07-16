@@ -4175,6 +4175,20 @@ function spOpenLocationDetail(r) {
     .sort((a,b) => (b.created||0) - (a.created||0));
   const linkedAccount = r.accountId ? (crmLoad('accounts') || []).find(a => a.id === r.accountId) : null;
 
+  // Equipment/asset history and order/product history -- both tables
+  // already existed (account_assets from ServiceTrade sync, 77 real
+  // rows; customer_orders from the collections/order-log flow) but were
+  // account-only and, for account_assets, invisible to every client.
+  // Matches by this location's own id first; falls back to the linked
+  // account's id for older rows that predate location_id existing at
+  // all, so existing history doesn't just disappear once a location is
+  // attached to an account that already had assets/orders on file.
+  const allAssets = crmLoad('account_assets') || [];
+  const assets = allAssets.filter(a => a.locationId === r.id || (!a.locationId && linkedAccount && a.accountId === linkedAccount.id));
+  const allOrders = crmLoad('customer_orders') || [];
+  const orders = (allOrders.filter(o => o.locationId === r.id || (!o.locationId && linkedAccount && o.accountId === linkedAccount.id)))
+    .sort((a,b) => (b.createdTs||b.created_ts||0) - (a.createdTs||a.created_ts||0));
+
   const contactRows = contacts.map(c => `<div style="padding:10px;background:#F8F9FA;border-radius:7px;margin-bottom:8px;cursor:pointer" onclick="spOpenAddContactModal('${r.id}','${c.id}')">
       <div style="font-size:13px;font-weight:700;color:var(--ink)">${escH(c.name||'')}</div>
       ${c.title ? `<div style="font-size:11px;color:var(--soft)">${escH(c.title)}</div>` : ''}
@@ -4209,6 +4223,21 @@ function spOpenLocationDetail(r) {
       </div>`;
   }).join('');
 
+  const assetRows = assets.map(a => `<div style="padding:9px 10px;background:#F8F9FA;border-radius:7px;margin-bottom:6px">
+      <div style="font-size:13px;font-weight:700;color:var(--ink)">${escH(a.assetType||a.asset_type||'Asset')}${a.description ? ' — '+escH(a.description) : ''}</div>
+      <div style="font-size:11px;color:var(--soft);margin-top:2px">${[a.manufacturer, a.model, a.size].filter(Boolean).map(escH).join(' · ')}${a.locationInSite||a.location_in_site ? ' · '+escH(a.locationInSite||a.location_in_site) : ''}</div>
+      ${a.maintenanceDueDate||a.maintenance_due_date ? `<div style="font-size:11px;color:#B45309;margin-top:2px">Maintenance due: ${escH(a.maintenanceDueDate||a.maintenance_due_date)}</div>` : ''}
+    </div>`).join('');
+
+  const orderRows = orders.map(o => `<div style="padding:9px 10px;background:#F8F9FA;border-radius:7px;margin-bottom:6px">
+      <div style="display:flex;justify-content:space-between">
+        <div style="font-size:13px;font-weight:700;color:var(--ink)">${escH(o.type||o.visitType||o.visit_type||'Order')}</div>
+        <div style="font-size:12px;font-weight:700;color:var(--ink)">${o.total ? spOppMoney(o.total) : ''}</div>
+      </div>
+      <div style="font-size:11px;color:var(--soft);margin-top:2px">${(o.createdTs||o.created_ts) ? new Date(o.createdTs||o.created_ts).toLocaleDateString() : ''}${o.rep ? ' · '+escH(o.rep) : ''}</div>
+      ${o.siteNotes||o.site_notes ? `<div style="font-size:11px;color:var(--soft);margin-top:2px">${escH((o.siteNotes||o.site_notes).slice(0,120))}</div>` : ''}
+    </div>`).join('');
+
   const el = document.getElementById('spContent');
   el.innerHTML = `<div class="sp-card">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">
@@ -4240,7 +4269,36 @@ function spOpenLocationDetail(r) {
       </div>
       ${opps.length ? oppRows : '<div style="font-size:12px;color:var(--soft)">No opportunities yet, click Create Opportunity when there is a real deal to track.</div>'}
     </div>
+
+    <div style="padding:12px 0;border-top:1px solid var(--line)">
+      <div onclick="spToggleCollapse('spLocAssets')" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft)">🔧 Equipment / Assets (${assets.length})</div>
+        <span id="spLocAssets-chevron" style="font-size:11px;color:var(--soft)">▸</span>
+      </div>
+      <div id="spLocAssets" style="display:none;margin-top:8px">
+        ${assets.length ? assetRows : '<div style="font-size:12px;color:var(--soft)">No equipment on file for this location yet.</div>'}
+      </div>
+    </div>
+
+    <div style="padding:12px 0;border-top:1px solid var(--line)">
+      <div onclick="spToggleCollapse('spLocOrders')" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft)">📦 Order / Product History (${orders.length})</div>
+        <span id="spLocOrders-chevron" style="font-size:11px;color:var(--soft)">▸</span>
+      </div>
+      <div id="spLocOrders" style="display:none;margin-top:8px">
+        ${orders.length ? orderRows : '<div style="font-size:12px;color:var(--soft)">No orders on file for this location yet.</div>'}
+      </div>
+    </div>
   </div>`;
+}
+
+function spToggleCollapse(id) {
+  var body = document.getElementById(id);
+  var chevron = document.getElementById(id + '-chevron');
+  if (!body) return;
+  var isOpen = body.style.display !== 'none';
+  body.style.display = isOpen ? 'none' : 'block';
+  if (chevron) chevron.textContent = isOpen ? '▸' : '▾';
 }
 
 function spOpenAddContactModal(locationId, editContactId) {

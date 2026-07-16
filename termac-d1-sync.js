@@ -52,7 +52,7 @@
     'trade_partners', 'trade_partner_referrals', 'trade_partner_bids',
     'reference_library', 'allpro_rate_tables', 'notifications',
     'accounts_payable', 'expense_reports', 'customer_orders', 'reorder_requests',
-    'warehouse_alerts', 'debriefs', 'rcp_calls'];
+    'warehouse_alerts', 'debriefs', 'rcp_calls', 'account_assets'];
 
   async function d1Fetch(method, path, body, opts2) {
     try {
@@ -224,6 +224,22 @@
       paymentMethod: 'payment_method', paymentRef: 'payment_ref',
       customerSignature: 'customer_signature', createdTs: 'created_ts',
       scheduledDelivery: 'scheduled_delivery',
+      locationId: 'location_id',
+    },
+    // account_assets, added 2026-07-16 -- existed since ServiceTrade
+    // sync (hood systems, fire extinguishers, emergency lights, etc.)
+    // but was written only by the servicetrade-sync Worker directly
+    // against D1, never read or written from any client. locationId is
+    // the only client-writable field for now; every other column is
+    // ServiceTrade-owned data, surfaced read-only on the Location page.
+    account_assets: {
+      accountId: 'account_id', externalAssetId: 'external_asset_id',
+      assetType: 'asset_type', locationInSite: 'location_in_site',
+      serviceLine: 'service_line', installDate: 'install_date',
+      maintenanceDueDate: 'maintenance_due_date',
+      hydrostaticTestDueDate: 'hydrostatic_test_due_date',
+      locationId: 'location_id',
+      createdAt: 'created_at', updatedAt: 'updated_at',
     },
     reorder_requests: {
       accountId: 'account_id', accountName: 'account_name', requestedAt: 'requested_at',
@@ -333,6 +349,11 @@
       'site_notes', 'rep', 'visit_type', 'type', 'lines', 'total',
       'inventory_snapshot', 'payment_method', 'payment_ref',
       'customer_signature', 'status', 'created_ts', 'scheduled_delivery',
+      'location_id', 'created_at', 'updated_at'],
+    account_assets: ['id', 'account_id', 'external_asset_id', 'asset_type',
+      'description', 'location_in_site', 'service_line', 'manufacturer',
+      'model', 'size', 'install_date', 'maintenance_due_date',
+      'hydrostatic_test_due_date', 'source', 'location_id',
       'created_at', 'updated_at'],
     reorder_requests: ['id', 'account_id', 'account_name', 'address', 'rep',
       'items', 'requested_at', 'status', 'created_at', 'updated_at'],
