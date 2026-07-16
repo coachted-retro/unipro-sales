@@ -630,6 +630,7 @@ textarea.cf-input{height:auto}
   padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.1);
 }
 </style>
+<script src="termac-d1-sync.js"></script>
 </head>
 <body>
 
@@ -1313,7 +1314,7 @@ function loadLeadFromUrl() {
     var params = new URLSearchParams(window.location.search);
     var leadId = params.get('lead');
     if (!leadId) return;
-    var leads = JSON.parse(localStorage.getItem('termac_crm_leads') || '[]');
+    var leads = crmLoad('leads');
     var rec = leads.find(function(r) { return r.id === leadId; });
     if (!rec) return;
     _preloadedLead = rec;
@@ -1751,7 +1752,16 @@ function saveLead() {
       updated:         now,
     };
 
-    var leads = JSON.parse(localStorage.getItem('termac_crm_leads') || '[]');
+    // 2026-07-16 FIX per Ted: this used to write straight to
+    // localStorage.setItem('termac_crm_leads', ...) directly, bypassing
+    // the D1 sync layer entirely. Since it shares the same local key as
+    // the real synced crmSave, a pitch completed here looked exactly
+    // like a normal record on the device it was created on, but never
+    // reached the shared database -- invisible to every other rep,
+    // manager, or Ted, and lost the moment that device's storage cleared.
+    // Now goes through the real crmLoad/crmSave from termac-d1-sync.js,
+    // same as sales-portal.html and termac-os.html already do.
+    var leads = crmLoad('leads');
     var existingIdx = _quickCaptureLeadId ? leads.findIndex(function(r){ return r.id === _quickCaptureLeadId; }) : -1;
     if (existingIdx !== -1) {
       rec.created = leads[existingIdx].created || rec.created; // preserve original created time
@@ -1759,7 +1769,7 @@ function saveLead() {
     } else {
       leads.unshift(rec);
     }
-    localStorage.setItem('termac_crm_leads', JSON.stringify(leads));
+    crmSave('leads', leads);
 
     // Store context for the site survey handoff — same key/shape as the
     // rest of the platform expects when launching a survey from a lead.
@@ -1855,7 +1865,11 @@ function spSaveQuickCapture() {
   if (_quickCapture.askfor)  notesParts.push('Ask for: ' + _quickCapture.askfor);
 
   try {
-    var leads = JSON.parse(localStorage.getItem('termac_crm_leads') || '[]');
+    // 2026-07-16 FIX per Ted: same D1 bypass as the main pitch save below,
+    // fixed the same way -- real crmLoad/crmSave from termac-d1-sync.js
+    // instead of raw localStorage, so quick-captured contacts actually
+    // reach the shared database.
+    var leads = crmLoad('leads');
     var now = Date.now();
     var rep = currentRepName();
 
@@ -1870,7 +1884,7 @@ function spSaveQuickCapture() {
         leads[idx].address    = _quickCapture.address;
         leads[idx].siteNotes  = notesParts.join(' \u00b7 ');
         leads[idx].updated    = now;
-        localStorage.setItem('termac_crm_leads', JSON.stringify(leads));
+        crmSave('leads', leads);
       }
     } else {
       var rec = {
@@ -1893,7 +1907,7 @@ function spSaveQuickCapture() {
         updated: now,
       };
       leads.unshift(rec);
-      localStorage.setItem('termac_crm_leads', JSON.stringify(leads));
+      crmSave('leads', leads);
       _quickCaptureLeadId = rec.id;
     }
   } catch(e) {}
