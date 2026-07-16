@@ -3839,6 +3839,25 @@ function spNeedsAttention() {
     }
   });
 
+  // Opportunities past their SLA with no check-in -- added 2026-07-16
+  // per Ted, this is the actual "notification" half of the 60-day
+  // pending rule. A quiet red badge on a tab nobody's on isn't a
+  // notification; showing up here, on the page they open every
+  // morning, is.
+  (crmLoad('opportunities') || [])
+    .filter(o => (o.assignedRep || '') === _spRep.name)
+    .forEach(o => {
+      const status = o.resolutionStatus || 'open';
+      if (status !== 'open' && status !== 'pending') return;
+      const slaAnchor = o.flaggedAt || o.created;
+      const daysOpen = slaAnchor ? Math.floor((now - slaAnchor) / day) : 0;
+      const slaDays = o.slaDays || 60;
+      if (daysOpen <= slaDays) return;
+      const parentType = o.accountId ? 'accounts' : 'contacts';
+      const parentId = o.accountId || o.contactId;
+      alerts.push({ color:'red', icon:'⏳', title:`Opportunity needs a check-in — ${daysOpen}d open, past ${slaDays}d`, sub:`${o.name || 'Opportunity'} — mark still pending with a note, or resolve it`, id:parentId, tab:parentType });
+    });
+
   if (!alerts.length) return `<div class="sp-card" style="margin-bottom:14px;text-align:center;color:var(--soft);font-size:13px;padding:20px">✅ All clear — nothing needs attention right now.</div>`;
 
   return `<div style="margin-bottom:14px">
@@ -3950,7 +3969,8 @@ function spOpenDetail(r, tab) {
       const status = o.resolutionStatus || 'open';
       const color = STATUS_COLOR[status] || '#6B7280';
       const bg = STATUS_BG[status] || '#F3F4F6';
-      const daysOpen = o.created ? Math.floor((Date.now() - o.created) / 86400000) : 0;
+      const slaAnchor = o.flaggedAt || o.created;
+      const daysOpen = slaAnchor ? Math.floor((Date.now() - slaAnchor) / 86400000) : 0;
       const slaDays = o.slaDays || 60;
       const isFlagged = (status === 'open' || status === 'pending') && daysOpen > slaDays;
       const total = o.serviceType === 'lease' ? (o.monthlyValue||0) * (o.termMonths||1) : (o.value||0);
@@ -3967,7 +3987,7 @@ function spOpenDetail(r, tab) {
               <div style="font-size:13px;font-weight:700;color:var(--ink)">${escH(o.name || 'Opportunity')}</div>
               <div style="font-size:11px;color:var(--soft);margin-top:2px">${escH(o.division||'')} · ${moneyStr}${o.serviceType==='lease' ? ' ('+(o.termMonths||1)+' mo)' : ''}</div>
               ${o.notes ? `<div style="font-size:11px;color:var(--soft);margin-top:2px">${escH(o.notes.slice(0,90))}</div>` : ''}
-              ${status !== 'open' && o.resolutionNotes ? `<div style="font-size:11px;color:${color};font-weight:600;margin-top:4px">${STATUS_LABEL[status]}: ${escH((o.lostReasonCode||o.pendingReasonCode||'').toString())} — ${escH(o.resolutionNotes.slice(0,90))}</div>` : ''}
+              ${status !== 'open' && o.resolutionNotes ? `<div style="font-size:11px;color:${color};font-weight:600;margin-top:4px">${STATUS_LABEL[status]}: ${escH((o.lostReasonCode||o.pendingReasonCode||'').toString())}${o.lostPriceDivision ? ' (' + escH(o.lostPriceDivision) + ')' : ''} — ${escH(o.resolutionNotes.slice(0,90))}</div>` : ''}
               ${isFlagged ? `<div style="font-size:10px;color:#C8102E;font-weight:800;text-transform:uppercase;margin-top:4px">⚠ ${daysOpen}d open, past ${slaDays}d target</div>` : ''}
             </div>
             <span style="font-size:10px;font-weight:800;text-transform:uppercase;color:${color}">${STATUS_LABEL[status]}</span>
@@ -4730,8 +4750,19 @@ function spOpenResolveModal(id, outcome) {
   var reasonList = outcome === 'lost' ? SP_LOST_REASONS : outcome === 'pending' ? SP_PENDING_REASONS : null;
   var reasonHtml = reasonList ? (
     '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Reason</label>' +
-    '<select id="oppResolveReason" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:12px"><option value="">— Select a reason —</option>' +
+    '<select id="oppResolveReason" onchange="spOppToggleLostPriceDivision()" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:12px"><option value="">— Select a reason —</option>' +
     reasonList.map(function(r){ return '<option value="' + r + '">' + r + '</option>'; }).join('') + '</select>'
+  ) : '';
+  // 2026-07-16 per Ted: "Price too high" on its own doesn't tell the
+  // company anything actionable -- need to know which specific service
+  // line was the sticking point so pricing can actually be compared
+  // against competitors and adjusted division by division.
+  var priceDivOpts = QUICK_SALE_DIVISIONS.map(function(d){ return '<option value="' + d.label + '">' + d.label + '</option>'; }).join('');
+  var priceDivHtml = outcome === 'lost' ? (
+    '<div id="oppLostPriceDivWrap" style="display:none;margin-bottom:12px">' +
+      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Which service was priced too high?</label>' +
+      '<select id="oppLostPriceDivision" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px"><option value="">— Select a service —</option>' + priceDivOpts + '</select>' +
+    '</div>'
   ) : '';
   var pendingDateHtml = outcome === 'pending' ? (
     '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">New target close date</label>' +
@@ -4745,7 +4776,7 @@ function spOpenResolveModal(id, outcome) {
     '<div style="padding:20px">' +
       '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:18px;color:var(--ink);margin-bottom:4px">' + titleMap[outcome] + '</div>' +
       '<div style="font-size:12px;color:var(--soft);margin-bottom:16px">' + escH(o.name || 'Opportunity') + '</div>' +
-      reasonHtml + pendingDateHtml +
+      reasonHtml + priceDivHtml + pendingDateHtml +
       '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Notes</label>' +
       '<textarea id="oppResolveNotes" placeholder="What happened, what was said..." rows="3" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;resize:vertical;box-sizing:border-box;margin-bottom:16px"></textarea>' +
       '<div style="display:flex;gap:10px;justify-content:flex-end">' +
@@ -4755,6 +4786,12 @@ function spOpenResolveModal(id, outcome) {
     '</div>' +
   '</div>';
   document.body.appendChild(wrap);
+}
+
+function spOppToggleLostPriceDivision() {
+  var reason = document.getElementById('oppResolveReason')?.value;
+  var wrap = document.getElementById('oppLostPriceDivWrap');
+  if (wrap) wrap.style.display = (reason === 'Price too high') ? 'block' : 'none';
 }
 
 function spResolveOpportunity(id, outcome) {
@@ -4769,10 +4806,23 @@ function spResolveOpportunity(id, outcome) {
     if (outcome === 'lost') o.lostReasonCode = reason; else o.pendingReasonCode = reason;
     if (!notes) { alert('A quick note on context is required — this is what a manager will see when reviewing why this deal is stalled or lost.'); return; }
   }
+  // 2026-07-16 per Ted: "Price too high" alone isn't trackable -- need
+  // to know which service line so the company can compare against local
+  // competitors and actually adjust that division's pricing.
+  if (outcome === 'lost' && document.getElementById('oppResolveReason')?.value === 'Price too high') {
+    var priceDiv = document.getElementById('oppLostPriceDivision')?.value;
+    if (!priceDiv) { alert('Select which service was priced too high.'); return; }
+    o.lostPriceDivision = priceDiv;
+  }
   if (outcome === 'pending') {
     var newDate = document.getElementById('oppResolveNewDate')?.value;
     if (!newDate) { alert('A new target close date is required when marking something pending — otherwise it just sits flagged again with no plan.'); return; }
     o.expectedClose = newDate;
+    // Resets the 60-day check-in clock -- this confirmation IS the
+    // check-in, so the SLA badge and the dashboard nag banner both go
+    // quiet until 60 more days pass from right now, instead of still
+    // measuring from the opportunity's original creation date.
+    o.flaggedAt = Date.now();
   }
 
   o.resolutionStatus = outcome;
@@ -4844,7 +4894,8 @@ function spRenderOpportunitiesTab() {
     var parentId = o.accountId || o.contactId;
     var parent = parentType === 'accounts' ? accounts.find(function(a){ return a.id === parentId; }) : contacts.find(function(c){ return c.id === parentId; });
     var parentName = parent ? (parent.business || parent.name || 'Unknown') : 'Unlinked';
-    var daysOpen = o.created ? Math.floor((Date.now() - o.created) / 86400000) : 0;
+    var slaAnchor = o.flaggedAt || o.created;
+    var daysOpen = slaAnchor ? Math.floor((Date.now() - slaAnchor) / 86400000) : 0;
     var slaDays = o.slaDays || 60;
     var isFlagged = (status === 'open' || status === 'pending') && daysOpen > slaDays;
     var total = o.serviceType === 'lease' ? (o.monthlyValue||0) * (o.termMonths||1) : (o.value||0);

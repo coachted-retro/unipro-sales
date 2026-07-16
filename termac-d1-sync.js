@@ -236,6 +236,7 @@
       resolutionStatus: 'resolution_status', resolutionDate: 'resolution_date',
       lostReasonCode: 'lost_reason_code', pendingReasonCode: 'pending_reason_code',
       resolutionNotes: 'resolution_notes', flaggedAt: 'flagged_at',
+      lostPriceDivision: 'lost_price_division',
     },
     // Route Debriefs, added 2026-07-13 per Ted - was 100% localStorage-
     // only on whichever device a tech submitted from (route-debrief.html),
@@ -286,6 +287,7 @@
       'sla_days', 'service_type', 'monthly_value', 'term_months',
       'resolution_status', 'resolution_date', 'lost_reason_code',
       'pending_reason_code', 'resolution_notes', 'flagged_at',
+      'lost_price_division',
       'created_at', 'updated_at', 'activity_log'],
     accounts_payable: ['id', 'vendor', 'amount', 'division', 'category',
       'due_date', 'invoice_num', 'notes', 'status', 'logged_at', 'paid_at',
