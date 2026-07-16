@@ -13749,6 +13749,11 @@ function rptBuildIntelligence(filters) {
       </table>
     </div>
 
+    <div class="rpt-card" style="margin-bottom:16px">
+      <div class="rpt-card-hdr"><span class="rpt-card-title">📄 vs ⚡ Pitch Tool vs Quick Sale, by Rep</span><span class="rpt-card-sub">Are they presenting the full cross-sell pitch, or defaulting to a quick close?</span></div>
+      <div id="rptToolUsageCard"><div style="text-align:center;color:var(--soft);font-size:12px;padding:16px">Loading usage data…</div></div>
+    </div>
+
     <div class="rpt-card">
       <div class="rpt-card-hdr"><span class="rpt-card-title">📋 All Opportunities in Period</span></div>
       <table class="rpt-table">
@@ -13761,6 +13766,56 @@ function rptBuildIntelligence(filters) {
         </tbody>
       </table>
     </div>`;
+}
+
+// Async on purpose -- rep_tool_usage is a simple append-only event log,
+// not part of the two-way CRM sync/hydration system the rest of this
+// report reads from, so it's fetched directly from D1 each time this
+// report renders rather than added to the whole hydration cycle for a
+// read-only reporting need.
+async function rptRenderToolUsage(filters) {
+  const el = document.getElementById('rptToolUsageCard');
+  if (!el) return;
+  try {
+    const res = await d1Fetch('GET', '/api/rep_tool_usage?limit=2000');
+    const rows = (res && res.ok && Array.isArray(res.results)) ? res.results : [];
+    const filtered = rows.filter(function(r){
+      if (filters.cutoff > 0 && (r.created_at||0) < filters.cutoff) return false;
+      if (filters.rep !== 'all' && r.rep_name !== filters.rep) return false;
+      return true;
+    });
+    if (!filtered.length) {
+      el.innerHTML = '<div style="text-align:center;color:var(--soft);font-size:12px;padding:16px">No pitch tool or quick sale usage logged yet for this period — this fills in as reps use either path.</div>';
+      return;
+    }
+    const byRep = {};
+    filtered.forEach(function(r){
+      const rep = r.rep_name || 'Unknown';
+      if (!byRep[rep]) byRep[rep] = { pitch:0, quick:0 };
+      if (r.tool === 'pitch_tool') byRep[rep].pitch++;
+      else if (r.tool === 'quick_sale') byRep[rep].quick++;
+    });
+    const table = Object.entries(byRep).sort(function(a,b){ return (b[1].pitch+b[1].quick)-(a[1].pitch+a[1].quick); }).map(function(e){
+      const rep = e[0], d = e[1];
+      const total = d.pitch + d.quick;
+      const quickShare = total ? (d.quick / total * 100) : 0;
+      // 90%+ of the way to a Quick Sale default is the flag Ted's after --
+      // a handful of quick sales is normal and expected, leaning on it as
+      // the standard path is what this surfaces.
+      const heavy = total >= 5 && quickShare >= 50;
+      return '<tr' + (heavy ? ' style="background:#FEF2F2"' : '') + '>' +
+        '<td><strong>' + rep + '</strong></td>' +
+        '<td>' + d.pitch + '</td>' +
+        '<td>' + d.quick + '</td>' +
+        '<td>' + rptBadge(quickShare.toFixed(0) + '%', heavy ? 'red' : quickShare >= 30 ? 'amber' : 'green') + '</td>' +
+      '</tr>';
+    }).join('');
+    el.innerHTML = '<table class="rpt-table">' +
+      '<thead><tr><th>Rep</th><th>Pitch Tool Starts</th><th>Quick Sales</th><th>Quick Sale Share</th></tr></thead>' +
+      '<tbody>' + table + '</tbody></table>';
+  } catch (e) {
+    el.innerHTML = '<div style="text-align:center;color:var(--soft);font-size:12px;padding:16px">Couldn\'t load usage data.</div>';
+  }
 }
 
 
@@ -13905,6 +13960,7 @@ function rptRender() {
       else if (_rptCurrentCat === 'custom')     html = rptBuildCustom(filters);
       out.innerHTML = html;
       if (_rptCurrentCat === 'custom') { rptBuildCustomColumns(); }
+      if (_rptCurrentCat === 'intel')  { rptRenderToolUsage(filters); }
       // Scroll to top of reports panel
       const panel = document.getElementById('mgrPanel-reports');
       if (panel) panel.scrollTop = 0;

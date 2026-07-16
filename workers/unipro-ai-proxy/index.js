@@ -48,6 +48,12 @@ const ALLOWED_TABLES = new Set([
   // no access to localStorage at all, so this closes the gap that made
   // the digest fall back to defaults instead of each rep's real targets.
   'rep_targets',
+  // Pitch Tool vs Quick Sale usage tracking, added 2026-07-16 per Ted --
+  // logs a lightweight event each time a rep launches either path, so
+  // the Manager Dashboard can show whether someone's leaning on Quick
+  // Sale as a full-time shortcut instead of presenting the full
+  // cross-sell pitch.
+  'rep_tool_usage',
   // Division GM Dashboards, added 2026-07-12 - manual monthly P&L
   // actuals entry for divisions without a live NetSuite/Adagio feed yet.
   'division_actuals',

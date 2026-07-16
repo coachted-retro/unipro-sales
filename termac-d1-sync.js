@@ -54,12 +54,17 @@
     'accounts_payable', 'expense_reports', 'customer_orders', 'reorder_requests',
     'warehouse_alerts', 'debriefs', 'rcp_calls'];
 
-  async function d1Fetch(method, path, body) {
+  async function d1Fetch(method, path, body, opts2) {
     try {
       var opts = {
         method: method,
         headers: { 'Content-Type': 'application/json', 'X-API-Secret': D1_API_SECRET },
       };
+      // keepalive lets this request actually finish even when the tab
+      // navigates away immediately after firing it (e.g. usage-logging
+      // beacons sent from an <a> click that also leaves the page) --
+      // without it, the browser can silently cancel the in-flight fetch.
+      if (opts2 && opts2.keepalive) opts.keepalive = true;
       if (body) opts.body = JSON.stringify(body);
       var res = await fetch(D1_API_URL + path.replace('/api/', '/db/'), opts);
       return await res.json();
