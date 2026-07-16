@@ -179,24 +179,26 @@ async function stGet(env, accessToken, path, params) {
 
 async function getProgress(env) {
   const row = await env.DB.prepare(
-    `SELECT current_page, offset_in_page, total_synced, total_updated, total_asset_errors, total_location_errors, completed_at FROM servicetrade_sync_progress WHERE id = ?`
+    `SELECT current_page, offset_in_page, total_synced, total_updated, total_asset_errors, total_location_errors, completed_at, last_error, last_error_at FROM servicetrade_sync_progress WHERE id = ?`
   ).bind(PROGRESS_ROW_ID).first();
   if (row) return row;
-  return { current_page: 1, offset_in_page: 0, total_synced: 0, total_updated: 0, total_asset_errors: 0, total_location_errors: 0, completed_at: null };
+  return { current_page: 1, offset_in_page: 0, total_synced: 0, total_updated: 0, total_asset_errors: 0, total_location_errors: 0, completed_at: null, last_error: null, last_error_at: null };
 }
 
 async function saveProgress(env, p) {
   const now = Date.now();
   await env.DB.prepare(
-    `INSERT INTO servicetrade_sync_progress (id, current_page, offset_in_page, total_synced, total_updated, total_asset_errors, total_location_errors, last_run_at, completed_at)
-     VALUES (?,?,?,?,?,?,?,?,?)
+    `INSERT INTO servicetrade_sync_progress (id, current_page, offset_in_page, total_synced, total_updated, total_asset_errors, total_location_errors, last_run_at, completed_at, last_error, last_error_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(id) DO UPDATE SET current_page=excluded.current_page, offset_in_page=excluded.offset_in_page,
        total_synced=excluded.total_synced, total_updated=excluded.total_updated,
        total_asset_errors=excluded.total_asset_errors, total_location_errors=excluded.total_location_errors,
-       last_run_at=excluded.last_run_at, completed_at=excluded.completed_at`
+       last_run_at=excluded.last_run_at, completed_at=excluded.completed_at,
+       last_error=excluded.last_error, last_error_at=excluded.last_error_at`
   ).bind(
     PROGRESS_ROW_ID, p.current_page, p.offset_in_page, p.total_synced, p.total_updated,
-    p.total_asset_errors, p.total_location_errors, now, p.completed_at || null
+    p.total_asset_errors, p.total_location_errors, now, p.completed_at || null,
+    p.last_error || null, p.last_error ? now : null
   ).run();
 }
 
@@ -465,6 +467,33 @@ export default {
         return Response.json({ ok: false, error: e.message }, { status: 500 });
       }
     }
+    // Runs several batches back to back in one call, same as the nightly
+    // cron does, but on demand -- added 2026-07-16 per Ted, so this can
+    // be kicked off right now from a browser instead of waiting for
+    // tonight's 1am ET slot. ?batches=N controls how many (default 20,
+    // capped at 100 -- same ceiling as the cron itself -- to stay inside
+    // the 300,000ms CPU limit set in wrangler.toml).
+    if (url.pathname === '/sync-many' && request.method === 'POST') {
+      const requested = parseInt(url.searchParams.get('batches') || '20', 10);
+      const batches = Math.max(1, Math.min(100, isNaN(requested) ? 20 : requested));
+      const runLog = { batchesRun: 0, done: false };
+      try {
+        for (let i = 0; i < batches; i++) {
+          const result = await runOneBatch(env);
+          runLog.batchesRun++;
+          runLog.progress = result.progress;
+          if (result.done) { runLog.done = true; break; }
+        }
+        return Response.json({ ok: true, ...runLog, message: runLog.done ? 'Sync fully complete.' : `Ran ${runLog.batchesRun} batch(es). Call /sync-many again to keep going, or wait for tonight's cron to resume automatically.` });
+      } catch (e) {
+        try {
+          const progress = await getProgress(env);
+          progress.last_error = String(e && e.message || e);
+          await saveProgress(env, progress);
+        } catch (e2) { /* best effort */ }
+        return Response.json({ ok: false, error: e.message, ...runLog }, { status: 500 });
+      }
+    }
     if (url.pathname === '/sync-status') {
       const progress = await getProgress(env);
       return Response.json({ ok: true, progress });
@@ -583,8 +612,12 @@ export default {
   // Nightly cron: chains a few batches together so real progress happens
   // on its own without Ted needing to trigger every batch by hand. Each
   // batch is still fully bounded and independent -- if one throws, the
-  // loop just stops for the night and picks back up tomorrow from the
-  // saved cursor, nothing is lost or re-done.
+  // loop stops for the night and picks back up tomorrow from the saved
+  // cursor. 2026-07-16 fix per Ted: this used to swallow the error
+  // completely, which is why a stalled sync gave zero indication of why
+  // -- now the error message and timestamp get written to
+  // servicetrade_sync_progress.last_error / last_error_at so /sync-status
+  // shows it immediately.
   async scheduled(event, env) {
     try {
       for (let i = 0; i < CRON_BATCHES_PER_RUN; i++) {
@@ -592,8 +625,15 @@ export default {
         if (result.done) break;
       }
     } catch (e) {
-      // Swallow -- a failed scheduled run shouldn't crash the cron, next
-      // night picks up from the last saved cursor.
+      try {
+        const progress = await getProgress(env);
+        progress.last_error = String(e && e.message || e);
+        await saveProgress(env, progress);
+      } catch (e2) {
+        // If even this fails, there's nothing more we can do from inside
+        // the cron -- but the original error is at least in whatever
+        // Cloudflare's own invocation logs captured.
+      }
     }
   },
 };
