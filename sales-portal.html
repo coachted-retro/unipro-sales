@@ -3905,7 +3905,17 @@ function spOpenDetail(r, tab) {
   // and the action buttons that used to be scattered in a separate side
   // rail. No hunting across panels for what you're standing there to do.
   const isAccount = tab === 'accounts';
-  const isContact = tab === 'contacts';
+  // 2026-07-16 FIX: a record moved to "contacted" stage doesn't get
+  // physically relocated from the `leads` storage pool to a separate
+  // `contacts` one -- spViewRecord's pool search checks 'leads' first
+  // and stops at the first match, so a genuine contact still sitting in
+  // the leads table opens with tab='leads', not 'contacts'. Checking
+  // only `tab === 'contacts'` meant the entire Opportunities panel and
+  // Create Opportunity button silently never rendered for exactly the
+  // most common case: a lead a rep just moved to contacted. Now checks
+  // the record's actual normalized stage as well, regardless of which
+  // pool it was found in.
+  const isContact = tab === 'contacts' || (tab === 'leads' && spNormalizeStage(r.lifecycleStage) === 'contacted');
   const apptDefaultMode = isAccount ? 'site_visit' : 'appointment';
 
   // Opportunities tied to this record — real rows from the `opportunities`
@@ -4470,8 +4480,17 @@ function spOpenOpportunityModal(parentType, parentId, parentName) {
   // Default rep: whoever's already assigned to the parent record, else
   // the current logged-in rep. Never left blank — an opportunity with
   // no owner is invisible to SLA and commission reporting.
-  var parentPool = parentType === 'account' ? 'accounts' : 'contacts';
-  var parentRec = (crmLoad(parentPool) || []).find(function(x){ return x.id === parentId; });
+  // 2026-07-16 FIX: same root cause as the isContact fix above — a
+  // contact-stage record may still physically live in the `leads` pool,
+  // so search both when parentType is 'contact' instead of assuming
+  // 'contacts' specifically.
+  var parentRec = null;
+  if (parentType === 'account') {
+    parentRec = (crmLoad('accounts') || []).find(function(x){ return x.id === parentId; });
+  } else {
+    parentRec = (crmLoad('contacts') || []).find(function(x){ return x.id === parentId; })
+      || (crmLoad('leads') || []).find(function(x){ return x.id === parentId; });
+  }
   var defaultRep = (parentRec && parentRec.assignedRep) || _spRep.name;
 
   var divOpts = divisions.map(function(d){ return '<option value="' + escH(d) + '">' + escH(d) + '</option>'; }).join('');
@@ -6162,8 +6181,35 @@ function spSetStage(id, tab, newStage, selectEl) {
   r.updated = Date.now();
   r.activityLog = r.activityLog || [];
   r.activityLog.push({ ts:Date.now(), type:'stage', icon:'🔄', title:`Stage: ${oldStage} → ${newStage}`, who:_spRep.name });
-  data[idx] = r;
-  crmSave(pool, data);
+
+  // 2026-07-16 per Ted, stated directly and repeatedly: once a lead
+  // becomes a contact, it is no longer a lead -- it comes OUT of the
+  // leads bucket and stays a contact from then on. Same principle one
+  // stage further: once a contact actually sells and becomes an
+  // account, it shouldn't keep lingering in leads or contacts either.
+  // This used to just flip lifecycleStage in place and leave the record
+  // sitting in its original pool forever, which silently broke every
+  // isContact/isAccount check downstream (see the Opportunities panel
+  // fix earlier tonight -- that was a workaround for this, not the real
+  // fix). Real migrations now: each happens exactly once, the moment a
+  // record first reaches that stage. Anything already disqualified or
+  // otherwise not migrating just saves in place as before.
+  if (pool === 'leads' && newStage === 'contacted') {
+    data.splice(idx, 1);
+    crmSave('leads', data);
+    const contactsArr = crmLoad('contacts') || [];
+    if (!contactsArr.find(c => c.id === r.id)) contactsArr.push(r);
+    crmSave('contacts', contactsArr);
+  } else if ((pool === 'leads' || pool === 'contacts') && newStage === 'accepted') {
+    data.splice(idx, 1);
+    crmSave(pool, data);
+    // the accounts row itself was already created/pushed above with its
+    // own lifecycleStage of 'onboarding' -- nothing further to save here,
+    // this just finishes removing the source record from its old pool.
+  } else {
+    data[idx] = r;
+    crmSave(pool, data);
+  }
 
   // ── UPSELL TRACKING: credit rep for closing cross-sell gaps ────────────
   spTrackUpsellAction(r, oldStage, newStage);
