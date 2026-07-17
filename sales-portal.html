@@ -3875,10 +3875,195 @@ function spRenderWeekPlanBody() {
         return '<div style="border:1px solid var(--line);border-radius:9px;padding:10px;min-height:200px">'
           + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;color:var(--ink);margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--line)">' + dayLabel + '</div>'
           + (blocks || '<div style="font-size:11px;color:var(--soft);text-align:center;padding:16px 0">No time blocks painted for this day yet \u2014 set them in My Schedule</div>')
-          + '<button onclick="spOpenApptModal(null,null,\'appointment\',\'' + dateStr + '\')" style="width:100%;background:#1B5FA8;border:none;border-radius:6px;padding:8px;font-size:11px;font-weight:800;color:#fff;cursor:pointer;text-transform:uppercase;letter-spacing:.04em;margin-top:6px">+ Add Stop</button>'
-        + '</div>';
+          + '<button onclick="spOpenApptModal(null,null,\'appointment\',\'' + dateStr + '\')" style="width:100%;background:#1B5FA8;border:none;border-radius:6px;padding:8px;font-size:11px;font-weight:800;color:#fff;cursor:pointer;text-transform:uppercase;letter-spacing:.04em;margin-top:6px">+ Add Stop</button>'          + '<button onclick="spPlanDayWithAI(' + JSON.stringify(dateStr) + ',' + JSON.stringify(dayLabel) + ')" id="planDayBtn_' + dateStr + '" style="width:100%;background:linear-gradient(135deg,#6C3EC9,#1B5FA8);border:none;border-radius:6px;padding:8px;font-size:11px;font-weight:800;color:#fff;cursor:pointer;text-transform:uppercase;letter-spacing:.04em;margin-top:5px">✨ Plan This Day with AI</button>'          + '<div id="planDayResults_' + dateStr + '"></div>'        + '</div>';
       }).join('')
     + '</div>';
+}
+
+// ══════════════════════════════════════════════════════════════
+//  PLAN THIS DAY WITH AI
+//  Three-layer suggestion engine per day card in Plan My Week:
+//  Layer 1: Hot pipeline items (leads + opportunities in D1 already assigned to this rep)
+//  Layer 2: AI-surfaced cold targets (nearby businesses of types Termac serves,
+//            NOT already in the pipeline) -- uses Claude API with web search enabled
+//  Results render as accept/skip cards inside the day card. Accepted stops
+//  commit as real appointments via spWeekPlanCommitSuggestion.
+// ══════════════════════════════════════════════════════════════
+
+async function spPlanDayWithAI(dateStr, dayLabel) {
+  var btn = document.getElementById('planDayBtn_' + dateStr);
+  var resultsEl = document.getElementById('planDayResults_' + dateStr);
+  if (!btn || !resultsEl) return;
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Planning...';
+  resultsEl.innerHTML = '';
+
+  var repName = _spRep ? _spRep.name : '';
+
+  // -- Layer 1: Hot pipeline items from D1 (assigned to this rep, not already booked today) --
+  var bookedToday = (crmLoad('appointments') || [])
+    .filter(function(a) { return a.date === dateStr && a.createdBy === repName; })
+    .map(function(a) { return a.recordId; })
+    .filter(Boolean);
+  var bookedSet = new Set(bookedToday);
+
+  var hotPipeline = [];
+  (crmLoad('leads') || []).filter(function(r) {
+    var isRep = r.assignedRep === repName || r.ownedBy === repName;
+    return isRep && !bookedSet.has(r.id) && (r.score >= 7 || r.status === 'hot' || r.lifecycleStage === 'opportunity');
+  }).slice(0, 5).forEach(function(r) {
+    hotPipeline.push({
+      id: r.id, tab: 'leads',
+      title: r.business || r.name || 'Lead',
+      address: r.address || '',
+      reason: r.lifecycleStage === 'opportunity' ? 'Open opportunity' : (r.status === 'hot' ? 'Hot lead' : 'High score lead'),
+      layer: 'pipeline',
+      score: r.score || 0
+    });
+  });
+  (crmLoad('accounts') || []).filter(function(a) {
+    var isRep = a.assignedRep === repName || a.ownedBy === repName;
+    var cutoff = Date.now() - (spCheckinDaysFor(a) * 86400000);
+    return isRep && a.status === 'active' && !bookedSet.has(a.id) && (!a.lastCheckin || a.lastCheckin < cutoff);
+  }).slice(0, 3).forEach(function(a) {
+    hotPipeline.push({
+      id: a.id, tab: 'accounts',
+      title: a.name || a.business || 'Account',
+      address: a.address || '',
+      reason: 'Check-in overdue',
+      layer: 'pipeline',
+      score: 5
+    });
+  });
+
+  // Build geographic anchor from confirmed stops OR the rep's first hot pipeline address
+  var geoAnchor = '';
+  var allStops = (crmLoad('appointments') || []).filter(function(a) { return a.date === dateStr && a.createdBy === repName && a.address; });
+  if (allStops.length) {
+    // Extract county/city from first confirmed stop address
+    var firstAddr = allStops[0].address;
+    var parts = firstAddr.split(',');
+    geoAnchor = parts.slice(-3).join(',').trim();
+  } else if (hotPipeline.length && hotPipeline[0].address) {
+    var parts2 = hotPipeline[0].address.split(',');
+    geoAnchor = parts2.slice(-3).join(',').trim();
+  }
+  if (!geoAnchor) geoAnchor = 'Eastern Pennsylvania';
+
+  // -- Layer 2: Claude API call to surface cold targets --
+  var confirmedStopList = allStops.map(function(a) { return a.title + (a.address ? ' (' + a.address + ')' : ''); }).join(', ') || 'none confirmed yet';
+  var pipelineList = hotPipeline.slice(0,4).map(function(r) { return r.title + (r.address ? ' — ' + r.address : ''); }).join('; ') || 'none';
+
+  var aiPrompt = 'You are a field sales assistant for Termac, a commercial kitchen services and fire protection company operating in Eastern PA, NJ, DE, MD, and DC. ' +
+    'The rep is ' + repName + ' and they are planning their day for ' + dayLabel + ' (' + dateStr + '). ' +
+    'Their confirmed stops that day: ' + confirmedStopList + '. ' +
+    'Their hot pipeline targets nearby: ' + pipelineList + '. ' +
+    'Geographic anchor for this day: ' + geoAnchor + '. ' +
+    'Your job: use web search to find 3 to 5 real businesses in the ' + geoAnchor + ' area that Termac does NOT currently serve but should — restaurants, hotels, hospitals, nursing homes, commercial kitchens, food manufacturers, institutional cafeterias, or venues with commercial cooking equipment. ' +
+    'These must be real businesses with real addresses. Do not suggest anything already in their pipeline list above. ' +
+    'Return ONLY a JSON array, no other text, like this: ' +
+    '[{"name":"Business Name","address":"Full address","type":"Restaurant/Hotel/etc","why":"One sentence on why this is a good Termac target"}]. ' +
+    'Limit to 5 results. Real businesses only, verifiable addresses.';
+
+  var coldTargets = [];
+  try {
+    var apiResp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 1000,
+        tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+        messages: [{ role: 'user', content: aiPrompt }]
+      })
+    });
+    var apiData = await apiResp.json();
+    // Extract the final text block (after tool use)
+    var textBlocks = (apiData.content || []).filter(function(b) { return b.type === 'text'; });
+    var raw = textBlocks.map(function(b) { return b.text || ''; }).join('');
+    // Strip markdown fences if present
+    var jsonStr = raw.replace(/```json|```/g, '').trim();
+    // Find the JSON array
+    var arrStart = jsonStr.indexOf('[');
+    var arrEnd = jsonStr.lastIndexOf(']');
+    if (arrStart >= 0 && arrEnd > arrStart) {
+      jsonStr = jsonStr.slice(arrStart, arrEnd + 1);
+      coldTargets = JSON.parse(jsonStr);
+    }
+  } catch(e) {
+    coldTargets = [];
+  }
+
+  btn.disabled = false;
+  btn.textContent = '✨ Plan This Day with AI';
+
+  // -- Render the results --
+  if (!hotPipeline.length && !coldTargets.length) {
+    resultsEl.innerHTML = '<div style="font-size:11px;color:var(--soft);text-align:center;padding:10px 0">No suggestions found for this day.</div>';
+    return;
+  }
+
+  var html = '<div style="margin-top:10px;border-top:1px solid var(--line);padding-top:10px">';
+  html += '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--soft);margin-bottom:7px">AI Suggested Stops</div>';
+
+  // Pipeline layer
+  if (hotPipeline.length) {
+    html += '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#1B5FA8;margin-bottom:5px">Pipeline</div>';
+    hotPipeline.forEach(function(item) {
+      var safeId = escH(item.id||''); var safeTab = escH(item.tab||''); var safeDate = escH(dateStr);
+      html += '<div style="background:#EFF6FF;border-left:3px solid #1B5FA8;border-radius:6px;padding:7px 9px;margin-bottom:5px;font-size:11px">' +
+        '<div style="font-weight:700;color:var(--ink)">' + escH(item.title) + '</div>' +
+        (item.address ? '<div style="font-size:10px;color:var(--soft)">\uD83D\uDCCD ' + escH(item.address) + '</div>' : '') +
+        '<div style="font-size:10px;color:#1B5FA8;margin:3px 0">' + escH(item.reason) + '</div>' +
+        '<button data-id="' + safeId + '" data-tab="' + safeTab + '" data-date="' + safeDate + '" data-title="' + escH(item.title) + '" data-addr="' + escH(item.address||'') + '" onclick="spPipelineSuggAdd(this)" style="background:#1B5FA8;color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:10px;font-weight:700;cursor:pointer;text-transform:uppercase;letter-spacing:.04em;margin-top:4px">+ Add</button>' +
+      '</div>';
+    });
+  }
+
+  // Cold targets layer
+  if (coldTargets.length) {
+    html += '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#6C3EC9;margin:8px 0 5px">AI-Found Targets Nearby</div>';
+    coldTargets.forEach(function(t) {
+      if (!t.name) return;
+      html += '<div style="background:#F5F0FF;border-left:3px solid #6C3EC9;border-radius:6px;padding:7px 9px;margin-bottom:5px;font-size:11px">' +
+        '<div style="font-weight:700;color:var(--ink)">' + escH(t.name) + '</div>' +
+        (t.address ? '<div style="font-size:10px;color:var(--soft)">\uD83D\uDCCD ' + escH(t.address) + '</div>' : '') +
+        '<div style="font-size:10px;color:var(--soft);font-style:italic;margin:2px 0">' + escH(t.type || '') + '</div>' +
+        '<div style="font-size:10px;color:#6C3EC9;margin-bottom:4px">' + escH(t.why || '') + '</div>' +
+        '<button data-date="' + escH(dateStr) + '" data-name="' + escH(t.name) + '" data-addr="' + escH(t.address || '') + '" onclick="spColdTargetAdd(this)" style="background:#6C3EC9;color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:10px;font-weight:700;cursor:pointer;text-transform:uppercase;letter-spacing:.04em">+ Add as Stop</button>' +
+      '</div>';
+    });
+  }
+
+  html += '</div>';
+  resultsEl.innerHTML = html;
+}
+
+// Commit an AI-surfaced cold target (not yet in D1) as a new appointment stop
+async function spAddColdTargetAsStop(dateStr, bizName, address) {
+  var appts = crmLoad('appointments') || [];
+  appts.push({
+    id: 'ai_' + Date.now(),
+    recordId: null, tab: 'leads', type: 'site_visit',
+    date: dateStr, time: '09:00', timeEnd: '', address: address,
+    notes: 'AI-suggested cold target — add to pipeline after visit',
+    title: bizName, allDay: false, recurring: false, recurFreq: null,
+    isFlexStop: true, isAiTarget: true,
+    createdAt: Date.now(), createdBy: _spRep ? _spRep.name : '',
+  });
+  crmSave('appointments', appts);
+  spToast('✅ ' + bizName + ' added to your day');
+  spRenderWeekPlanBody();
+}
+
+function spPipelineSuggAdd(btn) {
+  var id = btn.dataset.id, tab = btn.dataset.tab, title = btn.dataset.title, addr = btn.dataset.addr, date = btn.dataset.date;
+  spWeekPlanCommitSuggestion(id, tab, title, addr, date, 9);
+}
+
+function spColdTargetAdd(btn) {
+  spAddColdTargetAsStop(btn.dataset.date, btn.dataset.name, btn.dataset.addr);
 }
 
 function spViewApptDetail(apptId) {
