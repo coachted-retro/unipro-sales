@@ -2173,10 +2173,26 @@ function spRenderIdlePanel() {
 
   // Today's agenda account ids, so hot leads already scheduled don't duplicate
   const agendaAcctIds = new Set(spBuildAgenda().map(s => s.accountId).filter(Boolean));
+  const todayStr = new Date().toISOString().slice(0,10);
+  const dayPlanned = spIsDayPlanned(todayStr);
   const hotLeads = myLeads
     .filter(r => !agendaAcctIds.has(r.id) && ((r.score||0) >= 7 || r.status === 'hot'))
     .sort((a,b) => (b.score||0) - (a.score||0) || (b.updated||0) - (a.updated||0))
     .slice(0, 3);
+
+  // 2026-07-17 per Ted: naming specific leads to call, unprompted, every
+  // time the page loads is the same "locked into a round robin" problem
+  // as the old auto-filled agenda -- reps should ask for suggestions,
+  // not have them pushed. Only shows real names once Plan My Day has
+  // been tapped for today; otherwise just a plain nudge toward it.
+  const nextBestLeadsHtml = !dayPlanned
+    ? '<div style="font-size:11px;color:var(--soft);padding:8px 0">Tap Plan My Day above for suggested leads.</div>'
+    : (hotLeads.length ? hotLeads.map(r => `
+      <div onclick="spViewRecord('${r.id}','leads')" style="background:#fff;border:1px solid var(--line);border-radius:8px;padding:9px 10px;margin-bottom:8px;cursor:pointer">
+        <div style="font-size:12px;font-weight:700;color:var(--ink)">${escH(r.business||r.name||'Lead')}</div>
+        <div style="font-size:10px;color:var(--soft);margin-top:2px">${r.score ? '⭐ '+r.score+'/10' : ''}${r.address ? ' · '+escH(r.address.split(',')[0]) : ''}</div>
+      </div>`).join('')
+      : '<div style="font-size:11px;color:var(--soft);padding:8px 0">No hot leads waiting, all caught up.</div>');
 
   return `
   <div style="padding:14px 14px 0">
@@ -2184,12 +2200,7 @@ function spRenderIdlePanel() {
     <div style="display:flex;gap:2px;margin-bottom:4px">${weekBars}</div>
     <div style="font-size:10px;color:var(--soft);margin-bottom:18px">${dailyTouchTarget}/day target · touches logged</div>
     <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--soft);margin-bottom:10px">🔥 Next Best Leads</div>
-    ${hotLeads.length ? hotLeads.map(r => `
-      <div onclick="spViewRecord('${r.id}','leads')" style="background:#fff;border:1px solid var(--line);border-radius:8px;padding:9px 10px;margin-bottom:8px;cursor:pointer">
-        <div style="font-size:12px;font-weight:700;color:var(--ink)">${escH(r.business||r.name||'Lead')}</div>
-        <div style="font-size:10px;color:var(--soft);margin-top:2px">${r.score ? '⭐ '+r.score+'/10' : ''}${r.address ? ' · '+escH(r.address.split(',')[0]) : ''}</div>
-      </div>`).join('')
-      : '<div style="font-size:11px;color:var(--soft);padding:8px 0">No hot leads waiting, all caught up.</div>'}
+    ${nextBestLeadsHtml}
   </div>`;
 }
 
@@ -2289,11 +2300,22 @@ function spRenderPaceInsight() {
   }
   if (!hotLeads.length) return '';
 
-  const suggestion = hotLeads.slice(0, Math.min(2, hotLeads.length));
   const gapParts = [];
   if (callGap > 0) gapParts.push(callGap + ' call' + (callGap===1?'':'s'));
   if (visitGap > 0) gapParts.push(visitGap + ' visit' + (visitGap===1?'':'s'));
 
+  // 2026-07-17 per Ted: same opt-in rule as the agenda and Next Best
+  // Leads -- the pace gap itself (a status fact) is fine to surface
+  // automatically, but naming specific businesses to go work is a
+  // suggestion, and those only show once Plan My Day's been tapped.
+  const todayStr = new Date().toISOString().slice(0,10);
+  if (!spIsDayPlanned(todayStr)) {
+    return `<div class="sp-card" style="margin-bottom:14px;border-left:4px solid var(--orange)">
+      <div style="font-size:13px;color:var(--ink)">\ud83d\udca1 <b>${gapParts.join(' and ')} would get you to today's pace.</b> Tap Plan My Day above for suggested stops, or work your own list.</div>
+    </div>`;
+  }
+
+  const suggestion = hotLeads.slice(0, Math.min(2, hotLeads.length));
   return `<div class="sp-card" style="margin-bottom:14px;border-left:4px solid var(--orange)">
     <div style="font-size:13px;color:var(--ink);margin-bottom:8px">\ud83d\udca1 <b>${gapParts.join(' and ')} would get you to today's pace</b> \u2014 these are sitting ready:</div>
     ${suggestion.map(r => `<div onclick="spViewRecord('${r.id}','leads')" style="display:flex;align-items:center;justify-content:space-between;padding:8px 10px;background:var(--bg);border-radius:7px;margin-bottom:6px;cursor:pointer">
