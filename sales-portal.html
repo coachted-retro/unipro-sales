@@ -12923,26 +12923,32 @@ function svStep6(body, footer) {
 
 <script>
 /* ============================================================
-   Termac One — AllPro Project Handoff
-   When a rep sells a new AllPro build (hood, table, custom fab),
-   capture the job, estimated price, and blueprint scans, file it as
-   a Design Studio project linked to the account, and route it to the
-   AllPro manager (Dan Soleau) by email and into his review queue.
+   Termac One — AllPro Job Intake
+   2026-07-17 per Ted: reps in the field capture what the customer wants,
+   photos, and measurements only -- they do NOT price AllPro work. Dan and
+   Ted both quote it properly once it's in. Rebuilt from the old "Sell
+   AllPro Build" tool, which asked the rep for an estimated price (wrong)
+   and only routed to Dan (also wrong, Ted needs to see every one of
+   these too) and saved to a private localStorage queue only Dan's own
+   browser could ever see (a dead end, same as every other localStorage-
+   only spot fixed elsewhere this session). Now creates a real Location/
+   Contact/Opportunity/allpro_projects chain -- same shapes as everywhere
+   else -- landing on the actual AllPro board in Intake with no dollar
+   value attached, and emails both Dan and Ted so neither has to
+   remember to go looking for it.
    ============================================================ */
 (function(){
   'use strict';
   var R2_UPLOAD='https://termac-photo-upload.termac-one.workers.dev/';
-  var ALLPRO_MGR='dsoleau@termac.com';
-  var DESIGN_KEY='termac_stainless_projects';
+  var ALLPRO_NOTIFY=['dsoleau@termac.com','tscholl@termac.com'];
   var JOB_TYPES=['Hood System','Stainless Table / Counter','Custom Fabrication','Exhaust / Make-Up Air','Other Build'];
   function cur(){ try{ return window._siCurrentRecord||null; }catch(e){ return null; } }
+  function curTab(){ try{ return window._siCurrentTab||null; }catch(e){ return null; } }
+  function curUser(){ return localStorage.getItem('termac_current_user')||'Sales Rep'; }
   function recName(r){ return (r&&(r.business||r.name))||''; }
   function recId(r){ return (r&&r.id)||''; }
   function recAddr(r){ return (r&&(r.address||r.siteAddress))||''; }
   function stripB64(d){ return (d||'').replace(/^data:[^;]+;base64,/,''); }
-  function lsGet(k){ try{ return JSON.parse(localStorage.getItem(k)||'[]'); }catch(e){ return []; } }
-  function lsSet(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){} }
-  function curUser(){ return localStorage.getItem('termac_current_user')||'Sales Rep'; }
   function el(t,s,x){ var e=document.createElement(t); if(s) Object.assign(e.style,s); if(x!=null) e.textContent=x; return e; }
   function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
   async function uploadScan(accountId, jobId, n, base64){
@@ -12951,26 +12957,28 @@ function svStep6(body, footer) {
     return null;
   }
   function openAllProHandoff(passed){
-    var r=passed||cur(); var pages=[];
+    var r=passed||cur(); var tab=curTab(); var pages=[];
     var ov=el('div',{position:'fixed',inset:'0',background:'rgba(0,0,0,.55)',zIndex:'100002',display:'flex',alignItems:'center',justifyContent:'center',padding:'14px'});
     var card=el('div',{background:'#fff',borderRadius:'14px',width:'min(460px,96vw)',maxHeight:'92vh',overflow:'auto',padding:'18px',fontFamily:'-apple-system,Segoe UI,Roboto,sans-serif'});
     card.innerHTML=
-      '<div style="font-weight:800;font-size:18px;margin-bottom:2px">Sell AllPro Build</div>'+
-      '<div style="font-size:12px;color:#6B7280;margin-bottom:14px">Routes to Dan Soleau, AllPro manager, with the scans and price.</div>'+
+      '<div style="font-weight:800;font-size:18px;margin-bottom:2px">AllPro Job Intake</div>'+
+      '<div style="font-size:12px;color:#6B7280;margin-bottom:14px">Capture what the customer wants and photos/measurements. Dan and Ted quote it from here -- pricing is not part of this step.</div>'+
       '<label style="font-size:11px;font-weight:700;color:#6B7280">Account</label>'+
-      (r?'<div style="font-weight:700;margin:3px 0 12px">'+esc(recName(r))+(recAddr(r)?' · '+esc(recAddr(r)):'')+'</div>':'<input id="ah_acct" placeholder="Client name" style="width:100%;padding:9px;border:1.5px solid #D7DBE0;border-radius:7px;margin:3px 0 12px">')+
+      (r?'<div style="font-weight:700;margin:3px 0 12px">'+esc(recName(r))+(recAddr(r)?' · '+esc(recAddr(r)):'')+'</div>':'<input id="ah_acct" placeholder="Client / business name" style="width:100%;padding:9px;border:1.5px solid #D7DBE0;border-radius:7px;margin:3px 0 12px">')+
       '<label style="font-size:11px;font-weight:700;color:#6B7280">Job type</label>'+
       '<select id="ah_type" style="width:100%;padding:9px;border:1.5px solid #D7DBE0;border-radius:7px;margin:3px 0 12px">'+JOB_TYPES.map(function(t){return '<option>'+t+'</option>';}).join('')+'</select>'+
-      '<label style="font-size:11px;font-weight:700;color:#6B7280">Scope / what was sold</label>'+
-      '<textarea id="ah_scope" rows="3" placeholder="Describe the build, layout, finishes the customer wants" style="width:100%;padding:9px;border:1.5px solid #D7DBE0;border-radius:7px;margin:3px 0 12px"></textarea>'+
-      '<div style="display:flex;gap:10px"><div style="flex:1"><label style="font-size:11px;font-weight:700;color:#6B7280">Estimated price</label><input id="ah_price" type="number" placeholder="0" style="width:100%;padding:9px;border:1.5px solid #D7DBE0;border-radius:7px;margin:3px 0 12px"></div>'+
-      '<div style="flex:1"><label style="font-size:11px;font-weight:700;color:#6B7280">Dimensions / notes</label><input id="ah_dims" placeholder="L x W x H" style="width:100%;padding:9px;border:1.5px solid #D7DBE0;border-radius:7px;margin:3px 0 12px"></div></div>'+
-      '<label style="font-size:11px;font-weight:700;color:#6B7280">Blueprint scans / photos</label>'+
+      '<label style="font-size:11px;font-weight:700;color:#6B7280">What the customer wants</label>'+
+      '<textarea id="ah_scope" rows="3" placeholder="Describe the build, layout, finishes the customer is asking for" style="width:100%;padding:9px;border:1.5px solid #D7DBE0;border-radius:7px;margin:3px 0 12px"></textarea>'+
+      '<div style="display:flex;gap:10px;align-items:flex-end">'+
+        '<div style="flex:1"><label style="font-size:11px;font-weight:700;color:#6B7280">Price</label><div style="padding:9px 0;font-size:13px;color:#6B7280;font-style:italic">Determined on scope of work</div></div>'+
+        '<div style="flex:1"><label style="font-size:11px;font-weight:700;color:#6B7280">Measurements (optional)</label><input id="ah_dims" placeholder="L x W x H, if you have them" style="width:100%;padding:9px;border:1.5px solid #D7DBE0;border-radius:7px;margin:3px 0 12px"></div>'+
+      '</div>'+
+      '<label style="font-size:11px;font-weight:700;color:#6B7280">Photos</label>'+
       '<div id="ah_thumbs" style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0"></div>'+
-      '<label style="display:inline-block;background:#EEF0F2;border:1.5px dashed #B7BDC6;border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer;margin-bottom:12px">\uD83D\uDCF7 Add scan / photo<input id="ah_file" type="file" accept="image/*" capture="environment" multiple style="display:none"></label>'+
+      '<label style="display:inline-block;background:#EEF0F2;border:1.5px dashed #B7BDC6;border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer;margin-bottom:12px">\uD83D\uDCF7 Add photo<input id="ah_file" type="file" accept="image/*" capture="environment" multiple style="display:none"></label>'+
       '<div id="ah_status" style="font-size:12px;color:#6B7280;margin-bottom:10px"></div>'+
       '<div style="display:flex;gap:8px;justify-content:flex-end"><button id="ah_cancel" style="background:none;border:1.5px solid #D7DBE0;color:#5A616B;border-radius:8px;padding:8px 16px;font-weight:700;cursor:pointer">Cancel</button>'+
-      '<button id="ah_send" style="background:#6B21A8;border:none;color:#fff;border-radius:8px;padding:8px 16px;font-weight:800;cursor:pointer">Send to Dan</button></div>';
+      '<button id="ah_send" style="background:#6B21A8;border:none;color:#fff;border-radius:8px;padding:8px 16px;font-weight:800;cursor:pointer">Submit to Dan &amp; Ted</button></div>';
     ov.appendChild(card); document.body.appendChild(ov);
     function renderThumbs(){ var t=card.querySelector('#ah_thumbs'); t.innerHTML=''; pages.forEach(function(p,i){ var im=el('img',{width:'64px',height:'64px',objectFit:'cover',borderRadius:'7px',border:'1.5px solid #D7DBE0'}); im.src=p.b64; var wrap=el('div',{position:'relative'}); var x=el('button',{position:'absolute',top:'-6px',right:'-6px',background:'#C8102E',color:'#fff',border:'none',borderRadius:'50%',width:'18px',height:'18px',cursor:'pointer',fontSize:'11px'},'\u00d7'); x.onclick=function(){ pages.splice(i,1); renderThumbs(); }; wrap.appendChild(im); wrap.appendChild(x); t.appendChild(wrap); }); }
     card.querySelector('#ah_file').addEventListener('change', function(e){ var files=Array.prototype.slice.call(e.target.files||[]); files.forEach(function(f){ var rd=new FileReader(); rd.onload=function(){ pages.push({b64:rd.result}); renderThumbs(); }; rd.readAsDataURL(f); }); e.target.value=''; });
@@ -12978,27 +12986,63 @@ function svStep6(body, footer) {
     card.querySelector('#ah_send').onclick=async function(){
       var name=r?recName(r):((card.querySelector('#ah_acct')||{}).value||'');
       if(!name){ alert('Add the client or account first.'); return; }
+      var scope=card.querySelector('#ah_scope').value.trim();
+      if(!scope){ alert('Describe what the customer wants first.'); return; }
       var btn=card.querySelector('#ah_send'), st=card.querySelector('#ah_status'); btn.disabled=true; btn.textContent='Sending...';
       var jobId='ap'+Date.now(), urls=[];
-      for(var i=0;i<pages.length;i++){ st.textContent='Uploading scan '+(i+1)+' of '+pages.length+'...'; var u=await uploadScan(recId(r), jobId, i+1, pages[i].b64); if(u) urls.push(u); }
-      var type=card.querySelector('#ah_type').value, scope=card.querySelector('#ah_scope').value, price=Number(card.querySelector('#ah_price').value)||0, dims=card.querySelector('#ah_dims').value;
-      var proj={ id:jobId, client:name, site:recAddr(r), accountId:recId(r), division:'AllPro', pm:'', status:'sold', source:'sales', soldBy:curUser(), jobType:type, estimatedPrice:price, createdAt:Date.now(),
-        spec:{dims:dims,grade:'304',gauge:'14 ga',finish:'#4 Brushed',weld:'TIG continuous',drains:'',backsplash:'',edges:'',hardware:'',nsf:'',notes:scope},
-        layout:{units:'in',pieces:[]}, photos:urls.slice(), scanUrls:urls.slice(), revisions:[], approval:{status:'',client:'',date:'',note:''} };
-      var all=lsGet(DESIGN_KEY); all.unshift(proj); lsSet(DESIGN_KEY,all);
-      var lines=['New AllPro build sold','','Account: '+name]; if(recAddr(r)) lines.push('Site: '+recAddr(r));
-      lines.push('Job type: '+type,'Estimated price: $'+price.toLocaleString('en-US')); if(dims) lines.push('Dimensions: '+dims);
-      lines.push('','Scope:',scope,'');
-      if(urls.length){ lines.push('Blueprint scans / photos:'); urls.forEach(function(u){ lines.push(u); }); lines.push(''); }
-      lines.push('Sold by: '+curUser(),'This is now in the Design Studio review queue.');
-      var body=encodeURIComponent(lines.join('\n')), subj=encodeURIComponent('New AllPro Build Sold: '+name+' - $'+price.toLocaleString('en-US'));
+      for(var i=0;i<pages.length;i++){ st.textContent='Uploading photo '+(i+1)+' of '+pages.length+'...'; var u=await uploadScan(recId(r), jobId, i+1, pages[i].b64); if(u) urls.push(u); }
+      var type=card.querySelector('#ah_type').value, dims=card.querySelector('#ah_dims').value;
+      var now=Date.now();
+
+      // Resolve to the real Location/Account/Contact this intake attaches
+      // to, reusing whatever's already open rather than creating a
+      // duplicate. Falls back to a brand-new bare Location (name only --
+      // this modal doesn't collect a full address) when opened with no
+      // record in context at all, same as AllPro Project Planner's own
+      // New Proposal path.
+      var locationId=null, accountId=null, contactId=null;
+      if (r && tab === 'locations') { locationId=r.id; accountId=r.accountId||null; }
+      else if (r && tab === 'accounts') { accountId=r.id; }
+      else if (r && tab === 'contacts') { contactId=r.id; locationId=r.locationId||null; }
+      else if (!r) {
+        var newLoc={ id:'loc_'+now, name:name, parentCompany:'', address:'', city:'', state:'', zip:'', phone:'', accountId:null, assignedRep:curUser(), source:'AllPro Job Intake', status:'active', createdAt:now, updatedAt:now };
+        var locs=crmLoad('locations')||[]; locs.push(newLoc); crmSave('locations', locs);
+        locationId=newLoc.id;
+      }
+
+      var oppRecord={ id:'opp_'+now, accountId:accountId, contactId:contactId, locationId:locationId,
+        name:name+' \u2014 '+type, division:'AllPro', stage:'opportunity', value:null,
+        assignedRep:curUser(), expectedClose:'', notes:'AllPro field intake -- not yet quoted. '+scope,
+        slaDays:60, serviceType:'per_diem', monthlyValue:null, termMonths:1, resolutionStatus:'open',
+        created:now, updated:now };
+      var opps=crmLoad('opportunities')||[]; opps.push(oppRecord); crmSave('opportunities', opps);
+
+      var apProjects=crmLoad('allpro_projects')||[];
+      var newProject={ id:'APR'+now.toString(36).toUpperCase(), account_id:accountId, opportunity_id:oppRecord.id,
+        location_id:locationId, intake_business_name:name, project_name:name+' \u2014 '+type,
+        project_type: /hood/i.test(type)?'kitchen_hood' : /exhaust|make-up/i.test(type)?'fire_suppression' : /table|fab/i.test(type)?'custom_fabrication':'combined',
+        facility_type:'', build_context:scope+(dims?(' | Measurements: '+dims):''), estimated_value:0,
+        stage:'intake', stage_updated_at:now, cross_sell_triggered:0, crane_required:0,
+        drawing_register_json: JSON.stringify(urls.map(function(u){return {url:u, type:'field_photo', uploadedAt:now};})),
+        created_at:now, updated_at:now };
+      apProjects.push(newProject); crmSave('allpro_projects', apProjects);
+      if (window.TermacD1Sync && typeof window.TermacD1Sync.d1PushBatch === 'function') {
+        window.TermacD1Sync.d1PushBatch('allpro_projects', apProjects).catch(function(){});
+      }
+
+      var lines=['New AllPro job intake -- needs a quote','','Account: '+name]; if(recAddr(r)) lines.push('Site: '+recAddr(r));
+      lines.push('Job type: '+type); if(dims) lines.push('Measurements: '+dims);
+      lines.push('','What the customer wants:',scope,'');
+      if(urls.length){ lines.push('Photos:'); urls.forEach(function(u){ lines.push(u); }); lines.push(''); }
+      lines.push('Submitted by: '+curUser(),'This is now on the AllPro board in Intake, no price attached -- needs to be quoted.');
+      var body=encodeURIComponent(lines.join('\n')), subj=encodeURIComponent('AllPro Job Intake: '+name+' ('+type+') -- needs quote');
       ov.remove();
-      window.open('mailto:'+ALLPRO_MGR+'?subject='+subj+'&body='+body);
+      window.open('mailto:'+ALLPRO_NOTIFY.join(',')+'?subject='+subj+'&body='+body);
     };
   }
   window.openAllProHandoff=openAllProHandoff;
   document.addEventListener('DOMContentLoaded', function(){
-    function inject(){ var col=document.getElementById('spIntelCol'); if(col && !document.getElementById('ahLaunchBtn')){ var b=document.createElement('button'); b.id='ahLaunchBtn'; b.textContent='\uD83D\uDD27 Sell AllPro Build \u2192 Dan'; b.style.cssText='width:100%;background:#6B21A8;color:#fff;border:none;border-radius:8px;padding:9px 12px;font-weight:800;font-size:12px;cursor:pointer;margin-bottom:10px'; b.onclick=function(){ openAllProHandoff(); }; col.insertBefore(b, col.firstChild); } }
+    function inject(){ var col=document.getElementById('spIntelCol'); if(col && !document.getElementById('ahLaunchBtn')){ var b=document.createElement('button'); b.id='ahLaunchBtn'; b.textContent='\uD83D\uDCCB AllPro Job Intake'; b.style.cssText='width:100%;background:#6B21A8;color:#fff;border:none;border-radius:8px;padding:9px 12px;font-weight:800;font-size:12px;cursor:pointer;margin-bottom:10px'; b.onclick=function(){ openAllProHandoff(); }; col.insertBefore(b, col.firstChild); } }
     inject(); setInterval(inject, 3000);
   });
 })();
