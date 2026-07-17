@@ -2,6 +2,27 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<script>
+// 2026-07-17 per Ted: tech-portal-unified.html is the live destination
+// PORTAL_URLS routes techs to after signing in, but it never had a real
+// staff_auth gate -- it only ever read sessionStorage.termacUser, a
+// separate key that termac-os.html sets for its own internal role
+// switching, never set by staff-login.html. A tech signing in through
+// Sign in with Microsoft and landing here got a page with no session
+// data and silently fell back to the demo tech. Same proven pattern as
+// sales-portal.html and termac-os.html: check for a valid session before
+// anything else on the page runs, bounce straight to staff-login.html if
+// there isn't one, and come right back here (via ?dest=) once signed in.
+(function () {
+  var session = null;
+  try { session = JSON.parse(localStorage.getItem('termac_staff_session') || 'null'); } catch (e) {}
+  if (!session || !session.name) {
+    var here = window.location.pathname.split('/').pop() + window.location.search;
+    document.write('<style>body{visibility:hidden!important}</style>');
+    window.location.replace('staff-login.html?dest=' + encodeURIComponent(here));
+  }
+})();
+</script>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#1A1D21">
@@ -150,6 +171,7 @@ input.field:focus,select.field:focus{border-color:var(--div-primary)}
     <span class="tp-tech-name" id="navTechName"></span>
     <button class="tp-nav-btn" onclick="window.open('user-manuals.html?role=tech','_blank')">? Help</button>
     <a href="#" onclick="sessionStorage.setItem('trnReturnUrl','tech-portal-unified.html');window.location.href='employee-portal.html';return false;" style="background:#C8102E;border:1.5px solid #C8102E;border-radius:7px;color:#fff;font-family:Barlow,sans-serif;font-weight:700;font-size:11px;letter-spacing:.10em;text-transform:uppercase;padding:6px 14px;cursor:pointer;white-space:nowrap;text-decoration:none;display:inline-flex;align-items:center;gap:6px;margin-left:8px">🏠 Employee Portal</a>
+    <a href="#" onclick="localStorage.removeItem('termac_staff_session');window.location.href='staff-login.html';return false;" class="tp-nav-btn" style="text-decoration:none">Sign Out</a>
   </div>
 </nav>
 
@@ -581,9 +603,10 @@ document.addEventListener('DOMContentLoaded', function() {
   document.getElementById('formsSubtitle').textContent =
     'Required forms for ' + DIV.name + ' — complete after each job.';
 
-  // Load tech from session
+  // Load tech from the real session (the auth gate in <head> already
+  // guarantees this exists and has a name by the time we get here).
   try {
-    var u = JSON.parse(sessionStorage.getItem('termacUser') || 'null');
+    var u = JSON.parse(localStorage.getItem('termac_staff_session') || 'null');
     if (u) setTech(u);
     else setDemoTech();
   } catch(e) { setDemoTech(); }

@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Signing in - Termac One</title>
+<style>
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0f172a; color: #e2e8f0; height: 100vh;
+    display: flex; align-items: center; justify-content: center; text-align: center;
+  }
+  .box { max-width: 380px; padding: 24px; }
+  .spinner {
+    width: 36px; height: 36px; margin: 0 auto 20px;
+    border: 3px solid rgba(226,232,240,0.25); border-top-color: #38bdf8;
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  h1 { font-size: 17px; font-weight: 600; margin: 0 0 8px; }
+  p { font-size: 14px; color: #94a3b8; margin: 0 0 20px; }
+  a.btn {
+    display: inline-block; padding: 10px 18px; background: #38bdf8; color: #0f172a;
+    text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 14px;
+  }
+  #errBox { display: none; }
+</style>
+</head>
+<body>
+  <div class="box">
+    <div class="spinner" id="spinner"></div>
+    <div id="pendingBox">
+      <h1>Signing you in...</h1>
+      <p>Confirming your Microsoft account with Termac One.</p>
+    </div>
+    <div id="errBox">
+      <h1>Sign-in didn't go through</h1>
+      <p id="errMsg">Something went wrong finishing your Microsoft sign-in.</p>
+      <a class="btn" href="/staff-login.html">Back to sign in</a>
+    </div>
+  </div>
+
+<script>
+var AUTH_API = 'https://termac-staff-auth.termac-one.workers.dev';
+
+function showError(msg) {
+  document.getElementById('spinner').style.display = 'none';
+  document.getElementById('pendingBox').style.display = 'none';
+  document.getElementById('errBox').style.display = 'block';
+  document.getElementById('errMsg').textContent = msg;
+}
+
+// Same session shape and same localStorage key staff-login.html's
+// redirectAfterLogin() uses, so every portal's existing auth gate
+// (checks termac_staff_session) works identically whether someone
+// signed in with a password or with Microsoft.
+function completeLogin(session) {
+  localStorage.setItem('termac_staff_session', JSON.stringify({
+    id: session.id, name: session.name, email: session.email,
+    role: session.role, division: session.division || '', loginAt: Date.now(),
+  }));
+  var dest = session.dest || 'employee-portal.html';
+  var returnTo = sessionStorage.getItem('termac_staff_return_to');
+  if (returnTo) { sessionStorage.removeItem('termac_staff_return_to'); dest = returnTo; }
+  window.location.href = '/' + dest;
+}
+
+(async function run() {
+  var qs = new URLSearchParams(window.location.search);
+  var error = qs.get('error');
+  var errorDesc = qs.get('error_description');
+  var code = qs.get('code');
+
+  if (error) {
+    showError(errorDesc || 'Microsoft sign-in was cancelled or denied.');
+    return;
+  }
+  if (!code) {
+    showError('No sign-in code was returned by Microsoft.');
+    return;
+  }
+
+  try {
+    var res = await fetch(AUTH_API + '/sso-exchange', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: code }),
+    });
+    var data = await res.json();
+    if (!data.ok) {
+      showError(data.error || 'Could not complete sign-in.');
+      return;
+    }
+    completeLogin(data);
+  } catch (e) {
+    showError('Could not connect to Termac One. Check your connection and try again.');
+  }
+})();
+</script>
+</body>
+</html>
