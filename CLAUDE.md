@@ -274,6 +274,52 @@ confirming with Ted first.
 
 ---
 
+### 2026-07-17 — Weekly Planner + Friday Digest to Jim (SCOPED, NOT YET BUILT)
+
+This is a confirmed, scoped feature request from Ted. Do NOT build or
+activate any part of it without Ted explicitly saying go — the timing
+constraint below is deliberate, not a placeholder.
+
+**What it is:**
+- Before recent redesigns, planning used to be flexible: a rep could pick
+  a single day, multiple days, a full week, or plan a whole month ahead.
+  The current "Plan My Week" is a rigid 5-day grid locked to pre-set
+  recurring time blocks only — that's not what's wanted.
+- Rebuild it as a flexible day / multi-day / week / month planner.
+  Appointments anchor it; suggested stops fill the gaps, ranked by the
+  real `opportunities` table (division/value/stage) — the same
+  hot-pipeline logic Plan My Day already uses on Home, not just lead
+  score. One unified system, not two separate ones.
+- Business driver: Jim Kennedy (SVP of Sales, jkennedy@Termac.com) wants
+  a weekly report every Friday showing what each rep's following week
+  holds, so he can help them take the most swings toward quota/revenue.
+  Should eventually be fully automated (auto-sent every Friday), not
+  manually compiled.
+- Confirmed: ONE combined report covering every rep, not a separate
+  email per rep. Recipients: jkennedy@Termac.com and
+  tpittakas@Termac.com (Tom Pittakas).
+- Infrastructure already exists to build this on, nothing new to invent
+  for the sending mechanism:
+  - `termac-notify` Worker already has a working `/send-report` endpoint
+    (recipients array, subject, html — sends via Resend, not Brevo,
+    despite Brevo being referenced elsewhere as a separate roadmap item).
+  - A proven cron-trigger pattern is already live in production
+    (`termac-hotlead-escalation` runs every 15 min via its
+    `wrangler.toml` `[triggers] crons` block) — model a Friday-only cron
+    after this same pattern.
+
+**Timing — this is the part that matters most:**
+NOT needed this Friday (July 17 week). The week of July 20 is a planning
+phase plus a sales training test run — reps should NOT be pushed to fill
+in schedules during that window. Target go-live is the week of August 3
+at the earliest. Ted wants the underlying logic and wiring built now so
+it's ready to flip on, but explicitly does NOT want the Friday cron
+actually firing, or any UI pressure put on reps to use the new planner,
+until he says go live. Build behind a flag / manual-trigger-only, not a
+live scheduled cron, until told otherwise.
+
+---
+
 If anything in this file looks stale or contradicts what you find live in
 the repo or dashboard, trust the live state, but flag the discrepancy to
 Ted so this file can be corrected -- don't silently work around it.
