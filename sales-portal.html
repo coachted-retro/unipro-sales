@@ -4247,6 +4247,116 @@ function spOpenDetail(r, tab) {
   // not a derived view. Any rep or receptionist looking at this account can
   // see and resend one, which is exactly the point of using the same
   // account identity on both sides.
+  // Services & Inspections panel -- accounts only. Surfaces the
+  // ServiceTrade-synced next_due/last_service fields from the account
+  // record itself, plus all linked jobs rows (active scheduled or
+  // overdue service appointments) and a breakdown of on-site assets
+  // by service line. This gives a rep the full active-service picture
+  // before a disco call or site visit without having to open ServiceTrade.
+  let servicesHtml = '';
+  if (isAccount) {
+    const acctJobs = (crmLoad('jobs') || []).filter(j => j.accountId === r.id || j.account_id === r.id);
+    const acctAssets = (crmLoad('account_assets') || []).filter(a => a.accountId === r.id || a.account_id === r.id);
+
+    // Service line asset summary -- group by service_line/serviceLine
+    const assetByLine = {};
+    acctAssets.forEach(a => {
+      const line = a.serviceLine || a.service_line || a.assetType || a.asset_type || 'Other';
+      assetByLine[line] = (assetByLine[line] || 0) + 1;
+    });
+    const assetSummaryRows = Object.keys(assetByLine).sort().map(line =>
+      `<span style="display:inline-flex;align-items:center;gap:4px;background:#F3F4F6;border-radius:5px;padding:3px 9px;font-size:11px;font-weight:700;color:var(--ink)">🔧 ${escH(line)} <span style="color:var(--soft);font-weight:400">(${assetByLine[line]})</span></span>`
+    ).join('');
+
+    // Next due / last service from account record (set by ST sync)
+    const nextDueTs = r.nextDue || r.next_due;
+    const lastSvcDate = r.lastService || r.last_service;
+    const today = Date.now();
+    let nextDueBadge = '';
+    if (nextDueTs) {
+      const d = new Date(nextDueTs);
+      const daysOut = Math.round((d - today) / 86400000);
+      const color = daysOut < 0 ? '#C8102E' : daysOut <= 30 ? '#D97706' : '#1E7B3C';
+      const bg = daysOut < 0 ? '#FEE9EC' : daysOut <= 30 ? '#FEF3C7' : '#DCFCE7';
+      const label = daysOut < 0 ? `${Math.abs(daysOut)}d OVERDUE` : daysOut === 0 ? 'DUE TODAY' : `Due in ${daysOut}d`;
+      nextDueBadge = `<span style="background:${bg};color:${color};border-radius:5px;padding:3px 9px;font-size:11px;font-weight:800">${label} — ${d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}</span>`;
+    }
+
+    // Jobs rows -- active scheduled, pending, or overdue; completed shown collapsed
+    const JOB_STATUS_COLOR = { scheduled:'#1B5FA8', pending_schedule:'#D97706', complete:'#1E7B3C', cancelled:'#6B7280' };
+    const JOB_STATUS_BG    = { scheduled:'#EFF6FF', pending_schedule:'#FEF3C7', complete:'#F0FDF4', cancelled:'#F9FAFB' };
+    const JOB_STATUS_LABEL = { scheduled:'Scheduled', pending_schedule:'Pending Schedule', complete:'Completed', cancelled:'Cancelled' };
+
+    const activeJobs  = acctJobs.filter(j => !['complete','cancelled'].includes(j.status));
+    const recentJobs  = acctJobs.filter(j => j.status === 'complete').slice(0,5);
+
+    const buildJobRow = j => {
+      const st = j.status || 'scheduled';
+      const stColor = JOB_STATUS_COLOR[st] || '#6B7280';
+      const stBg    = JOB_STATUS_BG[st]    || '#F9FAFB';
+      const stLabel = JOB_STATUS_LABEL[st] || st;
+      const svcDate = j.scheduledDate || j.scheduled_date;
+      const dueDate = j.dueDate || j.due_date;
+      const showDate = svcDate || dueDate;
+      let dateBadge = '';
+      if (showDate) {
+        const d = new Date(showDate);
+        const daysOut = Math.round((d - today) / 86400000);
+        const dc = (st !== 'complete' && daysOut < 0) ? '#C8102E' : 'var(--soft)';
+        const prefix = st !== 'complete' && daysOut < 0 ? `${Math.abs(daysOut)}d overdue · ` : (svcDate ? '' : 'Due: ');
+        dateBadge = `<span style="font-size:11px;color:${dc}">${prefix}${d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}</span>`;
+      }
+      return `<div style="padding:9px 10px;background:${stBg};border-radius:7px;margin-bottom:6px">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start">
+            <div>
+              <div style="font-size:13px;font-weight:700;color:var(--ink)">${escH(j.serviceType||j.service_type||'Service Job')}</div>
+              <div style="font-size:11px;color:var(--soft);margin-top:2px">${escH(j.division||'')}${j.techId||j.tech_id ? ' · Tech: '+escH(j.techId||j.tech_id) : ''}</div>
+              ${j.notes ? `<div style="font-size:11px;color:var(--soft);margin-top:3px">${escH((j.notes).slice(0,120))}</div>` : ''}
+            </div>
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;margin-left:8px">
+              <span style="background:${stColor}1A;color:${stColor};border-radius:5px;padding:2px 8px;font-size:10px;font-weight:800;text-transform:uppercase">${stLabel}</span>
+              ${dateBadge}
+            </div>
+          </div>
+        </div>`;
+    };
+
+    const activeJobsHtml = activeJobs.length
+      ? activeJobs.map(buildJobRow).join('')
+      : '<div style="font-size:12px;color:var(--soft)">No active scheduled jobs on file from ServiceTrade.</div>';
+
+    const recentJobsHtml = recentJobs.length
+      ? recentJobs.map(buildJobRow).join('')
+      : '<div style="font-size:12px;color:var(--soft)">No completed service history on file yet.</div>';
+
+    const hasAnyService = nextDueTs || lastSvcDate || acctJobs.length || acctAssets.length;
+    if (hasAnyService) {
+      servicesHtml = `<div style="padding:12px 0;border-bottom:1px solid var(--line);margin-bottom:12px">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:10px">🛠 Active Services &amp; Inspections</div>
+
+        ${nextDueTs || lastSvcDate ? `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;align-items:center">
+          ${nextDueBadge}
+          ${lastSvcDate ? `<span style="font-size:11px;color:var(--soft)">Last service: <strong style="color:var(--ink)">${new Date(lastSvcDate).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}</strong></span>` : ''}
+        </div>` : ''}
+
+        ${acctAssets.length ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">${assetSummaryRows}</div>` : ''}
+
+        ${activeJobs.length ? `<div style="margin-bottom:6px">
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--soft);margin-bottom:6px">Active / Scheduled Jobs (${activeJobs.length})</div>
+          ${activeJobsHtml}
+        </div>` : activeJobsHtml}
+
+        ${recentJobs.length ? `<div>
+          <div onclick="spToggleCollapse('spSvcHistory')" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:6px">
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--soft)">Recent Completed (${recentJobs.length})</div>
+            <span id="spSvcHistory-chevron" style="font-size:11px;color:var(--soft)">▸</span>
+          </div>
+          <div id="spSvcHistory" style="display:none">${recentJobsHtml}</div>
+        </div>` : ''}
+      </div>`;
+    }
+  }
+
   let invoicesHtml = '';
   if (isAccount && typeof TermacInvoices !== 'undefined') {
     const acctInvoices = TermacInvoices.getForAccount(r.id);
@@ -4307,6 +4417,7 @@ function spOpenDetail(r, tab) {
       </div>
     </div>
 
+    ${servicesHtml}
     ${openOppsHtml}
     ${locationsHtml}
     ${invoicesHtml}
