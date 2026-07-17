@@ -57,49 +57,15 @@ function decodeJwtPayload(jwt) {
   return JSON.parse(json);
 }
 
-// 2026-07-13, per Ted: "not a generic page -- a direct link to their
-// dashboard, specifically." This MUST stay in sync with PORTAL_META and
-// DIVISION_SLUG in employee-portal.html -- that file is the single source
-// of truth for which portal key maps to which URL and how a division name
-// becomes a gm-dashboard.html slug. If a portal or division is ever added
-// there, mirror it here too, or invite links will point at the wrong page
-// (or the old generic one) while the tile chooser is already correct.
-// This is the ONLY copy of the routing logic; /sso-exchange returns the
-// resolved destination directly (session.dest), and both staff-login.html
-// and auth/callback.html just use it instead of recomputing their own.
-const PORTAL_URLS = {
-  sales_rep: 'sales-portal.html',
-  dms: 'dms-portal.html',
-  reception: 'reception-portal.html',
-  scheduler: 'scheduler-v2.html',
-  dispatch: 'dispatch-v2.html',
-  tech: 'tech-portal-unified.html',
-  warehouse: 'warehouse-portal.html',
-  manager: 'termac-os.html',
-  admin: 'termac-os.html',
-  gm_dashboard: 'gm-dashboard.html',
-  hr: 'hr-portal.html',
-};
-const DIVISION_SLUG = {
-  'UniPro': 'unipro', 'AllPro': 'allpro', 'Quality III': 'quality3',
-  'Filter Man': 'filterman', 'GTO': 'gto', 'Termac': 'termac',
-};
-
-// One clear job role -> one direct dashboard link, full stop. Only people
-// with several genuinely different portals and no single "home" (or full
-// platform access, which is its own kind of home) land on the personalized
-// tile chooser -- that's a real destination in its own right, not a
-// fallback shrug, since it's built from this exact same person's granted
-// access rather than a blank login form.
+// 2026-07-17 per Ted: everyone lands on employee-portal.html first, full
+// stop, no more single-portal people getting bounced straight into their
+// own dashboard. That page carries company news/announcements that
+// single-portal people (most of the company) were never seeing before --
+// they went straight to their own portal and never passed through it.
+// One landing page for everyone means one thing to explain and one thing
+// to fix if it breaks, instead of two different behaviors depending on
+// how many portals someone has.
 function resolveDestinationUrl(role, division, portals) {
-  const list = Array.isArray(portals) ? portals : [];
-  const fullAccess = role === 'admin' || role === 'owner' || list.indexOf('admin') !== -1;
-  if (fullAccess) return 'employee-portal.html';
-  if (list.indexOf('gm_dashboard') !== -1) {
-    const slug = DIVISION_SLUG[division || ''];
-    return slug ? ('gm-dashboard.html?division=' + slug) : 'gm-dashboard.html';
-  }
-  if (list.length === 1 && PORTAL_URLS[list[0]]) return PORTAL_URLS[list[0]];
   return 'employee-portal.html';
 }
 
