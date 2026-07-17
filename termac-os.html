@@ -23300,6 +23300,7 @@ function estRender(){
   let html = '';
   let grandTotal = 0;
   let monthlyTotal = 0;
+  let hasVariablePricing = false;
   const usedSvcs = [];
 
   Object.keys(estState.sections).forEach(svc=>{
@@ -23321,6 +23322,7 @@ function estRender(){
 
     lines.forEach((li, idx)=>{
       const total = (li.qty||1)*(li.unitPrice||0);
+      if (li.priceMayIncrease) hasVariablePricing = true;
       if(li.isMonthly && li.monthly) monthlyTotal += li.monthly;
       html += `<div class="est-line" id="estLine_${svc}_${idx}">
         <div class="est-line-desc">
@@ -23373,13 +23375,27 @@ function estRender(){
   var _acctTypeCfg = (typeof getAccountTypeCfg === 'function' && svState && svState.accountType)
     ? getAccountTypeCfg(svState.accountType) : null;
 
-  var totalDisplay = grandTotal > 0 ? '$' + grandTotal.toLocaleString() : 'TBD — see items';
+  // 2026-07-16 per Ted: the UniPro inspection line already says "Final
+  // Price: TBD" with the $162.99 shown small as a reference rate -- but
+  // this grand total was still showing that same number bold and
+  // unqualified, which is exactly what a customer anchors on and later
+  // argues from ("you told me it was only $162.99"). If ANY line in
+  // this estimate has variable pricing, the total needs to carry that
+  // same uncertainty instead of contradicting it.
+  var totalDisplay = hasVariablePricing
+    ? 'TBD'
+    : (grandTotal > 0 ? '$' + grandTotal.toLocaleString() : 'TBD — see items');
   document.getElementById('estGrandTotal').textContent = totalDisplay;
+  var totalEl = document.getElementById('estGrandTotal');
+  if (totalEl) totalEl.style.color = hasVariablePricing ? '#D97706' : '';
 
   // Pricing mode label below total
   var monthlyEl = document.getElementById('estGrandMonthly');
   if (monthlyEl) {
     var modeLines = [];
+    if (hasVariablePricing) {
+      modeLines.push('Based on the outcome of your inspection, final pricing is presented at time of service');
+    }
     if (_pricingMode === 'per_visit') {
       // Per-visit: only show per-visit note — no misleading monthly recurring line
       if (grandTotal > 0) modeLines.push('Per-visit pricing · Payment due on job completion');
