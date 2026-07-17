@@ -4,32 +4,53 @@ on:
   workflow_dispatch:
     inputs:
       batches:
-        description: 'Max batches to run (100 = full resume)'
+        description: 'Max batches per call (100 = default)'
         required: false
         default: '100'
+      passes:
+        description: 'How many times to call sync-many (default 5)'
+        required: false
+        default: '5'
 
 jobs:
   sync:
     runs-on: ubuntu-latest
     name: Resume ServiceTrade sync to D1
+    timeout-minutes: 55
     steps:
-      - name: Trigger sync-many
+      - name: Run sync passes
         run: |
           BATCHES="${{ github.event.inputs.batches }}"
           BATCHES=${BATCHES:-100}
-          echo "Calling /sync-many?batches=$BATCHES"
-          RESPONSE=$(curl -s --max-time 600 -X POST \
-            "https://servicetrade-sync.termac-one.workers.dev/sync-many?batches=$BATCHES")
-          echo "Response: $RESPONSE"
-          OK=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('ok','false'))" 2>/dev/null || echo "false")
-          if [ "$OK" != "True" ] && [ "$OK" != "true" ]; then
-            echo "::error::Sync returned ok=false or failed: $RESPONSE"
-            exit 1
-          fi
-          echo "Sync batch complete. Response: $RESPONSE"
+          PASSES="${{ github.event.inputs.passes }}"
+          PASSES=${PASSES:-5}
+          WORKER="https://servicetrade-sync.termac-one.workers.dev"
+
+          for i in $(seq 1 $PASSES); do
+            echo "=== Pass $i of $PASSES ==="
+            RESPONSE=$(curl -s --max-time 600 -X POST "${WORKER}/sync-many?batches=${BATCHES}" || echo '{"ok":false,"error":"curl timeout"}')
+            echo "Response: $RESPONSE"
+
+            DONE=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('done',False))" 2>/dev/null || echo "False")
+            OK=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('ok',False))" 2>/dev/null || echo "False")
+
+            if [ "$DONE" = "True" ]; then
+              echo "Sync fully complete after pass $i."
+              exit 0
+            fi
+
+            if [ "$OK" != "True" ]; then
+              echo "::warning::Pass $i returned ok=false -- token may have expired, continuing to next pass"
+            fi
+
+            echo "Pass $i done. Continuing to next pass..."
+            sleep 5
+          done
+
+          echo "Completed $PASSES passes. Run again if sync is not yet done."
 
       - name: Final status check
+        if: always()
         run: |
-          STATUS=$(curl -s --max-time 15 \
-            "https://servicetrade-sync.termac-one.workers.dev/sync-status")
-          echo "Sync status: $STATUS"
+          STATUS=$(curl -s --max-time 15 "https://servicetrade-sync.termac-one.workers.dev/sync-status" || echo '{}')
+          echo "Final sync status: $STATUS"
