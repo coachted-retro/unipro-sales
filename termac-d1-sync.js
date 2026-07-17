@@ -278,6 +278,11 @@
       lostReasonCode: 'lost_reason_code', pendingReasonCode: 'pending_reason_code',
       resolutionNotes: 'resolution_notes', flaggedAt: 'flagged_at',
       lostPriceDivision: 'lost_price_division',
+      // 2026-07-17 per Ted: digital signature on the attached proposal PDF.
+      signToken: 'sign_token', proposalPdfUrl: 'proposal_pdf_url',
+      proposalSentAt: 'proposal_sent_at', proposalViewedAt: 'proposal_viewed_at',
+      customerSignedName: 'customer_signed_name', customerSignatureImg: 'customer_signature_img',
+      acceptedAt: 'accepted_at',
     },
     // Location entity, added 2026-07-16 per Ted. A lead becomes a real
     // physical site when it converts; contacts and opportunities attach
