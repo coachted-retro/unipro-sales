@@ -1563,6 +1563,75 @@ function spPlanMyDayNow() {
   if (typeof spRenderHome === 'function') spRenderHome();
 }
 
+// ======================================================
+//  PLAN WITH AI - daily agenda version
+//  Same three-layer engine as the weekly planner but
+//  anchored to _spAgendaDate, renders into #agendaAiResults
+// ======================================================
+async function spAgendaPlanWithAI() {
+  var dateStr = _spAgendaDate;
+  var btn = document.getElementById('agendaAiPlanBtn');
+  var resultsEl = document.getElementById('agendaAiResults');
+  if (!resultsEl) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Planning...'; }
+  resultsEl.innerHTML = '';
+  var repName = _spRep ? _spRep.name : '';
+  var dayLabel = new Date(dateStr + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+  var bookedSet = new Set((crmLoad('appointments') || []).filter(function(a) { return a.date === dateStr && a.createdBy === repName && a.recordId; }).map(function(a) { return a.recordId; }));
+  var hotPipeline = [];
+  (crmLoad('leads') || []).filter(function(r) {
+    var isRep = r.assignedRep === repName || r.ownedBy === repName;
+    return isRep && !bookedSet.has(r.id) && (r.score >= 7 || r.status === 'hot' || r.lifecycleStage === 'opportunity');
+  }).slice(0, 5).forEach(function(r) {
+    hotPipeline.push({ id: r.id, tab: 'leads', title: r.business || r.name || 'Lead', address: r.address || '', reason: r.lifecycleStage === 'opportunity' ? 'Open opportunity' : (r.status === 'hot' ? 'Hot lead' : 'High score lead') });
+  });
+  (crmLoad('accounts') || []).filter(function(a) {
+    var isRep = a.assignedRep === repName || a.ownedBy === repName;
+    var cutoff = Date.now() - (spCheckinDaysFor(a) * 86400000);
+    return isRep && a.status === 'active' && !bookedSet.has(a.id) && (!a.lastCheckin || a.lastCheckin < cutoff);
+  }).slice(0, 3).forEach(function(a) {
+    hotPipeline.push({ id: a.id, tab: 'accounts', title: a.name || a.business || 'Account', address: a.address || '', reason: 'Check-in overdue' });
+  });
+  var allStops = (crmLoad('appointments') || []).filter(function(a) { return a.date === dateStr && a.createdBy === repName && a.address; });
+  var geoAnchor = 'Eastern Pennsylvania';
+  if (allStops.length) { var p1 = allStops[0].address.split(','); geoAnchor = p1.slice(-3).join(',').trim(); }
+  else if (hotPipeline.length && hotPipeline[0].address) { var p2 = hotPipeline[0].address.split(','); geoAnchor = p2.slice(-3).join(',').trim(); }
+  var confirmedList = allStops.map(function(a) { return a.title + (a.address ? ' (' + a.address + ')' : ''); }).join(', ') || 'none yet';
+  var pipelineList = hotPipeline.slice(0, 4).map(function(r) { return r.title + (r.address ? ' - ' + r.address : ''); }).join('; ') || 'none';
+  var coldTargets = [];
+  try {
+    var aiPrompt = 'You are a field sales assistant for Termac, a commercial kitchen services and fire protection company in Eastern PA, NJ, DE, MD, and DC. Rep: ' + repName + '. Planning: ' + dayLabel + ' (' + dateStr + '). Confirmed stops: ' + confirmedList + '. Hot pipeline: ' + pipelineList + '. Geographic anchor: ' + geoAnchor + '. Use web search to find 3-5 real businesses in the ' + geoAnchor + ' area that Termac does NOT serve yet: restaurants, hotels, hospitals, nursing homes, commercial kitchens, food manufacturers, institutional cafeterias. Do not repeat pipeline items. Real businesses and addresses only. Return ONLY a JSON array: [{"name":"Business Name","address":"Full address","type":"Restaurant/etc","why":"One sentence why good for Termac"}]. Max 5.';
+    var apiResp = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 1000, tools: [{ type: 'web_search_20250305', name: 'web_search' }], messages: [{ role: 'user', content: aiPrompt }] }) });
+    var apiData = await apiResp.json();
+    var raw = (apiData.content || []).filter(function(b) { return b.type === 'text'; }).map(function(b) { return b.text || ''; }).join('');
+    var js = raw.replace(/```json|```/g, '').trim();
+    var a1 = js.indexOf('['), a2 = js.lastIndexOf(']');
+    if (a1 >= 0 && a2 > a1) coldTargets = JSON.parse(js.slice(a1, a2 + 1));
+  } catch(e) { coldTargets = []; }
+  if (btn) { btn.disabled = false; btn.textContent = '&#10024; Plan with AI'; }
+  if (!hotPipeline.length && !coldTargets.length) {
+    resultsEl.innerHTML = '<div class="sp-card" style="margin-bottom:14px;font-size:12px;color:var(--soft);text-align:center;padding:16px">No AI suggestions found. Add a confirmed stop first to anchor the geographic search.</div>';
+    return;
+  }
+  var html = '<div class="sp-card" style="margin-bottom:14px">';
+  html += '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:14px;margin-bottom:12px">&#10024; AI-Suggested Stops &#8212; ' + dayLabel + '</div>';
+  if (hotPipeline.length) {
+    html += '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#1B5FA8;margin-bottom:7px">Pipeline &#8212; Hot Targets</div>';
+    hotPipeline.forEach(function(item) {
+      html += '<div style="background:#EFF6FF;border-left:3px solid #1B5FA8;border-radius:7px;padding:9px 12px;margin-bottom:7px"><div style="font-weight:700;font-size:13px;color:var(--ink)">' + escH(item.title) + '</div>' + (item.address ? '<div style="font-size:11px;color:var(--soft);margin:2px 0">&#128205; ' + escH(item.address) + '</div>' : '') + '<div style="font-size:11px;color:#1B5FA8;margin:3px 0">' + escH(item.reason) + '</div><button data-id="' + escH(item.id) + '" data-tab="' + escH(item.tab) + '" data-date="' + escH(dateStr) + '" data-title="' + escH(item.title) + '" data-addr="' + escH(item.address) + '" onclick="spPipelineSuggAdd(this)" style="background:#1B5FA8;color:#fff;border:none;border-radius:6px;padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer;text-transform:uppercase;letter-spacing:.04em;margin-top:5px">+ Add to Today</button></div>';
+    });
+  }
+  if (coldTargets.length) {
+    html += '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#6C3EC9;margin:10px 0 7px">AI-Found &#8212; Street Level Targets Nearby</div>';
+    coldTargets.forEach(function(t) {
+      if (!t.name) return;
+      html += '<div style="background:#F5F0FF;border-left:3px solid #6C3EC9;border-radius:7px;padding:9px 12px;margin-bottom:7px"><div style="font-weight:700;font-size:13px;color:var(--ink)">' + escH(t.name) + '</div>' + (t.address ? '<div style="font-size:11px;color:var(--soft);margin:2px 0">&#128205; ' + escH(t.address) + '</div>' : '') + '<div style="font-size:11px;color:var(--soft);font-style:italic">' + escH(t.type || '') + '</div><div style="font-size:11px;color:#6C3EC9;margin:3px 0">' + escH(t.why || '') + '</div><button data-date="' + escH(dateStr) + '" data-name="' + escH(t.name) + '" data-addr="' + escH(t.address || '') + '" onclick="spColdTargetAdd(this)" style="background:#6C3EC9;color:#fff;border:none;border-radius:6px;padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer;text-transform:uppercase;letter-spacing:.04em;margin-top:5px">+ Add as Stop</button></div>';
+    });
+  }
+  html += '<div style="font-size:10px;color:var(--soft);margin-top:8px">AI cold targets are not in your pipeline yet. Add them after your visit.</div></div>';
+  resultsEl.innerHTML = html;
+}
+
 // ── Agenda date navigation, added 2026-07-14 per Ted -- the agenda used
 // to only ever show today. This is the single piece of state that tracks
 // which day is currently being viewed; every function below that used to
@@ -2069,6 +2138,7 @@ function spRenderHome() {
   ${spRenderPaceInsight()}
   ${spRenderTimeEfficiency()}
   ${spRenderTodayAgenda()}
+  <div id="agendaAiResults"></div>
   ${spRenderAccountsToWatch()}
   ${spRenderWinBack()}
   ${spRenderFollowUpsDueToday()}
@@ -2598,6 +2668,7 @@ function spRenderTodayAgenda() {
     + navBtns
     + '<button class="sp-btn sp-btn-red" style="font-size:10px;padding:5px 12px" onclick="spOpenAddStop()">+ Add Stop</button>'
     + (isToday && !planned ? '<button class="sp-btn" style="font-size:10px;padding:5px 12px;background:#059669;color:#fff;border:none;border-radius:5px;cursor:pointer" onclick="spPlanMyDayNow()">🧭 Plan My Day</button>' : '')
+    + '<button id="agendaAiPlanBtn" class="sp-btn" style="font-size:10px;padding:5px 12px;background:linear-gradient(135deg,#6C3EC9,#1B5FA8);color:#fff;border:none;border-radius:5px;cursor:pointer" onclick="spAgendaPlanWithAI()">&#10024; Plan with AI</button>'
     + '</div>';
 
   if (!agenda.length) {
