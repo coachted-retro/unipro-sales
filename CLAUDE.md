@@ -223,6 +223,57 @@ confirming with Ted first.
 
 ---
 
+### 2026-07-17 (ST sync + services panel session)
+
+**Root-caused and fixed:**
+- ServiceTrade sync had been dead since July 13 -- OAuth token expired,
+  last_error was stale so no alert. Fixed: Worker now has client_credentials
+  fallback if the refresh token is also expired, and last_error/last_error_at
+  are written on every failure.
+- Old sync only wrote last_service/next_due to accounts and discarded all
+  individual job records. Jobs table had 29 rows with no account_id links.
+- D1 also had no deficiency data from ST at all.
+
+**Built this session:**
+- servicetrade-sync Worker upgraded to write full job records into the jobs
+  table (service_type, service_line, scheduled_date, due_date, status,
+  job_number, frequency, interval_days, division) on every location pass.
+- syncDeficiencies() added: pulls /deficiency per location, writes into new
+  st_deficiencies table. ST status 'verified' = open, 'fixed'/'corrected' = resolved.
+- Recurring service contracts derived from job recurrence data written into
+  new st_services table (service_line, frequency, interval_days, next_due,
+  last_completed per location).
+- POST /reset endpoint added to servicetrade-sync to safely restart from page 1.
+- New tables created in D1: st_services, st_deficiencies (with indexes).
+- New columns added: accounts.st_location_id, jobs.service_line,
+  jobs.job_number, jobs.frequency, jobs.interval_days.
+- All new tables wired into unipro-ai-proxy ALLOWED_TABLES/TABLE_PREFIX and
+  termac-d1-sync.js D1_SYNC_TABLES/FIELD_MAP.
+- Services and Inspections panel added to account detail view in sales-portal.html:
+  shows open deficiencies (red, severity-coded), next-due countdown
+  (red/amber/green), last service date, recurring contracts, asset type summary,
+  active/scheduled jobs, and completed job history (collapsed by default).
+- st-sync-trigger.yml workflow updated to chain multiple passes per dispatch
+  (batches param + passes param) so a full re-sync survives token expiry.
+
+**D1 state as of end of session (sync still running):**
+- ~2,330 ST accounts synced (more coming), ~2,738 jobs, ~97 open deficiencies,
+  ~8,129 assets. Full sync in progress via GitHub Actions (5-pass dispatch).
+- `servicetrade_sync_progress.last_error` may still show an old 401 -- check
+  last_run_at timestamp to see if the sync is actively advancing.
+
+**Pending / pick up next session:**
+- Verify sync completed (check servicetrade_sync_progress.completed_at in D1).
+  If not done, dispatch st-sync-trigger.yml again with passes=5.
+- Once sync complete, check st_deficiencies count and open status distribution.
+- The nightly cron (1am ET) will keep ST data fresh going forward -- no manual
+  trigger needed after the initial full pull is done.
+- termac-os.html has its own inline copy of termac-d1-sync.js (noted in CLAUDE.md
+  since original build) -- the new st_services/st_deficiencies FIELD_MAP entries
+  need to be mirrored there too if termac-os.html ever needs to read those tables.
+
+---
+
 If anything in this file looks stale or contradicts what you find live in
 the repo or dashboard, trust the live state, but flag the discrepancy to
-Ted so this file can be corrected — don't silently work around it.
+Ted so this file can be corrected -- don't silently work around it.
