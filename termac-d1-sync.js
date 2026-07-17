@@ -52,7 +52,7 @@
     'trade_partners', 'trade_partner_referrals', 'trade_partner_bids',
     'reference_library', 'allpro_rate_tables', 'notifications',
     'accounts_payable', 'expense_reports', 'customer_orders', 'reorder_requests',
-    'warehouse_alerts', 'debriefs', 'rcp_calls', 'account_assets'];
+    'warehouse_alerts', 'debriefs', 'rcp_calls', 'account_assets', 'tasks'];
 
   async function d1Fetch(method, path, body, opts2) {
     try {
@@ -241,6 +241,15 @@
       locationId: 'location_id',
       createdAt: 'created_at', updatedAt: 'updated_at',
     },
+    // tasks, added 2026-07-17 per Ted: self-assigned to-dos, standalone
+    // or attached to a lead/location/contact/opportunity/account via
+    // recordType+recordId. recordLabel is a cached display name so the
+    // Home dashboard task list doesn't need a lookup per record.
+    tasks: {
+      dueDate: 'due_date', assignedRep: 'assigned_rep',
+      recordType: 'record_type', recordId: 'record_id', recordLabel: 'record_label',
+      createdAt: 'created_at', updatedAt: 'updated_at', completedAt: 'completed_at',
+    },
     reorder_requests: {
       accountId: 'account_id', accountName: 'account_name', requestedAt: 'requested_at',
     },
@@ -355,6 +364,9 @@
       'model', 'size', 'install_date', 'maintenance_due_date',
       'hydrostatic_test_due_date', 'source', 'location_id',
       'created_at', 'updated_at'],
+    tasks: ['id', 'title', 'notes', 'due_date', 'status', 'assigned_rep',
+      'record_type', 'record_id', 'record_label',
+      'created_at', 'updated_at', 'completed_at'],
     reorder_requests: ['id', 'account_id', 'account_name', 'address', 'rep',
       'items', 'requested_at', 'status', 'created_at', 'updated_at'],
     warehouse_alerts: ['id', 'ts', 'type', 'status', 'confirmed', 'account',

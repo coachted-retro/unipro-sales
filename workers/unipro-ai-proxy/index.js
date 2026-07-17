@@ -132,6 +132,10 @@ const ALLOWED_TABLES = new Set([
   // written only by workers/servicetrade-sync directly against D1.
   // Surfacing it read-only on the Location detail page per Ted.
   'account_assets',
+  // tasks, added 2026-07-17 per Ted: self-assigned to-dos and follow-ups,
+  // either standalone or attached to a lead/location/contact/opportunity/
+  // account.
+  'tasks',
 ]);
 
 const TABLE_PREFIX = {
@@ -172,6 +176,7 @@ const TABLE_PREFIX = {
   reason_codes:'RSN',
   account_rep_assignments:'ARA',
   account_churn_events:'ACE',
+  tasks:'TSK',
   account_assets:'AST',
 };
 

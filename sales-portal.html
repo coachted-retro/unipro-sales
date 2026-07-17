@@ -2035,6 +2035,7 @@ function spRenderHome() {
   const html = `
   ${spRecentlyViewed()}
   ${spPlanMyDay()}
+  ${spRenderQuarterlySnapshot()}
   ${spRenderTodaysPace()}
   ${spRenderPaceInsight()}
   ${spRenderTimeEfficiency()}
@@ -2194,6 +2195,29 @@ function spRenderIdlePanel() {
       </div>`).join('')
       : '<div style="font-size:11px;color:var(--soft);padding:8px 0">No hot leads waiting, all caught up.</div>');
 
+  // 2026-07-17 per Ted: self-assigned tasks/follow-ups, right below
+  // Next Best Leads. Open tasks only, overdue first, each clickable
+  // into its linked record if it has one. This is a personal to-do
+  // list, always visible, not gated behind Plan My Day -- a task the
+  // rep set for themselves ("follow up with John") is exactly the kind
+  // of thing they put there on purpose, same as a real appointment.
+  const myTasks = (crmLoad('tasks') || [])
+    .filter(t => t.assignedRep === _spRep.name && t.status !== 'done')
+    .sort((a,b) => (a.dueDate||'9999') < (b.dueDate||'9999') ? -1 : 1)
+    .slice(0, 6);
+  const todayStr2 = new Date().toISOString().slice(0,10);
+  const taskRows = myTasks.map(t => {
+    const overdue = t.dueDate && t.dueDate < todayStr2;
+    const dueLabel = t.dueDate ? (t.dueDate === todayStr2 ? 'Today' : (overdue ? 'Overdue — ' + t.dueDate : t.dueDate)) : '';
+    return `<div style="display:flex;align-items:flex-start;gap:8px;background:#fff;border:1px solid ${overdue?'#FCA5A5':'var(--line)'};border-radius:8px;padding:9px 10px;margin-bottom:8px">
+      <input type="checkbox" onclick="event.stopPropagation();spCompleteTask('${t.id}')" style="margin-top:2px;cursor:pointer">
+      <div style="flex:1;cursor:pointer" onclick="${t.recordType && t.recordId ? `spViewRecord('${t.recordId}','${t.recordType}s')` : `spOpenAddTaskModal(null,null,null,'${t.id}')`}">
+        <div style="font-size:12px;font-weight:700;color:var(--ink)">${escH(t.title||'')}</div>
+        <div style="font-size:10px;color:${overdue?'var(--red)':'var(--soft)'};margin-top:2px">${dueLabel}${t.recordLabel ? (dueLabel?' · ':'')+escH(t.recordLabel) : ''}</div>
+      </div>
+    </div>`;
+  }).join('');
+
   return `
   <div style="padding:14px 14px 0">
     <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--soft);margin-bottom:10px">📊 This Week's Pace</div>
@@ -2201,6 +2225,11 @@ function spRenderIdlePanel() {
     <div style="font-size:10px;color:var(--soft);margin-bottom:18px">${dailyTouchTarget}/day target · touches logged</div>
     <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--soft);margin-bottom:10px">🔥 Next Best Leads</div>
     ${nextBestLeadsHtml}
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:18px;margin-bottom:10px">
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--soft)">✅ Tasks &amp; Follow-Ups</div>
+      <button onclick="spOpenAddTaskModal(null,null,null,null)" style="background:none;border:none;color:var(--red);font-size:11px;font-weight:700;cursor:pointer">+ Add</button>
+    </div>
+    ${myTasks.length ? taskRows : '<div style="font-size:11px;color:var(--soft);padding:8px 0">No open tasks. Click + Add for office work like a follow-up call, or add one straight from a lead, location, contact, opportunity, or account.</div>'}
   </div>`;
 }
 
@@ -2322,6 +2351,55 @@ function spRenderPaceInsight() {
       <span style="font-size:12px;font-weight:700;color:var(--ink)">${escH(r.business||r.name||'Lead')}</span>
       <span style="font-size:11px;color:var(--soft)">${r.score ? '\u2b50 '+r.score+'/10' : ''}</span>
     </div>`).join('')}
+  </div>`;
+}
+
+// -- QUARTERLY SNAPSHOT -- at-a-glance only, per Ted: the full breakdown
+// already exists on the Goals & Stats page (My Stuff), this just needs
+// to answer "where do I stand" in one glance on landing, not repeat that
+// whole page. Reuses the exact same real numbers (same revClosed source
+// off won opportunities, same quota/commission-rate storage) so the two
+// views can never disagree with each other.
+function spRenderQuarterlySnapshot() {
+  const repName = _spRep.name;
+  const now = new Date();
+  const qNum = Math.ceil((now.getMonth()+1)/3);
+  const qLabel = `Q${qNum} ${now.getFullYear()}`;
+  const qKey = repName + '_q' + qNum;
+  let quota = { revQuota:50000, commRate:8 };
+  try { const all = JSON.parse(localStorage.getItem('termac_goals_quotas')||'{}'); quota = { ...quota, ...(all[qKey]||{}) }; } catch(e){}
+
+  const myWonOpps = (crmLoad('opportunities') || []).filter(function(o) {
+    return o.resolutionStatus === 'won' && (o.assignedRep || '') === repName;
+  });
+  const revClosed = myWonOpps.reduce(function(s, o) {
+    return s + (o.serviceType === 'lease' ? (o.monthlyValue||0) * (o.termMonths||1) : (o.value||0));
+  }, 0);
+  const commission = Math.round(revClosed * (quota.commRate / 100));
+  const mySpiffs = (crmLoad('allpro_spiffs') || []).filter(s => s.repName === repName);
+  const spiffTotal = mySpiffs.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+  const pct = quota.revQuota ? Math.min(100, Math.round(revClosed / quota.revQuota * 100)) : 0;
+  const barColor = pct >= 100 ? 'var(--green)' : pct >= 60 ? 'var(--yellow)' : 'var(--red)';
+
+  return `<div class="sp-card" style="margin-bottom:14px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <div class="sp-card-title" style="margin-bottom:0">📈 ${qLabel} — At a Glance</div>
+      <button class="sp-btn sp-btn-ghost" style="font-size:10px;padding:4px 10px" onclick="spNav('goals')">Full Breakdown →</button>
+    </div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap">
+      <div style="flex:2;min-width:180px">
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
+          <span style="color:var(--soft)">Revenue Won</span>
+          <span style="font-weight:700;color:var(--ink)">$${revClosed.toLocaleString()} <span style="font-weight:400;color:var(--soft)">/ $${quota.revQuota.toLocaleString()}</span></span>
+        </div>
+        <div class="sp-progress-bar"><div class="sp-progress-fill" style="width:${pct}%;background:${barColor}"></div></div>
+        <div style="font-size:10px;color:var(--soft);margin-top:3px">${myWonOpps.length} deal${myWonOpps.length===1?'':'s'} won this quarter</div>
+      </div>
+      <div style="flex:1;min-width:140px;text-align:center;padding:10px;background:var(--bg);border-radius:8px">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:22px;color:var(--ink)">$${(commission+spiffTotal).toLocaleString()}</div>
+        <div style="font-size:10px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em">Commission Earned</div>
+      </div>
+    </div>
   </div>`;
 }
 
@@ -4117,7 +4195,10 @@ function spOpenDetail(r, tab) {
               ${isFlagged ? `<div style="font-size:10px;color:#C8102E;font-weight:800;text-transform:uppercase;margin-top:4px">⚠ ${daysOpen}d open, past ${slaDays}d target</div>` : ''}
               ${apStageBadge2}
             </div>
-            <span style="font-size:10px;font-weight:800;text-transform:uppercase;color:${color}">${STATUS_LABEL[status]}</span>
+            <span style="display:flex;align-items:center;gap:6px">
+              <button onclick="event.stopPropagation();spOpenAddTaskModal('opportunity','${o.id}','${escH(o.name||'Opportunity').replace(/'/g,"\\'")}',null)" title="Add Task" style="background:none;border:none;cursor:pointer;font-size:13px;padding:2px">✅</button>
+              <span style="font-size:10px;font-weight:800;text-transform:uppercase;color:${color}">${STATUS_LABEL[status]}</span>
+            </span>
           </div>
           ${resolveButtons}
         </div>`;
@@ -4239,6 +4320,7 @@ function spOpenDetail(r, tab) {
       ${isAccount ? `<button onclick="spCheckInAndStartVisit('${r.id}','${tab}')" style="padding:8px 14px;background:#D8690B;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">📍 I'm Here — Start Visit</button>` : ''}
       <button onclick="spOpenApptModal('${r.id}','${tab}','${apptDefaultMode}')" style="padding:8px 14px;background:#1B5FA8;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">📅 Set Appointment</button>
       <button onclick="spEditRecord('${r.id}','${tab}')" style="padding:8px 14px;background:#fff;color:var(--ink);border:1.5px solid var(--line);border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">Edit Record</button>
+      <button onclick="spOpenAddTaskModal('${tab.slice(0,-1)}','${r.id}','${escH(r.business||r.name||'').replace(/'/g,"\\'")}',null)" style="padding:8px 14px;background:#fff;color:var(--ink);border:1.5px solid var(--line);border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">✅ Add Task</button>
       ${isAccount ? `<button onclick="spOpenMarkLostModal('${r.id}','${tab}')" style="padding:8px 14px;background:#fff;color:#991B1B;border:1.5px solid #991B1B;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">🚫 Mark Lost</button>` : ''}
     </div>
   </div>
@@ -4355,7 +4437,10 @@ function spOpenLocationDetail(r) {
             <div style="font-size:11px;color:var(--soft);margin-top:2px">${escH(o.division||'')} · ${moneyStr}</div>
             ${apStageBadge}
           </div>
-          <span style="font-size:10px;font-weight:800;text-transform:uppercase;color:${color}">${STATUS_LABEL[status]}</span>
+          <span style="display:flex;align-items:center;gap:6px">
+            <button onclick="event.stopPropagation();spOpenAddTaskModal('opportunity','${o.id}','${escH(o.name||'Opportunity').replace(/'/g,"\\'")}',null)" title="Add Task" style="background:none;border:none;cursor:pointer;font-size:13px;padding:2px">✅</button>
+            <span style="font-size:10px;font-weight:800;text-transform:uppercase;color:${color}">${STATUS_LABEL[status]}</span>
+          </span>
         </div>
         ${resolveButtons}
       </div>`;
@@ -4387,6 +4472,7 @@ function spOpenLocationDetail(r) {
       <div style="display:flex;gap:8px">
         <a href="termac-pitch-tool.html?location=${r.id}" onclick="spLogToolUsage('pitch_tool','${r.id}',null)" style="background:#C8102E;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:4px">📄 Start Pitch</a>
         <button onclick="spOpenAddLocationModal(null,null,'${r.id}')" style="background:#F3F4F6;color:var(--ink);border:none;border-radius:6px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer">✏️ Edit</button>
+        <button onclick="spOpenAddTaskModal('location','${r.id}','${escH(r.name||'').replace(/'/g,"\\'")}',null)" style="background:#F3F4F6;color:var(--ink);border:none;border-radius:6px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer">✅ Add Task</button>
         ${linkedAccount ? `<button onclick="spViewRecord('${linkedAccount.id}','accounts')" style="background:#DCFCE7;color:#166534;border:none;border-radius:6px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer">✅ View Account →</button>` : ''}
       </div>
     </div>
@@ -4512,6 +4598,87 @@ function spSaveAsset(locationId, editAssetId) {
   document.getElementById('spAssetModal').remove();
   spToast(editAssetId ? '🔧 Asset updated' : '🔧 Asset added');
   spViewRecord(locationId, 'locations');
+}
+
+// ══════════════════════════════════════════════════════
+//  TASKS — added 2026-07-17 per Ted. Self-assigned to-dos and
+//  follow-ups, either standalone (office work: "follow up with
+//  so-and-so") or attached to a specific lead/location/contact/
+//  opportunity/account. recordType is one of those five strings, or
+//  null for a standalone task. Shown on Home in the Tasks & Follow-Ups
+//  panel; clicking a record-linked task jumps straight into that
+//  record.
+// ══════════════════════════════════════════════════════
+function spOpenAddTaskModal(recordType, recordId, recordLabel, editTaskId) {
+  var existing = editTaskId ? (crmLoad('tasks')||[]).find(t => t.id === editTaskId) : null;
+  var wrap = document.createElement('div');
+  wrap.id = 'spTaskModal';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9700;display:flex;align-items:center;justify-content:center;padding:16px';
+  wrap.innerHTML = '<div style="background:#fff;border-radius:12px;max-width:400px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.3)">' +
+    '<div style="padding:20px">' +
+      '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:18px;color:var(--ink);margin-bottom:4px">✅ ' + (existing ? 'Edit Task' : 'Add Task') + '</div>' +
+      (recordLabel ? '<div style="font-size:12px;color:var(--soft);margin-bottom:14px">Tied to <strong>' + escH(recordLabel) + '</strong></div>' : '<div style="font-size:12px;color:var(--soft);margin-bottom:14px">Standalone task, not tied to a specific record</div>') +
+      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">What do you need to do? *</label>' +
+      '<input id="taskTitle" type="text" value="' + (existing ? escH(existing.title||'') : '') + '" placeholder="e.g. Follow up with John on pricing" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:10px;box-sizing:border-box">' +
+      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Due Date</label>' +
+      '<input id="taskDue" type="date" value="' + (existing ? escH(existing.dueDate||'') : new Date().toISOString().slice(0,10)) + '" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:10px;box-sizing:border-box">' +
+      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Notes</label>' +
+      '<textarea id="taskNotes" rows="2" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:14px;box-sizing:border-box;resize:vertical">' + (existing ? escH(existing.notes||'') : '') + '</textarea>' +
+      '<div style="display:flex;gap:8px">' +
+        '<button onclick="document.getElementById(\'spTaskModal\').remove()" style="flex:1;background:#fff;border:1.5px solid var(--line);border-radius:8px;padding:10px;font-weight:700;font-size:13px;cursor:pointer">Cancel</button>' +
+        '<button onclick="spSaveTask(' +
+          (existing ? "'"+existing.id+"'" : 'null') + ',' +
+          (recordType ? "'"+recordType+"'" : (existing ? "'"+existing.recordType+"'" : 'null')) + ',' +
+          (recordId ? "'"+recordId+"'" : (existing ? "'"+existing.recordId+"'" : 'null')) + ',' +
+          (recordLabel ? "'"+escH(recordLabel).replace(/'/g,"\\'")+"'" : (existing && existing.recordLabel ? "'"+escH(existing.recordLabel).replace(/'/g,"\\'")+"'" : 'null')) +
+        ')" style="flex:1;background:var(--red);color:#fff;border:none;border-radius:8px;padding:10px;font-weight:700;font-size:13px;cursor:pointer">Save</button>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+  document.body.appendChild(wrap);
+}
+
+function spSaveTask(editTaskId, recordType, recordId, recordLabel) {
+  var title = document.getElementById('taskTitle').value.trim();
+  if (!title) { alert('Enter what you need to do.'); return; }
+  var now = Date.now();
+  var tasks = crmLoad('tasks') || [];
+  var vals = {
+    title: title,
+    dueDate: document.getElementById('taskDue').value || null,
+    notes: document.getElementById('taskNotes').value.trim(),
+    recordType: recordType || null,
+    recordId: recordId || null,
+    recordLabel: recordLabel || null,
+    updatedAt: now,
+  };
+  if (editTaskId) {
+    var idx = tasks.findIndex(t => t.id === editTaskId);
+    if (idx !== -1) Object.assign(tasks[idx], vals);
+  } else {
+    tasks.push(Object.assign({
+      id: 'task_' + now,
+      status: 'open',
+      assignedRep: _spRep.name,
+      createdAt: now,
+    }, vals));
+  }
+  crmSave('tasks', tasks);
+  document.getElementById('spTaskModal').remove();
+  spToast(editTaskId ? '✅ Task updated' : '✅ Task added');
+  if (typeof spRenderHome === 'function' && document.getElementById('spTab-home')?.classList.contains('active')) spRenderHome();
+}
+
+function spCompleteTask(taskId) {
+  var tasks = crmLoad('tasks') || [];
+  var idx = tasks.findIndex(t => t.id === taskId);
+  if (idx === -1) return;
+  tasks[idx].status = 'done';
+  tasks[idx].completedAt = Date.now();
+  tasks[idx].updatedAt = Date.now();
+  crmSave('tasks', tasks);
+  spToast('✅ Task completed');
+  if (typeof spRenderHome === 'function') spRenderHome();
 }
 
 function spOpenAddContactModal(locationId, editContactId) {
