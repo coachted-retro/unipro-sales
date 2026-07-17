@@ -359,7 +359,9 @@ async function syncDeficiencies(env, authToken, acctId, stLocationId, log) {
 
   for (const d of allDefs) {
     const defId = "STD-" + d.id;
-    const status = (d.status || "open").toLowerCase();
+    const rawStatus = (d.status || "open").toLowerCase();
+    // ST uses 'verified' for a confirmed open deficiency, 'fixed'/'corrected' for resolved
+    const status = ["fixed", "corrected", "resolved", "closed"].includes(rawStatus) ? "resolved" : rawStatus;
     const severity = (d.severity || d.priority || "").toLowerCase();
     const assetType = (d.asset && (d.asset.type || d.asset.name)) || (d.assetType) || null;
     const jobId = d.job ? "STJ-" + d.job.id : null;
