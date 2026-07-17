@@ -161,6 +161,16 @@ async function stGet(env, accessToken, path, params) {
   const res = await fetch(url.toString(), {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
+  // On 401 the token expired mid-sync -- re-authenticate and retry once.
+  // Tokens last ~1hr; a long sync run will always eventually hit this.
+  if (res.status === 401) {
+    const freshToken = await getServiceTradeAccessToken(env);
+    const res2 = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${freshToken}` },
+    });
+    if (!res2.ok) throw new Error(`ServiceTrade GET ${path} failed after token refresh: ${res2.status}`);
+    return res2.json();
+  }
   if (!res.ok) throw new Error(`ServiceTrade GET ${path} failed: ${res.status}`);
   return res.json();
 }
@@ -523,6 +533,9 @@ async function syncOneLocation(env, authToken, loc, log) {
 __name(syncOneLocation, "syncOneLocation");
 
 async function runOneBatch(env) {
+  // Always fetch a fresh token at the start of each batch -- getServiceTradeAccessToken
+  // returns the cached token if it still has >60s of life, or re-authenticates if not.
+  // This means a multi-batch /sync-many call never carries a stale token across pages.
   const authToken = await getServiceTradeAccessToken(env);
   const progress = await getProgress(env);
   let { current_page: page, offset_in_page: offset } = progress;
