@@ -1502,7 +1502,36 @@ var AGENDA_STORE = 'termac_today_agenda';
 // rep+date, same pattern as AGENDA_STORE, so it naturally resets every
 // new day without any cleanup job needed.
 var PLANNED_DAYS_STORE = 'termac_planned_days';
+// 2026-07-17 per Ted: some reps want suggestions available every
+// morning without re-tapping Plan My Day; others never want them at
+// all. This is a genuine on/off preference per rep, separate from the
+// daily tap above -- when on, every day counts as "planned"
+// automatically. Default is off, matching the behavior already built:
+// nothing suggested until the rep asks, whether that's a daily tap or
+// this permanent switch.
+var AUTO_SUGGEST_PREF_STORE = 'termac_auto_suggest_pref';
+function spIsAutoSuggestOn() {
+  try {
+    var raw = JSON.parse(localStorage.getItem(AUTO_SUGGEST_PREF_STORE) || '{}');
+    var rep = _spRep ? _spRep.name : '';
+    return !!raw[rep];
+  } catch(e) { return false; }
+}
+function spSetAutoSuggest(on) {
+  try {
+    var raw = JSON.parse(localStorage.getItem(AUTO_SUGGEST_PREF_STORE) || '{}');
+    var rep = _spRep ? _spRep.name : '';
+    raw[rep] = !!on;
+    localStorage.setItem(AUTO_SUGGEST_PREF_STORE, JSON.stringify(raw));
+  } catch(e) {}
+}
+function spToggleAutoSuggest() {
+  spSetAutoSuggest(!spIsAutoSuggestOn());
+  spToast(spIsAutoSuggestOn() ? '🔁 Suggested stops will show automatically every day' : '🔁 Suggested stops turned off — tap Plan My Day whenever you want them');
+  if (typeof spRenderHome === 'function') spRenderHome();
+}
 function spIsDayPlanned(dateStr) {
+  if (spIsAutoSuggestOn()) return true;
   try {
     var raw = JSON.parse(localStorage.getItem(PLANNED_DAYS_STORE) || '{}');
     var rep = _spRep ? _spRep.name : '';
@@ -3367,10 +3396,15 @@ function spSaveAppt(accountId, tab) {
 //  PLAN MY DAY
 // ══════════════════════════════════════════════════════
 function spPlanMyDay() {
+  const autoOn = spIsAutoSuggestOn();
   return '<div style="background:linear-gradient(135deg,#1B5FA8,#0F3E73);border-radius:12px;padding:14px 18px;color:#fff;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:14px">'
     + '<div>'
       + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:15px;margin-bottom:2px">🧭 Plan My Day</div>'
       + '<div style="font-size:11px;color:rgba(255,255,255,.75)">Add your own appointments, or tap Plan My Day on today\'s agenda card for suggested stops</div>'
+      + '<label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:11px;color:rgba(255,255,255,.85);cursor:pointer;width:fit-content">'
+        + '<input type="checkbox" ' + (autoOn ? 'checked' : '') + ' onchange="spToggleAutoSuggest()" style="cursor:pointer">'
+        + 'Always show suggested stops automatically (no daily tap needed)'
+      + '</label>'
     + '</div>'
     + '<div style="display:flex;gap:8px;flex-wrap:wrap">'
       + '<button onclick="spOpenApptModal(null,null,\'appointment\',null)" style="background:#fff;color:#1B5FA8;border:none;border-radius:7px;padding:8px 16px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;white-space:nowrap">+ Add Appointment</button>'
