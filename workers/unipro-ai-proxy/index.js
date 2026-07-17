@@ -142,6 +142,9 @@ const ALLOWED_TABLES = new Set([
   // st_deficiencies, added 2026-07-17: open inspection findings flagged
   // during ServiceTrade service visits -- key context for disco prep.
   'st_deficiencies',
+  // ServiceTrade sync progress tracking, added 2026-07-17 -- the ST
+  // sync dashboard panel was 400ing because this table was never added.
+  'servicetrade_sync_progress',
 ]);
 
 const TABLE_PREFIX = {
