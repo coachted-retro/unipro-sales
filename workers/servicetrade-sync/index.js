@@ -336,6 +336,60 @@ async function syncJobsAndServices(env, authToken, acctId, stLocationId, divisio
 }
 __name(syncJobsAndServices, "syncJobsAndServices");
 
+// Pull open deficiencies flagged during ST inspections for this location
+async function syncDeficiencies(env, authToken, acctId, stLocationId, log) {
+  const now = Date.now();
+  let page = 1, totalPages = 1;
+  const allDefs = [];
+
+  do {
+    let resp;
+    try {
+      resp = await stGet(env, authToken, "/deficiency", { locationId: stLocationId, page });
+    } catch (e) {
+      // /deficiency endpoint may 404 on some ST tiers -- not fatal
+      break;
+    }
+    const rows = (resp.data && resp.data.deficiencies) || (resp.data && resp.data.items) || [];
+    if (!rows.length) break;
+    totalPages = (resp.data && resp.data.totalPages) || 1;
+    allDefs.push(...rows);
+    page++;
+  } while (page <= totalPages);
+
+  for (const d of allDefs) {
+    const defId = "STD-" + d.id;
+    const status = (d.status || "open").toLowerCase();
+    const severity = (d.severity || d.priority || "").toLowerCase();
+    const assetType = (d.asset && (d.asset.type || d.asset.name)) || (d.assetType) || null;
+    const jobId = d.job ? "STJ-" + d.job.id : null;
+    const identifiedDate = d.createdOn ? toDateStr(d.createdOn) : (d.identifiedOn ? toDateStr(d.identifiedOn) : null);
+    const resolvedDate = d.resolvedOn ? toDateStr(d.resolvedOn) : null;
+    const techId = d.technician ? String(d.technician.id) : null;
+
+    try {
+      await env.DB.prepare(
+        `INSERT INTO st_deficiencies (id, account_id, st_location_id, job_id, description, asset_type, severity, status, identified_date, resolved_date, tech_id, notes, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         ON CONFLICT(id) DO UPDATE SET
+           status=excluded.status, resolved_date=excluded.resolved_date,
+           description=excluded.description, asset_type=excluded.asset_type,
+           severity=excluded.severity, notes=excluded.notes, updated_at=excluded.updated_at`
+      ).bind(
+        defId, acctId, stLocationId, sv(jobId),
+        sv(d.description || d.name || null), sv(assetType), sv(severity), status,
+        sv(identifiedDate), sv(resolvedDate), sv(techId),
+        sv(d.notes || d.correctiveAction || null),
+        now, now
+      ).run();
+      log.deficienciesSynced = (log.deficienciesSynced || 0) + 1;
+    } catch (e) {
+      log.deficiencyWriteErrors = (log.deficiencyWriteErrors || 0) + 1;
+    }
+  }
+}
+__name(syncDeficiencies, "syncDeficiencies");
+
 async function syncAssetsAndHistory(env, authToken, acctId, stLocationId, log) {
   let page = 1, totalPages = 1;
   const assets = [];
@@ -450,6 +504,12 @@ async function syncOneLocation(env, authToken, loc, log) {
       log.jobSyncErrorSamples.push({ locationId: stId, error: e.message });
     }
     log.jobSyncErrorSamples = log.jobSyncErrorSamples || [];
+  }
+
+  try {
+    await syncDeficiencies(env, authToken, finalAcctId, stId, log);
+  } catch (e) {
+    log.deficiencySyncErrors = (log.deficiencySyncErrors || 0) + 1;
   }
 
   try {

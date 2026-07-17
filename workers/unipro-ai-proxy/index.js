@@ -139,6 +139,9 @@ const ALLOWED_TABLES = new Set([
   // st_services, added 2026-07-17: recurring service contract summary
   // derived from ServiceTrade job recurrence data per location.
   'st_services',
+  // st_deficiencies, added 2026-07-17: open inspection findings flagged
+  // during ServiceTrade service visits -- key context for disco prep.
+  'st_deficiencies',
 ]);
 
 const TABLE_PREFIX = {
@@ -182,6 +185,7 @@ const TABLE_PREFIX = {
   tasks:'TSK',
   account_assets:'AST',
   st_services:'STS',
+  st_deficiencies:'STD',
 };
 
 function corsHeaders(origin) {

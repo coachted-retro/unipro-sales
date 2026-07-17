@@ -4292,6 +4292,8 @@ function spOpenDetail(r, tab) {
     const acctJobs = (crmLoad('jobs') || []).filter(j => j.accountId === r.id || j.account_id === r.id);
     const acctAssets = (crmLoad('account_assets') || []).filter(a => a.accountId === r.id || a.account_id === r.id);
     const acctServices = (crmLoad('st_services') || []).filter(s => s.accountId === r.id || s.account_id === r.id);
+    const acctDeficiencies = (crmLoad('st_deficiencies') || []).filter(d => d.accountId === r.id || d.account_id === r.id);
+    const openDefs = acctDeficiencies.filter(d => !['resolved','closed','complete'].includes((d.status||'').toLowerCase()));
 
     // Service line asset summary -- group by service_line/serviceLine
     const assetByLine = {};
@@ -4387,10 +4389,28 @@ function spOpenDetail(r, tab) {
         </div>`;
     }).join('');
 
-    const hasAnyService = nextDueTs || lastSvcDate || acctJobs.length || acctAssets.length || acctServices.length;
+    const hasAnyService = nextDueTs || lastSvcDate || acctJobs.length || acctAssets.length || acctServices.length || openDefs.length;
     if (hasAnyService) {
+      // Open deficiencies from ST inspections -- most important for disco prep
+      const defRows = openDefs.map(d => {
+        const sev = (d.severity || '').toLowerCase();
+        const sevColor = sev === 'high' || sev === 'critical' ? '#C8102E' : sev === 'medium' ? '#D97706' : '#6B7280';
+        const sevBg = sev === 'high' || sev === 'critical' ? '#FEE9EC' : sev === 'medium' ? '#FEF3C7' : '#F3F4F6';
+        const identified = d.identifiedDate || d.identified_date;
+        return `<div style="padding:8px 10px;background:${sevBg};border-left:3px solid ${sevColor};border-radius:0 6px 6px 0;margin-bottom:5px">
+            <div style="font-size:12px;font-weight:700;color:var(--ink)">${escH(d.description || d.assetType || d.asset_type || 'Deficiency')}</div>
+            <div style="font-size:10px;color:var(--soft);margin-top:2px">${escH(d.assetType||d.asset_type||'')}${sev ? ' · ' + sev.toUpperCase() : ''}${identified ? ' · Flagged ' + new Date(identified).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : ''}</div>
+            ${d.notes ? `<div style="font-size:11px;color:var(--soft);margin-top:2px">${escH((d.notes).slice(0,100))}</div>` : ''}
+          </div>`;
+      }).join('');
+
       servicesHtml = `<div style="padding:12px 0;border-bottom:1px solid var(--line);margin-bottom:12px">
         <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:10px">🛠 Active Services &amp; Inspections</div>
+
+        ${openDefs.length ? `<div style="margin-bottom:10px">
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#C8102E;margin-bottom:6px">⚠ Open Deficiencies (${openDefs.length})</div>
+          ${defRows}
+        </div>` : ''}
 
         ${nextDueTs || lastSvcDate ? `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;align-items:center">
           ${nextDueBadge}
@@ -4407,7 +4427,7 @@ function spOpenDetail(r, tab) {
         ${activeJobs.length ? `<div style="margin-bottom:6px">
           <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--soft);margin-bottom:6px">Active / Scheduled Jobs (${activeJobs.length})</div>
           ${activeJobsHtml}
-        </div>` : activeJobsHtml}
+        </div>` : (!openDefs.length && !acctServices.length ? activeJobsHtml : '')}
 
         ${recentJobs.length ? `<div>
           <div onclick="spToggleCollapse('spSvcHistory')" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:6px">

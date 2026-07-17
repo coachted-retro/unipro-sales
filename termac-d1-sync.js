@@ -52,7 +52,7 @@
     'trade_partners', 'trade_partner_referrals', 'trade_partner_bids',
     'reference_library', 'allpro_rate_tables', 'notifications',
     'accounts_payable', 'expense_reports', 'customer_orders', 'reorder_requests',
-    'warehouse_alerts', 'debriefs', 'rcp_calls', 'account_assets', 'tasks', 'st_services'];
+    'warehouse_alerts', 'debriefs', 'rcp_calls', 'account_assets', 'tasks', 'st_services', 'st_deficiencies'];
 
   async function d1Fetch(method, path, body, opts2) {
     try {
@@ -402,6 +402,9 @@
     st_services: ['id', 'account_id', 'st_location_id', 'service_line', 'description',
       'frequency', 'interval_days', 'next_due', 'last_completed', 'status',
       'tech_id', 'created_at', 'updated_at'],
+    st_deficiencies: ['id', 'account_id', 'st_location_id', 'job_id', 'description',
+      'asset_type', 'severity', 'status', 'identified_date', 'resolved_date',
+      'tech_id', 'notes', 'created_at', 'updated_at'],
     deficiencies: ['id', 'account_id', 'location_id', 'job_id', 'division', 'description',
       'equipment_type', 'severity', 'status', 'quoted_amount', 'quote_ref',
       'assigned_to', 'due_date', 'resolved_at', 'notes', 'created_at', 'updated_at'],
