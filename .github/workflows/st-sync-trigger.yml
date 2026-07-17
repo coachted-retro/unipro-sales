@@ -1,0 +1,35 @@
+name: ServiceTrade Full Sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      batches:
+        description: 'Max batches to run (100 = full resume)'
+        required: false
+        default: '100'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    name: Resume ServiceTrade sync to D1
+    steps:
+      - name: Trigger sync-many
+        run: |
+          BATCHES="${{ github.event.inputs.batches }}"
+          BATCHES=${BATCHES:-100}
+          echo "Calling /sync-many?batches=$BATCHES"
+          RESPONSE=$(curl -s --max-time 600 -X POST \
+            "https://servicetrade-sync.termac-one.workers.dev/sync-many?batches=$BATCHES")
+          echo "Response: $RESPONSE"
+          OK=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('ok','false'))" 2>/dev/null || echo "false")
+          if [ "$OK" != "True" ] && [ "$OK" != "true" ]; then
+            echo "::error::Sync returned ok=false or failed: $RESPONSE"
+            exit 1
+          fi
+          echo "Sync batch complete. Response: $RESPONSE"
+
+      - name: Final status check
+        run: |
+          STATUS=$(curl -s --max-time 15 \
+            "https://servicetrade-sync.termac-one.workers.dev/sync-status")
+          echo "Sync status: $STATUS"
