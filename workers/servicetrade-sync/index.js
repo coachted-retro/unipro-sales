@@ -1,93 +1,28 @@
-/**
- * servicetrade-sync
- *
- * Pulls real account/location data out of ServiceTrade (the "Ter-pro LLC"
- * account, which per Ted's screenshots covers the UniPro family: Uni Pro,
- * Capital Fire, Quality III, GBD, GNY) and syncs it into Termac One's
- * accounts + contacts tables in D1. This is the single biggest unblock
- * for the sales-side data gap discussed all night -- reps currently have
- * zero UniPro accounts to work with in Termac One even though ~6,000+
- * real customer locations already exist in ServiceTrade.
- *
- * AUTH STATUS, 2026-07-15 (resolved and confirmed live): OAuth2
- * client_credentials against /oauth2/token, using the External System
- * Client ID/Secret pair Cathy originally set up, works and is confirmed
- * live -- a real token exchange succeeded on the first live /sync call.
- *
- * DATA-SHAPE FIX, 2026-07-15 (resolved and confirmed live): the first
- * real sync crashed with "D1_TYPE_ERROR: Type 'object' not supported"
- * because at least one field ServiceTrade actually returns is a nested
- * object where the docs implied a flat string. sv() below JSON-
- * stringifies any object/array value instead of crashing, applied to
- * every field pulled from a ServiceTrade response. Per-location and
- * per-asset writes are also individually try/caught now, so one bad
- * record can't take down the whole run.
- *
- * BATCHING, 2026-07-15 (this fix): the second real sync attempt, after
- * the data-shape fix, got real results (45 assets synced, 7 asset
- * errors safely caught) but then hit Cloudflare's own per-invocation
- * subrequest ceiling ("Too many subrequests by single Worker
- * invocation") -- Workers on the Free plan cap out at 50 external
- * fetch() calls per invocation, and a location plus its assets plus its
- * job history is 2-3 external calls each, so a single invocation could
- * only ever get partway into the first page of ~6,000+ locations no
- * matter what. Fixed by batching: each /sync call now processes a
- * bounded number of locations (LOCATIONS_PER_BATCH) and persists exactly
- * where it left off in servicetrade_sync_progress (D1 table, not
- * localStorage, per standing platform rule), so calling /sync again
- * picks up right where the last call stopped instead of restarting from
- * scratch or blowing the same ceiling again. This works regardless of
- * which Cloudflare plan the account is on -- if it turns out to be on
- * Workers Paid ($5/mo, 10,000 external subrequests per invocation by
- * default as of Cloudflare's Feb 2026 change), batching just means each
- * call finishes faster than the ceiling allows; if it's on Free, this is
- * what makes the sync completable at all. The nightly cron below now
- * runs a small chained loop of batches (see runBatchedSync) rather than
- * one unbounded call, so it makes steady progress on its own without
- * needing every night's run to be manually triggered.
- *
- * ACCOUNT MAPPING PHILOSOPHY, per Ted 2026-07-14: keep ServiceTrade's
- * own service-line language visible and intact (Lexi is comfortable
- * with ServiceTrade's structure and this should not force her into an
- * unfamiliar system), while still mapping cleanly into Termac's own
- * division taxonomy underneath. Every synced account keeps the real
- * ServiceTrade service line names in its activity log for full
- * traceability back to source, not just a silently remapped category.
- */
+var __defProp = Object.defineProperty;
+var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
-const ST_API_BASE = 'https://app.servicetrade.com/api';
+// index.js
+var ST_API_BASE = "https://app.servicetrade.com/api";
+var LOCATIONS_PER_BATCH = 300;
+var CRON_BATCHES_PER_RUN = 100;
 
-// 2026-07-15, updated after Ted upgraded the termac-one Cloudflare
-// account to Workers Paid: the per-invocation external-subrequest
-// ceiling jumps from 50 (Free) to 10,000 by default. Each location
-// costs roughly 2-3 external calls (asset pull, possible extra asset
-// pagination, job pull), plus 1 call for the location page itself.
-// 300 locations/batch keeps total external calls (~600-900) comfortably
-// under the new ceiling with real margin, while cutting a full sync of
-// ~6,000 locations down to roughly 20 manual /sync calls instead of
-// ~500. If the account ever drops back to Free, this would need to
-// come back down to ~12.
-const LOCATIONS_PER_BATCH = 300;
-
-// 2026-07-15, bumped after confirming several live batches ran clean
-// (zero errors, ~10 locations per ServiceTrade page regardless of how
-// high LOCATIONS_PER_BATCH is set -- the real page size is controlled
-// by ServiceTrade's own API, not by us). At ~10 locations/call, 100
-// chained batches per night covers roughly 1,000 locations, working
-// through the full ~6,000-location list in well under a week
-// automatically, with no manual /sync clicking required.
-const CRON_BATCHES_PER_RUN = 100;
-
-const SERVICE_LINE_MAP = {
-  'Emergency/Exit Light Group': 'unipro',
-  'Emergency/Exit Light': 'unipro',
-  'Fire Suppression': 'unipro',
-  'Gas Station Fire Suppression': 'unipro',
-  'Kitchen Fire Suppression': 'unipro',
-  'Kitchen Suppression Group': 'unipro',
-  'Kitchen Suppression Cylinder': 'unipro',
-  'Fire Extinguisher Group': 'unipro',
-  'Portable Fire Extinguisher': 'unipro',
+// Service lines that map to UniPro division
+var SERVICE_LINE_MAP = {
+  "Emergency/Exit Light Group": "unipro",
+  "Emergency/Exit Light": "unipro",
+  "Fire Suppression": "unipro",
+  "Gas Station Fire Suppression": "unipro",
+  "Kitchen Fire Suppression": "unipro",
+  "Kitchen Suppression Group": "unipro",
+  "Kitchen Suppression Cylinder": "unipro",
+  "Fire Extinguisher Group": "unipro",
+  "Portable Fire Extinguisher": "unipro",
+  // GTO / grease
+  "Grease Trap Cleaning": "gto",
+  "Grease Trap": "gto",
+  "Hood Cleaning": "gto",
+  "Filter Exchange": "filterman",
+  "Filter Man": "filterman",
 };
 
 function mapServiceLines(rawLines) {
@@ -100,28 +35,56 @@ function mapServiceLines(rawLines) {
   });
   return { divisions: Array.from(divisions), unmapped };
 }
+__name(mapServiceLines, "mapServiceLines");
 
-// D1 only accepts primitives as bind values. See DATA-SHAPE FIX note
-// above -- objects/arrays get JSON-stringified instead of crashing.
 function sv(val) {
   if (val === undefined || val === null) return null;
-  if (typeof val === 'object') {
+  if (typeof val === "object") {
     try { return JSON.stringify(val); } catch (e) { return String(val); }
   }
   return val;
 }
+__name(sv, "sv");
 
-// 2026-07-15: same normalization used for the GTO/FilterMan/UniPro CSV
-// import -- uppercase, strip everything but letters/digits, collapse
-// whitespace. Used to catch "XYZ CAFE" vs "XYZ Cafe LLC" as the same
-// business when they share a zip, instead of the old exact-string
-// comparison that let real duplicates straight through.
 function normalizeForMatch(s) {
-  return (s || '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
+  return (s || "").toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim();
 }
+__name(normalizeForMatch, "normalizeForMatch");
 
-const ST_OAUTH_ROW_ID = 'main';
-const PROGRESS_ROW_ID = 'main';
+function toDateStr(val) {
+  if (val === null || val === undefined) return "";
+  if (typeof val === "number") return new Date(val * 1000).toISOString().slice(0, 10);
+  return String(val);
+}
+__name(toDateStr, "toDateStr");
+
+// Map ST job status values to our normalized set
+function normalizeJobStatus(stStatus) {
+  const s = (stStatus || "").toLowerCase();
+  if (s === "completed" || s === "complete") return "complete";
+  if (s === "scheduled" || s === "dispatched") return "scheduled";
+  if (s === "cancelled" || s === "canceled") return "cancelled";
+  return "pending_schedule";
+}
+__name(normalizeJobStatus, "normalizeJobStatus");
+
+// Derive interval_days from ST's frequency/interval fields
+function resolveIntervalDays(job) {
+  // ST uses recurrence.interval + recurrence.unit: day/week/month/year
+  const rec = job.recurrence || job.schedule || {};
+  const unit = (rec.unit || rec.intervalUnit || "").toLowerCase();
+  const count = rec.interval || rec.intervalCount || 1;
+  if (!unit) return null;
+  if (unit === "day") return count;
+  if (unit === "week") return count * 7;
+  if (unit === "month") return count * 30;
+  if (unit === "year") return count * 365;
+  return null;
+}
+__name(resolveIntervalDays, "resolveIntervalDays");
+
+var ST_OAUTH_ROW_ID = "main";
+var PROGRESS_ROW_ID = "main";
 
 async function getServiceTradeAccessToken(env) {
   const now = Date.now();
@@ -136,36 +99,59 @@ async function getServiceTradeAccessToken(env) {
   let tokenBody;
   if (row && row.refresh_token) {
     tokenBody = new URLSearchParams({
-      grant_type: 'refresh_token',
+      grant_type: "refresh_token",
       client_id: env.SERVICETRADE_CLIENT_ID,
       refresh_token: row.refresh_token,
     });
   } else {
     tokenBody = new URLSearchParams({
-      grant_type: 'client_credentials',
+      grant_type: "client_credentials",
       client_id: env.SERVICETRADE_CLIENT_ID,
       client_secret: env.SERVICETRADE_CLIENT_SECRET,
     });
   }
 
   const res = await fetch(`${ST_API_BASE}/oauth2/token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: tokenBody,
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok || !body.access_token) {
-    throw new Error('ServiceTrade OAuth2 token exchange failed: ' + res.status + ' ' + JSON.stringify(body).slice(0, 300));
+    // Refresh token may have expired -- fall back to client_credentials
+    if (row && row.refresh_token) {
+      const fallback = new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id: env.SERVICETRADE_CLIENT_ID,
+        client_secret: env.SERVICETRADE_CLIENT_SECRET,
+      });
+      const res2 = await fetch(`${ST_API_BASE}/oauth2/token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: fallback,
+      });
+      const body2 = await res2.json().catch(() => ({}));
+      if (!res2.ok || !body2.access_token) {
+        throw new Error("ServiceTrade OAuth2 token exchange failed (both refresh and client_credentials): " + res2.status + " " + JSON.stringify(body2).slice(0, 300));
+      }
+      const expiresAt2 = now + (body2.expires_in || 86400) * 1000;
+      await env.DB.prepare(
+        `INSERT INTO servicetrade_oauth_state (id, access_token, refresh_token, expires_at, updated_at) VALUES (?,?,?,?,?)
+         ON CONFLICT(id) DO UPDATE SET access_token=excluded.access_token, refresh_token=excluded.refresh_token, expires_at=excluded.expires_at, updated_at=excluded.updated_at`
+      ).bind(ST_OAUTH_ROW_ID, sv(body2.access_token), sv(body2.refresh_token || null), expiresAt2, now).run();
+      return body2.access_token;
+    }
+    throw new Error("ServiceTrade OAuth2 token exchange failed: " + res.status + " " + JSON.stringify(body).slice(0, 300));
   }
 
-  const expiresAt = now + ((body.expires_in || 86400) * 1000);
+  const expiresAt = now + (body.expires_in || 86400) * 1000;
   await env.DB.prepare(
     `INSERT INTO servicetrade_oauth_state (id, access_token, refresh_token, expires_at, updated_at) VALUES (?,?,?,?,?)
      ON CONFLICT(id) DO UPDATE SET access_token=excluded.access_token, refresh_token=excluded.refresh_token, expires_at=excluded.expires_at, updated_at=excluded.updated_at`
   ).bind(ST_OAUTH_ROW_ID, sv(body.access_token), sv(body.refresh_token || (row && row.refresh_token) || null), expiresAt, now).run();
-
   return body.access_token;
 }
+__name(getServiceTradeAccessToken, "getServiceTradeAccessToken");
 
 async function stGet(env, accessToken, path, params) {
   const url = new URL(ST_API_BASE + path);
@@ -176,6 +162,7 @@ async function stGet(env, accessToken, path, params) {
   if (!res.ok) throw new Error(`ServiceTrade GET ${path} failed: ${res.status}`);
   return res.json();
 }
+__name(stGet, "stGet");
 
 async function getProgress(env) {
   const row = await env.DB.prepare(
@@ -184,6 +171,7 @@ async function getProgress(env) {
   if (row) return row;
   return { current_page: 1, offset_in_page: 0, total_synced: 0, total_updated: 0, total_asset_errors: 0, total_location_errors: 0, completed_at: null, last_error: null, last_error_at: null };
 }
+__name(getProgress, "getProgress");
 
 async function saveProgress(env, p) {
   const now = Date.now();
@@ -201,39 +189,143 @@ async function saveProgress(env, p) {
     p.last_error || null, p.last_error ? now : null
   ).run();
 }
+__name(saveProgress, "saveProgress");
 
-// 2026-07-15 FIX: asset detail fields (manufacturer, model, install date,
-// hydrostatic test date) live in a nested `properties` object, and the
-// property key names are prefixed by asset type -- a kitchen_cylinder
-// asset has cylinder_manufacturer/cylinder_model/etc, an extinguisher
-// will have its own different prefix, and so on for every asset type
-// ServiceTrade defines. Rather than hardcode every type's exact prefix
-// (fragile, and would silently miss any type not seen yet), this
-// searches the properties object generically for any key containing the
-// given keyword, so it works across every asset type automatically.
-// Also fixes location_in_site, which was assumed to be a flat top-level
-// field but is actually inside properties too on most asset types.
 function findProp(properties, keyword) {
-  if (!properties || typeof properties !== 'object') return null;
+  if (!properties || typeof properties !== "object") return null;
   const key = Object.keys(properties).find((k) => k.toLowerCase().includes(keyword));
   return key ? properties[key] : null;
 }
+__name(findProp, "findProp");
 
-// Several property values are epoch-seconds timestamps (confirmed via
-// cylinder_manufacture_date in a real response), same convention as the
-// job dates fixed earlier tonight. Converts to a plain date string;
-// passes through anything that isn't a bare number unchanged.
-function toDateStr(val) {
-  if (val === null || val === undefined) return '';
-  if (typeof val === 'number') return new Date(val * 1000).toISOString().slice(0, 10);
-  return String(val);
+// Write all job rows for a location into the jobs table, and populate
+// st_services with recurring service contract data
+async function syncJobsAndServices(env, authToken, acctId, stLocationId, division, log) {
+  const now = Date.now();
+  let page = 1, totalPages = 1;
+  const allJobs = [];
+
+  do {
+    const resp = await stGet(env, authToken, "/job", { locationId: stLocationId, status: "all", page });
+    const rows = (resp.data && resp.data.jobs) || [];
+    totalPages = (resp.data && resp.data.totalPages) || 1;
+    allJobs.push(...rows);
+    page++;
+  } while (page <= totalPages);
+
+  // Write each job into the jobs table
+  for (const j of allJobs) {
+    const jobId = "STJ-" + j.id;
+    const status = normalizeJobStatus(j.status);
+    const scheduledDate = j.scheduledOn ? toDateStr(j.scheduledOn) : (j.scheduledDate || null);
+    const dueDate = j.dueBy ? toDateStr(j.dueBy) : null;
+    const completedAt = j.completedOn ? j.completedOn * 1000 : null;
+    const serviceType = (j.type && j.type.name) || j.serviceType || j.name || null;
+    const serviceLine = (j.serviceLine && j.serviceLine.name) || (j.serviceLines && j.serviceLines[0] && j.serviceLines[0].name) || null;
+    const techId = j.technician ? String(j.technician.id || "") : null;
+    const jobNumber = sv(j.number || j.jobNumber || null);
+    const intervalDays = resolveIntervalDays(j);
+    const frequency = j.recurrence ? ((j.recurrence.interval || "") + " " + (j.recurrence.unit || "")).trim() || null : null;
+
+    try {
+      await env.DB.prepare(
+        `INSERT INTO jobs (id, account_id, division, service_type, service_line, tech_id, scheduled_date, due_date, status, notes, job_number, frequency, interval_days, completed_at, source, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         ON CONFLICT(id) DO UPDATE SET
+           account_id=excluded.account_id, status=excluded.status,
+           scheduled_date=excluded.scheduled_date, due_date=excluded.due_date,
+           service_type=excluded.service_type, service_line=excluded.service_line,
+           tech_id=excluded.tech_id, notes=excluded.notes, job_number=excluded.job_number,
+           frequency=excluded.frequency, interval_days=excluded.interval_days,
+           completed_at=excluded.completed_at, updated_at=excluded.updated_at`
+      ).bind(
+        jobId, acctId, sv(division), sv(serviceType), sv(serviceLine), sv(techId),
+        sv(scheduledDate), sv(dueDate), status,
+        sv(j.notes || j.description || null), sv(jobNumber),
+        sv(frequency), intervalDays, completedAt,
+        "ServiceTrade Sync", now, now
+      ).run();
+      log.jobsSynced = (log.jobsSynced || 0) + 1;
+    } catch (e) {
+      log.jobWriteErrors = (log.jobWriteErrors || 0) + 1;
+    }
+  }
+
+  // Derive recurring services from jobs that have a recurrence/schedule
+  // ServiceTrade doesn't have a separate /service endpoint in all account
+  // tiers, but recurring jobs carry frequency info -- group by service line
+  // to produce a clean service-contract summary per location
+  const recurringByLine = {};
+  for (const j of allJobs) {
+    const intervalDays = resolveIntervalDays(j);
+    if (!intervalDays) continue;
+    const serviceLine = (j.serviceLine && j.serviceLine.name) || (j.serviceLines && j.serviceLines[0] && j.serviceLines[0].name) || "General";
+    if (!recurringByLine[serviceLine] || (j.dueBy && (!recurringByLine[serviceLine].nextDue || j.dueBy < recurringByLine[serviceLine].nextDue))) {
+      recurringByLine[serviceLine] = {
+        intervalDays,
+        frequency: j.recurrence ? ((j.recurrence.interval || "") + " " + (j.recurrence.unit || "")).trim() : null,
+        nextDue: j.dueBy || null,
+        lastCompleted: null,
+        status: normalizeJobStatus(j.status),
+      };
+    }
+    if (j.status === "completed" && j.completedOn) {
+      const existing = recurringByLine[serviceLine];
+      if (!existing.lastCompleted || j.completedOn > existing.lastCompleted) {
+        existing.lastCompleted = j.completedOn;
+      }
+    }
+  }
+
+  for (const [line, data] of Object.entries(recurringByLine)) {
+    const svcId = "STS-" + stLocationId + "-" + line.replace(/[^a-zA-Z0-9]/g, "_").slice(0, 30);
+    try {
+      await env.DB.prepare(
+        `INSERT INTO st_services (id, account_id, st_location_id, service_line, frequency, interval_days, next_due, last_completed, status, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)
+         ON CONFLICT(id) DO UPDATE SET
+           frequency=excluded.frequency, interval_days=excluded.interval_days,
+           next_due=excluded.next_due, last_completed=excluded.last_completed,
+           status=excluded.status, updated_at=excluded.updated_at`
+      ).bind(
+        svcId, acctId, stLocationId, sv(line),
+        sv(data.frequency), data.intervalDays,
+        sv(data.nextDue ? toDateStr(data.nextDue) : null),
+        sv(data.lastCompleted ? toDateStr(data.lastCompleted) : null),
+        data.status, now, now
+      ).run();
+      log.servicesSynced = (log.servicesSynced || 0) + 1;
+    } catch (e) {
+      log.serviceWriteErrors = (log.serviceWriteErrors || 0) + 1;
+    }
+  }
+
+  // Also update last_service and next_due on the account from the most
+  // authoritative job data (same as before, kept for backward compat
+  // with anything already reading those fields directly off accounts)
+  const completed = allJobs.filter((j) => (j.status === "completed" || j.status === "complete") && j.completedOn);
+  const upcoming = allJobs.filter((j) => !["completed","complete","cancelled","canceled"].includes(j.status) && j.dueBy);
+  const lastService = completed.sort((a, b) => b.completedOn - a.completedOn)[0];
+  const nextDue = upcoming.sort((a, b) => a.dueBy - b.dueBy)[0];
+
+  if (lastService || nextDue) {
+    await env.DB.prepare(
+      `UPDATE accounts SET last_service=?, next_due=?, updated_at=? WHERE id=?`
+    ).bind(
+      sv(lastService ? toDateStr(lastService.completedOn) : null),
+      sv(nextDue ? toDateStr(nextDue.dueBy) : null),
+      now, acctId
+    ).run();
+  }
 }
+__name(syncJobsAndServices, "syncJobsAndServices");
 
 async function syncAssetsAndHistory(env, authToken, acctId, stLocationId, log) {
   let page = 1, totalPages = 1;
   const assets = [];
+
   do {
-    const resp = await stGet(env, authToken, '/asset', { locationId: stLocationId, page });
+    const resp = await stGet(env, authToken, "/asset", { locationId: stLocationId, page });
     const rows = (resp.data && resp.data.assets) || [];
     totalPages = (resp.data && resp.data.totalPages) || 1;
     assets.push(...rows);
@@ -242,25 +334,26 @@ async function syncAssetsAndHistory(env, authToken, acctId, stLocationId, log) {
 
   const now = Date.now();
   for (const a of assets) {
-    const assetId = 'STA-' + a.id;
+    const assetId = "STA-" + a.id;
     const props = a.properties || {};
-    const locationInSite = findProp(props, 'location_in_site') || a.locationInSite || '';
-    const manufacturer = findProp(props, 'manufacturer');
-    const model = findProp(props, 'model');
-    const size = findProp(props, 'size');
-    const installDate = findProp(props, 'install');
-    const maintenanceDue = findProp(props, 'maintenance');
-    const hydroDue = findProp(props, 'hydro');
+    const locationInSite = findProp(props, "location_in_site") || a.locationInSite || "";
+    const manufacturer = findProp(props, "manufacturer");
+    const model = findProp(props, "model");
+    const size = findProp(props, "size");
+    const installDate = findProp(props, "install");
+    const maintenanceDue = findProp(props, "maintenance");
+    const hydroDue = findProp(props, "hydro");
+
     try {
       await env.DB.prepare(
         `INSERT INTO account_assets (id, account_id, external_asset_id, asset_type, description, location_in_site, service_line, manufacturer, model, size, install_date, maintenance_due_date, hydrostatic_test_due_date, created_at, updated_at)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
          ON CONFLICT(id) DO UPDATE SET description=excluded.description, location_in_site=excluded.location_in_site, service_line=excluded.service_line, manufacturer=excluded.manufacturer, model=excluded.model, size=excluded.size, install_date=excluded.install_date, maintenance_due_date=excluded.maintenance_due_date, hydrostatic_test_due_date=excluded.hydrostatic_test_due_date, updated_at=excluded.updated_at`
       ).bind(
-        assetId, acctId, sv(String(a.id)), sv(a.type) || '', sv(a.description || a.name) || '',
-        sv(locationInSite) || '', sv(a.serviceLine && a.serviceLine.name) || '',
-        sv(manufacturer) || '', sv(model) || '', sv(size) || '',
-        sv(toDateStr(installDate)) || '', sv(toDateStr(maintenanceDue)) || '', sv(toDateStr(hydroDue)) || '',
+        assetId, acctId, sv(String(a.id)), sv(a.type) || "", sv(a.description || a.name) || "",
+        sv(locationInSite) || "", sv(a.serviceLine && a.serviceLine.name) || "",
+        sv(manufacturer) || "", sv(model) || "", sv(size) || "",
+        sv(toDateStr(installDate)) || "", sv(toDateStr(maintenanceDue)) || "", sv(toDateStr(hydroDue)) || "",
         now, now
       ).run();
     } catch (e) {
@@ -268,33 +361,8 @@ async function syncAssetsAndHistory(env, authToken, acctId, stLocationId, log) {
     }
   }
   log.assetsSynced = (log.assetsSynced || 0) + assets.length;
-
-  // 2026-07-15 FIX: this call used to have no status parameter at all,
-  // and ServiceTrade's /job endpoint silently defaults to something
-  // that excludes real jobs when status isn't specified -- confirmed via
-  // a location with 4 real jobs (visible in the ServiceTrade UI) coming
-  // back completely empty without status=all, then returning real data
-  // once it was added. Also corrected next-due to use `dueBy` (epoch
-  // seconds, matches the "DUE BY" column in ServiceTrade's own UI
-  // exactly) instead of a `scheduledDate` field that doesn't actually
-  // exist on the real job object -- `completedOn` was already right.
-  const jobsResp = await stGet(env, authToken, '/job', { locationId: stLocationId, status: 'all', page: 1 });
-  const jobs = (jobsResp.data && jobsResp.data.jobs) || [];
-  const completed = jobs.filter((j) => j.status === 'completed' && j.completedOn);
-  const upcoming = jobs.filter((j) => j.status !== 'completed' && j.dueBy);
-  const lastService = completed.sort((a, b) => b.completedOn - a.completedOn)[0];
-  const nextDue = upcoming.sort((a, b) => a.dueBy - b.dueBy)[0];
-
-  if (lastService || nextDue) {
-    await env.DB.prepare(
-      `UPDATE accounts SET last_service = ?, next_due = ?, updated_at = ? WHERE id = ?`
-    ).bind(
-      sv(lastService ? new Date(lastService.completedOn * 1000).toISOString().slice(0, 10) : null),
-      sv(nextDue ? new Date(nextDue.dueBy * 1000).toISOString().slice(0, 10) : null),
-      now, acctId
-    ).run();
-  }
 }
+__name(syncAssetsAndHistory, "syncAssetsAndHistory");
 
 async function syncOneLocation(env, authToken, loc, log) {
   const rawServiceLines = (loc.serviceLines || []).map((s) => s.name || s);
@@ -302,75 +370,70 @@ async function syncOneLocation(env, authToken, loc, log) {
   unmapped.forEach((u) => (log.unmappedLinesSeen = log.unmappedLinesSeen || new Set()).add(u));
 
   const stId = String(loc.id);
-  const acctId = 'ST-' + stId;
-  const locName = sv(loc.name) || '';
-
-  // 2026-07-15 FIX: loc.address is a real structured object from
-  // ServiceTrade (street/city/state/postalCode), not a flat string like
-  // originally assumed. The first live sync stored the whole object as
-  // one garbled JSON blob in `address` and left city/state/zip empty,
-  // since it was reading those as separate top-level fields that don't
-  // exist on the real response. 40 accounts synced before this fix were
-  // repaired directly in D1; this unpacks it properly going forward.
-  const addr = (loc.address && typeof loc.address === 'object') ? loc.address : {};
-  const locStreet = sv(addr.street) || '';
-  const locCity = sv(addr.city) || '';
-  const locState = sv(addr.state) || '';
-  const locZip = sv(addr.postalCode) || '';
-
-  // 2026-07-15 FIX: matching used to be an exact string comparison on
-  // business name + the (broken) address blob, which almost never
-  // caught real duplicates -- "XYZ CAFE" vs "XYZ Cafe LLC" at the
-  // identical address sailed past each other as different accounts.
-  // Now pulls every existing account at the same zip (cheap, zip is
-  // indexed-cardinality small even in dense areas) and compares names
-  // normalized the same way the GTO/FilterMan/UniPro CSV import does --
-  // uppercase, strip punctuation -- catching the same class of near-
-  // duplicate that a pure exact match misses.
+  const acctId = "ST-" + stId;
+  const locName = sv(loc.name) || "";
+  const addr = (loc.address && typeof loc.address === "object") ? loc.address : {};
+  const locStreet = sv(addr.street) || "";
+  const locCity = sv(addr.city) || "";
+  const locState = sv(addr.state) || "";
+  const locZip = sv(addr.postalCode) || "";
   const normName = normalizeForMatch(locName);
+
   let existing = null;
   if (locZip) {
     const candidates = await env.DB.prepare(
-      `SELECT id, name FROM accounts WHERE zip = ? AND id != ?`
+      `SELECT id, name FROM accounts WHERE zip=? AND id!=?`
     ).bind(locZip, acctId).all();
     const rows = (candidates && candidates.results) || [];
     const match = rows.find((r) => normalizeForMatch(r.name) === normName);
     if (match) existing = { id: match.id };
   }
   if (!existing) {
-    existing = await env.DB.prepare(`SELECT id FROM accounts WHERE id = ?`).bind(acctId).first();
+    existing = await env.DB.prepare(`SELECT id FROM accounts WHERE id=?`).bind(acctId).first();
   }
 
   const now = Date.now();
-  const servicesJson = JSON.stringify(divisions.length ? divisions : ['unipro']);
-  const noteLines = 'ServiceTrade service lines on file: ' + (rawServiceLines.join(', ') || 'none listed');
+  const division = divisions.length ? divisions[0] : "unipro";
+  const servicesJson = JSON.stringify(divisions.length ? divisions : ["unipro"]);
+  const noteLines = "ServiceTrade service lines on file: " + (rawServiceLines.join(", ") || "none listed");
   const finalAcctId = existing ? existing.id : acctId;
 
   if (existing) {
     await env.DB.prepare(
-      `UPDATE accounts SET business = ?, name = ?, address = ?, city = ?, state = ?, zip = ?, phone = ?, services = ?, updated_at = ? WHERE id = ?`
-    ).bind(locName, locName, locStreet, locCity, locState, locZip, sv(loc.phone) || '', servicesJson, now, existing.id).run();
+      `UPDATE accounts SET business=?, name=?, address=?, city=?, state=?, zip=?, phone=?, services=?, st_location_id=?, updated_at=? WHERE id=?`
+    ).bind(locName, locName, locStreet, locCity, locState, locZip, sv(loc.phone) || "", servicesJson, stId, now, existing.id).run();
     log.updated = (log.updated || 0) + 1;
   } else {
     await env.DB.prepare(
-      `INSERT INTO accounts (id, name, business, status, services, address, city, state, zip, phone, division, cust_num, source, activity_log, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      `INSERT INTO accounts (id, name, business, status, services, address, city, state, zip, phone, division, cust_num, st_location_id, source, activity_log, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     ).bind(
-      acctId, locName, locName, 'active', servicesJson,
-      locStreet, locCity, locState, locZip, sv(loc.phone) || '',
-      'UniPro', stId, 'ServiceTrade Sync',
-      JSON.stringify([{ ts: now, type: 'system', icon: '🔄', title: 'Synced from ServiceTrade', note: noteLines, who: 'ServiceTrade Sync' }]),
+      acctId, locName, locName, "active", servicesJson,
+      locStreet, locCity, locState, locZip, sv(loc.phone) || "",
+      division.toUpperCase() === "GTO" ? "GTO" : division.toUpperCase() === "FILTERMAN" ? "Filter Man" : "UniPro",
+      stId, stId, "ServiceTrade Sync",
+      JSON.stringify([{ ts: now, type: "system", icon: "\u{1F504}", title: "Synced from ServiceTrade", note: noteLines, who: "ServiceTrade Sync" }]),
       now, now
     ).run();
     log.synced = (log.synced || 0) + 1;
   }
 
   if (loc.primaryContact && loc.primaryContact.name) {
-    const contactId = 'ST-C-' + stId;
+    const contactId = "ST-C-" + stId;
     const c = loc.primaryContact;
     await env.DB.prepare(
       `INSERT INTO contacts (id, name, company, title, email, phone, account_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)
        ON CONFLICT(id) DO UPDATE SET name=excluded.name, email=excluded.email, phone=excluded.phone, updated_at=excluded.updated_at`
-    ).bind(contactId, sv(c.name) || '', locName, sv(c.title) || '', sv(c.email) || '', sv(c.phone) || '', acctId, now, now).run();
+    ).bind(contactId, sv(c.name) || "", locName, sv(c.title) || "", sv(c.email) || "", sv(c.phone) || "", finalAcctId, now, now).run();
+  }
+
+  try {
+    await syncJobsAndServices(env, authToken, finalAcctId, stId, division, log);
+  } catch (e) {
+    log.jobSyncErrors = (log.jobSyncErrors || 0) + 1;
+    if (log.jobSyncErrorSamples && log.jobSyncErrorSamples.length < 3) {
+      log.jobSyncErrorSamples.push({ locationId: stId, error: e.message });
+    }
+    log.jobSyncErrorSamples = log.jobSyncErrorSamples || [];
   }
 
   try {
@@ -379,23 +442,26 @@ async function syncOneLocation(env, authToken, loc, log) {
     log.assetSyncErrors = (log.assetSyncErrors || 0) + 1;
   }
 }
+__name(syncOneLocation, "syncOneLocation");
 
-// Processes one bounded batch (LOCATIONS_PER_BATCH locations) starting
-// from wherever servicetrade_sync_progress left off, then saves the new
-// position. Returns { done, batchLog, cumulativeTotals }.
 async function runOneBatch(env) {
   const authToken = await getServiceTradeAccessToken(env);
   const progress = await getProgress(env);
   let { current_page: page, offset_in_page: offset } = progress;
 
-  const batchLog = { synced: 0, updated: 0, assetsSynced: 0, assetWriteErrors: 0, assetSyncErrors: 0, locationSyncErrors: 0, locationSyncErrorSamples: [] };
+  const batchLog = {
+    synced: 0, updated: 0,
+    assetsSynced: 0, assetWriteErrors: 0, assetSyncErrors: 0,
+    jobsSynced: 0, jobWriteErrors: 0, jobSyncErrors: 0, jobSyncErrorSamples: [],
+    servicesSynced: 0, serviceWriteErrors: 0,
+    locationSyncErrors: 0, locationSyncErrorSamples: [],
+  };
 
-  const resp = await stGet(env, authToken, '/location', { page });
+  const resp = await stGet(env, authToken, "/location", { page });
   const locations = (resp.data && resp.data.locations) || [];
   const totalPages = (resp.data && resp.data.totalPages) || 1;
 
   if (locations.length === 0 && page > totalPages) {
-    // Nothing left at all -- fully done.
     progress.completed_at = Date.now();
     await saveProgress(env, progress);
     return { done: true, batchLog, progress };
@@ -417,13 +483,8 @@ async function runOneBatch(env) {
   let nextPage = page;
   let done = false;
   if (nextOffset >= locations.length) {
-    // Finished this page. Move to the next one, or finish entirely.
-    if (page >= totalPages) {
-      done = true;
-    } else {
-      nextPage = page + 1;
-      nextOffset = 0;
-    }
+    if (page >= totalPages) { done = true; }
+    else { nextPage = page + 1; nextOffset = 0; }
   }
 
   progress.current_page = nextPage;
@@ -434,47 +495,37 @@ async function runOneBatch(env) {
   progress.total_location_errors = (progress.total_location_errors || 0) + (batchLog.locationSyncErrors || 0);
   progress.completed_at = done ? Date.now() : null;
   await saveProgress(env, progress);
-
   return { done, batchLog, progress };
 }
+__name(runOneBatch, "runOneBatch");
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (url.pathname === '/health') {
+
+    if (url.pathname === "/health") {
       return Response.json({ ok: true, hasCredentials: !!(env.SERVICETRADE_CLIENT_ID && env.SERVICETRADE_CLIENT_SECRET) });
     }
-    // Single bounded batch per call -- call this repeatedly to work
-    // through the full location list. Response tells you exactly where
-    // it left off and whether it's done.
-    if (url.pathname === '/sync' && request.method === 'POST') {
+
+    if (url.pathname === "/sync" && request.method === "POST") {
       try {
         const result = await runOneBatch(env);
         return Response.json({
-          ok: true,
-          done: result.done,
-          thisBatch: result.batchLog,
+          ok: true, done: result.done, thisBatch: result.batchLog,
           cumulative: {
-            totalSynced: result.progress.total_synced,
-            totalUpdated: result.progress.total_updated,
-            totalAssetErrors: result.progress.total_asset_errors,
-            totalLocationErrors: result.progress.total_location_errors,
+            totalSynced: result.progress.total_synced, totalUpdated: result.progress.total_updated,
+            totalAssetErrors: result.progress.total_asset_errors, totalLocationErrors: result.progress.total_location_errors,
           },
           resumePosition: { page: result.progress.current_page, offsetInPage: result.progress.offset_in_page },
-          message: result.done ? 'Sync fully complete.' : 'Batch complete. Call /sync again to continue from where this left off.',
+          message: result.done ? "Sync fully complete." : "Batch complete. Call /sync again to continue.",
         });
       } catch (e) {
         return Response.json({ ok: false, error: e.message }, { status: 500 });
       }
     }
-    // Runs several batches back to back in one call, same as the nightly
-    // cron does, but on demand -- added 2026-07-16 per Ted, so this can
-    // be kicked off right now from a browser instead of waiting for
-    // tonight's 1am ET slot. ?batches=N controls how many (default 20,
-    // capped at 100 -- same ceiling as the cron itself -- to stay inside
-    // the 300,000ms CPU limit set in wrangler.toml).
-    if (url.pathname === '/sync-many' && request.method === 'POST') {
-      const requested = parseInt(url.searchParams.get('batches') || '20', 10);
+
+    if (url.pathname === "/sync-many" && request.method === "POST") {
+      const requested = parseInt(url.searchParams.get("batches") || "20", 10);
       const batches = Math.max(1, Math.min(100, isNaN(requested) ? 20 : requested));
       const runLog = { batchesRun: 0, done: false };
       try {
@@ -484,140 +535,93 @@ export default {
           runLog.progress = result.progress;
           if (result.done) { runLog.done = true; break; }
         }
-        return Response.json({ ok: true, ...runLog, message: runLog.done ? 'Sync fully complete.' : `Ran ${runLog.batchesRun} batch(es). Call /sync-many again to keep going, or wait for tonight's cron to resume automatically.` });
+        return Response.json({
+          ok: true, ...runLog,
+          message: runLog.done ? "Sync fully complete." : `Ran ${runLog.batchesRun} batch(es). Call /sync-many again or wait for the nightly cron.`,
+        });
       } catch (e) {
         try {
           const progress = await getProgress(env);
           progress.last_error = String(e && e.message || e);
           await saveProgress(env, progress);
-        } catch (e2) { /* best effort */ }
+        } catch (_) {}
         return Response.json({ ok: false, error: e.message, ...runLog }, { status: 500 });
       }
     }
-    if (url.pathname === '/sync-status') {
+
+    if (url.pathname === "/sync-status") {
       const progress = await getProgress(env);
       return Response.json({ ok: true, progress });
     }
-    if (url.pathname === '/webhook' && request.method === 'POST') {
+
+    if (url.pathname === "/reset" && request.method === "POST") {
+      // Reset the progress cursor so a full re-sync starts from page 1.
+      // Existing D1 rows are preserved -- the ON CONFLICT DO UPDATE in
+      // every INSERT means a full re-sync is safe to run at any time.
+      await env.DB.prepare(
+        `UPDATE servicetrade_sync_progress SET current_page=1, offset_in_page=0, completed_at=NULL, last_error=NULL, last_error_at=NULL WHERE id=?`
+      ).bind(PROGRESS_ROW_ID).run();
+      return Response.json({ ok: true, message: "Sync cursor reset to page 1. POST /sync-many to start." });
+    }
+
+    if (url.pathname === "/webhook" && request.method === "POST") {
       try {
         const bodyText = await request.text();
         const headersObj = {};
         request.headers.forEach((v, k) => { headersObj[k] = v; });
         await env.DB.prepare(
           `INSERT INTO servicetrade_webhook_log (id, headers, body, received_at) VALUES (?,?,?,?)`
-        ).bind('WH-' + Date.now() + '-' + Math.floor(Math.random() * 10000), JSON.stringify(headersObj), bodyText, Date.now()).run();
-      } catch (e) { /* never fail the webhook ack, even if logging breaks */ }
+        ).bind("WH-" + Date.now() + "-" + Math.floor(Math.random() * 10000), JSON.stringify(headersObj), bodyText, Date.now()).run();
+      } catch (_) {}
       return Response.json({ ok: true });
     }
-    if (url.pathname === '/webhook-peek') {
+
+    if (url.pathname === "/webhook-peek") {
       const rows = await env.DB.prepare(
         `SELECT id, headers, body, received_at FROM servicetrade_webhook_log ORDER BY received_at DESC LIMIT 5`
       ).all();
       return Response.json({ ok: true, count: (rows.results || []).length, recent: rows.results || [] });
     }
-    // 2026-07-15 TEMPORARY diagnostic, per Ted: last_service/next_due are
-    // showing null on every single synced account, which isn't plausible
-    // for real active accounts. Same root-cause class as the address bug
-    // -- the /job field names assumed from docs (status/completedOn/
-    // scheduledDate) may not match ServiceTrade's real response, same as
-    // address turned out to be a nested object instead of a flat string.
-    // Returns the RAW, unmodified /job response for one real location so
-    // the actual field names can be seen directly instead of guessed at
-    // a second time. Remove this route once the /job parsing is fixed.
-    if (url.pathname === '/debug-job') {
-      const locationId = url.searchParams.get('locationId');
-      const companyId = url.searchParams.get('companyId');
-      if (!locationId) return Response.json({ ok: false, error: 'pass ?locationId=<a real ServiceTrade location id>, optionally &companyId=<company id too>' }, { status: 400 });
+
+    if (url.pathname === "/debug-job") {
+      const locationId = url.searchParams.get("locationId");
+      if (!locationId) return Response.json({ ok: false, error: "pass ?locationId=<ST location id>" }, { status: 400 });
       try {
         const authToken = await getServiceTradeAccessToken(env);
-        // 2026-07-15: testing several hypotheses in one call instead of
-        // one slow guess-and-redeploy cycle per idea. Ted confirmed via
-        // the real ServiceTrade UI that this exact location has 4 real
-        // jobs, but a plain locationId query came back completely empty
-        // -- correctly shaped, zero rows. Trying: the same query as
-        // before (control), the location's companyId instead, an
-        // explicit status=all in case a default filter is hiding
-        // history, and locationId as a repeated/array-style param in
-        // case the API expects that shape for a single filter value.
-        const attempts = {};
-        try { attempts.plain_locationId = await stGet(env, authToken, '/job', { locationId, page: 1 }); }
-        catch (e) { attempts.plain_locationId = { error: e.message }; }
-
-        try { attempts.locationId_status_all = await stGet(env, authToken, '/job', { locationId, status: 'all', page: 1 }); }
-        catch (e) { attempts.locationId_status_all = { error: e.message }; }
-
-        if (companyId) {
-          try { attempts.companyId = await stGet(env, authToken, '/job', { companyId, page: 1 }); }
-          catch (e) { attempts.companyId = { error: e.message }; }
-        }
-
-        try {
-          const u = new URL(ST_API_BASE + '/job');
-          u.searchParams.append('locationId[]', locationId);
-          u.searchParams.set('page', '1');
-          const res = await fetch(u.toString(), { headers: { Authorization: `Bearer ${authToken}` } });
-          attempts.locationId_array_syntax = res.ok ? await res.json() : { httpStatus: res.status };
-        } catch (e) { attempts.locationId_array_syntax = { error: e.message }; }
-
-        return Response.json({ ok: true, attempts });
-      } catch (e) {
-        return Response.json({ ok: false, error: e.message }, { status: 500 });
-      }
-    }
-    // 2026-07-15 TEMPORARY diagnostic, per Ted: /job returns a correctly-
-    // shaped but completely EMPTY result for a location confirmed (via
-    // screenshots of the real ServiceTrade UI) to have 4 real jobs. Since
-    // the response shape itself is right, this isn't a field-parsing bug
-    // like address was -- it's a scoping mismatch. ServiceTrade's own
-    // docs show a location can carry both a modern `id` and a separate
-    // `legacyId` (see the /appointment example in their API reference).
-    // This pulls the raw /location/<id> object directly to check whether
-    // that's what's happening here before guessing at a second fix.
-    if (url.pathname === '/debug-location') {
-      const locationId = url.searchParams.get('locationId');
-      if (!locationId) return Response.json({ ok: false, error: 'pass ?locationId=<a real ServiceTrade location id>' }, { status: 400 });
-      try {
-        const authToken = await getServiceTradeAccessToken(env);
-        const raw = await stGet(env, authToken, '/location/' + locationId, {});
+        const raw = await stGet(env, authToken, "/job", { locationId, status: "all", page: 1 });
         return Response.json({ ok: true, raw });
       } catch (e) {
         return Response.json({ ok: false, error: e.message }, { status: 500 });
       }
     }
-    // 2026-07-15 TEMPORARY diagnostic, per Ted: asset manufacturer/model/
-    // dates are blank in D1 even though ServiceTrade's own UI clearly
-    // shows them (Manufacturer: Pyro chem, Model: PCL-350, Manufacture
-    // Date: Apr 2014, etc). The asset itself IS syncing correctly
-    // (description matches), so this is likely a nested `properties`
-    // object that varies by asset type rather than flat top-level
-    // fields -- ServiceTrade's own docs mention an "asset definition"
-    // endpoint that defines per-type properties, which fits what the UI
-    // shows (extinguishers and suppression systems have different spec
-    // fields). Returns the raw /asset response for one real location so
-    // the actual shape can be seen before fixing this blind a third time.
-    if (url.pathname === '/debug-asset') {
-      const locationId = url.searchParams.get('locationId');
-      if (!locationId) return Response.json({ ok: false, error: 'pass ?locationId=<a real ServiceTrade location id>' }, { status: 400 });
+
+    if (url.pathname === "/debug-location") {
+      const locationId = url.searchParams.get("locationId");
+      if (!locationId) return Response.json({ ok: false, error: "pass ?locationId=<ST location id>" }, { status: 400 });
       try {
         const authToken = await getServiceTradeAccessToken(env);
-        const raw = await stGet(env, authToken, '/asset', { locationId, page: 1 });
+        const raw = await stGet(env, authToken, "/location/" + locationId, {});
         return Response.json({ ok: true, raw });
       } catch (e) {
         return Response.json({ ok: false, error: e.message }, { status: 500 });
       }
     }
-    return Response.json({ ok: true, message: 'servicetrade-sync -- POST /sync to run one batch, GET /sync-status to see progress, GET /health to check credentials, POST /webhook to receive ServiceTrade events, GET /webhook-peek to view captured ones' });
+
+    if (url.pathname === "/debug-asset") {
+      const locationId = url.searchParams.get("locationId");
+      if (!locationId) return Response.json({ ok: false, error: "pass ?locationId=<ST location id>" }, { status: 400 });
+      try {
+        const authToken = await getServiceTradeAccessToken(env);
+        const raw = await stGet(env, authToken, "/asset", { locationId, page: 1 });
+        return Response.json({ ok: true, raw });
+      } catch (e) {
+        return Response.json({ ok: false, error: e.message }, { status: 500 });
+      }
+    }
+
+    return Response.json({ ok: true, message: "servicetrade-sync -- POST /sync-many?batches=100 to run a full batch, POST /reset to restart from page 1, GET /sync-status to see progress, GET /health to verify credentials." });
   },
 
-  // Nightly cron: chains a few batches together so real progress happens
-  // on its own without Ted needing to trigger every batch by hand. Each
-  // batch is still fully bounded and independent -- if one throws, the
-  // loop stops for the night and picks back up tomorrow from the saved
-  // cursor. 2026-07-16 fix per Ted: this used to swallow the error
-  // completely, which is why a stalled sync gave zero indication of why
-  // -- now the error message and timestamp get written to
-  // servicetrade_sync_progress.last_error / last_error_at so /sync-status
-  // shows it immediately.
   async scheduled(event, env) {
     try {
       for (let i = 0; i < CRON_BATCHES_PER_RUN; i++) {
@@ -629,11 +633,7 @@ export default {
         const progress = await getProgress(env);
         progress.last_error = String(e && e.message || e);
         await saveProgress(env, progress);
-      } catch (e2) {
-        // If even this fails, there's nothing more we can do from inside
-        // the cron -- but the original error is at least in whatever
-        // Cloudflare's own invocation logs captured.
-      }
+      } catch (_) {}
     }
   },
 };

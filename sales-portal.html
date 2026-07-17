@@ -4291,6 +4291,7 @@ function spOpenDetail(r, tab) {
   if (isAccount) {
     const acctJobs = (crmLoad('jobs') || []).filter(j => j.accountId === r.id || j.account_id === r.id);
     const acctAssets = (crmLoad('account_assets') || []).filter(a => a.accountId === r.id || a.account_id === r.id);
+    const acctServices = (crmLoad('st_services') || []).filter(s => s.accountId === r.id || s.account_id === r.id);
 
     // Service line asset summary -- group by service_line/serviceLine
     const assetByLine = {};
@@ -4363,7 +4364,30 @@ function spOpenDetail(r, tab) {
       ? recentJobs.map(buildJobRow).join('')
       : '<div style="font-size:12px;color:var(--soft)">No completed service history on file yet.</div>';
 
-    const hasAnyService = nextDueTs || lastSvcDate || acctJobs.length || acctAssets.length;
+    // Recurring service contracts from st_services
+    const serviceContractRows = acctServices.map(s => {
+      const nd = s.nextDue || s.next_due;
+      const lc = s.lastCompleted || s.last_completed;
+      const intDays = s.intervalDays || s.interval_days;
+      let dueBadge = '';
+      if (nd) {
+        const d = new Date(nd);
+        const daysOut = Math.round((d - today) / 86400000);
+        const color = daysOut < 0 ? '#C8102E' : daysOut <= 30 ? '#D97706' : '#1E7B3C';
+        const bg = daysOut < 0 ? '#FEE9EC' : daysOut <= 30 ? '#FEF3C7' : '#DCFCE7';
+        const label = daysOut < 0 ? `${Math.abs(daysOut)}d overdue` : daysOut === 0 ? 'due today' : `in ${daysOut}d`;
+        dueBadge = `<span style="background:${bg};color:${color};border-radius:4px;padding:2px 7px;font-size:10px;font-weight:800">${label}</span>`;
+      }
+      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 10px;background:#F8F9FA;border-radius:6px;margin-bottom:5px">
+          <div>
+            <div style="font-size:12px;font-weight:700;color:var(--ink)">${escH(s.serviceLine || s.service_line || 'Service')}</div>
+            <div style="font-size:10px;color:var(--soft);margin-top:1px">${intDays ? 'Every ' + intDays + ' days' : (s.frequency ? escH(s.frequency) : '')}${lc ? ' · Last: ' + new Date(lc).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : ''}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px">${dueBadge}</div>
+        </div>`;
+    }).join('');
+
+    const hasAnyService = nextDueTs || lastSvcDate || acctJobs.length || acctAssets.length || acctServices.length;
     if (hasAnyService) {
       servicesHtml = `<div style="padding:12px 0;border-bottom:1px solid var(--line);margin-bottom:12px">
         <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:10px">🛠 Active Services &amp; Inspections</div>
@@ -4371,6 +4395,11 @@ function spOpenDetail(r, tab) {
         ${nextDueTs || lastSvcDate ? `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;align-items:center">
           ${nextDueBadge}
           ${lastSvcDate ? `<span style="font-size:11px;color:var(--soft)">Last service: <strong style="color:var(--ink)">${new Date(lastSvcDate).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}</strong></span>` : ''}
+        </div>` : ''}
+
+        ${acctServices.length ? `<div style="margin-bottom:10px">
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--soft);margin-bottom:6px">Recurring Contracts (${acctServices.length})</div>
+          ${serviceContractRows}
         </div>` : ''}
 
         ${acctAssets.length ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">${assetSummaryRows}</div>` : ''}

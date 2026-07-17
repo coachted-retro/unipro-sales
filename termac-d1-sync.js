@@ -52,7 +52,7 @@
     'trade_partners', 'trade_partner_referrals', 'trade_partner_bids',
     'reference_library', 'allpro_rate_tables', 'notifications',
     'accounts_payable', 'expense_reports', 'customer_orders', 'reorder_requests',
-    'warehouse_alerts', 'debriefs', 'rcp_calls', 'account_assets', 'tasks'];
+    'warehouse_alerts', 'debriefs', 'rcp_calls', 'account_assets', 'tasks', 'st_services'];
 
   async function d1Fetch(method, path, body, opts2) {
     try {
@@ -395,10 +395,13 @@
       'status_flag', 'last_status_check_at', 'confirmation_status', 'activity_log'],
     contacts: ['id', 'name', 'company', 'title', 'email', 'phone',
       'assigned_rep', 'status', 'account_id', 'location_id', 'created_at', 'updated_at', 'activity_log'],
-    jobs: ['id', 'account_id', 'location_id', 'division', 'service_type', 'tech_id',
-      'scheduled_date', 'scheduled_time', 'status', 'notes', 'report_url',
-      'square_ref', 'completed_at', 'created_at', 'updated_at',
-      'due_date', 'source'],
+    jobs: ['id', 'account_id', 'location_id', 'division', 'service_type', 'service_line',
+      'tech_id', 'scheduled_date', 'scheduled_time', 'due_date', 'status', 'notes',
+      'report_url', 'square_ref', 'job_number', 'frequency', 'interval_days',
+      'completed_at', 'source', 'created_at', 'updated_at'],
+    st_services: ['id', 'account_id', 'st_location_id', 'service_line', 'description',
+      'frequency', 'interval_days', 'next_due', 'last_completed', 'status',
+      'tech_id', 'created_at', 'updated_at'],
     deficiencies: ['id', 'account_id', 'location_id', 'job_id', 'division', 'description',
       'equipment_type', 'severity', 'status', 'quoted_amount', 'quote_ref',
       'assigned_to', 'due_date', 'resolved_at', 'notes', 'created_at', 'updated_at'],

@@ -136,6 +136,9 @@ const ALLOWED_TABLES = new Set([
   // either standalone or attached to a lead/location/contact/opportunity/
   // account.
   'tasks',
+  // st_services, added 2026-07-17: recurring service contract summary
+  // derived from ServiceTrade job recurrence data per location.
+  'st_services',
 ]);
 
 const TABLE_PREFIX = {
@@ -178,6 +181,7 @@ const TABLE_PREFIX = {
   account_churn_events:'ACE',
   tasks:'TSK',
   account_assets:'AST',
+  st_services:'STS',
 };
 
 function corsHeaders(origin) {
