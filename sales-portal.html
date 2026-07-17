@@ -4050,6 +4050,22 @@ function spOpenDetail(r, tab) {
     const STATUS_COLOR = { open:'#D97706', won:'#166534', lost:'#C8102E', pending:'#0D7490' };
     const STATUS_BG    = { open:'#FEF3C7', won:'#DCFCE7', lost:'#FEE9EC', pending:'#E0F2FE' };
     const STATUS_LABEL = { open:'Open', won:'Won', lost:'Lost', pending:'Pending' };
+    // 2026-07-17 per Ted: bidirectional link, AllPro-side direction --
+    // same local copy of AllPro's STAGE_LABELS/STAGE_COLORS as the
+    // Location detail page above, kept in sync with
+    // allpro-project-planner.html's own definitions.
+    const AP_STAGE_LABELS = {
+      intake:'Intake', survey_plan_review:'Survey / Plan Review', proposal_submitted:'Proposal Submitted',
+      design_drawings:'Design / Drawings', costing:'Costing', permitting:'Permitting / AHJ',
+      fabrication:'Fabrication', delivery_install:'Delivery / Install', commissioning:'Commissioning', closeout:'Closeout'
+    };
+    const AP_STAGE_COLORS = {
+      intake:'#5A616B', survey_plan_review:'#1B5FA8', proposal_submitted:'#0D9488', design_drawings:'#6D28D9',
+      costing:'#D97706', permitting:'#C8102E', fabrication:'#1E7B3C',
+      delivery_install:'#0A1628', commissioning:'#B45309', closeout:'#166534'
+    };
+    const apProjectsByOpp2 = {};
+    (crmLoad('allpro_projects') || []).forEach(p => { if (p.opportunity_id) apProjectsByOpp2[p.opportunity_id] = p; });
 
     const oppRows = oppsHere.map(o => {
       const status = o.resolutionStatus || 'open';
@@ -4061,6 +4077,8 @@ function spOpenDetail(r, tab) {
       const isFlagged = (status === 'open' || status === 'pending') && daysOpen > slaDays;
       const total = o.serviceType === 'lease' ? (o.monthlyValue||0) * (o.termMonths||1) : (o.value||0);
       const moneyStr = '$' + Number(total||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+      const apProject2 = o.division === 'AllPro' ? apProjectsByOpp2[o.id] : null;
+      const apStageBadge2 = apProject2 ? `<div style="margin-top:6px;display:inline-flex;align-items:center;gap:5px;background:${(AP_STAGE_COLORS[apProject2.stage]||'#6B7280')}18;color:${(AP_STAGE_COLORS[apProject2.stage]||'#6B7280')};border-radius:5px;padding:3px 9px;font-size:10.5px;font-weight:700">🏗️ AllPro: ${AP_STAGE_LABELS[apProject2.stage]||apProject2.stage}</div>` : '';
       const resolveButtons = (status === 'open' || status === 'pending') ? `
           <div style="display:flex;gap:6px;margin-top:8px">
             <button onclick="event.stopPropagation();spOpenResolveModal('${o.id}','won')" style="flex:1;background:#166534;color:#fff;border:none;border-radius:6px;padding:6px 8px;font-size:11px;font-weight:700;cursor:pointer">✅ Won</button>
@@ -4075,6 +4093,7 @@ function spOpenDetail(r, tab) {
               ${o.notes ? `<div style="font-size:11px;color:var(--soft);margin-top:2px">${escH(o.notes.slice(0,90))}</div>` : ''}
               ${status !== 'open' && o.resolutionNotes ? `<div style="font-size:11px;color:${color};font-weight:600;margin-top:4px">${STATUS_LABEL[status]}: ${escH((o.lostReasonCode||o.pendingReasonCode||'').toString())}${o.lostPriceDivision ? ' (' + escH(o.lostPriceDivision) + ')' : ''} — ${escH(o.resolutionNotes.slice(0,90))}</div>` : ''}
               ${isFlagged ? `<div style="font-size:10px;color:#C8102E;font-weight:800;text-transform:uppercase;margin-top:4px">⚠ ${daysOpen}d open, past ${slaDays}d target</div>` : ''}
+              ${apStageBadge2}
             </div>
             <span style="font-size:10px;font-weight:800;text-transform:uppercase;color:${color}">${STATUS_LABEL[status]}</span>
           </div>
@@ -4275,12 +4294,32 @@ function spOpenLocationDetail(r) {
   const STATUS_COLOR = { open:'#D97706', won:'#166534', lost:'#C8102E', pending:'#0D7490' };
   const STATUS_BG    = { open:'#FEF3C7', won:'#DCFCE7', lost:'#FEE9EC', pending:'#E0F2FE' };
   const STATUS_LABEL = { open:'Open', won:'Won', lost:'Lost', pending:'Pending' };
+  // 2026-07-17 per Ted: bidirectional link, AllPro-side direction. Same
+  // stage labels/colors as allpro-project-planner.html's own STAGE_LABELS/
+  // STAGE_COLORS -- kept as a small local copy rather than importing that
+  // whole file, but the wording must match exactly so a rep sees the same
+  // stage name here as Dan/Ted see on the AllPro board itself.
+  const AP_STAGE_LABELS = {
+    intake:'Intake', survey_plan_review:'Survey / Plan Review', proposal_submitted:'Proposal Submitted',
+    design_drawings:'Design / Drawings', costing:'Costing', permitting:'Permitting / AHJ',
+    fabrication:'Fabrication', delivery_install:'Delivery / Install', commissioning:'Commissioning', closeout:'Closeout'
+  };
+  const AP_STAGE_COLORS = {
+    intake:'#5A616B', survey_plan_review:'#1B5FA8', proposal_submitted:'#0D9488', design_drawings:'#6D28D9',
+    costing:'#D97706', permitting:'#C8102E', fabrication:'#1E7B3C',
+    delivery_install:'#0A1628', commissioning:'#B45309', closeout:'#166534'
+  };
+  const apProjectsByOpp = {};
+  (crmLoad('allpro_projects') || []).forEach(p => { if (p.opportunity_id) apProjectsByOpp[p.opportunity_id] = p; });
+
   const oppRows = opps.map(o => {
     const status = o.resolutionStatus || 'open';
     const color = STATUS_COLOR[status] || '#6B7280';
     const bg = STATUS_BG[status] || '#F3F4F6';
     const total = o.serviceType === 'lease' ? (o.monthlyValue||0) * (o.termMonths||1) : (o.value||0);
     const moneyStr = spOppMoney(total);
+    const apProject = o.division === 'AllPro' ? apProjectsByOpp[o.id] : null;
+    const apStageBadge = apProject ? `<div style="margin-top:6px;display:inline-flex;align-items:center;gap:5px;background:${(AP_STAGE_COLORS[apProject.stage]||'#6B7280')}18;color:${(AP_STAGE_COLORS[apProject.stage]||'#6B7280')};border-radius:5px;padding:3px 9px;font-size:10.5px;font-weight:700">🏗️ AllPro: ${AP_STAGE_LABELS[apProject.stage]||apProject.stage}</div>` : '';
     const resolveButtons = (status === 'open' || status === 'pending') ? `
         <div style="display:flex;gap:6px;margin-top:8px">
           <button onclick="event.stopPropagation();spOpenResolveModal('${o.id}','won')" style="flex:1;background:#166534;color:#fff;border:none;border-radius:6px;padding:6px 8px;font-size:11px;font-weight:700;cursor:pointer">✅ Won</button>
@@ -4292,6 +4331,7 @@ function spOpenLocationDetail(r) {
           <div>
             <div style="font-size:13px;font-weight:700;color:var(--ink)">${escH(o.name || 'Opportunity')}</div>
             <div style="font-size:11px;color:var(--soft);margin-top:2px">${escH(o.division||'')} · ${moneyStr}</div>
+            ${apStageBadge}
           </div>
           <span style="font-size:10px;font-weight:800;text-transform:uppercase;color:${color}">${STATUS_LABEL[status]}</span>
         </div>
@@ -5332,8 +5372,9 @@ function spSaveOpportunity(parentType, parentId) {
 
   var opps = crmLoad('opportunities') || [];
   var now = Date.now();
+  var newlyCreatedOpps = [];
   toCreate.forEach(function(c, idx) {
-    opps.push({
+    var newOpp = {
       id: 'opp_' + (now + idx),
       accountId: parentType === 'account' ? parentId : (locRec ? locRec.accountId : null),
       contactId: parentType === 'contact' ? parentId : null,
@@ -5352,11 +5393,67 @@ function spSaveOpportunity(parentType, parentId) {
       resolutionStatus: 'open',
       created: now + idx,
       updated: now + idx,
-    });
+    };
+    opps.push(newOpp);
+    newlyCreatedOpps.push(newOpp);
   });
   crmSave('opportunities', opps);
+
+  // 2026-07-17 per Ted: bidirectional link, sales-side direction. A rep
+  // in the field who lands an AllPro job used to have no path into
+  // AllPro's own pipeline at all -- Ted or Dan had to notice it and
+  // re-enter it by hand on that side, the exact back-and-forth this
+  // whole rebuild has been trying to kill. Any Opportunity created here
+  // with division 'AllPro' now automatically gets a matching
+  // allpro_projects row, same field shapes as AllPro's own New Proposal
+  // path, landing in Intake so Dan/Ted still review and advance it
+  // rather than assuming a sales-side price is a finished scope.
+  var newAllProOpps = newlyCreatedOpps.filter(function(o){ return o.division === 'AllPro'; });
+  if (newAllProOpps.length) {
+    var apProjects = crmLoad('allpro_projects') || [];
+    var locName = '';
+    if (locRec) {
+      locName = locRec.name || '';
+    } else if (parentType === 'account') {
+      var acctRec = (crmLoad('accounts') || []).find(function(x){ return x.id === parentId; });
+      locName = acctRec ? (acctRec.business || acctRec.name || '') : '';
+    } else if (parentType === 'contact') {
+      var contRec = (crmLoad('contacts') || []).find(function(x){ return x.id === parentId; });
+      locName = contRec ? (contRec.name || '') : '';
+    }
+    newAllProOpps.forEach(function(o, i) {
+      var nameLower = (o.name || '').toLowerCase();
+      var inferredType = /hood/.test(nameLower) ? 'kitchen_hood'
+        : /suppress/.test(nameLower) ? 'fire_suppression'
+        : /(fab|steel|shelv|stainless)/.test(nameLower) ? 'custom_fabrication'
+        : 'combined';
+      apProjects.push({
+        id: 'APR' + (now + i).toString(36).toUpperCase(),
+        account_id: o.accountId || null,
+        opportunity_id: o.id,
+        location_id: o.locationId || null,
+        intake_business_name: locName || null,
+        project_name: (locName ? locName + ' \u2014 ' : '') + o.name,
+        project_type: inferredType,
+        facility_type: '',
+        build_context: '',
+        estimated_value: o.value || 0,
+        stage: 'intake',
+        stage_updated_at: now,
+        cross_sell_triggered: 0,
+        crane_required: 0,
+        created_at: now,
+        updated_at: now,
+      });
+    });
+    crmSave('allpro_projects', apProjects);
+    if (window.TermacD1Sync && typeof window.TermacD1Sync.d1PushBatch === 'function') {
+      window.TermacD1Sync.d1PushBatch('allpro_projects', apProjects).catch(function(){});
+    }
+  }
+
   document.getElementById('spOppModal').remove();
-  spToast('💼 ' + toCreate.length + ' opportunit' + (toCreate.length === 1 ? 'y' : 'ies') + ' created');
+  spToast('💼 ' + toCreate.length + ' opportunit' + (toCreate.length === 1 ? 'y' : 'ies') + ' created' + (newAllProOpps.length ? ' \u2014 AllPro notified' : ''));
   spViewRecord(parentId, parentType === 'account' ? 'accounts' : (parentType === 'location' ? 'locations' : 'contacts'));
 }
 
