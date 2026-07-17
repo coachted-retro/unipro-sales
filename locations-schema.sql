@@ -52,3 +52,13 @@ CREATE INDEX IF NOT EXISTS idx_opportunities_location  ON opportunities(location
 --   status TEXT DEFAULT 'active', notes TEXT, activity_log TEXT,
 --   lead_id TEXT, parent_company TEXT
 -- );
+
+-- 2026-07-16 addendum, per Ted: AllPro Project Planner's New Project
+-- modal was still Account-only when this schema first went in, matching
+-- neither this Location model nor the sales dashboard's own lifecycle.
+-- Brought it in line -- New Proposal mode now creates a real Location +
+-- Contact + Opportunity chain (same field shapes as sales-portal.html's
+-- own save paths, not a parallel shortcut version), and allpro_projects
+-- needed its own location_id column to reference that chain directly,
+-- same pattern as the existing opportunity_id column.
+ALTER TABLE allpro_projects ADD COLUMN location_id TEXT;

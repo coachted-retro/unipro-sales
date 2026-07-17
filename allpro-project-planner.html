@@ -390,26 +390,53 @@ async function apGoHome() {
         </div>
       </div>
       <div id="npNewBlock" style="display:none">
-        <div style="font-size:11px;color:var(--soft);margin-bottom:8px">This creates a Contact and an Opportunity (stage: Proposal Sent) and attaches this project to that Opportunity. No Account is created yet -- that happens automatically once the Opportunity is marked Won on the sales side.</div>
+        <div style="font-size:11px;color:var(--soft);margin-bottom:8px">2026-07-16 per Ted's lifecycle rebuild: this creates a Location, a Contact at that location, and an Opportunity attached to the Location -- exactly the same chain the sales dashboard uses (Location &rarr; Contact &rarr; Opportunity &rarr; Account), not a shortcut version. No Account is created yet -- that happens automatically, and reuses an existing account if this is a second site for a company already on the books, once the Opportunity is marked Won on the sales side.</div>
         <div class="form-row">
           <div class="form-field">
             <label>Business Name</label>
             <input id="npNewBusiness" placeholder="e.g. Corner Diner">
           </div>
           <div class="form-field">
-            <label>Contact Name</label>
-            <input id="npNewContact" placeholder="Who signed / who you're dealing with">
+            <label>Parent Company (optional)</label>
+            <input id="npNewParentCompany" placeholder="e.g. Cintas -- leave blank if this isn't part of a larger group">
           </div>
         </div>
         <div class="form-row">
           <div class="form-field">
+            <label>Address</label>
+            <input id="npNewAddress" placeholder="Street address">
+          </div>
+          <div class="form-field">
+            <label>City</label>
+            <input id="npNewCity" placeholder="">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-field">
+            <label>State</label>
+            <input id="npNewState" placeholder="" maxlength="2" style="text-transform:uppercase">
+          </div>
+          <div class="form-field">
+            <label>Zip</label>
+            <input id="npNewZip" placeholder="">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-field">
+            <label>Contact Name</label>
+            <input id="npNewContact" placeholder="Who signed / who you're dealing with">
+          </div>
+          <div class="form-field">
             <label>Phone</label>
             <input id="npNewPhone" placeholder="">
           </div>
+        </div>
+        <div class="form-row">
           <div class="form-field">
             <label>Email</label>
             <input id="npNewEmail" placeholder="">
           </div>
+          <div class="form-field"></div>
         </div>
       </div>
       <div class="form-row">
@@ -2000,6 +2027,11 @@ function openNewProjectModal() {
   var opps = crmLoad('opportunities');
   oppSel.innerHTML = '<option value="">— none —</option>' + opps.map(function(o){ return '<option value="'+o.id+'">'+(o.name||o.business||o.id)+'</option>'; }).join('');
   document.getElementById('npNewBusiness').value = '';
+  document.getElementById('npNewParentCompany').value = '';
+  document.getElementById('npNewAddress').value = '';
+  document.getElementById('npNewCity').value = '';
+  document.getElementById('npNewState').value = '';
+  document.getElementById('npNewZip').value = '';
   document.getElementById('npNewContact').value = '';
   document.getElementById('npNewPhone').value = '';
   document.getElementById('npNewEmail').value = '';
@@ -2025,50 +2057,82 @@ function createProject() {
     accountId = document.getElementById('npAccountId').value;
     if (!accountId) { alert('Select an account, or switch to "New Proposal" above if there is no account yet.'); return; }
   } else {
-    // New Proposal path, added 2026-07-16 per Ted: no Account exists yet
-    // for a proposal -- create the Contact and the Opportunity (stage:
-    // proposal, matching "Proposal Sent" in the sales dashboard) so this
-    // job is trackable from day one, and attach the project to the
-    // Opportunity instead of an Account. Converting the Opportunity to
-    // Won on the sales side creates the Account normally; this project
-    // then self-heals its account_id the next time the board renders
-    // (see npReconcileConvertedOpportunities).
+    // New Proposal path -- rebuilt 2026-07-16 per Ted to match the sales
+    // dashboard's real lifecycle exactly: Location -> Contact -> Opportunity
+    // -> Account, not a shortcut Contact-only version. Field names and id
+    // patterns below are copied straight from sales-portal.html's
+    // spSaveNewLocation / spSaveContactToLocation / spOpenOpportunityModal
+    // save paths -- not reinvented -- so a proposal entered here shows up
+    // correctly everywhere the sales side reads locations/contacts/
+    // opportunities from, not just inside this planner. No Account is
+    // created yet; that happens automatically (and reuses an existing
+    // account if this is a second site for a company already on the
+    // books, matched on Parent Company) once the Opportunity is marked
+    // Won on the sales side -- this project then self-heals its
+    // account_id the next time the board renders (see
+    // npReconcileConvertedOpportunities).
     intakeBusiness = document.getElementById('npNewBusiness').value.trim();
     var contactName = document.getElementById('npNewContact').value.trim();
     if (!intakeBusiness || !contactName) { alert('Business Name and Contact Name are required to create a proposal.'); return; }
+
+    var locRecord = {
+      id: 'loc_' + now,
+      name: intakeBusiness,
+      parentCompany: document.getElementById('npNewParentCompany').value.trim(),
+      address: document.getElementById('npNewAddress').value.trim(),
+      city: document.getElementById('npNewCity').value.trim(),
+      state: document.getElementById('npNewState').value.trim().toUpperCase(),
+      zip: document.getElementById('npNewZip').value.trim(),
+      phone: document.getElementById('npNewPhone').value.trim(),
+      accountId: null,
+      assignedRep: '',
+      source: 'AllPro Project Planner',
+      status: 'active',
+      createdAt: now,
+      updatedAt: now
+    };
+    var locs = crmLoad('locations') || [];
+    locs.push(locRecord);
+    crmSave('locations', locs);
+    var locationId = locRecord.id;
+
     var contactRecord = {
-      id: genId('CON'),
+      id: 'con_' + now,
       name: contactName,
-      company: intakeBusiness,
       title: '',
       phone: document.getElementById('npNewPhone').value.trim(),
       email: document.getElementById('npNewEmail').value.trim(),
-      accountId: '',
-      status: 'active',
-      created_at: now,
-      updated_at: now
+      locationId: locationId,
+      assignedRep: '',
+      status: 'contacted',
+      created: now,
+      updated: now
     };
-    var contacts = crmLoad('contacts');
+    var contacts = crmLoad('contacts') || [];
     contacts.push(contactRecord);
     crmSave('contacts', contacts);
 
     var oppRecord = {
-      id: 'OPP' + now.toString(36).toUpperCase(),
-      accountId: '',
+      id: 'opp_' + now,
+      accountId: null,
       contactId: contactRecord.id,
-      business: intakeBusiness,
+      locationId: locationId,
       name: (typedName || (intakeBusiness + ' \u2014 ' + (TYPE_LABELS[typeVal] || 'Project'))),
       division: 'allpro',
-      stage: 'proposal',
+      stage: 'opportunity',
       value: Number(document.getElementById('npValue').value) || null,
-      expectedClose: '',
       assignedRep: '',
-      notes: 'Created from AllPro Project Planner as a backdated/existing proposal, per Ted.',
-      closedAt: null,
-      created_at: now,
-      updated_at: now
+      expectedClose: '',
+      notes: 'Created from AllPro Project Planner as a submitted proposal, per Ted.',
+      slaDays: 60,
+      serviceType: 'per_diem',
+      monthlyValue: null,
+      termMonths: 1,
+      resolutionStatus: 'open',
+      created: now,
+      updated: now
     };
-    var opps = crmLoad('opportunities');
+    var opps = crmLoad('opportunities') || [];
     opps.push(oppRecord);
     crmSave('opportunities', opps);
     opportunityId = oppRecord.id;
@@ -2088,6 +2152,7 @@ function createProject() {
     id: genId('APR'),
     account_id: accountId || null,
     opportunity_id: opportunityId,
+    location_id: (mode === 'new' && typeof locationId !== 'undefined') ? locationId : null,
     intake_business_name: intakeBusiness || null,
     project_name: smartDefaultName,
     project_type: typeVal,
