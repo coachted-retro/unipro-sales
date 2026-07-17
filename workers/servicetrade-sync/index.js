@@ -53,7 +53,9 @@ __name(normalizeForMatch, "normalizeForMatch");
 
 function toDateStr(val) {
   if (val === null || val === undefined) return "";
-  if (typeof val === "number") return new Date(val * 1000).toISOString().slice(0, 10);
+  // Handle epoch-seconds as number or numeric string (e.g. "1757955600.0" from ST)
+  const n = typeof val === "number" ? val : parseFloat(val);
+  if (!isNaN(n) && n > 1000000000) return new Date(n * 1000).toISOString().slice(0, 10);
   return String(val);
 }
 __name(toDateStr, "toDateStr");
@@ -221,7 +223,21 @@ async function syncJobsAndServices(env, authToken, acctId, stLocationId, divisio
     const dueDate = j.dueBy ? toDateStr(j.dueBy) : null;
     const completedAt = j.completedOn ? j.completedOn * 1000 : null;
     const serviceType = (j.type && j.type.name) || j.serviceType || j.name || null;
-    const serviceLine = (j.serviceLine && j.serviceLine.name) || (j.serviceLines && j.serviceLines[0] && j.serviceLines[0].name) || null;
+    // serviceLine from job object, or inferred from service type name
+    let serviceLine = (j.serviceLine && j.serviceLine.name) || (j.serviceLines && j.serviceLines[0] && j.serviceLines[0].name) || null;
+    if (!serviceLine && serviceType) {
+      const st = serviceType.toLowerCase();
+      if (st.includes("suppression") || st.includes("inspection") || st.includes("extinguisher") || st.includes("exit light") || st.includes("emergency")) {
+        serviceLine = "Fire Protection";
+      } else if (st.includes("trap") || st.includes("grease")) {
+        serviceLine = "Grease Trap";
+      } else if (st.includes("filter")) {
+        serviceLine = "Filter Exchange";
+      } else if (st.includes("hood")) {
+        serviceLine = "Hood Cleaning";
+      }
+    }
+    const divLabel = division === "gto" ? "GTO" : division === "filterman" ? "Filter Man" : "UniPro";
     const techId = j.technician ? String(j.technician.id || "") : null;
     const jobNumber = sv(j.number || j.jobNumber || null);
     const intervalDays = resolveIntervalDays(j);
@@ -239,7 +255,7 @@ async function syncJobsAndServices(env, authToken, acctId, stLocationId, divisio
            frequency=excluded.frequency, interval_days=excluded.interval_days,
            completed_at=excluded.completed_at, updated_at=excluded.updated_at`
       ).bind(
-        jobId, acctId, sv(division), sv(serviceType), sv(serviceLine), sv(techId),
+        jobId, acctId, sv(divLabel), sv(serviceType), sv(serviceLine), sv(techId),
         sv(scheduledDate), sv(dueDate), status,
         sv(j.notes || j.description || null), sv(jobNumber),
         sv(frequency), intervalDays, completedAt,
