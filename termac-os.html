@@ -5822,7 +5822,7 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
       <select id="rpt_company" onchange="rptRender()" style="padding:7px 12px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;font-family:Barlow,sans-serif"><option value="all">All Companies</option><option value="UniPro">UniPro</option><option value="Quality III">Quality III</option><option value="ALLPro">ALLPro</option><option value="Filter Man">Filter Man</option><option value="GTO">G.T.O.</option><option value="Termac">Termac LLC</option></select>
       <select id="rpt_rep" onchange="rptRender()" style="padding:7px 12px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;font-family:Barlow,sans-serif"><option value="all">All Reps</option></select>
       <button onclick="rptExportCSV()" style="background:var(--green);color:#fff;border:none;border-radius:7px;padding:8px 16px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">⬇ Export CSV</button>
-      <button onclick="myReportPrefsOpen()" title="My Report Preferences" style="background:none;border:1.5px solid var(--line);border-radius:7px;padding:7px 10px;font-size:15px;cursor:pointer;line-height:1">⚙️</button>
+      <button onclick="myReportPrefsOpen()" title="My Reports" style="background:none;border:1.5px solid var(--line);border-radius:7px;padding:7px 10px;font-size:15px;cursor:pointer;line-height:1">⚙️</button>
     </div>
     <div style="display:flex;gap:6px;margin-bottom:20px;flex-wrap:wrap">
       <button class="rpt-cat-btn active" id="rptCat-revenue" onclick="rptSetCat('revenue')">💰 Revenue & Billing</button>
@@ -11232,13 +11232,21 @@ let _rptCurrentData = [];
 // digest gets built later it needs an actual action underneath each
 // number, not just a headline.)
 
-// Report Settings admin tab removed 2026-07-17 -- per-user prefs now live in myReportPrefs* functions below.
-
 // ══════════════════════════════════════════════════════════════
-//  MY REPORT PREFERENCES  (per-logged-in-user, scoped to their own row)
-//  Stored in report_settings D1 table keyed by user email.
-//  Accessible via the gear icon in the Reports Center header.
+//  MY REPORTS  (self-service subscription picker, per Ted 2026-07-17)
+//  Each manager logs in with their own SSO credentials and picks
+//  which reports THEY want to receive -- no more one admin checking
+//  boxes for the whole employee roster. Toggling only ever adds/
+//  removes the logged-in user's own email from that report's
+//  recipients list, never anyone else's.
+//
+//  IMPORTANT: the save endpoint is a generic table POST that does
+//  INSERT OR REPLACE on the whole row -- sending a partial payload
+//  would silently wipe report_key/label/other recipients. Every save
+//  here always sends the complete row back, only the recipients
+//  array (and updated_by/updated_at) actually changes.
 // ══════════════════════════════════════════════════════════════
+var _myReportsCache = [];
 
 function myReportPrefsOpen() {
   var modal = document.getElementById('myReportPrefsModal');
@@ -11253,16 +11261,12 @@ function myReportPrefsClose() {
 }
 
 function myReportPrefsInject() {
-  var hourOptions = Array.from({length: 24}, function (_, h) {
-    var label = new Date(Date.UTC(2000, 0, 1, h)).toLocaleTimeString('en-US', { hour: 'numeric', hour12: true });
-    return '<option value="' + h + '">' + label + ' ET-ish (' + h + ':00 UTC)</option>';
-  }).join('');
   var html = '<div id="myReportPrefsModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;align-items:center;justify-content:center">' +
-    '<div style="background:#fff;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.18);padding:24px 28px;width:340px;max-width:95vw;position:relative">' +
+    '<div style="background:#fff;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.18);padding:24px 28px;width:380px;max-width:95vw;position:relative">' +
       '<button onclick="myReportPrefsClose()" style="position:absolute;top:12px;right:14px;background:none;border:none;font-size:18px;cursor:pointer;color:var(--soft)">✕</button>' +
-      '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:17px;margin-bottom:16px">⚙️ My Report Preferences</div>' +
+      '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:17px;margin-bottom:4px">📋 My Reports</div>' +
+      '<div style="font-size:11px;color:var(--soft);margin-bottom:16px">Pick which reports get sent to you. Only affects your own subscription.</div>' +
       '<div id="myReportPrefsBody"><div style="color:var(--soft);font-size:13px">Loading…</div></div>' +
-      '<div style="margin-top:6px;font-size:11px;color:var(--soft)">Settings apply only to your account.</div>' +
     '</div>' +
   '</div>';
   document.body.insertAdjacentHTML('beforeend', html);
@@ -11273,52 +11277,58 @@ async function myReportPrefsLoad() {
   if (!body || !_currentUser) return;
   body.innerHTML = '<div style="color:var(--soft);font-size:13px">Loading…</div>';
   try {
-    var res = await d1Fetch('GET', '/api/report_settings?email=' + encodeURIComponent(_currentUser.email) + '&limit=10');
-    var rows = (res && res.ok && Array.isArray(res.results)) ? res.results : [];
-    // Filter to this user's row (or the global Daily Rep Digest row they are on)
-    var row = rows.find(function (r) { return r.user_email === _currentUser.email; }) || rows[0] || null;
-    var currentHour = row ? (row.send_hour_utc || 11) : 11;
-    var currentFreq = row ? (row.frequency || 'daily') : 'daily';
-    var rowId = row ? row.id : null;
-    var hourOptions = Array.from({length: 24}, function (_, h) {
-      var label = new Date(Date.UTC(2000, 0, 1, h)).toLocaleTimeString('en-US', { hour: 'numeric', hour12: true });
-      return '<option value="' + h + '"' + (h === currentHour ? ' selected' : '') + '>' + label + ' ET-ish (' + h + ':00 UTC)</option>';
+    var res = await d1Fetch('GET', '/api/report_settings?limit=50');
+    var reports = (res && res.ok && Array.isArray(res.results)) ? res.results : [];
+    reports = reports.filter(function(r) { return r.enabled; });
+    _myReportsCache = reports;
+    if (!reports.length) {
+      body.innerHTML = '<div style="color:var(--soft);font-size:13px">No reports available yet.</div>';
+      return;
+    }
+    body.innerHTML = reports.map(function(r) {
+      var recipients = [];
+      try { recipients = JSON.parse(r.recipients || '[]'); } catch(e) {}
+      var subscribed = recipients.includes(_currentUser.email);
+      return '<label style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--line);cursor:pointer">' +
+        '<span>' +
+          '<div style="font-size:13px;font-weight:700;color:var(--ink)">' + escH(r.label || r.report_key) + '</div>' +
+          '<div style="font-size:10px;color:var(--soft)">' + (r.frequency || 'daily') + '</div>' +
+        '</span>' +
+        '<input type="checkbox" data-report-key="' + escH(r.report_key) + '"' + (subscribed ? ' checked' : '') + ' onchange="myReportSubToggle(this)" style="cursor:pointer;width:18px;height:18px">' +
+      '</label>';
     }).join('');
-    body.innerHTML =
-      '<input type="hidden" id="myRptRowId" value="' + (rowId || '') + '">' +
-      '<label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--soft);margin-bottom:4px">Send Time</label>' +
-      '<select id="myRptHour" style="width:100%;padding:8px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;margin-bottom:14px">' + hourOptions + '</select>' +
-      '<label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--soft);margin-bottom:4px">Frequency</label>' +
-      '<select id="myRptFreq" style="width:100%;padding:8px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;margin-bottom:18px">' +
-        '<option value="daily"' + (currentFreq === 'daily' ? ' selected' : '') + '>Daily</option>' +
-        '<option value="weekly"' + (currentFreq === 'weekly' ? ' selected' : '') + '>Weekly (Mon-Fri)</option>' +
-        '<option value="monthly"' + (currentFreq === 'monthly' ? ' selected' : '') + '>Monthly</option>' +
-      '</select>' +
-      '<button onclick="myReportPrefsSave()" style="width:100%;background:#1E7B3C;color:#fff;border:none;border-radius:8px;padding:10px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">💾 Save Preferences</button>' +
-      '<div id="myRptSavedMsg" style="display:none;margin-top:10px;text-align:center;font-size:12px;color:var(--green)">Preferences saved.</div>';
   } catch (e) {
-    body.innerHTML = '<div style="color:var(--red);font-size:13px">Could not load preferences. Try again.</div>';
+    body.innerHTML = '<div style="color:var(--red);font-size:13px">Could not load reports. Try again.</div>';
   }
 }
 
-async function myReportPrefsSave() {
-  if (!_currentUser) return;
-  var rowId = document.getElementById('myRptRowId').value;
-  var payload = {
-    user_email: _currentUser.email,
-    send_hour_utc: parseInt(document.getElementById('myRptHour').value, 10),
-    frequency: document.getElementById('myRptFreq').value,
+async function myReportSubToggle(checkboxEl) {
+  var reportKey = checkboxEl.getAttribute('data-report-key');
+  var report = _myReportsCache.find(function(r) { return r.report_key === reportKey; });
+  if (!report || !_currentUser) return;
+  var recipients = [];
+  try { recipients = JSON.parse(report.recipients || '[]'); } catch(e) {}
+  var idx = recipients.indexOf(_currentUser.email);
+  if (checkboxEl.checked && idx === -1) recipients.push(_currentUser.email);
+  else if (!checkboxEl.checked && idx !== -1) recipients.splice(idx, 1);
+
+  // Send the FULL row back -- INSERT OR REPLACE on this table means a
+  // partial payload here would wipe report_key/label/other people's
+  // subscriptions, not just fail to save the intended change.
+  var payload = Object.assign({}, report, {
+    recipients: JSON.stringify(recipients),
     updated_by: _currentUser.email,
     updated_at: Date.now(),
-  };
-  if (rowId) payload.id = rowId;
+  });
+  checkboxEl.disabled = true;
   try {
     await d1Fetch('POST', '/api/report_settings', payload);
-    var msg = document.getElementById('myRptSavedMsg');
-    if (msg) { msg.style.display = 'block'; setTimeout(function () { msg.style.display = 'none'; myReportPrefsClose(); }, 1800); }
+    report.recipients = payload.recipients;
   } catch (e) {
-    alert('Save failed. Try again.');
+    checkboxEl.checked = !checkboxEl.checked;
+    alert('Could not save. Try again.');
   }
+  checkboxEl.disabled = false;
 }
 
 
