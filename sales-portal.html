@@ -8599,12 +8599,14 @@ function spOpenApptModal(id, tab, mode, presetDate, keepNotes) {
   if (cfg.linkMode !== 'none') {
     linkFieldHtml = '<div>' +
       '<label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Link to a Lead, Contact, Opportunity, or Account' + (cfg.linkMode === 'required' ? ' *' : ' (optional)') + '</label>' +
+      '<div data-role="link-field">' +
       (_spApptLinkedId
-        ? '<div style="display:flex;align-items:center;justify-content:space-between;background:#F1F5F9;border-radius:7px;padding:8px 10px;font-size:13px"><span>🔗 ' + escH(_spApptLinkedName) + '</span><button type="button" onclick="spApptClearLink()" style="background:none;border:none;color:#C8102E;font-size:12px;cursor:pointer;font-weight:700">Change</button></div>'
+        ? '<div style="display:flex;align-items:center;justify-content:space-between;background:#F1F5F9;border-radius:7px;padding:8px 10px;font-size:13px"><span>&#128279; ' + escH(_spApptLinkedName) + '</span><button type="button" onclick="spApptClearLink()" style="background:none;border:none;color:#C8102E;font-size:12px;cursor:pointer;font-weight:700">Change</button></div>'
         : '<div style="position:relative">' +
-            '<input type="text" id="spApptLinkSearch" oninput="spApptSearchRecords(this.value)" placeholder="Search by business or contact name…" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px">' +
+            '<input type="text" id="spApptLinkSearch" oninput="spApptSearchRecords(this.value)" placeholder="Search by name or address..." style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px">' +
             '<div id="spApptLinkResults" style="display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:#fff;border:1.5px solid #D7DBE0;border-radius:8px;box-shadow:0 8px 20px rgba(0,0,0,.12);z-index:10;max-height:200px;overflow-y:auto"></div>' +
           '</div>') +
+      '</div>' +
     '</div>';
   }
 
@@ -8694,7 +8696,7 @@ function spApptSearchRecords(query) {
   results = results.slice(0, 8);
   if (!results.length) { box.innerHTML = '<div style="padding:10px;font-size:12px;color:var(--soft)">No matches.</div>'; box.style.display = 'block'; return; }
   box.innerHTML = results.map(function(rr) {
-    return '<div onclick="spApptPickRecord(\'' + rr.id + '\',\'' + rr.tab + '\',' + JSON.stringify(rr.name||'') + ')" style="padding:9px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid #F1F5F9">' +
+    return '<div onmousedown="event.preventDefault();spApptPickRecord(\'' + rr.id + '\',\'' + rr.tab + '\',' + JSON.stringify(rr.name||'') + ')" ontouchend="event.preventDefault();spApptPickRecord(\'' + rr.id + '\',\'' + rr.tab + '\',' + JSON.stringify(rr.name||'') + ')" style="padding:9px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid #F1F5F9">' +
       '<div style="display:flex;justify-content:space-between;align-items:center">' +
         '<span style="font-weight:600">' + escH(rr.name||'Unnamed') + '</span>' +
         '<span style="font-size:10px;color:var(--soft);text-transform:uppercase;margin-left:8px;flex-shrink:0">' + rr.badge + '</span>' +
@@ -8706,11 +8708,35 @@ function spApptSearchRecords(query) {
 }
 function spApptPickRecord(id, tab, name) {
   _spApptLinkedId = id; _spApptLinkedTab = tab; _spApptLinkedName = name;
-  spOpenApptModal(_spApptId, _spApptTab, _spApptMode, document.getElementById('spApptDate')?.value, document.getElementById('spApptNotes')?.value);
+  // Update the link field in place -- no full modal re-render needed.
+  // Re-render was causing mobile tap to get lost in the re-paint and
+  // the dropdown to stay open due to blur/focus race.
+  var searchWrap = document.getElementById('spApptLinkSearch');
+  var resultsBox = document.getElementById('spApptLinkResults');
+  if (searchWrap && searchWrap.parentNode) {
+    searchWrap.parentNode.innerHTML =
+      '<div style="display:flex;align-items:center;justify-content:space-between;background:#F1F5F9;border-radius:7px;padding:8px 10px;font-size:13px">' +
+        '<span>&#128279; ' + escH(name) + '</span>' +
+        '<button type="button" onclick="spApptClearLink()" style="background:none;border:none;color:#C8102E;font-size:12px;cursor:pointer;font-weight:700">Change</button>' +
+      '</div>';
+  } else if (resultsBox) {
+    resultsBox.style.display = 'none';
+  }
 }
 function spApptClearLink() {
   _spApptLinkedId = null; _spApptLinkedTab = null; _spApptLinkedName = '';
-  spOpenApptModal(null, null, _spApptMode, document.getElementById('spApptDate')?.value, document.getElementById('spApptNotes')?.value);
+  // Replace the linked-record pill with the search input again, in place
+  var linkWrap = document.querySelector('#spApptModal [data-role="link-field"]');
+  if (linkWrap) {
+    linkWrap.innerHTML =
+      '<div style="position:relative">' +
+        '<input type="text" id="spApptLinkSearch" oninput="spApptSearchRecords(this.value)" placeholder="Search by name or address..." style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px" autofocus>' +
+        '<div id="spApptLinkResults" style="display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:#fff;border:1.5px solid #D7DBE0;border-radius:8px;box-shadow:0 8px 20px rgba(0,0,0,.12);z-index:10;max-height:200px;overflow-y:auto"></div>' +
+      '</div>';
+  } else {
+    // Fallback to full re-render if wrapper not found
+    spOpenApptModal(null, null, _spApptMode, document.getElementById('spApptDate')?.value, document.getElementById('spApptNotes')?.value);
+  }
 }
 function spApptToggleAllDay(checked) {
   var wrap = document.getElementById('spApptTimeWrap');
