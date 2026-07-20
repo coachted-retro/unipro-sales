@@ -597,7 +597,7 @@ body.rail-open .rail-overlay{display:block}
         <span style="font-size:14px">🔍</span>
         <input class="sp-unisearch" id="spUniSearch" type="text"
           placeholder="Search any name, business, phone, address…"
-          oninput="spGlobalSearch(this.value)">
+          oninput="spDebouncedGlobalSearch(this.value)">
         <span id="spSearchClear" style="cursor:pointer;color:var(--soft);display:none" onclick="spClearSearch()">✕</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
@@ -11064,6 +11064,23 @@ function spOpenCatalogInline() {
 /* ══════════════════════════════════════════════════════
    GLOBAL SEARCH — scans leads, contacts, accounts pools
 ══════════════════════════════════════════════════════ */
+// 2026-07-20 per Ted: the search box felt "dead" -- typing produced
+// nothing. Root cause: spGlobalSearch does a fresh JSON.parse of the
+// entire accounts + leads pools (21,000+ accounts as of today's
+// imports) and a full linear scan, synchronously, on every single
+// keystroke, with zero debounce. That's enough to block the main
+// thread for a real chunk of a second per character on a dataset this
+// size -- the input still had focus (cursor blinking is separate,
+// native browser behavior), it just never got a chance to actually
+// run the search and repaint before the next keystroke piled on. This
+// wrapper waits for a short pause in typing before running the real
+// scan, same UX, none of the per-keystroke cost.
+var _spSearchDebounceTimer = null;
+function spDebouncedGlobalSearch(q) {
+  clearTimeout(_spSearchDebounceTimer);
+  _spSearchDebounceTimer = setTimeout(function() { spGlobalSearch(q); }, 220);
+}
+
 function spGlobalSearch(q) {
   const clearBtn = document.getElementById('spSearchClear');
   const overlay  = document.getElementById('spSearchResults');
@@ -11104,6 +11121,7 @@ function spGlobalSearch(q) {
   // account record got silently hidden. Accounts first means the real
   // record wins instead.
   crmLoad('accounts').forEach(r => {
+    if (results.length >= 60) return;
     if (seen.has(r.id)) return;
     const blob = [r.name, r.business, r.phone, r.address, r.email, r.city, r.contact]
       .filter(Boolean).join(' ').toLowerCase();
@@ -11115,6 +11133,7 @@ function spGlobalSearch(q) {
   // Search unified leads pool (all pipeline stages)
   const allLeads = crmLoad('leads');
   allLeads.forEach(r => {
+    if (results.length >= 60) return;
     if (seen.has(r.id)) return;
     const blob = [r.name, r.business, r.phone, r.address, r.email, r.city, r.zip, r.contact, r.notes]
       .filter(Boolean).join(' ').toLowerCase();
