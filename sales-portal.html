@@ -1238,6 +1238,11 @@ function spRenderCRM(tab) {
       No ${tab} in your territory yet. Click <strong>+ Add New</strong> to get started.
     </div>`;
   } else {
+    // 2026-07-20 per Ted: service tags on account cards, built once per
+    // render instead of per-card -- jobs + account_assets run into the
+    // tens of thousands of rows combined, scanning that per card in a
+    // grid of dozens would be needlessly slow.
+    if (tab === 'accounts') spBuildServiceTagIndex();
     html += data.map(r => spRecordCard(r, tab)).join('');
   }
 
@@ -1248,6 +1253,52 @@ function spRenderCRM(tab) {
   if (q) document.getElementById('spCrmSearch').value = q;
   if (co) document.getElementById('spCrmCo').value = co;
   if (st) document.getElementById('spCrmSt').value = st;
+}
+
+// 2026-07-20 per Ted: real service tags per account, derived from
+// actual delivery history (jobs.service_line + account_assets.service_line),
+// not the intake form's r.services (which is what a rep hoped to sell,
+// not what's actually on file). Built once per render into a Map, not
+// scanned per card -- jobs + account_assets run into the tens of
+// thousands of rows combined.
+var _spServiceTagIndex = null;
+var _spServiceTagIndexByLocation = null;
+function spBuildServiceTagIndex() {
+  var idx = new Map();
+  var locIdx = new Map();
+  function addTag(map, key, tag) {
+    if (!key || !tag) return;
+    if (!map.has(key)) map.set(key, new Set());
+    map.get(key).add(tag);
+  }
+  (crmLoad('jobs') || []).forEach(function(j) { addTag(idx, j.accountId || j.account_id, j.serviceLine || j.service_line); });
+  (crmLoad('account_assets') || []).forEach(function(a) {
+    addTag(idx, a.accountId || a.account_id, a.serviceLine || a.service_line);
+    addTag(locIdx, a.locationId || a.location_id, a.serviceLine || a.service_line);
+  });
+  _spServiceTagIndex = idx;
+  _spServiceTagIndexByLocation = locIdx;
+}
+
+var SP_SERVICE_TAG_COLORS = {
+  'Fire Protection':          { bg:'#FEE2E2', color:'#991B1B' },
+  'Grease Trap':              { bg:'#FEF3C7', color:'#92400E' },
+  'Kitchen Suppression':      { bg:'#FEE2E2', color:'#991B1B' },
+  'Portable Extinguishers':   { bg:'#FEE2E2', color:'#991B1B' },
+  'Emergency / Exit Lights':  { bg:'#DBEAFE', color:'#1E40AF' },
+  'Grease Trap Clean':        { bg:'#FEF3C7', color:'#92400E' },
+};
+function spServiceTagPills(acctId, locId) {
+  if (!_spServiceTagIndex) return '';
+  var tags = (locId && _spServiceTagIndexByLocation) ? _spServiceTagIndexByLocation.get(locId) : null;
+  if ((!tags || !tags.size) && acctId) tags = _spServiceTagIndex.get(acctId);
+  if (!tags || !tags.size) return '';
+  return '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:6px">' +
+    Array.from(tags).map(function(t) {
+      var c = SP_SERVICE_TAG_COLORS[t] || { bg:'#F3F4F6', color:'#374151' };
+      return '<span style="background:' + c.bg + ';color:' + c.color + ';border-radius:4px;padding:2px 7px;font-size:9px;font-weight:700">' + escH(t) + '</span>';
+    }).join('') +
+  '</div>';
 }
 
 function spRecordCard(r, tab) {
@@ -1274,6 +1325,7 @@ function spRecordCard(r, tab) {
     ${r.address ? `<div class="sp-rec-row">📍 ${escH(r.address)}</div>` : ''}
     ${r.siteNotes ? `<div class="sp-site-notes" style="margin-top:8px"><div class="sp-site-notes-lbl">🔶 Site Notes</div>${escH(r.siteNotes)}</div>` : ''}
     <div class="sp-rec-chips">${svcs}</div>
+    ${tab === 'accounts' ? spServiceTagPills(r.id) : ''}
       ${(function(){ try { var cs = r.completionScore || calcCompletionScore(r); var cc = cs>=80?'#1E7B3C':cs>=60?'#D97706':'#C8102E'; return cs<100 ? '<div style="font-size:9px;font-weight:700;color:'+cc+';margin-top:2px">📊 Data: '+cs+'%</div>' : ''; } catch(e){return '';} })()}
     <div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px">
       <span class="sp-stage-pill" style="background:${stage.bg};color:${stage.color}">${stage.label}</span>
@@ -4390,6 +4442,7 @@ function spResendInvoice(invoiceId) {
 function spOpenDetail(r, tab) {
   _spDetailOpen = true;
   if (tab === 'locations') { spOpenLocationDetail(r); return; }
+  if (tab === 'accounts') spBuildServiceTagIndex();
   const stage = SP_STAGES[spNormalizeStage(r.lifecycleStage)] || SP_STAGES.lead;
   const svcs = (r.services || []).map(s => { const c = spSvcColor(s); return `<span style="background:${c.bg};color:${c.color};border-radius:4px;padding:3px 9px;font-size:11px;font-weight:700">${spSvcLabel(s)}</span>`; }).join(' ');
   const extraContacts = (r.extraContacts || []).map((c,i) => `<div style="border-top:1px dashed var(--line);padding-top:8px;margin-top:8px">
@@ -4825,6 +4878,7 @@ function spOpenDetail(r, tab) {
 //  each other. Account only appears once an opportunity here wins.
 // ══════════════════════════════════════════════════════
 function spOpenLocationDetail(r) {
+  spBuildServiceTagIndex();
   const contacts = (crmLoad('contacts') || []).filter(c => c.locationId === r.id);
   const opps = (crmLoad('opportunities') || []).filter(o => o.locationId === r.id)
     .sort((a,b) => (b.created||0) - (a.created||0));
@@ -4942,6 +4996,7 @@ function spOpenLocationDetail(r) {
     ${r.address ? `<div style="font-size:13px;color:var(--soft);margin-top:4px">${escH(r.address)}${r.city?', '+escH(r.city):''}${r.state?', '+escH(r.state):''} ${escH(r.zip||'')}</div>` : ''}
     ${r.phone ? `<a href="tel:${escH(r.phone)}" style="font-size:13px;color:var(--blue);display:block;margin-top:2px">${escH(r.phone)}</a>` : ''}
     <div style="font-size:11px;color:var(--soft);margin-top:8px">Assigned: ${escH(r.assignedRep||'Unassigned')}</div>
+    ${spServiceTagPills(r.accountId, r.id)}
 
     <div style="padding:12px 0;border-top:1px solid var(--line);margin-top:14px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -5614,6 +5669,7 @@ function spRenderLocationsTab() {
       No locations yet. A location is created from a completed pitch, or click <strong>+ Add Location</strong> directly.
     </div>`;
   } else {
+    spBuildServiceTagIndex();
     html += data.map(spLocationCard).join('');
   }
   html += `</div>`;
@@ -5631,6 +5687,7 @@ function spLocationCard(loc) {
     ${loc.address ? `<div style="font-size:12px;color:var(--soft);margin-top:4px">${escH(loc.address)}${loc.city ? ', '+escH(loc.city) : ''}${loc.state ? ', '+escH(loc.state) : ''}</div>` : ''}
     <div style="font-size:11px;color:var(--soft);margin-top:8px">👤 ${contactCount} contact${contactCount===1?'':'s'} · 💼 ${oppCount} opportunit${oppCount===1?'y':'ies'}</div>
     ${loc.accountId ? `<div style="font-size:10px;font-weight:700;color:#166534;text-transform:uppercase;margin-top:6px">✅ Linked to an account</div>` : ''}
+    ${spServiceTagPills(loc.accountId, loc.id)}
     <div class="sp-actions" onclick="event.stopPropagation()" style="margin-top:8px">
       <a class="sp-rec-btn" href="termac-pitch-tool.html?location=${loc.id}" onclick="spLogToolUsage('pitch_tool','${loc.id}',null)" style="background:#C8102E;color:#fff;border-color:#C8102E;text-decoration:none;display:inline-flex;align-items:center">📄 Start Pitch</a>
     </div>
