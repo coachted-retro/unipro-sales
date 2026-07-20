@@ -1166,6 +1166,34 @@ const SP_TAB_STAGES = {
 // ══════════════════════════════════════════════════════
 //  CRM VIEWS — LEADS / CONTACTS / OPPORTUNITIES / ACCOUNTS
 // ══════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════
+//  MULTI-VIEW BAR — 2026-07-20 per Ted, applied consistently across
+//  Leads/Contacts/Opportunities/Locations (Accounts already got this
+//  earlier tonight): My [X] as the default landing view (never "every
+//  record in the system" on a table that could hold thousands),
+//  Recently Viewed, and a tab-specific extra view where it makes sense
+//  (Hot for leads/opportunities, By Territory/Division for search).
+//  Leads/contacts/locations/opportunities are all small (a few hundred
+//  rows at most) so this stays a local-data filter, no live-query
+//  rearchitecture needed the way Accounts required.
+// ══════════════════════════════════════════════════════
+var _spMultiView = {};
+function spSwitchView(tab, view) {
+  _spMultiView[tab] = view;
+  spRender(tab);
+}
+function spViewBar(tab, views) {
+  var active = _spMultiView[tab] || views[0].key;
+  return '<div style="margin-bottom:12px">' + views.map(function(v) {
+    var isActive = active === v.key;
+    return '<button onclick="spSwitchView(\'' + tab + '\',\'' + v.key + '\')" style="padding:7px 15px;border-radius:7px;border:1.5px solid ' + (isActive?'var(--red)':'var(--line)') + ';background:' + (isActive?'var(--red)':'#fff') + ';color:' + (isActive?'#fff':'var(--ink)') + ';font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer;margin-right:6px;margin-bottom:6px">' + v.label + '</button>';
+  }).join('') + '</div>';
+}
+function spRecentlyViewedIds(tab) {
+  var rv = JSON.parse(sessionStorage.getItem('sp_recently_viewed') || '[]');
+  return rv.filter(function(item) { return item.tab === tab; }).map(function(item) { return item.id; });
+}
+
 function spRenderCRM(tab) {
   if (tab === 'opportunities') { spRenderOpportunitiesTab(); return; }
   const el = document.getElementById('spContent');
@@ -1192,11 +1220,25 @@ function spRenderCRM(tab) {
     data = [...data, ...legacyC];
   }
 
-  // Filter to this rep's records only
-  data = data.filter(r => {
-    const owner = r.ownedBy || r.assignedRep || r.createdBy || '';
-    return !owner || owner === _spRep.name || owner === 'Unassigned' || owner === '';
-  });
+  // 2026-07-20 per Ted: My [X] / Recently Viewed / Hot (leads) or By
+  // Territory (leads) as real, separate views instead of one endless
+  // list — leads alone could realistically grow into the thousands.
+  const activeView = (tab === 'leads' || tab === 'contacts') ? (_spMultiView[tab] || 'mine') : null;
+  const territoryFilter = document.getElementById('spTerritoryFilter')?.value || '';
+  if (activeView === 'recent') {
+    const ids = spRecentlyViewedIds(tab);
+    data = data.filter(r => ids.includes(r.id));
+  } else if (activeView === 'hot' && tab === 'leads') {
+    data = data.filter(r => (r.score||0) >= 7 || r.isHot || r.is_hot);
+  } else if (activeView === 'territory' && tab === 'leads') {
+    data = territoryFilter ? data.filter(r => (r.territory||'') === territoryFilter) : [];
+  } else {
+    // Filter to this rep's records only (the default "mine" view)
+    data = data.filter(r => {
+      const owner = r.ownedBy || r.assignedRep || r.createdBy || '';
+      return !owner || owner === _spRep.name || owner === 'Unassigned' || owner === '';
+    });
+  }
 
   // Search + filter
   const q = (document.getElementById('spCrmSearch')?.value || '').trim().toLowerCase();
@@ -1222,6 +1264,21 @@ function spRenderCRM(tab) {
   let html = `
   <!-- Recently Viewed -->
   ${spRecentlyViewed()}
+  ${tab === 'leads' ? spViewBar('leads', [
+      {key:'mine', label:'👤 My Leads'},
+      {key:'recent', label:'🕐 Recently Viewed'},
+      {key:'hot', label:'🔥 Hot Leads'},
+      {key:'territory', label:'📍 By Territory'},
+    ]) : ''}
+  ${tab === 'contacts' ? spViewBar('contacts', [
+      {key:'mine', label:'👤 My Contacts'},
+      {key:'recent', label:'🕐 Recently Viewed'},
+    ]) : ''}
+  ${(tab === 'leads' && activeView === 'territory') ? (function() {
+      const allTerritories = Array.from(new Set(crmLoad('leads').map(r => r.territory).filter(Boolean))).sort();
+      return '<div style="margin-bottom:12px"><select id="spTerritoryFilter" class="sp-filter-sel" onchange="spRenderCRM(\'leads\')"><option value="">Pick a territory…</option>' +
+        allTerritories.map(t => '<option value="' + escH(t) + '"' + (t === territoryFilter ? ' selected' : '') + '>' + escH(t) + '</option>').join('') + '</select></div>';
+    })() : ''}
   <!-- Add New Lead (leads tab only, prominent top placement) -->
   ${tab === 'leads' ? `<div style="margin-bottom:14px;display:flex;gap:10px;align-items:center">
     <button class="sp-btn sp-btn-red" style="font-size:13px;padding:10px 22px" onclick="spOpenAdd('leads')">+ Add New Lead</button>
@@ -6070,14 +6127,34 @@ function spRenderLocationsTab() {
   const el = document.getElementById('spContent');
   let data = crmLoad('locations') || [];
 
+  // 2026-07-20 per Ted: default to My Locations, not every location
+  // company-wide -- same reasoning as every other tab tonight, this
+  // table is small right now but shouldn't default to "everything" as
+  // a habit.
+  const activeView = _spMultiView['locations'] || 'mine';
+  if (activeView === 'recent') {
+    const ids = spRecentlyViewedIds('locations');
+    data = data.filter(r => ids.includes(r.id));
+  } else if (activeView === 'mine') {
+    data = data.filter(r => {
+      const owner = r.assignedRep || '';
+      return !owner || owner === _spRep.name || owner === 'Unassigned';
+    });
+  }
+
   const q = (document.getElementById('spCrmSearch')?.value || '').trim().toLowerCase();
   if (q) data = data.filter(r => JSON.stringify(r).toLowerCase().includes(q));
 
   data.sort((a,b) => (b.updated_at||b.updatedAt||b.created_at||b.createdAt||0) - (a.updated_at||a.updatedAt||a.created_at||a.createdAt||0));
 
   let html = `
+  ${spViewBar('locations', [
+      {key:'mine', label:'👤 My Locations'},
+      {key:'recent', label:'🕐 Recently Viewed'},
+      {key:'all', label:'🌐 All Locations'},
+    ])}
   <div class="sp-filter-bar">
-    <input class="sp-search" id="spCrmSearch" placeholder="Search by name, address, parent company…" oninput="spRenderLocationsTab()" value="${escH(q)}">
+    <input class="sp-search" id="spCrmSearch" placeholder="Search by name, address, or parent company…" oninput="spRenderLocationsTab()" value="${escH(q)}">
     <button class="sp-btn sp-btn-red" onclick="spOpenAddLocationModal()">+ Add Location</button>
   </div>
   <div class="sp-record-grid" id="spRecGrid">`;
@@ -6085,7 +6162,7 @@ function spRenderLocationsTab() {
   if (!data.length) {
     html += `<div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--soft);font-size:14px">
       <div style="font-size:32px;margin-bottom:10px">📍</div>
-      No locations yet. A location is created from a completed pitch, or click <strong>+ Add Location</strong> directly.
+      ${activeView === 'recent' ? 'No locations viewed yet this session.' : activeView === 'mine' ? 'No locations assigned to you yet — try All Locations, or click + Add Location.' : 'No locations yet. A location is created from a completed pitch, or click <strong>+ Add Location</strong> directly.'}
     </div>`;
   } else {
     spBuildServiceTagIndex();
@@ -6897,10 +6974,24 @@ function spResolveOpportunity(id, outcome) {
 // creation and resolution happen on the parent record itself.
 function spRenderOpportunitiesTab() {
   var el = document.getElementById('spContent');
-  var opps = (crmLoad('opportunities') || []).filter(function(o){
-    var owner = o.assignedRep || '';
-    return !owner || owner === _spRep.name;
-  });
+  var activeView = _spMultiView['opportunities'] || 'mine';
+  var divisionFilter = document.getElementById('spOppDivisionFilter')?.value || '';
+  var opps = crmLoad('opportunities') || [];
+
+  if (activeView === 'recent') {
+    var recentIds = spRecentlyViewedIds('opportunities');
+    opps = opps.filter(function(o){ return recentIds.includes(o.id); });
+  } else if (activeView === 'hot') {
+    opps = opps.filter(function(o){ return (o.resolutionStatus||'open') === 'open'; })
+      .sort(function(a,b){ return (b.value||0) - (a.value||0); });
+  } else if (activeView === 'division') {
+    opps = divisionFilter ? opps.filter(function(o){ return (o.division||'') === divisionFilter; }) : [];
+  } else {
+    opps = opps.filter(function(o){
+      var owner = o.assignedRep || '';
+      return !owner || owner === _spRep.name;
+    });
+  }
 
   var accounts = crmLoad('accounts') || [];
   var contacts = crmLoad('contacts') || [];
@@ -6908,7 +6999,7 @@ function spRenderOpportunitiesTab() {
   var q = (document.getElementById('spCrmSearch')?.value || '').trim().toLowerCase();
   if (q) opps = opps.filter(function(o){ return JSON.stringify(o).toLowerCase().indexOf(q) !== -1; });
 
-  opps.sort(function(a,b){ return (b.created||0) - (a.created||0); });
+  if (activeView !== 'hot') opps.sort(function(a,b){ return (b.created||0) - (a.created||0); });
 
   var STATUS_COLOR = { open:'#D97706', won:'#166534', lost:'#C8102E', pending:'#0D7490' };
   var STATUS_BG    = { open:'#FEF3C7', won:'#DCFCE7', lost:'#FEE9EC', pending:'#E0F2FE' };
@@ -6965,11 +7056,22 @@ function spRenderOpportunitiesTab() {
   }).join('');
 
   el.innerHTML =
+    spViewBar('opportunities', [
+      {key:'mine', label:'👤 My Opportunities'},
+      {key:'recent', label:'🕐 Recently Viewed'},
+      {key:'hot', label:'🔥 Hot (Highest Value)'},
+      {key:'division', label:'📂 By Division'},
+    ]) +
+    (activeView === 'division' ? (function() {
+      var allDivisions = Array.from(new Set((crmLoad('opportunities')||[]).map(function(o){ return o.division; }).filter(Boolean))).sort();
+      return '<div style="margin-bottom:12px"><select id="spOppDivisionFilter" class="sp-filter-sel" onchange="spRenderOpportunitiesTab()"><option value="">Pick a division…</option>' +
+        allDivisions.map(function(d){ return '<option value="' + escH(d) + '"' + (d === divisionFilter ? ' selected' : '') + '>' + escH(d) + '</option>'; }).join('') + '</select></div>';
+    })() : '') +
     '<div class="sp-filter-bar">' +
       '<input class="sp-search" id="spCrmSearch" placeholder="Search opportunities…" oninput="spRenderOpportunitiesTab()" value="' + escH(q) + '">' +
     '</div>' +
     '<div class="sp-record-grid">' +
-      (opps.length ? cards : '<div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--soft);font-size:14px"><div style="font-size:32px;margin-bottom:10px">💼</div>No opportunities yet — create one from a Contact or Account record.</div>') +
+      (opps.length ? cards : '<div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--soft);font-size:14px"><div style="font-size:32px;margin-bottom:10px">💼</div>' + (activeView === 'recent' ? 'No opportunities viewed yet this session.' : activeView === 'division' && !divisionFilter ? 'Pick a division above.' : 'No opportunities yet — create one from a Location, Contact, or Account record.') + '</div>') +
     '</div>';
 }
 
