@@ -5147,16 +5147,11 @@ function spOpenLocationDetail(r) {
     .sort((a,b) => (b.created||0) - (a.created||0));
   const linkedAccount = r.accountId ? (crmLoad('accounts') || []).find(a => a.id === r.accountId) : null;
 
-  // Equipment/asset history and order/product history -- both tables
-  // already existed (account_assets from ServiceTrade sync, 77 real
-  // rows; customer_orders from the collections/order-log flow) but were
-  // account-only and, for account_assets, invisible to every client.
-  // Matches by this location's own id first; falls back to the linked
-  // account's id for older rows that predate location_id existing at
-  // all, so existing history doesn't just disappear once a location is
-  // attached to an account that already had assets/orders on file.
-  const allAssets = crmLoad('account_assets') || [];
-  const assets = allAssets.filter(a => a.locationId === r.id || (!a.locationId && linkedAccount && a.accountId === linkedAccount.id));
+  // Equipment/asset history and order/product history -- account_assets
+  // is now too large to ever sync into the browser (27,000+ rows, same
+  // wall accounts hit) -- fetched live and scoped to just this one
+  // location/account below, not from a local bulk copy. customer_orders
+  // is still small enough to stay local for now.
   const allOrders = crmLoad('customer_orders') || [];
   const orders = (allOrders.filter(o => o.locationId === r.id || (!o.locationId && linkedAccount && o.accountId === linkedAccount.id)))
     .sort((a,b) => (b.createdTs||b.created_ts||0) - (a.createdTs||a.created_ts||0));
@@ -5226,12 +5221,14 @@ function spOpenLocationDetail(r) {
       </div>`;
   }).join('');
 
-  const assetRows = assets.map(a => `<div style="padding:9px 10px;background:#F8F9FA;border-radius:7px;margin-bottom:6px;cursor:pointer" onclick="spOpenAddAssetModal('${r.id}','${a.id}')">
+  function spAssetRowHtml(a, locId) {
+    return `<div style="padding:9px 10px;background:#F8F9FA;border-radius:7px;margin-bottom:6px;cursor:pointer" onclick="spOpenAddAssetModal('${locId}','${a.id}')">
       <div style="font-size:13px;font-weight:700;color:var(--ink)">${escH(a.assetType||a.asset_type||'Asset')}${a.description ? ' — '+escH(a.description) : ''}</div>
       <div style="font-size:11px;color:var(--soft);margin-top:2px">${[a.manufacturer, a.model, a.size].filter(Boolean).map(escH).join(' · ')}${a.locationInSite||a.location_in_site ? ' · '+escH(a.locationInSite||a.location_in_site) : ''}</div>
       ${a.maintenanceDueDate||a.maintenance_due_date ? `<div style="font-size:11px;color:#B45309;margin-top:2px">Maintenance due: ${escH(a.maintenanceDueDate||a.maintenance_due_date)}</div>` : ''}
       ${(a.source||'manual') !== 'ServiceTrade Sync' ? '' : '<div style="font-size:10px;color:var(--soft);margin-top:2px;font-style:italic">Synced from ServiceTrade</div>'}
-    </div>`).join('');
+    </div>`;
+  }
 
   const orderRows = orders.map(o => `<div style="padding:9px 10px;background:#F8F9FA;border-radius:7px;margin-bottom:6px">
       <div style="display:flex;justify-content:space-between">
@@ -5284,14 +5281,12 @@ function spOpenLocationDetail(r) {
     <div style="padding:12px 0;border-top:1px solid var(--line)">
       <div style="display:flex;justify-content:space-between;align-items:center">
         <div onclick="spToggleCollapse('spLocAssets')" style="display:flex;align-items:center;gap:8px;cursor:pointer;flex:1">
-          <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft)">🔧 Equipment / Assets (${assets.length})</div>
+          <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft)">🔧 Equipment / Assets (<span id="spLocAssetsCount">…</span>)</div>
           <span id="spLocAssets-chevron" style="font-size:11px;color:var(--soft)">▸</span>
         </div>
         <button onclick="event.stopPropagation();spOpenAddAssetModal('${r.id}')" style="background:#1A1D21;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer">+ Add Asset</button>
       </div>
-      <div id="spLocAssets" style="display:none;margin-top:8px">
-        ${assets.length ? assetRows : '<div style="font-size:12px;color:var(--soft)">No equipment on file for this location yet.</div>'}
-      </div>
+      <div id="spLocAssets" style="display:none;margin-top:8px"><div style="font-size:12px;color:var(--soft)">Loading…</div></div>
     </div>
 
     <div style="padding:12px 0;border-top:1px solid var(--line)">
@@ -5305,6 +5300,28 @@ function spOpenLocationDetail(r) {
       ${linkedAccount ? `<button onclick="spOpenVisitModal('${linkedAccount.id}','${r.id}')" style="margin-top:8px;padding:8px 14px;background:#D8690B;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">📍 I'm Here — Start Visit</button>` : `<div style="margin-top:8px;font-size:11px;color:var(--soft)">Site visits and orders need an Account behind this location first — win an opportunity here to create one.</div>`}
     </div>
   </div>`;
+
+  // account_assets is too large to sync locally (see D1_NO_BULK_HYDRATE
+  // in termac-d1-sync.js) -- fetched live here, scoped to just this one
+  // location/account, patched in once it resolves rather than blocking
+  // the rest of this page (which renders instantly from local data).
+  if (typeof d1LocationAssets === 'function') {
+    d1LocationAssets(r.id, linkedAccount ? linkedAccount.id : r.accountId).then(function(rawAssets) {
+      var countEl = document.getElementById('spLocAssetsCount');
+      var bodyEl = document.getElementById('spLocAssets');
+      if (!countEl || !bodyEl) return; // rep navigated away before this resolved
+      var mapped = (typeof TermacD1Sync !== 'undefined' && TermacD1Sync.d1ReverseMap)
+        ? rawAssets.map(function(a){ return TermacD1Sync.d1ReverseMap('account_assets', a); })
+        : rawAssets;
+      countEl.textContent = mapped.length;
+      bodyEl.innerHTML = mapped.length
+        ? mapped.map(function(a){ return spAssetRowHtml(a, r.id); }).join('')
+        : '<div style="font-size:12px;color:var(--soft)">No equipment on file for this location yet.</div>';
+    }).catch(function() {
+      var countEl = document.getElementById('spLocAssetsCount');
+      if (countEl) countEl.textContent = '0';
+    });
+  }
 }
 
 function spToggleCollapse(id) {

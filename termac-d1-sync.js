@@ -66,7 +66,7 @@
   // single account -- crmSave still pushes those through normally
   // since 'accounts' stays in D1_SYNC_TABLES above; this only skips
   // the bulk "pull the whole table down" step.
-  var D1_NO_BULK_HYDRATE = ['accounts'];
+  var D1_NO_BULK_HYDRATE = ['accounts', 'account_assets'];
 
   async function d1Fetch(method, path, body, opts2) {
     try {
@@ -189,6 +189,21 @@
     var rows = await d1RawQuery('SELECT id, name, business, phone FROM accounts WHERE phone LIKE ? LIMIT 5', ['%' + norm.slice(-7) + '%']);
     var match = rows.find(function(r) { return String(r.phone || '').replace(/[^\d]/g, '') === norm; });
     return match ? { type: 'account', label: 'Account', id: match.id, name: match.business || match.name || 'Unnamed' } : null;
+  }
+
+  // account_assets is even bigger than accounts was when it broke
+  // (27,000+ rows) -- same fix, scoped live query for exactly the one
+  // location/account being viewed instead of ever syncing the whole
+  // table. Checks location_id first (assets added directly via + Add
+  // Asset), falls back to account_id (everything ServiceTrade synced,
+  // which predates location_id existing at all) -- same fallback
+  // pattern the Equipment/Assets panel already used against local data.
+  async function d1LocationAssets(locationId, accountId) {
+    if (!locationId && !accountId) return [];
+    return d1RawQuery(
+      'SELECT * FROM account_assets WHERE location_id = ? OR (location_id IS NULL AND account_id = ?) LIMIT 100',
+      [locationId || '', accountId || '']
+    );
   }
 
   var FIELD_MAP = {
@@ -1344,6 +1359,7 @@
     d1MyAccounts: d1MyAccounts,
     d1SearchAccounts: d1SearchAccounts,
     d1CheckAccountPhoneDuplicate: d1CheckAccountPhoneDuplicate,
+    d1LocationAssets: d1LocationAssets,
   };
 
   // Also expose crmSave/crmLoad/crmDelete as plain globals if the page
@@ -1358,6 +1374,7 @@
   if (typeof global.d1MyAccounts !== 'function') global.d1MyAccounts = d1MyAccounts;
   if (typeof global.d1SearchAccounts !== 'function') global.d1SearchAccounts = d1SearchAccounts;
   if (typeof global.d1CheckAccountPhoneDuplicate !== 'function') global.d1CheckAccountPhoneDuplicate = d1CheckAccountPhoneDuplicate;
+  if (typeof global.d1LocationAssets !== 'function') global.d1LocationAssets = d1LocationAssets;
 
   // ════════════════════════════════════════════════════════════════════
   // APP-UPDATE CHECK (added 2026-07-12 per Ted)
