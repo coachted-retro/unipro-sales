@@ -4269,7 +4269,7 @@ function spViewApptDetail(apptId) {
           // so notes and follow-up don't have to wait on the migration.
           : '<div style="font-size:11px;color:#B45309;background:#FEF3E5;border-radius:7px;padding:8px 10px">⚠️ Not yet in Termac One \u2014 this account only exists elsewhere right now.</div>'
             + '<button onclick="spQuickCreateFromAppt(\'' + apptId + '\')" style="background:#059669;color:#fff;border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;cursor:pointer;letter-spacing:.05em;text-transform:uppercase">+ Add to Termac One \u2192</button>')
-      + '<button onclick="spMoveAppt(\'' + apptId + '\')" style="background:#F3F4F6;color:var(--ink);border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;cursor:pointer;letter-spacing:.05em;text-transform:uppercase;margin-top:4px">✏️ Move to Different Day</button>'
+      + '<button onclick="spMoveAppt(\'' + apptId + '\')" style="background:#F3F4F6;color:var(--ink);border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;cursor:pointer;letter-spacing:.05em;text-transform:uppercase;margin-top:4px">✏️ Edit / Reschedule</button>'
       + '<button onclick="document.getElementById(\'spApptDetailModal\').remove()" style="background:#F3F4F6;color:#6B7280;border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;cursor:pointer;letter-spacing:.05em;text-transform:uppercase;margin-top:4px">Close</button>'
     + '</div>'
   + '</div>';
@@ -4404,20 +4404,99 @@ function spNeedsAttention() {
 function spMoveAppt(apptId) {
   var old = document.getElementById('spApptDetailModal');
   if (old) old.remove();
-  var newDate = prompt('Move to what date? (YYYY-MM-DD)');
-  if (!newDate || !/^\d{4}-\d{2}-\d{2}$/.test(newDate)) {
-    if (newDate !== null) alert('Invalid format. Use YYYY-MM-DD, e.g. 2026-07-21');
-    return;
-  }
+
+  var appts = crmLoad('appointments') || [];
+  var appt = appts.find(function(x){ return x.id === apptId; });
+  if (!appt) { if (typeof spToast === 'function') spToast('Appointment not found.'); return; }
+
+  // Parse existing date and time
+  var existingDate = appt.date || '';
+  var existingTime = appt.time || '08:00';
+  var existingTitle = appt.title || '';
+  var existingNotes = appt.notes || '';
+  var existingType = appt.type || 'appointment';
+
+  var wrap = document.createElement('div');
+  wrap.id = 'spApptEditModal';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9700;display:flex;align-items:center;justify-content:center;padding:20px';
+  wrap.innerHTML =
+    '<div style="background:#fff;border-radius:14px;width:min(460px,96vw);box-shadow:0 20px 60px rgba(0,0,0,.35);overflow:hidden">' +
+      '<div style="background:#1B5FA8;padding:16px 20px;display:flex;align-items:center;justify-content:space-between">' +
+        '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:16px;color:#fff;letter-spacing:.05em;text-transform:uppercase">✏️ Edit Appointment</div>' +
+        '<button onclick="document.getElementById(\'spApptEditModal\').remove()" style="background:none;border:none;color:rgba(255,255,255,.7);font-size:20px;cursor:pointer;line-height:1">✕</button>' +
+      '</div>' +
+      '<div style="padding:20px;display:flex;flex-direction:column;gap:14px">' +
+        '<div>' +
+          '<label style="font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Title / Stop Name</label>' +
+          '<input id="apptEditTitle" value="' + existingTitle.replace(/"/g,'&quot;') + '" placeholder="e.g. Hood Survey, Site Visit, Follow-up Call" style="width:100%;padding:9px 12px;border:1.5px solid #D1D5DB;border-radius:8px;font-size:13px;box-sizing:border-box">' +
+        '</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+          '<div>' +
+            '<label style="font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Date</label>' +
+            '<input id="apptEditDate" type="date" value="' + existingDate + '" style="width:100%;padding:9px 12px;border:1.5px solid #D1D5DB;border-radius:8px;font-size:13px;box-sizing:border-box">' +
+          '</div>' +
+          '<div>' +
+            '<label style="font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Time</label>' +
+            '<input id="apptEditTime" type="time" value="' + existingTime + '" style="width:100%;padding:9px 12px;border:1.5px solid #D1D5DB;border-radius:8px;font-size:13px;box-sizing:border-box">' +
+          '</div>' +
+        '</div>' +
+        '<div>' +
+          '<label style="font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Type</label>' +
+          '<select id="apptEditType" style="width:100%;padding:9px 12px;border:1.5px solid #D1D5DB;border-radius:8px;font-size:13px;box-sizing:border-box">' +
+            ['appointment','site visit','call','follow-up','delivery','install','survey','other'].map(function(t){
+              return '<option value="' + t + '"' + (existingType === t ? ' selected' : '') + '>' + t.charAt(0).toUpperCase() + t.slice(1) + '</option>';
+            }).join('') +
+          '</select>' +
+        '</div>' +
+        '<div>' +
+          '<label style="font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Notes</label>' +
+          '<textarea id="apptEditNotes" rows="3" placeholder="Any details about this stop…" style="width:100%;padding:9px 12px;border:1.5px solid #D1D5DB;border-radius:8px;font-size:13px;resize:vertical;box-sizing:border-box">' + existingNotes + '</textarea>' +
+        '</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:4px">' +
+          '<button onclick="spSaveApptEdit(\'' + apptId + '\')" style="background:#1B5FA8;color:#fff;border:none;border-radius:8px;padding:12px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:14px;cursor:pointer;letter-spacing:.05em;text-transform:uppercase">Save Changes</button>' +
+          '<button onclick="document.getElementById(\'spApptEditModal\').remove()" style="background:#F3F4F6;color:#6B7280;border:none;border-radius:8px;padding:12px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:14px;cursor:pointer;letter-spacing:.05em;text-transform:uppercase">Cancel</button>' +
+        '</div>' +
+        '<button onclick="spDeleteAppt(\'' + apptId + '\')" style="background:none;border:none;color:#EF4444;font-size:12px;font-weight:700;cursor:pointer;text-align:center;padding:4px;letter-spacing:.04em">🗑 Delete This Appointment</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(wrap);
+}
+
+function spSaveApptEdit(apptId) {
+  var newDate  = (document.getElementById('apptEditDate') || {}).value || '';
+  var newTime  = (document.getElementById('apptEditTime') || {}).value || '';
+  var newTitle = (document.getElementById('apptEditTitle') || {}).value || '';
+  var newNotes = (document.getElementById('apptEditNotes') || {}).value || '';
+  var newType  = (document.getElementById('apptEditType') || {}).value || 'appointment';
+  if (!newDate) { if (typeof spToast === 'function') spToast('Date is required.'); return; }
+
   var appts = crmLoad('appointments') || [];
   var idx = appts.findIndex(function(x){ return x.id === apptId; });
-  if (idx < 0) { alert('Appointment not found.'); return; }
-  appts[idx].date = newDate;
+  if (idx < 0) { if (typeof spToast === 'function') spToast('Appointment not found.'); return; }
+
+  appts[idx].date    = newDate;
+  appts[idx].time    = newTime;
+  appts[idx].title   = newTitle;
+  appts[idx].notes   = newNotes;
+  appts[idx].type    = newType;
   appts[idx].updated = Date.now();
   crmSave('appointments', appts);
-  if (typeof spToast === 'function') spToast('Appointment moved to ' + newDate);
+
+  document.getElementById('spApptEditModal').remove();
+  if (typeof spToast === 'function') spToast('Appointment updated.');
   if (typeof spRenderCalendar === 'function') spRenderCalendar();
-  else if (typeof spNav === 'function') spNav(_spTab || 'home');
+  else if (typeof renderAll === 'function') renderAll();
+}
+
+function spDeleteAppt(apptId) {
+  if (!confirm('Delete this appointment? This cannot be undone.')) return;
+  var appts = (crmLoad('appointments') || []).filter(function(x){ return x.id !== apptId; });
+  crmSave('appointments', appts);
+  var m = document.getElementById('spApptEditModal');
+  if (m) m.remove();
+  if (typeof spToast === 'function') spToast('Appointment deleted.');
+  if (typeof spRenderCalendar === 'function') spRenderCalendar();
+  else if (typeof renderAll === 'function') renderAll();
 }
 
 function spViewRecord(id, tab) {
@@ -4429,7 +4508,35 @@ function spViewRecord(id, tab) {
     if (r) { foundTab = p; break; }
   }
   if (!r) {
-    if (typeof spToast === 'function') spToast('Account not loaded yet — tap Refresh My Data and try again.');
+    // Record not in local cache -- fetch directly from D1 and open it.
+    // This happens when an account was inserted into D1 directly (e.g. via
+    // bulk import) and hasn't been synced to this browser's localStorage yet.
+    var D1_PROXY = 'https://unipro-ai-proxy.termac-one.workers.dev';
+    if (typeof spToast === 'function') spToast('Loading account from database…');
+    fetch(D1_PROXY + '/db/accounts/' + encodeURIComponent(id), {
+      headers: {'X-API-Secret': 'termac2026'}
+    })
+    .then(function(res){ return res.json(); })
+    .then(function(data) {
+      if (data.ok && data.result) {
+        var rec = data.result;
+        rec.contact = rec.contact_name;
+        rec.email   = rec.contact_email;
+        // Add to local cache so it's there on next click
+        var localAccts = crmLoad('accounts') || [];
+        if (!localAccts.find(function(a){ return a.id === rec.id; })) {
+          localAccts.push(rec);
+          try { localStorage.setItem('termac_crm_accounts', JSON.stringify(localAccts)); } catch(e) {}
+        }
+        spOpenDetail(rec, 'accounts');
+        if (typeof spLoadIntelPanel === 'function') spLoadIntelPanel(id, 'accounts');
+      } else {
+        if (typeof spToast === 'function') spToast('Account not found in database.');
+      }
+    })
+    .catch(function() {
+      if (typeof spToast === 'function') spToast('Could not load account. Check connection.');
+    });
     return;
   }
   // Clear the "new" flag the moment a rep actually opens a hot inbound
