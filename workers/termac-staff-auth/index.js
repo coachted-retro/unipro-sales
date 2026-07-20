@@ -162,7 +162,7 @@ async function handleSsoExchange(request, env) {
     grant_type: 'authorization_code',
     code: code,
     redirect_uri: env.SSO_REDIRECT_URI,
-    scope: 'openid profile email',
+    scope: 'openid profile email offline_access https://graph.microsoft.com/Mail.Send',
   });
 
   let tokenData;
@@ -197,6 +197,31 @@ async function handleSsoExchange(request, env) {
 
   await env.DB.prepare('UPDATE staff_auth SET last_login_at = ? WHERE id = ?').bind(Date.now(), user.id).run();
 
+  // 2026-07-20 per Ted: store the Graph access/refresh token for this
+  // person server-side, never sent to the browser, so /api/send-mail
+  // can send real email as them later in the session. If Mail.Send
+  // wasn't actually granted for some reason, tokenData just won't have
+  // these fields -- don't let that break login itself.
+  if (tokenData.access_token) {
+    try {
+      await env.DB.prepare(
+        `INSERT INTO staff_graph_tokens (staff_email, access_token, refresh_token, expires_at, updated_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(staff_email) DO UPDATE SET
+           access_token = excluded.access_token,
+           refresh_token = excluded.refresh_token,
+           expires_at = excluded.expires_at,
+           updated_at = excluded.updated_at`
+      ).bind(
+        email,
+        tokenData.access_token,
+        tokenData.refresh_token || null,
+        Date.now() + ((tokenData.expires_in || 3600) * 1000),
+        Date.now()
+      ).run();
+    } catch (e) { /* email-sending is a bonus, never block login over it */ }
+  }
+
   let portals = [];
   try { portals = JSON.parse(user.portals || '[]'); } catch (e) {}
   const dest = resolveDestinationUrl(user.role, user.division, portals);
@@ -211,6 +236,97 @@ async function handleSsoExchange(request, env) {
     portals: portals,
     dest: dest,
   });
+}
+
+// 2026-07-20 per Ted: send-as-the-real-person email, for every portal
+// (sales, management, DMS, reception, scheduler, tech). Looks up the
+// Graph token stored for this person at their last SSO login, refreshes
+// it if it's expired or about to be, then calls Microsoft Graph's own
+// sendMail so the email genuinely comes from their real mailbox and
+// replies land there too -- not a shared system address. Callers should
+// fall back to the existing Resend-based system send on any non-ok
+// response here (most commonly: this person hasn't logged in since
+// Mail.Send was added, so there's no token on file yet).
+async function handleSendMail(request, env) {
+  const body = await request.json();
+  const fromEmail = String(body.from_email || '').trim().toLowerCase();
+  const to = (Array.isArray(body.to) ? body.to : [body.to]).filter(Boolean);
+  const subject = String(body.subject || '').trim();
+  const html = String(body.html || '');
+  if (!fromEmail || !to.length || !subject) {
+    return jsonResponse({ ok: false, error: 'Missing from_email, to, or subject.' }, 400);
+  }
+
+  let tokenRow = await env.DB.prepare('SELECT * FROM staff_graph_tokens WHERE staff_email = ?').bind(fromEmail).first();
+  if (!tokenRow || !tokenRow.access_token) {
+    return jsonResponse({ ok: false, error: 'no_graph_token', message: 'No Microsoft mail token on file yet -- sign out and back in once to enable this.' }, 409);
+  }
+
+  if (tokenRow.expires_at < Date.now() + 60000) {
+    if (!tokenRow.refresh_token) {
+      return jsonResponse({ ok: false, error: 'no_refresh_token', message: 'Mail token expired and cannot be refreshed -- sign out and back in.' }, 409);
+    }
+    const tokenUrl = 'https://login.microsoftonline.com/' + env.SSO_TENANT_ID + '/oauth2/v2.0/token';
+    const refreshParams = new URLSearchParams({
+      client_id: env.SSO_CLIENT_ID,
+      client_secret: env.SSO_CLIENT_SECRET,
+      grant_type: 'refresh_token',
+      refresh_token: tokenRow.refresh_token,
+      scope: 'openid profile email offline_access https://graph.microsoft.com/Mail.Send',
+    });
+    let refreshData;
+    try {
+      const refreshRes = await fetch(tokenUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: refreshParams.toString(),
+      });
+      refreshData = await refreshRes.json();
+      if (!refreshRes.ok || !refreshData.access_token) {
+        return jsonResponse({ ok: false, error: 'refresh_failed', message: 'Could not refresh Microsoft mail token -- sign out and back in.' }, 409);
+      }
+    } catch (e) {
+      return jsonResponse({ ok: false, error: 'Could not reach Microsoft to refresh mail token.' }, 502);
+    }
+    await env.DB.prepare(
+      `UPDATE staff_graph_tokens SET access_token = ?, refresh_token = ?, expires_at = ?, updated_at = ? WHERE staff_email = ?`
+    ).bind(
+      refreshData.access_token,
+      refreshData.refresh_token || tokenRow.refresh_token,
+      Date.now() + ((refreshData.expires_in || 3600) * 1000),
+      Date.now(),
+      fromEmail
+    ).run();
+    tokenRow = Object.assign({}, tokenRow, { access_token: refreshData.access_token });
+  }
+
+  const graphMessage = {
+    message: {
+      subject: subject,
+      body: { contentType: 'HTML', content: html },
+      toRecipients: to.map(function(addr) { return { emailAddress: { address: addr } }; }),
+    },
+    saveToSentItems: true,
+  };
+
+  try {
+    const sendRes = await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + tokenRow.access_token,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(graphMessage),
+    });
+    if (sendRes.status !== 202) {
+      const errText = await sendRes.text();
+      return jsonResponse({ ok: false, error: 'graph_send_failed', message: errText.slice(0, 300) }, 502);
+    }
+  } catch (e) {
+    return jsonResponse({ ok: false, error: 'Could not reach Microsoft Graph to send mail.' }, 502);
+  }
+
+  return jsonResponse({ ok: true, sentAs: fromEmail });
 }
 
 // 2026-07-10: dedicated safe list endpoint for the admin provisioning UI.
@@ -350,6 +466,7 @@ export default {
         case '/update-access': return await handleUpdateAccess(request, env);
         case '/resend-invite': return await handleResendInvite(request, env);
         case '/my-access': return await handleMyAccess(request, env);
+        case '/send-mail': return await handleSendMail(request, env);
         default: return jsonResponse({ ok: false, error: 'Unknown endpoint.' }, 404);
       }
     } catch (e) {

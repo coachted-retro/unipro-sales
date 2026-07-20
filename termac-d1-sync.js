@@ -71,6 +71,32 @@
     } catch (e) { return { ok: false, error: e.message }; }
   }
 
+  // 2026-07-20 per Ted: send email as whoever's actually signed in --
+  // sales, management, DMS, reception, scheduler, tech, every portal --
+  // instead of a shared system address, so replies land in their real
+  // mailbox. Reads the sender from the same termac_staff_session every
+  // portal's auth gate already relies on, so callers just pass to/
+  // subject/html. Returns {ok:false, error:'no_graph_token', ...} for
+  // anyone who hasn't logged in since Mail.Send was added yet -- callers
+  // should fall back to the existing system-send path on any non-ok
+  // response rather than just failing silently.
+  var STAFF_AUTH_URL = 'https://termac-staff-auth.termac-one.workers.dev';
+  async function sendMailAsMe(to, subject, html) {
+    var session;
+    try { session = JSON.parse(localStorage.getItem('termac_staff_session') || 'null'); } catch (e) {}
+    if (!session || !session.email) return { ok: false, error: 'not_signed_in' };
+    try {
+      var res = await fetch(STAFF_AUTH_URL + '/send-mail', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from_email: session.email, to: to, subject: subject, html: html }),
+      });
+      return await res.json();
+    } catch (e) {
+      return { ok: false, error: 'network_error', message: e.message };
+    }
+  }
+
   var FIELD_MAP = {
     // 2026-07-10 FIX: 'business' was previously remapped to 'business_name',
     // a column that never actually existed on the live D1 leads table (the
@@ -1217,6 +1243,7 @@
     crmDelete: crmDelete,
     SYNC_TABLES: D1_SYNC_TABLES,
     JOB_DIVISION_KEYS: JOB_DIVISION_KEYS,
+    sendMailAsMe: sendMailAsMe,
   };
 
   // Also expose crmSave/crmLoad/crmDelete as plain globals if the page
@@ -1225,6 +1252,7 @@
   if (typeof global.crmSave !== 'function') global.crmSave = crmSave;
   if (typeof global.crmLoad !== 'function') global.crmLoad = crmLoad;
   if (typeof global.crmDelete !== 'function') global.crmDelete = crmDelete;
+  if (typeof global.sendMailAsMe !== 'function') global.sendMailAsMe = sendMailAsMe;
 
   // ════════════════════════════════════════════════════════════════════
   // APP-UPDATE CHECK (added 2026-07-12 per Ted)
