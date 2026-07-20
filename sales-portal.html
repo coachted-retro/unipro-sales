@@ -930,6 +930,27 @@ function spEnterPortal() {
   // needing a full page reload. Pure additive merge: never overwrites
   // an existing local record, only adds ones that aren't here yet.
   if (typeof TermacD1Sync !== 'undefined') {
+    // Force-replace opportunities and locations on every load.
+    // These tables get updated directly in D1 (location links, proposal
+    // assignments) and the additive-only sweep never picks up changed
+    // records that already exist locally -- so stale location_id and
+    // contact_id values would persist forever without this.
+    var D1_PROXY = 'https://unipro-ai-proxy.termac-one.workers.dev';
+    ['opportunities','locations'].forEach(function(table) {
+      fetch(D1_PROXY + '/db/' + table + '?limit=500', {
+        headers: {'X-API-Secret': 'termac2026'}
+      })
+      .then(function(r){ return r.json(); })
+      .then(function(d) {
+        if (d.ok && d.results && d.results.length) {
+          try {
+            localStorage.setItem('termac_crm_' + table, JSON.stringify(d.results));
+          } catch(e) {}
+        }
+      })
+      .catch(function(){});
+    });
+
     TermacD1Sync.startCrmSyncSweep(30000, function () {
       // 2026-07-13 per Ted: this was calling spNav('home') unconditionally
       // any time ANY background sync found even one new/changed record in
