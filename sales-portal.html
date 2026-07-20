@@ -9136,6 +9136,38 @@ async function spCommitAppt(patternKeysToClear) {
       isFlexStop: mode !== 'appointment', createdAt: Date.now(), createdBy: _spRep.name,
     });
     crmSave('appointments', appts);
+
+    // Outlook calendar sync -- creates a matching event in the rep's real
+    // Outlook calendar via Microsoft Graph. Fires in the background; any
+    // failure is silently ignored so it never blocks the save. The endpoint
+    // requires Calendars.ReadWrite scope (granted 2026-07-20 by Fernando).
+    // Users who signed in before this permission was added need to sign out
+    // and back in once to get a token with the new scope.
+    (function() {
+      try {
+        var session = JSON.parse(localStorage.getItem('termac_staff_session') || 'null');
+        if (!session || !session.email) return;
+        var startDt = date + 'T' + (time || '08:00') + ':00';
+        var endDt   = date + 'T' + (timeEnd || (time ? time.replace(/(\d+):(\d+)/, function(_,h,m){ var eh=parseInt(h)+1; return (eh<10?'0':'')+eh+':'+m; }) : '09:00')) + ':00';
+        var eventBody = (notes || '') + (location ? '\n\n📍 ' + location : '');
+        fetch('https://termac-staff-auth.termac-one.workers.dev/create-calendar-event', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            from_email: session.email,
+            event: {
+              subject: (linkedName ? linkedName + ' \u2014 ' : '') + (notes || 'Termac One Appointment'),
+              start: startDt,
+              end: endDt,
+              location: location || '',
+              body: eventBody
+            }
+          })
+        }).then(function(res){ return res.json(); }).then(function(data){
+          if (data.ok && typeof spToast === 'function') spToast('\uD83D\uDCC5 Added to your Outlook calendar');
+        }).catch(function(){});
+      } catch(e) {}
+    })();
   } catch(e){}
 
   // Notify anyone invited along - directions link included so they don't
