@@ -4503,8 +4503,96 @@ function spDeleteAppt(apptId) {
   else if (typeof renderAll === 'function') renderAll();
 }
 
-function spViewRecord(id, tab) {
-  if (!id || id === 'null' || id === 'undefined') {
+// Search and link an existing opportunity to a location.
+// Opens a modal with all opportunities that have no locationId yet,
+// so orphaned opportunities can be connected without rebuilding from scratch.
+function spLinkOppToLocation(locationId, locationName) {
+  var existing = document.getElementById('spLinkOppModal');
+  if (existing) existing.remove();
+
+  var allOpps = (crmLoad('opportunities') || []).filter(function(o) {
+    return !o.locationId || o.locationId === '';
+  });
+
+  var wrap = document.createElement('div');
+  wrap.id = 'spLinkOppModal';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9900;display:flex;align-items:center;justify-content:center;padding:20px';
+
+  function buildRows(opps) {
+    if (!opps.length) return '<div style="padding:24px;text-align:center;color:var(--soft);font-size:13px">No unlinked opportunities found.</div>';
+    return opps.map(function(o) {
+      var val = o.value ? '$' + Number(o.value).toLocaleString() : '$0';
+      return '<div onclick="spDoLinkOpp(\'' + locationId + '\',\'' + o.id + '\',\'' + escH(locationName) + '\')" style="padding:10px 12px;border:1.5px solid var(--line);border-radius:8px;margin-bottom:8px;cursor:pointer;background:#fff" onmouseover="this.style.background=\'#F0F4FF\'" onmouseout="this.style.background=\'#fff\'">' +
+        '<div style="font-size:13px;font-weight:700;color:var(--ink)">' + escH(o.name || 'Unnamed') + '</div>' +
+        '<div style="font-size:11px;color:var(--soft);margin-top:2px">' + escH(o.division || '') + ' · ' + val + (o.stage ? ' · ' + escH(o.stage) : '') + '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  wrap.innerHTML =
+    '<div style="background:#fff;border-radius:14px;width:min(500px,96vw);max-height:80vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.35)">' +
+      '<div style="background:#1B5FA8;padding:16px 20px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0">' +
+        '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:16px;color:#fff;letter-spacing:.05em;text-transform:uppercase">🔗 Link Opportunity to ' + escH(locationName) + '</div>' +
+        '<button onclick="document.getElementById(\'spLinkOppModal\').remove()" style="background:none;border:none;color:rgba(255,255,255,.7);font-size:20px;cursor:pointer">✕</button>' +
+      '</div>' +
+      '<div style="padding:12px 16px;border-bottom:1px solid var(--line);flex-shrink:0">' +
+        '<input id="spLinkOppSearch" type="text" placeholder="Search opportunities…" oninput="spFilterLinkOpps(\'' + locationId + '\')" style="width:100%;padding:9px 12px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;box-sizing:border-box">' +
+      '</div>' +
+      '<div id="spLinkOppList" style="padding:12px 16px;overflow-y:auto;flex:1">' + buildRows(allOpps) + '</div>' +
+    '</div>';
+
+  document.body.appendChild(wrap);
+  wrap.querySelector('#spLinkOppSearch').focus();
+}
+
+function spFilterLinkOpps(locationId) {
+  var q = (document.getElementById('spLinkOppSearch') || {}).value || '';
+  var term = q.trim().toLowerCase();
+  var allOpps = (crmLoad('opportunities') || []).filter(function(o) {
+    return !o.locationId || o.locationId === '';
+  });
+  var filtered = term ? allOpps.filter(function(o) {
+    return JSON.stringify(o).toLowerCase().indexOf(term) !== -1;
+  }) : allOpps;
+  var list = document.getElementById('spLinkOppList');
+  if (!list) return;
+  if (!filtered.length) { list.innerHTML = '<div style="padding:24px;text-align:center;color:var(--soft);font-size:13px">No matches.</div>'; return; }
+  list.innerHTML = filtered.map(function(o) {
+    var val = o.value ? '$' + Number(o.value).toLocaleString() : '$0';
+    return '<div onclick="spDoLinkOpp(\'' + locationId + '\',\'' + o.id + '\')" style="padding:10px 12px;border:1.5px solid var(--line);border-radius:8px;margin-bottom:8px;cursor:pointer;background:#fff" onmouseover="this.style.background=\'#F0F4FF\'" onmouseout="this.style.background=\'#fff\'">' +
+      '<div style="font-size:13px;font-weight:700;color:var(--ink)">' + escH(o.name || 'Unnamed') + '</div>' +
+      '<div style="font-size:11px;color:var(--soft);margin-top:2px">' + escH(o.division || '') + ' · ' + val + (o.stage ? ' · ' + escH(o.stage) : '') + '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function spDoLinkOpp(locationId, oppId, locationName) {
+  // Update in localStorage
+  var opps = crmLoad('opportunities') || [];
+  var idx = opps.findIndex(function(o) { return o.id === oppId; });
+  if (idx >= 0) {
+    opps[idx].locationId = locationId;
+    opps[idx].location_id = locationId;
+    opps[idx].updated = Date.now();
+    crmSave('opportunities', opps);
+  }
+  // Push to D1
+  var D1_PROXY = 'https://unipro-ai-proxy.termac-one.workers.dev';
+  fetch(D1_PROXY + '/db/query', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json','X-API-Secret':'termac2026'},
+    body: JSON.stringify({sql: "UPDATE opportunities SET location_id = '" + locationId.replace(/'/g,"''") + "', updated_at = " + Date.now() + " WHERE id = '" + oppId.replace(/'/g,"''") + "'"})
+  }).catch(function(){});
+  var m = document.getElementById('spLinkOppModal');
+  if (m) m.remove();
+  if (typeof spToast === 'function') spToast('Opportunity linked to ' + (locationName || 'location') + '.');
+  // Refresh the location detail
+  var locs = crmLoad('locations') || [];
+  var loc = locs.find(function(l) { return l.id === locationId; });
+  if (loc) spOpenLocationDetail(loc);
+}
+
+
     if (typeof spToast === 'function') spToast('No linked record — tap Edit to assign one.');
     return;
   }
@@ -5162,9 +5250,12 @@ function spOpenLocationDetail(r) {
     <div style="padding:12px 0;border-top:1px solid var(--line)">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft)">💼 Opportunities (${opps.length})</div>
-        <button onclick="spOpenOpportunityModal('location','${r.id}','${escH(r.name||'')}')" style="background:#1A1D21;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer">+ Create Opportunity</button>
+        <div style="display:flex;gap:6px">
+          <button onclick="spLinkOppToLocation('${r.id}','${escH(r.name||'')}')" style="background:#F3F4F6;color:var(--ink);border:1.5px solid var(--line);border-radius:6px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer">🔗 Link Existing</button>
+          <button onclick="spOpenOpportunityModal('location','${r.id}','${escH(r.name||'')}')" style="background:#1A1D21;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer">+ Create Opportunity</button>
+        </div>
       </div>
-      ${opps.length ? oppRows : '<div style="font-size:12px;color:var(--soft)">No opportunities yet, click Create Opportunity when there is a real deal to track.</div>'}
+      ${opps.length ? oppRows : '<div style="font-size:12px;color:var(--soft)">No opportunities yet. Use Link Existing to attach one, or Create Opportunity for a new deal.</div>'}
     </div>
 
     <div style="padding:12px 0;border-top:1px solid var(--line)">
