@@ -9095,12 +9095,12 @@ function spOpenApptModal(id, tab, mode, presetDate, keepNotes) {
   let linkFieldHtml = '';
   if (cfg.linkMode !== 'none') {
     linkFieldHtml = '<div>' +
-      '<label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Link to a Lead, Contact, Opportunity, or Account' + (cfg.linkMode === 'required' ? ' *' : ' (optional)') + '</label>' +
+      '<label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Business Name' + (cfg.linkMode === 'required' ? ' *' : ' (optional)') + '</label>' +
       '<div data-role="link-field">' +
       (_spApptLinkedId
         ? '<div style="display:flex;align-items:center;justify-content:space-between;background:#F1F5F9;border-radius:7px;padding:8px 10px;font-size:13px"><span>&#128279; ' + escH(_spApptLinkedName) + '</span><button type="button" onclick="spApptClearLink()" style="background:none;border:none;color:#C8102E;font-size:12px;cursor:pointer;font-weight:700">Change</button></div>'
         : '<div style="position:relative">' +
-            '<input type="text" id="spApptLinkSearch" oninput="spApptSearchRecords(this.value)" placeholder="Search by name or address..." style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px">' +
+            '<input type="text" id="spApptLinkSearch" oninput="spApptSearchRecords(this.value)" onblur="setTimeout(function(){var b=document.getElementById(\'spApptLinkResults\');if(b)b.style.display=\'none\';},150)" placeholder="Type the business name..." style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px">' +
             '<div id="spApptLinkResults" style="display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:#fff;border:1.5px solid #D7DBE0;border-radius:8px;box-shadow:0 8px 20px rgba(0,0,0,.12);z-index:10;max-height:200px;overflow-y:auto"></div>' +
           '</div>') +
       '</div>' +
@@ -9181,17 +9181,52 @@ function spApptSearchRecords(query) {
   var term = (query||'').trim().toLowerCase();
   if (term.length < 2) { box.style.display = 'none'; return; }
   var results = [];
+
+  // 2026-07-20 FIX per Ted: this only ever searched leads + accounts --
+  // a real business sitting as a Location (the actual primary entity
+  // now) or a Contact could never be found here at all, showing "No
+  // matches" for something that genuinely exists. Locations and
+  // contacts are both small, safe to check locally; accounts is
+  // queried live (see below) since it's too large to trust the local
+  // cache for -- same reasoning as everywhere else this got fixed
+  // tonight.
   crmLoad('leads').forEach(function(rec) {
-    // Search name, business, contact, AND address so reps can type a street or city
     var blob = [rec.name, rec.business, rec.contact, rec.address, rec.addr, rec.city].filter(Boolean).join(' ').toLowerCase();
     if (blob.indexOf(term) !== -1) results.push({ id: rec.id, tab: 'leads', name: rec.business || rec.name || rec.contact, address: rec.address || rec.addr || '', badge: 'Lead' });
   });
-  crmLoad('accounts').forEach(function(rec) {
-    var blob = [rec.name, rec.business, rec.contact, rec.address, rec.addr, rec.city].filter(Boolean).join(' ').toLowerCase();
-    if (blob.indexOf(term) !== -1) results.push({ id: rec.id, tab: 'accounts', name: rec.business || rec.name || rec.contact, address: rec.address || rec.addr || '', badge: 'Account' });
+  crmLoad('locations').forEach(function(rec) {
+    var blob = [rec.name, rec.parentCompany, rec.address, rec.city].filter(Boolean).join(' ').toLowerCase();
+    if (blob.indexOf(term) !== -1) results.push({ id: rec.id, tab: 'locations', name: rec.name, address: rec.address || '', badge: 'Location' });
   });
+  crmLoad('contacts').forEach(function(rec) {
+    var blob = [rec.name, rec.title, rec.phone].filter(Boolean).join(' ').toLowerCase();
+    if (blob.indexOf(term) !== -1) results.push({ id: rec.id, tab: 'contacts', name: rec.name, address: '', badge: 'Contact' });
+  });
+
   results = results.slice(0, 8);
-  if (!results.length) { box.innerHTML = '<div style="padding:10px;font-size:12px;color:var(--soft)">No matches.</div>'; box.style.display = 'block'; return; }
+  spApptRenderLinkResults(results, term);
+
+  // Accounts queried live, appended once it resolves -- local results
+  // above already show instantly, this just adds to them.
+  if (typeof d1SearchAccounts === 'function') {
+    d1SearchAccounts(term, 5).then(function(rows) {
+      var currentBox = document.getElementById('spApptLinkResults');
+      var currentInput = document.getElementById('spApptLinkSearch');
+      // Bail if the rep already picked something or changed the search
+      // while this was in flight.
+      if (!currentBox || !currentInput || currentInput.value.trim().toLowerCase() !== term) return;
+      var acctResults = rows.map(function(rec) {
+        return { id: rec.id, tab: 'accounts', name: rec.business || rec.name || '', address: rec.address || '', badge: 'Account' };
+      });
+      if (acctResults.length) spApptRenderLinkResults(results.concat(acctResults).slice(0, 12), term);
+    }).catch(function() {});
+  }
+}
+
+function spApptRenderLinkResults(results, term) {
+  var box = document.getElementById('spApptLinkResults');
+  if (!box) return;
+  if (!results.length) { box.innerHTML = '<div style="padding:10px;font-size:12px;color:var(--soft)">No matches for "' + escH(term) + '".</div>'; box.style.display = 'block'; return; }
   box.innerHTML = results.map(function(rr) {
     return '<div onmousedown="event.preventDefault();spApptPickRecord(\'' + rr.id + '\',\'' + rr.tab + '\',' + JSON.stringify(rr.name||'') + ')" ontouchend="event.preventDefault();spApptPickRecord(\'' + rr.id + '\',\'' + rr.tab + '\',' + JSON.stringify(rr.name||'') + ')" style="padding:9px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid #F1F5F9">' +
       '<div style="display:flex;justify-content:space-between;align-items:center">' +
@@ -9227,7 +9262,7 @@ function spApptClearLink() {
   if (linkWrap) {
     linkWrap.innerHTML =
       '<div style="position:relative">' +
-        '<input type="text" id="spApptLinkSearch" oninput="spApptSearchRecords(this.value)" placeholder="Search by name or address..." style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px" autofocus>' +
+        '<input type="text" id="spApptLinkSearch" oninput="spApptSearchRecords(this.value)" onblur="setTimeout(function(){var b=document.getElementById(\'spApptLinkResults\');if(b)b.style.display=\'none\';},150)" placeholder="Type the business name..." style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px" autofocus>' +
         '<div id="spApptLinkResults" style="display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:#fff;border:1.5px solid #D7DBE0;border-radius:8px;box-shadow:0 8px 20px rgba(0,0,0,.12);z-index:10;max-height:200px;overflow-y:auto"></div>' +
       '</div>';
   } else {
