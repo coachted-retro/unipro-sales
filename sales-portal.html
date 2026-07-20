@@ -4259,16 +4259,9 @@ function spViewApptDetail(apptId) {
       + (contactName ? '<div style="font-size:13px;color:var(--ink)">👤 ' + escH(contactName) + '</div>' : '')
       + (phone ? '<div style="font-size:13px;color:var(--ink)">📞 <a href="tel:' + escH(phone) + '" style="color:var(--blue)">' + escH(phone) + '</a></div>' : '')
       + (a.notes ? '<div style="font-size:13px;color:var(--soft);background:#F8F9FA;border-radius:8px;padding:10px 12px;white-space:pre-wrap">' + escH(a.notes) + '</div>' : '')
-      + (linkedId
+      + (linkedId && business
           ? '<button onclick="document.getElementById(\'spApptDetailModal\').remove();spViewRecord(\'' + linkedId + '\',\'' + (resolvedTab || 'accounts') + '\')" style="background:#1B5FA8;color:#fff;border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;cursor:pointer;letter-spacing:.05em;text-transform:uppercase">View Full Account →</button>'
-          // No matching account or lead anywhere in the system yet -- this
-          // is the real "existing customer, not yet migrated" case (data
-          // that only lives in ServiceTrade/another source right now).
-          // Instead of a dead end, one tap creates a real record from
-          // what this stop already knows and takes you straight into it,
-          // so notes and follow-up don't have to wait on the migration.
-          : '<div style="font-size:11px;color:#B45309;background:#FEF3E5;border-radius:7px;padding:8px 10px">⚠️ Not yet in Termac One \u2014 this account only exists elsewhere right now.</div>'
-            + '<button onclick="spQuickCreateFromAppt(\'' + apptId + '\')" style="background:#059669;color:#fff;border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;cursor:pointer;letter-spacing:.05em;text-transform:uppercase">+ Add to Termac One \u2192</button>')
+          : '<button onclick="spQuickCreateFromAppt(\'' + apptId + '\')" style="background:#059669;color:#fff;border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;cursor:pointer;letter-spacing:.05em;text-transform:uppercase">+ Link / Create Account in Termac One</button>')
       + '<button onclick="spMoveAppt(\'' + apptId + '\')" style="background:#F3F4F6;color:var(--ink);border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;cursor:pointer;letter-spacing:.05em;text-transform:uppercase;margin-top:4px">✏️ Edit / Reschedule</button>'
       + '<button onclick="document.getElementById(\'spApptDetailModal\').remove()" style="background:#F3F4F6;color:#6B7280;border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;cursor:pointer;letter-spacing:.05em;text-transform:uppercase;margin-top:4px">Close</button>'
     + '</div>'
@@ -4484,8 +4477,17 @@ function spSaveApptEdit(apptId) {
 
   document.getElementById('spApptEditModal').remove();
   if (typeof spToast === 'function') spToast('Appointment updated.');
+  // Refresh the calendar view — both the grid dots and the right-panel day list
   if (typeof spRenderCalendar === 'function') spRenderCalendar();
-  else if (typeof renderAll === 'function') renderAll();
+  // Also refresh the selected-day panel if it's visible
+  var selDay = document.querySelector('.sp-cal-day.sp-cal-selected, .sp-cal-day[data-selected]');
+  if (selDay && selDay.dataset.date && typeof spShowDayPanel === 'function') {
+    spShowDayPanel(selDay.dataset.date);
+  } else {
+    // Fallback: re-click today's date cell to force the right panel to update
+    var todayCell = document.querySelector('.sp-cal-day.sp-cal-today, [data-today]');
+    if (todayCell && typeof spShowDayPanel === 'function') spShowDayPanel(todayCell.dataset.date || newDate);
+  }
 }
 
 function spDeleteAppt(apptId) {
@@ -4508,35 +4510,46 @@ function spViewRecord(id, tab) {
     if (r) { foundTab = p; break; }
   }
   if (!r) {
-    // Record not in local cache -- fetch directly from D1 and open it.
-    // This happens when an account was inserted into D1 directly (e.g. via
-    // bulk import) and hasn't been synced to this browser's localStorage yet.
+    // Record not in local cache -- try D1 across all tables.
     var D1_PROXY = 'https://unipro-ai-proxy.termac-one.workers.dev';
-    if (typeof spToast === 'function') spToast('Loading account from database…');
-    fetch(D1_PROXY + '/db/accounts/' + encodeURIComponent(id), {
-      headers: {'X-API-Secret': 'termac2026'}
-    })
-    .then(function(res){ return res.json(); })
-    .then(function(data) {
-      if (data.ok && data.result) {
-        var rec = data.result;
-        rec.contact = rec.contact_name;
-        rec.email   = rec.contact_email;
-        // Add to local cache so it's there on next click
-        var localAccts = crmLoad('accounts') || [];
-        if (!localAccts.find(function(a){ return a.id === rec.id; })) {
-          localAccts.push(rec);
-          try { localStorage.setItem('termac_crm_accounts', JSON.stringify(localAccts)); } catch(e) {}
-        }
-        spOpenDetail(rec, 'accounts');
-        if (typeof spLoadIntelPanel === 'function') spLoadIntelPanel(id, 'accounts');
-      } else {
-        if (typeof spToast === 'function') spToast('Account not found in database.');
+    var tablesToTry = [];
+    if (tab === 'accounts') tablesToTry = ['accounts', 'leads'];
+    else if (tab === 'leads' || tab === 'contacts') tablesToTry = ['leads', 'accounts'];
+    else tablesToTry = ['accounts', 'leads'];
+
+    if (typeof spToast === 'function') spToast('Loading record…');
+
+    function tryNextTable(tables) {
+      if (!tables.length) {
+        if (typeof spToast === 'function') spToast('Record not found. It may not be linked yet.');
+        return;
       }
-    })
-    .catch(function() {
-      if (typeof spToast === 'function') spToast('Could not load account. Check connection.');
-    });
+      var tbl = tables[0];
+      var rest = tables.slice(1);
+      fetch(D1_PROXY + '/db/' + tbl + '/' + encodeURIComponent(id), {
+        headers: {'X-API-Secret': 'termac2026'}
+      })
+      .then(function(res){ return res.json(); })
+      .then(function(data) {
+        if (data.ok && data.result) {
+          var rec = data.result;
+          rec.contact = rec.contact || rec.contact_name;
+          rec.email   = rec.email   || rec.contact_email;
+          var localPool = crmLoad(tbl) || [];
+          if (!localPool.find(function(a){ return a.id === rec.id; })) {
+            localPool.push(rec);
+            try { localStorage.setItem('termac_crm_' + tbl, JSON.stringify(localPool)); } catch(e) {}
+          }
+          spOpenDetail(rec, tbl);
+          if (typeof spLoadIntelPanel === 'function') spLoadIntelPanel(id, tbl);
+        } else {
+          tryNextTable(rest);
+        }
+      })
+      .catch(function() { tryNextTable(rest); });
+    }
+
+    tryNextTable(tablesToTry);
     return;
   }
   // Clear the "new" flag the moment a rep actually opens a hot inbound
