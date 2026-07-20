@@ -5251,6 +5251,7 @@ function spOpenLocationDetail(r) {
       </div>
       <div style="display:flex;gap:8px">
         <a href="termac-pitch-tool.html?location=${r.id}" onclick="spLogToolUsage('pitch_tool','${r.id}',null)" style="background:#C8102E;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:4px">📄 Start Pitch</a>
+        <button onclick="spOpenOpportunityModal('location','${r.id}','${escH(r.name||'').replace(/'/g,"\\'")}',true)" style="background:#F2B705;color:#1A1D21;border:none;border-radius:6px;padding:6px 12px;font-size:11px;font-weight:800;cursor:pointer">⚡ Quick Sale</button>
         <button onclick="spOpenAddLocationModal(null,null,'${r.id}')" style="background:#F3F4F6;color:var(--ink);border:none;border-radius:6px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer">✏️ Edit</button>
         <button onclick="spOpenAddTaskModal('location','${r.id}','${escH(r.name||'').replace(/'/g,"\\'")}',null)" style="background:#F3F4F6;color:var(--ink);border:none;border-radius:6px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer">✅ Add Task</button>
         ${linkedAccount ? `<button onclick="spViewRecord('${linkedAccount.id}','accounts')" style="background:#DCFCE7;color:#166534;border:none;border-radius:6px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer">✅ View Account →</button>` : ''}
@@ -6092,7 +6093,7 @@ function spSaveNewLocation(prefillAccountId, editLocationId) {
 // so there's only ever one source of truth to read from here, not two
 // to reconcile). Save creates one real Opportunity per checked
 // division in a single click.
-function spOpenOpportunityModal(parentType, parentId, parentName) {
+function spOpenOpportunityModal(parentType, parentId, parentName, isQuickSale) {
   var divisions = [];
   spOppCatalog().forEach(function(r){ if (r.division && divisions.indexOf(r.division) === -1) divisions.push(r.division); });
   divisions.sort();
@@ -6140,11 +6141,12 @@ function spOpenOpportunityModal(parentType, parentId, parentName) {
 
   var wrap = document.createElement('div');
   wrap.id = 'spOppModal';
+  wrap.dataset.quickSale = isQuickSale ? 'true' : 'false';
   wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9700;display:flex;align-items:center;justify-content:center;padding:16px;overflow-y:auto';
   wrap.innerHTML = '<div style="background:#fff;border-radius:12px;max-width:520px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.3);max-height:92vh;overflow-y:auto">' +
     '<div style="padding:20px">' +
-      '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:18px;color:var(--ink);margin-bottom:4px">💼 Create Opportunity</div>' +
-      '<div style="font-size:12px;color:var(--soft);margin-bottom:12px">For ' + escH(parentName || '') + '</div>' +
+      '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:18px;color:var(--ink);margin-bottom:4px">' + (isQuickSale ? '\u26a1 Quick Sale' : '\ud83d\udcbc Create Opportunity') + '</div>' +
+      '<div style="font-size:12px;color:var(--soft);margin-bottom:12px">For ' + escH(parentName || '') + (isQuickSale ? ' \u2014 skips the Pitch Tool survey; this still tracks like any other opportunity (Won/Pending/Lost)' : '') + '</div>' +
 
       existingNote +
       (catalogNotReady ? '<div style="background:#FEF3C7;color:#92400E;border-radius:7px;padding:10px 12px;font-size:12px;margin-bottom:12px">⚠ The pricing catalog is still loading on this device. Use manual entry below for now, or close this and try again in a few seconds.</div>' : '') +
@@ -6328,6 +6330,7 @@ function spOppToggleManual(key) {
 // modal -- everything checked gets created together in one action,
 // instead of the rep repeating this whole form once per division.
 function spSaveOpportunity(parentType, parentId) {
+  var isQuickSale = document.getElementById('spOppModal')?.dataset.quickSale === 'true';
   var expectedClose = document.getElementById('oppExpectedClose').value;
   if (!expectedClose) { alert('A target close date is required so this can actually be tracked against an SLA.'); return; }
 
@@ -6416,6 +6419,7 @@ function spSaveOpportunity(parentType, parentId) {
       monthlyValue: c.monthlyValue,
       termMonths: c.termMonths,
       resolutionStatus: 'open',
+      source: isQuickSale ? 'quick_sale' : 'standard',
       created: now + idx,
       updated: now + idx,
     };
@@ -6423,6 +6427,7 @@ function spSaveOpportunity(parentType, parentId) {
     newlyCreatedOpps.push(newOpp);
   });
   crmSave('opportunities', opps);
+  if (isQuickSale && typeof spLogToolUsage === 'function') spLogToolUsage('quick_sale', parentId, null);
 
   // 2026-07-17 per Ted: bidirectional link, sales-side direction. A rep
   // in the field who lands an AllPro job used to have no path into
