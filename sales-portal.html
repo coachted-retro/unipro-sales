@@ -4269,6 +4269,7 @@ function spViewApptDetail(apptId) {
           // so notes and follow-up don't have to wait on the migration.
           : '<div style="font-size:11px;color:#B45309;background:#FEF3E5;border-radius:7px;padding:8px 10px">⚠️ Not yet in Termac One \u2014 this account only exists elsewhere right now.</div>'
             + '<button onclick="spQuickCreateFromAppt(\'' + apptId + '\')" style="background:#059669;color:#fff;border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;cursor:pointer;letter-spacing:.05em;text-transform:uppercase">+ Add to Termac One \u2192</button>')
+      + '<button onclick="spMoveAppt(\'' + apptId + '\')" style="background:#F3F4F6;color:var(--ink);border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;cursor:pointer;letter-spacing:.05em;text-transform:uppercase;margin-top:4px">✏️ Move to Different Day</button>'
       + '<button onclick="document.getElementById(\'spApptDetailModal\').remove()" style="background:#F3F4F6;color:#6B7280;border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;cursor:pointer;letter-spacing:.05em;text-transform:uppercase;margin-top:4px">Close</button>'
     + '</div>'
   + '</div>';
@@ -4398,6 +4399,27 @@ function spNeedsAttention() {
 // ══════════════════════════════════════════════════════
 //  VIEW / EDIT / ADD RECORD
 // ══════════════════════════════════════════════════════
+// Move an appointment to a different date without deleting and recreating it.
+// Replaces the previous date in the appointments array and re-renders calendar.
+function spMoveAppt(apptId) {
+  var old = document.getElementById('spApptDetailModal');
+  if (old) old.remove();
+  var newDate = prompt('Move to what date? (YYYY-MM-DD)');
+  if (!newDate || !/^\d{4}-\d{2}-\d{2}$/.test(newDate)) {
+    if (newDate !== null) alert('Invalid format. Use YYYY-MM-DD, e.g. 2026-07-21');
+    return;
+  }
+  var appts = crmLoad('appointments') || [];
+  var idx = appts.findIndex(function(x){ return x.id === apptId; });
+  if (idx < 0) { alert('Appointment not found.'); return; }
+  appts[idx].date = newDate;
+  appts[idx].updated = Date.now();
+  crmSave('appointments', appts);
+  if (typeof spToast === 'function') spToast('Appointment moved to ' + newDate);
+  if (typeof spRenderCalendar === 'function') spRenderCalendar();
+  else if (typeof spNav === 'function') spNav(_spTab || 'home');
+}
+
 function spViewRecord(id, tab) {
   // Track recently viewed
   const pools = ['leads','contacts','accounts','locations'];
@@ -4406,7 +4428,10 @@ function spViewRecord(id, tab) {
     r = crmLoad(p).find(x => x.id === id);
     if (r) { foundTab = p; break; }
   }
-  if (!r) return;
+  if (!r) {
+    if (typeof spToast === 'function') spToast('Account not loaded yet — tap Refresh My Data and try again.');
+    return;
+  }
   // Clear the "new" flag the moment a rep actually opens a hot inbound
   // lead — stays hot (still rises to the top, still shows the fire icon)
   // but the NEW badge specifically is a first-look flag, not permanent.
@@ -11085,7 +11110,7 @@ function spGlobalSearch(q) {
   const clearBtn = document.getElementById('spSearchClear');
   const overlay  = document.getElementById('spSearchResults');
   if (clearBtn) clearBtn.style.display = q ? 'block' : 'none';
-  if (!q || q.trim().length < 2) { spClearSearch(); return; }
+  if (!q || q.trim().length < 2) { spClearSearch(false); return; }
 
   const term = q.trim().toLowerCase();
   const results = [];
@@ -11201,11 +11226,14 @@ function spSelectSearchResult(id, tab) {
   }, 200);
 }
 
-function spClearSearch() {
+function spClearSearch(clearInput) {
   const input = document.getElementById('spUniSearch');
   const overlay = document.getElementById('spSearchResults');
   const clearBtn = document.getElementById('spSearchClear');
-  if (input) input.value = '';
+  // Only wipe the input value when explicitly requested (e.g. user clicks X
+  // or navigates away). When called because the query is too short (<2 chars),
+  // just hide the results overlay -- do NOT clear what the user is typing.
+  if (clearInput !== false && input) input.value = '';
   if (overlay) overlay.style.display = 'none';
   if (clearBtn) clearBtn.style.display = 'none';
 }
