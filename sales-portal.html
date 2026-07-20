@@ -5465,6 +5465,52 @@ function spCompleteTask(taskId) {
   if (typeof spRenderHome === 'function') spRenderHome();
 }
 
+// 2026-07-20 per Ted: real duplicate checking has to happen live, at
+// the moment someone types in a phone number, not just as an
+// after-the-fact cleanup pass -- that's exactly how "TBD / Charlie"
+// ended up as both a Lead AND a separate Location+Contact with the
+// identical phone number, created through two different entry points
+// that never checked each other. Checks leads/contacts/locations/
+// accounts by normalized phone; excludeId lets an edit-in-place skip
+// matching itself.
+function spCheckPhoneDuplicate(phone, excludeId) {
+  var norm = String(phone || '').replace(/[^\d]/g, '');
+  if (norm.length < 7) return null;
+  function sameNum(p) { return p && String(p).replace(/[^\d]/g, '') === norm; }
+  var pools = [
+    { data: crmLoad('leads') || [],      type: 'lead',     label: 'Lead' },
+    { data: crmLoad('contacts') || [],   type: 'contact',  label: 'Contact' },
+    { data: crmLoad('locations') || [],  type: 'location', label: 'Location' },
+    { data: crmLoad('accounts') || [],   type: 'account',  label: 'Account' },
+  ];
+  for (var i = 0; i < pools.length; i++) {
+    var match = pools[i].data.find(function(r) { return r.id !== excludeId && sameNum(r.phone); });
+    if (match) {
+      return { type: pools[i].type, label: pools[i].label, id: match.id, name: match.business || match.name || 'Unnamed' };
+    }
+  }
+  return null;
+}
+
+// Wires a phone input to a warning box right below it -- shows/hides
+// on blur, since checking on every keystroke would be both noisy (mid-
+// typed numbers look "unique" until the last digit) and, at this data
+// volume, worth debouncing the same way the top search bar needed to be.
+function spWirePhoneDupeCheck(inputId, warnDivId, excludeId) {
+  var input = document.getElementById(inputId);
+  var warnDiv = document.getElementById(warnDivId);
+  if (!input || !warnDiv) return;
+  input.addEventListener('blur', function() {
+    var match = spCheckPhoneDuplicate(input.value, excludeId);
+    if (match) {
+      warnDiv.style.display = 'block';
+      warnDiv.innerHTML = '\u26a0\ufe0f This phone number is already on file \u2014 <strong>' + escH(match.name) + '</strong> (' + match.label + '). <a href="#" onclick="event.preventDefault();spViewRecord(\'' + match.id + '\',\'' + match.type + 's\')" style="color:var(--red);font-weight:700">View it</a> instead of creating a duplicate.';
+    } else {
+      warnDiv.style.display = 'none';
+    }
+  });
+}
+
 function spOpenAddContactModal(locationId, editContactId) {
   var existing = editContactId ? (crmLoad('contacts')||[]).find(c => c.id === editContactId) : null;
   var wrap = document.createElement('div');
@@ -5479,7 +5525,8 @@ function spOpenAddContactModal(locationId, editContactId) {
       '<input id="contTitle" type="text" list="contTitleOptions" value="' + (existing ? escH(existing.title||'') : '') + '" placeholder="e.g. Property Manager, Owner" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:10px;box-sizing:border-box">' +
       '<datalist id="contTitleOptions"><option value="Owner"><option value="General Manager"><option value="Property Manager"><option value="Manager"><option value="Chef"><option value="Maintenance"></datalist>' +
       '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Phone <span style="font-weight:400;text-transform:none">(optional)</span></label>' +
-      '<input id="contPhone" type="text" value="' + (existing ? escH(existing.phone||'') : '') + '" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:10px;box-sizing:border-box">' +
+      '<input id="contPhone" type="text" value="' + (existing ? escH(existing.phone||'') : '') + '" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:4px;box-sizing:border-box">' +
+      '<div id="contPhoneDupeWarn" style="display:none;background:#FEF3C7;color:#92400E;border-radius:6px;padding:6px 9px;font-size:11px;margin-bottom:10px"></div>' +
       '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Email <span style="font-weight:400;text-transform:none">(optional)</span></label>' +
       '<input id="contEmail" type="text" value="' + (existing ? escH(existing.email||'') : '') + '" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:14px;box-sizing:border-box">' +
       '<div style="display:flex;gap:8px">' +
@@ -5489,6 +5536,7 @@ function spOpenAddContactModal(locationId, editContactId) {
     '</div>' +
   '</div>';
   document.body.appendChild(wrap);
+  spWirePhoneDupeCheck('contPhone', 'contPhoneDupeWarn', existing ? existing.id : null);
 }
 
 function spSaveContactToLocation(locationId, editContactId) {
@@ -5982,7 +6030,8 @@ function spOpenAddLocationModal(prefillAccountId, prefillAccountName, editLocati
         '<input id="locZip" type="text" value="' + v('zip') + '" placeholder="Zip" style="padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;box-sizing:border-box">' +
       '</div>' +
       '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Phone</label>' +
-      '<input id="locPhone" type="text" value="' + v('phone') + '" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:14px;box-sizing:border-box">' +
+      '<input id="locPhone" type="text" value="' + v('phone') + '" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:4px;box-sizing:border-box">' +
+      '<div id="locPhoneDupeWarn" style="display:none;background:#FEF3C7;color:#92400E;border-radius:6px;padding:6px 9px;font-size:11px;margin-bottom:14px"></div>' +
       '<div style="display:flex;gap:8px">' +
         '<button onclick="document.getElementById(\'spLocModal\').remove()" style="flex:1;background:#fff;border:1.5px solid var(--line);border-radius:8px;padding:10px;font-weight:700;font-size:13px;cursor:pointer">Cancel</button>' +
         '<button onclick="spSaveNewLocation(' + (prefillAccountId ? "'"+prefillAccountId+"'" : 'null') + ',' + (existing ? "'"+existing.id+"'" : 'null') + ')" style="flex:1;background:var(--red);color:#fff;border:none;border-radius:8px;padding:10px;font-weight:700;font-size:13px;cursor:pointer">Save</button>' +
@@ -5990,6 +6039,7 @@ function spOpenAddLocationModal(prefillAccountId, prefillAccountName, editLocati
     '</div>' +
   '</div>';
   document.body.appendChild(wrap);
+  spWirePhoneDupeCheck('locPhone', 'locPhoneDupeWarn', existing ? existing.id : null);
 }
 
 function spSaveNewLocation(prefillAccountId, editLocationId) {
@@ -6765,8 +6815,18 @@ function spRenderOpportunitiesTab() {
     var status = o.resolutionStatus || 'open';
     var color = STATUS_COLOR[status] || '#6B7280';
     var bg = STATUS_BG[status] || '#F3F4F6';
-    var parentType = o.accountId ? 'accounts' : o.contactId ? 'contacts' : 'locations';
-    var parentId   = o.accountId || o.contactId || o.locationId || null;
+    // 2026-07-20 FIX per Ted: parentType and parentId used to be computed
+    // with DIFFERENT priority (type checked account->contact->location,
+    // but id checked account->contact->location too -- looks consistent,
+    // but contactId on an opportunity can be stale or even point at a
+    // Lead id instead of a real Contact from an older creation path,
+    // which sent clicks to the wrong record or a dead end ("not found")
+    // even when the opportunity had a perfectly good locationId the
+    // whole time. Location is an opportunity's actual home in this
+    // model -- check it first, always, then fall back to account/contact
+    // only for older opportunities that predate locations entirely.
+    var parentType = o.locationId ? 'locations' : o.accountId ? 'accounts' : o.contactId ? 'contacts' : null;
+    var parentId   = o.locationId || o.accountId || o.contactId || null;
     var parent = null;
     if (parentId) {
       if (parentType === 'accounts') parent = accounts.find(function(a){ return a.id === parentId; });
@@ -7472,7 +7532,7 @@ function spDupeCheck(val, field) {
 
   const matches = [];
   const seenIds = new Set();
-  ['leads','contacts','accounts'].forEach(pool => {
+  ['leads','contacts','accounts','locations'].forEach(pool => {
     (crmLoad(pool) || []).forEach(r => {
       if (seenIds.has(r.id)) return;
       const biz = (r.business || r.name || '').toLowerCase();
