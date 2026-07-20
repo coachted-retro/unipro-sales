@@ -4504,6 +4504,10 @@ function spDeleteAppt(apptId) {
 }
 
 function spViewRecord(id, tab) {
+  if (!id || id === 'null' || id === 'undefined') {
+    if (typeof spToast === 'function') spToast('No linked record — tap Edit to assign one.');
+    return;
+  }
   // Track recently viewed
   const pools = ['leads','contacts','accounts','locations'];
   let r = null; let foundTab = tab;
@@ -6648,17 +6652,23 @@ function spRenderOpportunitiesTab() {
     var status = o.resolutionStatus || 'open';
     var color = STATUS_COLOR[status] || '#6B7280';
     var bg = STATUS_BG[status] || '#F3F4F6';
-    var parentType = o.accountId ? 'accounts' : 'contacts';
-    var parentId = o.accountId || o.contactId;
-    var parent = parentType === 'accounts' ? accounts.find(function(a){ return a.id === parentId; }) : contacts.find(function(c){ return c.id === parentId; });
-    var parentName = parent ? (parent.business || parent.name || 'Unknown') : 'Unlinked';
+    var parentType = o.accountId ? 'accounts' : o.contactId ? 'contacts' : 'locations';
+    var parentId   = o.accountId || o.contactId || o.locationId || null;
+    var parent = null;
+    if (parentId) {
+      if (parentType === 'accounts') parent = accounts.find(function(a){ return a.id === parentId; });
+      else if (parentType === 'contacts') parent = contacts.find(function(c){ return c.id === parentId; });
+      else parent = (crmLoad('locations')||[]).find(function(l){ return l.id === parentId; });
+    }
+    var parentName = parent ? (parent.business || parent.name || parent.location_name || 'Unknown') : (o.name ? '' : 'Unlinked');
+    var clickAction = parentId ? 'spViewRecord(\'' + parentId + '\',\'' + parentType + '\')' : 'spToast(\'No linked location yet — edit the opportunity to add one.\')';
     var slaAnchor = o.flaggedAt || o.created;
     var daysOpen = slaAnchor ? Math.floor((Date.now() - slaAnchor) / 86400000) : 0;
     var slaDays = o.slaDays || 60;
     var isFlagged = (status === 'open' || status === 'pending') && daysOpen > slaDays;
     var total = o.serviceType === 'lease' ? (o.monthlyValue||0) * (o.termMonths||1) : (o.value||0);
 
-    return '<div class="sp-record" style="border-left-color:' + color + (isFlagged ? ';border-left-width:4px' : '') + '" onclick="spViewRecord(\'' + parentId + '\',\'' + parentType + '\')">' +
+    return '<div class="sp-record" style="border-left-color:' + color + (isFlagged ? ';border-left-width:4px' : '') + '" onclick="' + clickAction + '">' +
       '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:4px">' +
         '<div class="sp-rec-biz">' + escH(parentName) + '</div>' +
         (isFlagged ? '<span style="background:#FEE2E2;color:#991B1B;border-radius:99px;padding:1px 8px;font-size:10px;font-weight:800;flex-shrink:0">⚠ ' + daysOpen + 'd, past ' + slaDays + 'd</span>' : '') +
