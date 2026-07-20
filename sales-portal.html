@@ -11317,50 +11317,71 @@ function spGlobalSearch(q) {
   // Show local results immediately (even if zero — D1 is loading)
   renderResults(results, true);
 
-  // D1 fallback — searches the full accounts table in the database.
-  // Runs on EVERY search so accounts that aren't in localStorage yet
-  // (e.g. bulk-imported UniPro/GTO/FilterMan accounts) are always findable.
+  // D1 search — runs across ALL tables simultaneously so nothing is ever
+  // invisible. Accounts (14,518 UniPro/GTO/FilterMan/etc.), opportunities
+  // (AllPro proposals like Locke Steel), allpro_projects, and leads.
   var D1_PROXY = 'https://unipro-ai-proxy.termac-one.workers.dev';
-  var sqlTerm = term.replace(/'/g, "''");
-  var sql = "SELECT id, name, business, phone, address, city, state, zip, " +
-    "contact_name, contact_email, division, services, cust_num, territory " +
-    "FROM accounts WHERE " +
-    "LOWER(name) LIKE '%" + sqlTerm + "%' OR " +
-    "LOWER(business) LIKE '%" + sqlTerm + "%' OR " +
-    "LOWER(phone) LIKE '%" + sqlTerm + "%' OR " +
-    "LOWER(contact_name) LIKE '%" + sqlTerm + "%' OR " +
-    "LOWER(contact_email) LIKE '%" + sqlTerm + "%' OR " +
-    "LOWER(address) LIKE '%" + sqlTerm + "%' OR " +
-    "LOWER(city) LIKE '%" + sqlTerm + "%' OR " +
-    "LOWER(cust_num) LIKE '%" + sqlTerm + "%' " +
-    "LIMIT 30";
+  var s = term.replace(/'/g, "''"); // SQL-safe term
 
-  fetch(D1_PROXY + '/db/query', {
-    method: 'POST',
-    headers: {'Content-Type':'application/json','X-API-Secret':'termac2026'},
-    body: JSON.stringify({sql: sql})
-  })
-  .then(function(res){ return res.json(); })
-  .then(function(data) {
-    // Only update if the search term hasn't changed while we were fetching
+  var queries = [
+    {
+      sql: "SELECT id, name, business, phone, address, city, state, zip, " +
+           "contact_name, contact_email, division, services, cust_num, territory " +
+           "FROM accounts WHERE LOWER(name) LIKE '%" + s + "%' OR " +
+           "LOWER(business) LIKE '%" + s + "%' OR LOWER(phone) LIKE '%" + s + "%' OR " +
+           "LOWER(contact_name) LIKE '%" + s + "%' OR LOWER(contact_email) LIKE '%" + s + "%' OR " +
+           "LOWER(address) LIKE '%" + s + "%' OR LOWER(city) LIKE '%" + s + "%' OR " +
+           "LOWER(cust_num) LIKE '%" + s + "%' LIMIT 25",
+      tab: 'accounts', badge: typeBadge.accounts,
+      mapFn: function(r){ r.contact = r.contact_name; r.email = r.contact_email; return r; }
+    },
+    {
+      sql: "SELECT id, name, division, value, notes, assigned_rep FROM opportunities WHERE " +
+           "LOWER(name) LIKE '%" + s + "%' OR LOWER(notes) LIKE '%" + s + "%' OR " +
+           "LOWER(assigned_rep) LIKE '%" + s + "%' LIMIT 15",
+      tab: 'opportunities', badge: typeBadge.opportunities,
+      mapFn: function(r){
+        r.business = r.name; r.phone = ''; r.address = '';
+        r.contact = r.assigned_rep || '';
+        return r;
+      }
+    },
+    {
+      sql: "SELECT id, project_name AS name, site_address AS address, intake_business_name AS business, " +
+           "accounting_job_number AS cust_num, scope_summary AS notes, stage " +
+           "FROM allpro_projects WHERE LOWER(project_name) LIKE '%" + s + "%' OR " +
+           "LOWER(intake_business_name) LIKE '%" + s + "%' OR " +
+           "LOWER(site_address) LIKE '%" + s + "%' OR " +
+           "LOWER(accounting_job_number) LIKE '%" + s + "%' LIMIT 10",
+      tab: 'opportunities', badge: {label:'AllPro', bg:'#EDE9FE', color:'#5B21B6'},
+      mapFn: function(r){ r.phone = ''; r.contact = ''; return r; }
+    }
+  ];
+
+  Promise.all(queries.map(function(q) {
+    return fetch(D1_PROXY + '/db/query', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json','X-API-Secret':'termac2026'},
+      body: JSON.stringify({sql: q.sql})
+    })
+    .then(function(res){ return res.json(); })
+    .then(function(data) {
+      if (data.ok && data.results) {
+        data.results.forEach(function(r) {
+          if (seen.has(r.id)) return;
+          seen.add(r.id);
+          r = q.mapFn(r);
+          r._tab = q.tab;
+          r._badge = q.badge;
+          results.push(r);
+        });
+      }
+    })
+    .catch(function(){});
+  }))
+  .then(function() {
     var current = (document.getElementById('spUniSearch') || {}).value || '';
     if (current.trim().toLowerCase() !== term) return;
-    if (data.ok && data.results) {
-      data.results.forEach(function(r) {
-        if (seen.has(r.id)) return;
-        seen.add(r.id);
-        // Normalize field names to match what the rest of the app expects
-        r.contact = r.contact_name;
-        r.email = r.contact_email;
-        r._tab = 'accounts';
-        r._badge = typeBadge.accounts;
-        results.push(r);
-      });
-    }
-    renderResults(results, false);
-  })
-  .catch(function() {
-    // D1 unreachable — just show local results without loading indicator
     renderResults(results, false);
   });
 }
