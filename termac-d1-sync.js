@@ -97,6 +97,38 @@
     }
   }
 
+  // 2026-07-20 per Ted: drop-in replacement for the window.open('mailto:...')
+  // pattern used everywhere -- tries a real, silent, one-click send as the
+  // signed-in person first (no switching to Outlook, no manual Send click).
+  // Falls back to the exact original mailto: behavior on ANY failure (no
+  // token yet, expired refresh, network error, whatever) so nothing ever
+  // just silently fails to reach the recipient -- worst case it behaves
+  // exactly like it did before this shipped. subject/body are plain,
+  // unencoded strings; this handles both the send and the mailto: encoding.
+  function sendOrMailto(to, subject, body, opts) {
+    opts = opts || {};
+    var toList = Array.isArray(to) ? to.filter(Boolean) : String(to || '').split(',').map(function(s){ return s.trim(); }).filter(Boolean);
+    function fallbackMailto() {
+      var mailto = 'mailto:' + toList.join(',') + '?subject=' + encodeURIComponent(subject) +
+        (opts.cc ? '&cc=' + encodeURIComponent(opts.cc) : '') +
+        '&body=' + encodeURIComponent(body);
+      window.open(mailto, opts.target || '_blank');
+    }
+    if (!toList.length) { fallbackMailto(); return; }
+    var htmlBody = String(body || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g, '<br>');
+    var allRecipients = opts.cc ? toList.concat(String(opts.cc).split(',').map(function(s){ return s.trim(); }).filter(Boolean)) : toList;
+    sendMailAsMe(allRecipients, subject, htmlBody).then(function(result) {
+      if (result && result.ok) {
+        var toastFn = global.spToast || global.toast || global.showToast;
+        if (typeof toastFn === 'function') toastFn('\u2709\ufe0f Email sent to ' + toList.join(', '));
+      } else {
+        fallbackMailto();
+      }
+    }).catch(function() {
+      fallbackMailto();
+    });
+  }
+
   var FIELD_MAP = {
     // 2026-07-10 FIX: 'business' was previously remapped to 'business_name',
     // a column that never actually existed on the live D1 leads table (the
@@ -1244,6 +1276,7 @@
     SYNC_TABLES: D1_SYNC_TABLES,
     JOB_DIVISION_KEYS: JOB_DIVISION_KEYS,
     sendMailAsMe: sendMailAsMe,
+    sendOrMailto: sendOrMailto,
   };
 
   // Also expose crmSave/crmLoad/crmDelete as plain globals if the page
@@ -1253,6 +1286,7 @@
   if (typeof global.crmLoad !== 'function') global.crmLoad = crmLoad;
   if (typeof global.crmDelete !== 'function') global.crmDelete = crmDelete;
   if (typeof global.sendMailAsMe !== 'function') global.sendMailAsMe = sendMailAsMe;
+  if (typeof global.sendOrMailto !== 'function') global.sendOrMailto = sendOrMailto;
 
   // ════════════════════════════════════════════════════════════════════
   // APP-UPDATE CHECK (added 2026-07-12 per Ted)

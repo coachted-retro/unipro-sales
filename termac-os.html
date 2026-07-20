@@ -10821,8 +10821,8 @@ function fsRequestComplianceDocs() {
     'Requested:    ' + new Date().toLocaleString('en-US'),
   ].join('\\n');
 
-  const subject = encodeURIComponent('Vendor Compliance Docs Needed - ' + (acct.business || acct.name || 'New Account') + ' (' + docs.join(', ') + ')');
-  window.open('mailto:csullivan@termac.com?cc=tscholl@termac.com&subject=' + subject + '&body=' + encodeURIComponent(bodyLines));
+  const subject = 'Vendor Compliance Docs Needed - ' + (acct.business || acct.name || 'New Account') + ' (' + docs.join(', ') + ')';
+  sendOrMailto('csullivan@termac.com', subject, bodyLines, { cc: 'tscholl@termac.com' });
 
   // Save the request and the return contact to the account record so the
   // packet, and anyone opening the account later, can see both.
@@ -10859,11 +10859,11 @@ function fsSendDivisionScopeEmails() {
   contractedDivisions.forEach(function(svc, idx) {
     const div = DIVISION_EMAIL_MAP[svc];
     const bodyText = fsBuildDivisionScopeText(svc, surveyData, acct, estimate);
-    const subject = encodeURIComponent('New Account Setup — ' + (acct.business || acct.name || 'New Account') + ' [' + div.label + ']');
-    const body = encodeURIComponent(bodyText);
-    // Stagger each mailto open slightly so the browser doesn't block them
+    const subject = 'New Account Setup \u2014 ' + (acct.business || acct.name || 'New Account') + ' [' + div.label + ']';
+    // Stagger slightly so any mailto: fallbacks don't get popup-blocked
+    // by the browser if several divisions fail to send at once.
     setTimeout(function() {
-      window.open('mailto:' + div.to + '?cc=tscholl@termac.com&subject=' + subject + '&body=' + body);
+      sendOrMailto(div.to, subject, bodyText, { cc: 'tscholl@termac.com' });
     }, idx * 800);
     emailsOpened++;
   });
@@ -10905,8 +10905,20 @@ function fsSendAccountSetupEmail() {
     }
   }
 
-  const body = `New Account Setup Required%0A%0AAccount: ${encodeURIComponent(biz)}%0AAddress: ${encodeURIComponent(document.getElementById('fs_acctAddress')?.value||'')}%0AContact: ${encodeURIComponent(document.getElementById('fs_acctContact')?.value||'')}%0APhone: ${encodeURIComponent(document.getElementById('fs_acctPhone')?.value||'')}%0AEmail: ${encodeURIComponent(document.getElementById('fs_acctEmail')?.value||'')}%0A%0AServices Contracted: ${svcs.join(', ')||'See notes'}%0APayment Terms: ${encodeURIComponent(document.getElementById('fs_acctPayTerms')?.value||'')}%0AEstimate Total: ${encodeURIComponent(total)}%0A%0AClient Signature: ${encodeURIComponent(sigLine)}%0A%0AAccess Instructions:%0A${encodeURIComponent(document.getElementById('fs_acctAccess')?.value||'')}%0A%0ANotes:%0A${encodeURIComponent(document.getElementById('fs_acctNotes')?.value||'')}%0A%0ASent by: Ted Scholl (tscholl@termac.com)`;
-  window.open(`mailto:${to}?cc=tscholl@termac.com&subject=New Account Setup — ${encodeURIComponent(biz)}&body=${body}`);
+  const body = 'New Account Setup Required\n\n' +
+    'Account: ' + biz + '\n' +
+    'Address: ' + (document.getElementById('fs_acctAddress')?.value||'') + '\n' +
+    'Contact: ' + (document.getElementById('fs_acctContact')?.value||'') + '\n' +
+    'Phone: ' + (document.getElementById('fs_acctPhone')?.value||'') + '\n' +
+    'Email: ' + (document.getElementById('fs_acctEmail')?.value||'') + '\n\n' +
+    'Services Contracted: ' + (svcs.join(', ')||'See notes') + '\n' +
+    'Payment Terms: ' + (document.getElementById('fs_acctPayTerms')?.value||'') + '\n' +
+    'Estimate Total: ' + total + '\n\n' +
+    'Client Signature: ' + sigLine + '\n\n' +
+    'Access Instructions:\n' + (document.getElementById('fs_acctAccess')?.value||'') + '\n\n' +
+    'Notes:\n' + (document.getElementById('fs_acctNotes')?.value||'') + '\n\n' +
+    'Sent by: Ted Scholl (tscholl@termac.com)';
+  sendOrMailto(to, 'New Account Setup \u2014 ' + biz, body, { cc: 'tscholl@termac.com' });
 }
 
 // ── BUSINESS TYPE / PAYMENT PATH ─────────────────────────────────────────────
@@ -11027,35 +11039,35 @@ function fsSubmitCreditApp(action) {
   fsCreditAppStatusRefresh(appId);
 
   if (action === 'email') {
-    const subject = encodeURIComponent(`Net 30 Credit Application — ${biz}`);
+    const subject = `Net 30 Credit Application \u2014 ${biz}`;
     const body = [
       `NET 30 CREDIT APPLICATION`,``,
       `Dear ${apName||'Accounts Payable'},`,``,
       `Thank you for your interest in establishing a Net 30 account with Universal Fire Protection (UniPro) / Termac Family of Companies. Please review and complete the information below and return this email to tscholl@termac.com.`,``,
-      `── BUSINESS INFORMATION ──`,
+      `\u2500\u2500 BUSINESS INFORMATION \u2500\u2500`,
       `Legal Business Name: ${biz}`,
       `Federal Tax ID / EIN: ${ein}`,
-      `Years in Business: ${years||'—'}`,
-      `Estimated Annual Revenue: ${revenue||'—'}`,``,
-      `── BANK REFERENCE ──`,
-      `Bank Name: ${bankName||'—'}`,
-      `Account Type: ${bankAcct||'—'}`,
-      `Bank Contact: ${bankContact||'—'}`,``,
-      `── TRADE REFERENCES ──`,
-      `Reference 1: ${ref1Name||'—'} · ${ref1Phone||'—'}`,
-      `Reference 2: ${ref2Name||'—'} · ${ref2Phone||'—'}`,``,
-      `── AP DEPARTMENT CONTACT ──`,
-      `Name / Title: ${apName||'—'} / ${apTitle||'—'}`,
-      `Email: ${apEmail||'—'}`,
-      `Phone: ${apPhone||'—'}`,``,
-      `── AUTHORIZATION ──`,
+      `Years in Business: ${years||'\u2014'}`,
+      `Estimated Annual Revenue: ${revenue||'\u2014'}`,``,
+      `\u2500\u2500 BANK REFERENCE \u2500\u2500`,
+      `Bank Name: ${bankName||'\u2014'}`,
+      `Account Type: ${bankAcct||'\u2014'}`,
+      `Bank Contact: ${bankContact||'\u2014'}`,``,
+      `\u2500\u2500 TRADE REFERENCES \u2500\u2500`,
+      `Reference 1: ${ref1Name||'\u2014'} \u00b7 ${ref1Phone||'\u2014'}`,
+      `Reference 2: ${ref2Name||'\u2014'} \u00b7 ${ref2Phone||'\u2014'}`,``,
+      `\u2500\u2500 AP DEPARTMENT CONTACT \u2500\u2500`,
+      `Name / Title: ${apName||'\u2014'} / ${apTitle||'\u2014'}`,
+      `Email: ${apEmail||'\u2014'}`,
+      `Phone: ${apPhone||'\u2014'}`,``,
+      `\u2500\u2500 AUTHORIZATION \u2500\u2500`,
       `Authorized Signature: ${signedBy||'_________________________'}`,
       `Date: _________________________`,``,
       `By returning this application, the above-named business agrees that the information provided is accurate and authorizes Universal Fire Protection to verify credit with the listed references and banking institution.`,``,
       `Please return completed application to: tscholl@termac.com`,
       `Questions? Call Ted Scholl: 267-421-6336`,
-    ].map(l => encodeURIComponent(l)).join('%0A');
-    window.open(`mailto:${apEmail}?cc=tscholl@termac.com&subject=${subject}&body=${body}`);
+    ].join('\n');
+    sendOrMailto(apEmail, subject, body, { cc: 'tscholl@termac.com' });
   }
 
   fsCloseCreditApp();
@@ -20244,8 +20256,8 @@ function bidsAllProHandoff(b){
   if (b.refNo) lines.push('Ref: '+b.refNo);
   lines.push('Estimated value: $'+((b.estValue||0).toLocaleString()));
   lines.push('','Scope:',(b.scopeRaw||'See bid documents.'),'','This is now in the Design Studio review queue. Pull the drawings and specs from the bid package.');
-  var body=encodeURIComponent(lines.join('\n')), subj=encodeURIComponent('AllPro Bid Won: '+(b.agency||b.title||'')+' - $'+((b.estValue||0).toLocaleString()));
-  window.open('mailto:dsoleau@termac.com?subject='+subj+'&body='+body);
+  var body=lines.join('\n'), subj='AllPro Bid Won: '+(b.agency||b.title||'')+' - $'+((b.estValue||0).toLocaleString());
+  sendOrMailto('dsoleau@termac.com', subj, body);
 }
 
 function bidsOpenManualEntry(){
@@ -21840,7 +21852,7 @@ function tmInvEmailReorder() {
   }).filter(Boolean);
   if (!items.length) { alert('No products need reordering at this time.'); return; }
   const body = [
-    `Termac Chemical Reorder — ${acctName}`,
+    `Termac Chemical Reorder \u2014 ${acctName}`,
     `Date: ${new Date().toLocaleDateString()}`,
     `Rep: ${_currentUser?.name || 'Ted Scholl'}`,
     ``,
@@ -21848,8 +21860,8 @@ function tmInvEmailReorder() {
     ...items,
     ``,
     `Please process and schedule delivery at your earliest convenience.`
-  ].map(l => encodeURIComponent(l)).join('%0A');
-  window.open(`mailto:pbrahan@termac.com?cc=tscholl@termac.com&subject=Termac Chemical Reorder — ${encodeURIComponent(acctName)}&body=${body}`);
+  ].join('\n');
+  sendOrMailto('pbrahan@termac.com', `Termac Chemical Reorder \u2014 ${acctName}`, body, { cc: 'tscholl@termac.com' });
 }
 
 function svTMRenderMachineOptions() {
@@ -23518,12 +23530,17 @@ function estPresent(){
 
 function estSendPDF(){
   const biz = estState.bizName;
-  const body = encodeURIComponent(
-    `Hi,\n\nThank you for your time today! As discussed, please find your estimate attached.\n\nIf you have any questions, don't hesitate to reach out.\n\nBest,\nTed Scholl\nTermac Family of Companies\ntscholl@termac.com | 267-421-6336`
-  );
-  const subject = encodeURIComponent(`Termac Estimate — ${biz}`);
-  // Open mailto — in production would trigger Brevo API
-  window.open(`mailto:?subject=${subject}&body=${body}`, '_blank');
+  const body = `Hi,\n\nThank you for your time today! As discussed, please find your estimate attached.\n\nIf you have any questions, don't hesitate to reach out.\n\nBest,\nTed Scholl\nTermac Family of Companies\ntscholl@termac.com | 267-421-6336`;
+  const subject = `Termac Estimate \u2014 ${biz}`;
+  const acct = estState?.accountId ? crmLoad('accounts').find(a => a.id === estState.accountId) : null;
+  // NOT converted to silent auto-send: this email promises an attached
+  // PDF, but neither this nor the old mailto: path actually attaches
+  // one -- the rep needs to see their own email client to attach the
+  // real file before it goes out, an instant Graph send would ship a
+  // promise with nothing behind it.
+  const to = acct?.email || '';
+  const mailto = 'mailto:' + to + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+  window.open(mailto, '_blank');
   // Also trigger print as proxy for PDF
   estPrint();
 }
@@ -23762,10 +23779,10 @@ function rcpHideComplaintBanner() {
 
 // Send complaint escalation email via Brevo (or mailto fallback)
 async function rcpSendComplaintEscalation(call) {
-  const subject = encodeURIComponent('⚠️ Customer Complaint — Immediate Attention Required');
+  const subject = '\u26a0\ufe0f Customer Complaint \u2014 Immediate Attention Required';
   const date = new Date().toLocaleDateString('en-US', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
-  const body = encodeURIComponent(
-    'Jim, Tom —\n\n' +
+  const body =
+    'Jim, Tom \u2014\n\n' +
     'A customer complaint was just logged in Termac One. Details below.\n\n' +
     '------------------------------------------------------------\n' +
     'COMPLAINT DETAILS\n' +
@@ -23773,10 +23790,10 @@ async function rcpSendComplaintEscalation(call) {
     'Date:         ' + date + '\n' +
     'Time:         ' + call.time + '\n' +
     'Caller:       ' + (call.name || 'Unknown') + '\n' +
-    'Company:      ' + (call.company || '—') + '\n' +
-    'Phone:        ' + (call.phone || '—') + '\n' +
+    'Company:      ' + (call.company || '\u2014') + '\n' +
+    'Phone:        ' + (call.phone || '\u2014') + '\n' +
     'Call Type:    Complaint\n' +
-    'Urgency:      HIGH — Follow Up Today\n' +
+    'Urgency:      HIGH \u2014 Follow Up Today\n' +
     '------------------------------------------------------------\n' +
     'NOTES / MESSAGE FROM CALLER\n' +
     '------------------------------------------------------------\n' +
@@ -23788,12 +23805,10 @@ async function rcpSendComplaintEscalation(call) {
     'Logged by:    ' + (call.loggedBy || 'Reception') + '\n\n' +
     'This call is logged and visible in the Termac One Reception dashboard.\n' +
     'View: https://coachted-retro.github.io/unipro-sales/termac-os.html\n\n' +
-    '— Termac One Reception System'
-  );
-  // mailto: opens default email client pre-filled — replace with Brevo API once key is active
+    '\u2014 Termac One Reception System';
   // Note: notifyOnCallLogged handles complaint notification now via termac-notify.js
   // This function is kept as legacy fallback for direct calls
-  window.open('mailto:jkennedy@termac.com,tpittakas@termac.com?subject=' + subject + '&body=' + body, '_blank');
+  sendOrMailto(['jkennedy@termac.com', 'tpittakas@termac.com'], subject, body);
 }
 
 function rcpRenderLog(){
@@ -24636,9 +24651,9 @@ function flagDeficiencyFromTech(accountId, accountName, address, description, se
     TermacLifecycle.flagDeficiency({ accountId, accountName, address, description, severity, techId, jobId, canFixNow, partsNeeded });
   } else {
     // Fallback: direct email to Lexi
-    const subj = encodeURIComponent('⚠️ Deficiency — ' + accountName);
-    const body = encodeURIComponent('Deficiency flagged at ' + accountName + '\nDescription: ' + description + '\nCan fix now: ' + canFixNow);
-    window.open('mailto:lcranfield@termac.com?subject=' + subj + '&body=' + body, '_blank');
+    const subj = '\u26a0\ufe0f Deficiency \u2014 ' + accountName;
+    const body = 'Deficiency flagged at ' + accountName + '\nDescription: ' + description + '\nCan fix now: ' + canFixNow;
+    sendOrMailto('lcranfield@termac.com', subj, body);
   }
 }
 function estDecline(){
@@ -33204,10 +33219,9 @@ function weeklySend() {
     if (!confirm('Some questionnaire fields are empty. Send anyway?')) return;
   }
   const body    = weeklyBuildEmailBody();
-  const subject = encodeURIComponent('Weekly Activity Report — ' + (_currentUser?.name || 'Ted Scholl') + ' — ' + new Date().toLocaleDateString());
+  const subject = 'Weekly Activity Report \u2014 ' + (_currentUser?.name || 'Ted Scholl') + ' \u2014 ' + new Date().toLocaleDateString();
   const recipients = Array.from(document.querySelectorAll('#weeklyRecipients input:checked')).map(i => i.value);
-  const to = recipients.join(',');
-  window.open('mailto:' + to + '?subject=' + subject + '&body=' + encodeURIComponent(body), '_blank');
+  sendOrMailto(recipients, subject, body);
   weeklySaveDraft();
   weeklyLogSend(recipients);
   const t = document.createElement('div');
@@ -36713,7 +36727,7 @@ function sendEstFollowUp() {
   const body = document.getElementById('estFUDraft').value;
   const acct = crmLoad('accounts').find(a => a.id === accountId);
   if (acct?.email) {
-    window.open(`mailto:${acct.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, '_blank');
+    sendOrMailto(acct.email, subject, body);
   }
   // Mark touch as sent
   const seq = IS.loadArr('estFollowUps');
