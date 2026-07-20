@@ -220,7 +220,8 @@ async function apGoHome() {
 
   <div class="filter-row" id="apTypeFilters"></div>
 
-  <div style="display:flex;gap:6px;margin-bottom:12px">
+  <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
+    <input type="text" id="apProjectSearch" placeholder="Search projects, customers, job numbers..." oninput="renderAll()" style="flex:1;min-width:200px;padding:9px 14px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;font-family:'Barlow',sans-serif;outline:none">
     <button class="btn" id="apViewBtn-board" onclick="setProjectView('board')" style="background:var(--ink);color:#fff">🗂 Board</button>
     <button class="btn" id="apViewBtn-list" onclick="setProjectView('list')" style="background:#fff;border:1.5px solid var(--line);color:var(--ink)">📋 List</button>
   </div>
@@ -2361,11 +2362,13 @@ function npReconcileConvertedOpportunities(projects) {
 
 function renderAll() {
   var projects = npReconcileConvertedOpportunities(loadProjects());
-  renderKPIs(projects);
-  renderStageChart(projects);
+  var q = (document.getElementById('apProjectSearch') ? document.getElementById('apProjectSearch').value : '').trim().toLowerCase();
+  var filtered = q ? projects.filter(function(p) { return JSON.stringify(p).toLowerCase().indexOf(q) !== -1; }) : projects;
+  renderKPIs(filtered);
+  renderStageChart(filtered);
   renderTypeFilters();
-  if (projectView === 'list') renderProjectList(projects);
-  else renderKanban(projects);
+  if (projectView === 'list') renderProjectList(filtered);
+  else renderKanban(filtered);
 }
 
 // -- STAGE DISTRIBUTION CHART -- at-a-glance count of active projects per
@@ -3222,14 +3225,36 @@ function togglePunch(i, checked) {
 
 // ── INIT ──
 document.addEventListener('DOMContentLoaded', function() {
-  // 2026-07-13 FIX: this called TermacD1Sync.hydrateAll, which does not
-  // exist (the real method is d1HydrateAll) - every page load threw here
-  // and silently skipped hydration entirely, meaning projects created or
-  // changed on another device never actually pulled in on this one.
-  if (typeof TermacD1Sync !== 'undefined' && typeof TermacD1Sync.d1HydrateAll === 'function') {
-    TermacD1Sync.d1HydrateAll().then(function() { renderAll(); }).catch(function(){});
-  }
+  // 2026-07-20 FIX: d1HydrateAll is additive-only -- it skips records
+  // already in localStorage by ID, so stale stage values (e.g. a proposal
+  // that existed locally before its stage was set in D1) never get updated.
+  // allpro_projects is also large (692+ rows) spanning two 500-row pages.
+  // Force a full two-page fetch and complete replacement on every load so
+  // every device always sees the real current D1 state, no stale overrides.
   renderAll();
+  if (typeof TermacD1Sync !== 'undefined' && typeof TermacD1Sync.d1Fetch === 'function') {
+    Promise.all([
+      TermacD1Sync.d1Fetch('GET', '/api/allpro_projects?limit=500&offset=0'),
+      TermacD1Sync.d1Fetch('GET', '/api/allpro_projects?limit=500&offset=500')
+    ]).then(function(pages) {
+      var all = [];
+      pages.forEach(function(d) { if (d && d.results) all = all.concat(d.results); });
+      if (all.length) {
+        try { localStorage.setItem('termac_crm_allpro_projects', JSON.stringify(all)); } catch(e) {
+          // localStorage full -- store only active (non-closeout) projects
+          var active = all.filter(function(p) { return p.stage !== 'closeout'; });
+          localStorage.removeItem('termac_crm_allpro_projects');
+          localStorage.setItem('termac_crm_allpro_projects', JSON.stringify(active));
+        }
+        renderAll();
+      }
+    }).catch(function() {
+      // Fallback to normal hydration if direct fetch fails
+      if (typeof TermacD1Sync.d1HydrateAll === 'function') {
+        TermacD1Sync.d1HydrateAll().then(function() { renderAll(); }).catch(function(){});
+      }
+    });
+  }
   if (location.hash === '#combined') apNav('combined');
 
   // 2026-07-15 per Ted: the New Project account picker was coming up
