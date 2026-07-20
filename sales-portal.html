@@ -11103,7 +11103,7 @@ function spOpenCatalogInline() {
 var _spSearchDebounceTimer = null;
 function spDebouncedGlobalSearch(q) {
   clearTimeout(_spSearchDebounceTimer);
-  _spSearchDebounceTimer = setTimeout(function() { spGlobalSearch(q); }, 220);
+  _spSearchDebounceTimer = setTimeout(function() { spGlobalSearch(q); }, 400);
 }
 
 function spGlobalSearch(q) {
@@ -11116,13 +11116,6 @@ function spGlobalSearch(q) {
   const results = [];
   const seen = new Set();
 
-  // Route every record through the same normalized-stage model the rest of
-  // the app already uses (spNormalizeStage + SP_TAB_STAGES), instead of a
-  // separate, older mapping that predated the stage taxonomy fix and
-  // disagreed with it — e.g. this used to always file "disqualified" under
-  // Leads regardless of which stage it was actually disqualified from, and
-  // treated "lost" as its own destination instead of the same disqualified
-  // path everything else now uses.
   function spSearchTab(stage) {
     const normalized = spNormalizeStage(stage);
     for (const tab in SP_TAB_STAGES) {
@@ -11131,83 +11124,125 @@ function spGlobalSearch(q) {
     return 'leads';
   }
   const typeBadge = {
-    leads:       {label:'Lead',        bg:'#EBF2FD', color:'#1B5FA8'},
-    contacts:    {label:'Contact',     bg:'#F3E8FF', color:'#6B21A8'},
-    opportunities:{label:'Opportunity',bg:'#FEF3C7', color:'#D97706'},
-    accounts:    {label:'Account',     bg:'#DCFCE7', color:'#166534'},
+    leads:        {label:'Lead',        bg:'#EBF2FD', color:'#1B5FA8'},
+    contacts:     {label:'Contact',     bg:'#F3E8FF', color:'#6B21A8'},
+    opportunities:{label:'Opportunity', bg:'#FEF3C7', color:'#D97706'},
+    accounts:     {label:'Account',     bg:'#DCFCE7', color:'#166534'},
   };
 
-  // Search accounts FIRST. A converted Opportunity leaves a vestigial
-  // leftover copy behind in the leads pool (lifecycleStage 'accepted',
-  // same id as the real account — see spFindRecordAnyPool's comment on
-  // this same vestigial-copy issue). Searching leads first meant that
-  // stale copy won the dedup race below, so a converted account showed
-  // up in search mislabeled as an outdated Lead while the real, live
-  // account record got silently hidden. Accounts first means the real
-  // record wins instead.
+  // Local search — accounts first so converted records win dedup
   crmLoad('accounts').forEach(r => {
     if (results.length >= 60) return;
     if (seen.has(r.id)) return;
-    const blob = [r.name, r.business, r.phone, r.address, r.email, r.city, r.contact]
+    const blob = [r.name, r.business, r.phone, r.address, r.email, r.contact_email,
+      r.city, r.contact, r.contact_name, r.cust_num, r.zip]
       .filter(Boolean).join(' ').toLowerCase();
     if (!blob.includes(term)) return;
     seen.add(r.id);
     results.push({ ...r, _tab: 'accounts', _badge: typeBadge.accounts });
   });
 
-  // Search unified leads pool (all pipeline stages)
-  const allLeads = crmLoad('leads');
-  allLeads.forEach(r => {
+  crmLoad('leads').forEach(r => {
     if (results.length >= 60) return;
     if (seen.has(r.id)) return;
     const blob = [r.name, r.business, r.phone, r.address, r.email, r.city, r.zip, r.contact, r.notes]
       .filter(Boolean).join(' ').toLowerCase();
     if (!blob.includes(term)) return;
     seen.add(r.id);
-    const stage = r.lifecycleStage || 'lead';
-    const tabKey = spSearchTab(stage);
+    const tabKey = spSearchTab(r.lifecycleStage || 'lead');
     results.push({ ...r, _tab: tabKey, _badge: typeBadge[tabKey] });
   });
 
-  // Render overlay
-  if (overlay) overlay.style.display = 'block';
-  const countEl = document.getElementById('spSearchCount');
-  if (countEl) countEl.textContent = `(${results.length} found)`;
-  const list = document.getElementById('spSearchList');
-  if (!list) return;
-
-  if (results.length === 0) {
-    list.innerHTML = '<div style="padding:24px;text-align:center;color:var(--soft);font-size:13px">No records match "' + escH(q) + '"</div>';
-    return;
+  function renderResults(rows, isLoading) {
+    if (!overlay) return;
+    overlay.style.display = 'block';
+    const countEl = document.getElementById('spSearchCount');
+    if (countEl) countEl.textContent = rows.length ? '(' + rows.length + ' found)' : '';
+    const list = document.getElementById('spSearchList');
+    if (!list) return;
+    if (rows.length === 0) {
+      list.innerHTML = isLoading
+        ? '<div style="padding:24px;text-align:center;color:var(--soft);font-size:13px">🔍 Searching database for "' + escH(q) + '"…</div>'
+        : '<div style="padding:24px;text-align:center;color:var(--soft);font-size:13px">No records match "' + escH(q) + '"</div>';
+      return;
+    }
+    list.innerHTML = rows.map(function(r) {
+      var badge = r._badge || typeBadge.leads;
+      var stage = SP_STAGES[spNormalizeStage(r.lifecycleStage)] || {};
+      var lastContact = r.lastContactDate
+        ? Math.round((Date.now() - new Date(r.lastContactDate)) / 86400000) + 'd ago'
+        : r.updated ? Math.round((Date.now() - r.updated) / 86400000) + 'd ago' : '';
+      var svcs = (r.services||[]).map(function(sv) {
+        var c = spSvcColor(sv);
+        return '<span style="background:' + c.bg + ';color:' + c.color + ';border-radius:3px;padding:1px 5px;font-size:9px;font-weight:700">' + spSvcLabel(sv) + '</span>';
+      }).join(' ');
+      return '<div class="sp-search-result" onclick="spSelectSearchResult(\'' + r.id + '\',\'' + r._tab + '\')">' +
+        '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px"><div>' +
+          '<span class="sp-search-biz">' + escH(r.business||r.name||'—') + '</span>' +
+          '<span class="sp-record-type" style="background:' + badge.bg + ';color:' + badge.color + '">' + badge.label + '</span>' +
+          (stage.label ? '<span style="font-size:10px;color:' + (stage.color||'#6B7280') + ';margin-left:4px">· ' + stage.label + '</span>' : '') +
+        '</div>' +
+        (r.score ? '<span style="background:' + (r.score>=8?'#DCFCE7':r.score>=5?'#FEF3C7':'#FEE2E2') + ';color:' + (r.score>=8?'#166534':r.score>=5?'#92400E':'#991B1B') + ';border-radius:99px;padding:1px 7px;font-size:10px;font-weight:800;white-space:nowrap">' + r.score + '/10</span>' : '') +
+        '</div>' +
+        '<div class="sp-search-sub">' +
+          (r.phone ? '📞 ' + escH(r.phone) + ' ' : '') +
+          (r.address ? '📍 ' + escH(r.address) + (r.city ? ', ' + escH(r.city) : '') + ' ' : '') +
+          (lastContact ? '· ' + lastContact : '') +
+        '</div>' +
+        (svcs ? '<div style="margin-top:4px;display:flex;gap:3px;flex-wrap:wrap">' + svcs + '</div>' : '') +
+      '</div>';
+    }).join('');
   }
 
-  list.innerHTML = results.map(r => {
-    const badge = r._badge || typeBadge.leads;
-    const stage = SP_STAGES[spNormalizeStage(r.lifecycleStage)] || {};
-    const lastContact = r.lastContactDate
-      ? Math.round((Date.now() - new Date(r.lastContactDate)) / 86400000) + 'd ago'
-      : r.updated ? Math.round((Date.now() - r.updated) / 86400000) + 'd ago' : '';
-    const svcs = (r.services||[]).map(sv => {
-      const c = spSvcColor(sv);
-      return `<span style="background:${c.bg};color:${c.color};border-radius:3px;padding:1px 5px;font-size:9px;font-weight:700">${spSvcLabel(sv)}</span>`;
-    }).join(' ');
-    return `<div class="sp-search-result" onclick="spSelectSearchResult('${r.id}','${r._tab}')">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
-        <div>
-          <span class="sp-search-biz">${escH(r.business||r.name||'—')}</span>
-          <span class="sp-record-type" style="background:${badge.bg};color:${badge.color}">${badge.label}</span>
-          ${stage.label ? `<span style="font-size:10px;color:${stage.color||'#6B7280'};margin-left:4px">· ${stage.label}</span>` : ''}
-        </div>
-        ${r.score ? `<span style="background:${r.score>=8?'#DCFCE7':r.score>=5?'#FEF3C7':'#FEE2E2'};color:${r.score>=8?'#166534':r.score>=5?'#92400E':'#991B1B'};border-radius:99px;padding:1px 7px;font-size:10px;font-weight:800;white-space:nowrap">${r.score}/10</span>` : ''}
-      </div>
-      <div class="sp-search-sub">
-        ${r.phone ? `📞 ${escH(r.phone)} ` : ''}
-        ${r.address ? `📍 ${escH(r.address)} ` : ''}
-        ${lastContact ? `· ${lastContact}` : ''}
-      </div>
-      ${svcs ? `<div style="margin-top:4px;display:flex;gap:3px;flex-wrap:wrap">${svcs}</div>` : ''}
-    </div>`;
-  }).join('');
+  // Show local results immediately (even if zero — D1 is loading)
+  renderResults(results, true);
+
+  // D1 fallback — searches the full accounts table in the database.
+  // Runs on EVERY search so accounts that aren't in localStorage yet
+  // (e.g. bulk-imported UniPro/GTO/FilterMan accounts) are always findable.
+  var D1_PROXY = 'https://unipro-ai-proxy.termac-one.workers.dev';
+  var sqlTerm = term.replace(/'/g, "''");
+  var sql = "SELECT id, name, business, phone, address, city, state, zip, " +
+    "contact_name, contact_email, division, services, cust_num, territory " +
+    "FROM accounts WHERE " +
+    "LOWER(name) LIKE '%" + sqlTerm + "%' OR " +
+    "LOWER(business) LIKE '%" + sqlTerm + "%' OR " +
+    "LOWER(phone) LIKE '%" + sqlTerm + "%' OR " +
+    "LOWER(contact_name) LIKE '%" + sqlTerm + "%' OR " +
+    "LOWER(contact_email) LIKE '%" + sqlTerm + "%' OR " +
+    "LOWER(address) LIKE '%" + sqlTerm + "%' OR " +
+    "LOWER(city) LIKE '%" + sqlTerm + "%' OR " +
+    "LOWER(cust_num) LIKE '%" + sqlTerm + "%' " +
+    "LIMIT 30";
+
+  fetch(D1_PROXY + '/db/query', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json','X-API-Secret':'termac2026'},
+    body: JSON.stringify({sql: sql})
+  })
+  .then(function(res){ return res.json(); })
+  .then(function(data) {
+    // Only update if the search term hasn't changed while we were fetching
+    var current = (document.getElementById('spUniSearch') || {}).value || '';
+    if (current.trim().toLowerCase() !== term) return;
+    if (data.ok && data.results) {
+      data.results.forEach(function(r) {
+        if (seen.has(r.id)) return;
+        seen.add(r.id);
+        // Normalize field names to match what the rest of the app expects
+        r.contact = r.contact_name;
+        r.email = r.contact_email;
+        r._tab = 'accounts';
+        r._badge = typeBadge.accounts;
+        results.push(r);
+      });
+    }
+    renderResults(results, false);
+  })
+  .catch(function() {
+    // D1 unreachable — just show local results without loading indicator
+    renderResults(results, false);
+  });
 }
 
 function spSelectSearchResult(id, tab) {
