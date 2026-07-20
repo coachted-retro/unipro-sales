@@ -1066,7 +1066,7 @@ function spRender(tab) {
   else if (tab === 'locations')     spRenderLocationsTab();
   else if (tab === 'contacts')      spRenderCRM('contacts');
   else if (tab === 'opportunities') spRenderCRM('opportunities');
-  else if (tab === 'accounts')      spRenderCRM('accounts');
+  else if (tab === 'accounts')      spRenderAccountsTab();
   else if (tab === 'goals')         spRenderGoals();
   else if (tab === 'leaderboard')   spRenderLeaderboard();
   else if (tab === 'weekly')        spRenderWeekly();
@@ -5474,7 +5474,7 @@ function spCompleteTask(taskId) {
 // that never checked each other. Checks leads/contacts/locations/
 // accounts by normalized phone; excludeId lets an edit-in-place skip
 // matching itself.
-function spCheckPhoneDuplicate(phone, excludeId) {
+async function spCheckPhoneDuplicate(phone, excludeId) {
   var norm = String(phone || '').replace(/[^\d]/g, '');
   if (norm.length < 7) return null;
   function sameNum(p) { return p && String(p).replace(/[^\d]/g, '') === norm; }
@@ -5482,13 +5482,19 @@ function spCheckPhoneDuplicate(phone, excludeId) {
     { data: crmLoad('leads') || [],      type: 'lead',     label: 'Lead' },
     { data: crmLoad('contacts') || [],   type: 'contact',  label: 'Contact' },
     { data: crmLoad('locations') || [],  type: 'location', label: 'Location' },
-    { data: crmLoad('accounts') || [],   type: 'account',  label: 'Account' },
   ];
   for (var i = 0; i < pools.length; i++) {
     var match = pools[i].data.find(function(r) { return r.id !== excludeId && sameNum(r.phone); });
     if (match) {
       return { type: pools[i].type, label: pools[i].label, id: match.id, name: match.business || match.name || 'Unnamed' };
     }
+  }
+  // Accounts is too large to hold locally (see D1_NO_BULK_HYDRATE) --
+  // checked live against D1 instead, same as everything else that
+  // needs to know about the full accounts table now.
+  if (typeof d1CheckAccountPhoneDuplicate === 'function') {
+    var acctMatch = await d1CheckAccountPhoneDuplicate(phone);
+    if (acctMatch && acctMatch.id !== excludeId) return acctMatch;
   }
   return null;
 }
@@ -5501,8 +5507,8 @@ function spWirePhoneDupeCheck(inputId, warnDivId, excludeId) {
   var input = document.getElementById(inputId);
   var warnDiv = document.getElementById(warnDivId);
   if (!input || !warnDiv) return;
-  input.addEventListener('blur', function() {
-    var match = spCheckPhoneDuplicate(input.value, excludeId);
+  input.addEventListener('blur', async function() {
+    var match = await spCheckPhoneDuplicate(input.value, excludeId);
     if (match) {
       warnDiv.style.display = 'block';
       warnDiv.innerHTML = '\u26a0\ufe0f This phone number is already on file \u2014 <strong>' + escH(match.name) + '</strong> (' + match.label + '). <a href="#" onclick="event.preventDefault();spViewRecord(\'' + match.id + '\',\'' + match.type + 's\')" style="color:var(--red);font-weight:700">View it</a> instead of creating a duplicate.';
@@ -5962,6 +5968,87 @@ function spOppSafeKey(div) { return (div || '').replace(/[^a-zA-Z0-9]/g, '_'); }
 //  as every other tab, on purpose — no more building one tab's list
 //  different from everyone else's.
 // ══════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════
+//  ACCOUNTS — rebuilt 2026-07-20 per Ted, the right way this time.
+//  Accounts is too large (23,000+ rows) to ever sync into the browser
+//  as a whole -- see D1_NO_BULK_HYDRATE in termac-d1-sync.js. Every
+//  view here queries D1 live instead, same pattern Salesforce/
+//  ServiceTrade/ServiceTitan actually use: ask the server for exactly
+//  the view you want (My Accounts, Recently Viewed, a live search),
+//  get back a page of real results, nothing ever gets bulk-synced to
+//  local storage first.
+// ══════════════════════════════════════════════════════
+var _spAcctView = 'mine';
+async function spRenderAccountsTab(view) {
+  if (view) _spAcctView = view;
+  const el = document.getElementById('spContent');
+  const activeView = _spAcctView;
+
+  const tabBtn = function(key, label) {
+    const active = activeView === key;
+    return '<button onclick="spRenderAccountsTab(\'' + key + '\')" style="padding:8px 16px;border-radius:7px;border:1.5px solid ' + (active ? 'var(--red)' : 'var(--line)') + ';background:' + (active ? 'var(--red)' : '#fff') + ';color:' + (active ? '#fff' : 'var(--ink)') + ';font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer;margin-right:8px">' + label + '</button>';
+  };
+
+  el.innerHTML = `
+  <div style="margin-bottom:14px">${tabBtn('mine','👤 My Accounts')}${tabBtn('recent','🕐 Recently Viewed')}${tabBtn('search','🔍 Search All')}</div>
+  ${activeView === 'search' ? '<div class="sp-filter-bar"><input class="sp-search" id="spAcctSearchBox" placeholder="Search all accounts by name, business, phone, address…" oninput="spDebouncedAcctSearch(this.value)" autofocus></div>' : ''}
+  <div id="spAcctResults" class="sp-record-grid"><div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--soft);font-size:14px">Loading…</div></div>`;
+
+  if (activeView === 'mine') {
+    const rows = await d1MyAccounts(_spRep.name, 100);
+    spRenderAcctResults(rows, 'No accounts assigned to you yet, and none sitting unassigned right now. Try Search All to find a specific one.');
+  } else if (activeView === 'recent') {
+    const rv = JSON.parse(sessionStorage.getItem('sp_recently_viewed') || '[]');
+    const ids = rv.filter(function(item) { return item.tab === 'accounts'; }).map(function(item) { return item.id; });
+    if (!ids.length) {
+      spRenderAcctResults([], 'No accounts viewed yet this session. Open one from My Accounts or Search, and it\'ll show up here.');
+    } else {
+      const results = [];
+      for (var i = 0; i < ids.length; i++) {
+        var row = await d1RawQuery('SELECT * FROM accounts WHERE id = ? LIMIT 1', [ids[i]]);
+        if (row && row[0]) results.push(row[0]);
+      }
+      spRenderAcctResults(results, 'No accounts viewed yet this session. Open one from My Accounts or Search, and it\'ll show up here.');
+    }
+  } else {
+    document.getElementById('spAcctResults').innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--soft);font-size:14px">Start typing above to search all accounts.</div>';
+  }
+}
+
+function spRenderAcctResults(rawRows, emptyMsg) {
+  const grid = document.getElementById('spAcctResults');
+  if (!grid) return;
+  if (!rawRows.length) {
+    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--soft);font-size:14px">' + escH(emptyMsg) + '</div>';
+    return;
+  }
+  const mapped = rawRows.map(function(raw) {
+    var r = (typeof TermacD1Sync !== 'undefined' && TermacD1Sync.d1ReverseMap) ? TermacD1Sync.d1ReverseMap('accounts', raw) : raw;
+    // accounts has no lifecycle_stage column (status is the real field)
+    // -- without this, every card would default to a "New Lead" pill,
+    // since spRecordCard normalizes a missing stage to 'lead'.
+    r.lifecycleStage = r.status || 'active';
+    return r;
+  });
+  spBuildServiceTagIndex();
+  grid.innerHTML = mapped.map(function(r) { return spRecordCard(r, 'accounts'); }).join('');
+}
+
+var _spAcctSearchTimer = null;
+function spDebouncedAcctSearch(term) {
+  clearTimeout(_spAcctSearchTimer);
+  var grid = document.getElementById('spAcctResults');
+  if (!term || term.trim().length < 2) {
+    if (grid) grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--soft);font-size:14px">Start typing above to search all accounts.</div>';
+    return;
+  }
+  _spAcctSearchTimer = setTimeout(async function() {
+    if (grid) grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--soft);font-size:14px">Searching…</div>';
+    var rows = await d1SearchAccounts(term, 50);
+    spRenderAcctResults(rows, 'No accounts match "' + term + '".');
+  }, 250);
+}
+
 function spRenderLocationsTab() {
   const el = document.getElementById('spContent');
   let data = crmLoad('locations') || [];

@@ -54,6 +54,20 @@
     'accounts_payable', 'expense_reports', 'customer_orders', 'reorder_requests',
     'warehouse_alerts', 'debriefs', 'rcp_calls', 'account_assets', 'tasks', 'st_services', 'st_deficiencies'];
 
+  // 2026-07-20 per Ted: accounts grew past 23,000 rows -- full-table
+  // hydration into one localStorage blob was silently failing every
+  // single 30-second sync sweep (localStorage has a hard per-origin
+  // size cap browsers enforce, no partial credit) AND burning
+  // bandwidth re-fetching up to 30,000 rows each time for nothing, all
+  // silently, with zero error surfaced anywhere. Tables this large
+  // should never be bulk-synced into the browser at all -- they get
+  // queried live from D1 instead (see spAccountsQuery / the rebuilt
+  // Accounts tab). This does NOT touch the ability to create or edit a
+  // single account -- crmSave still pushes those through normally
+  // since 'accounts' stays in D1_SYNC_TABLES above; this only skips
+  // the bulk "pull the whole table down" step.
+  var D1_NO_BULK_HYDRATE = ['accounts'];
+
   async function d1Fetch(method, path, body, opts2) {
     try {
       var opts = {
@@ -127,6 +141,54 @@
     }).catch(function() {
       fallbackMailto();
     });
+  }
+
+  // 2026-07-20 per Ted: accounts is too large to ever hold client-side
+  // (see D1_NO_BULK_HYDRATE above) -- these query D1 live instead,
+  // the actual right way to do this at this scale, same pattern
+  // Salesforce/ServiceTrade/ServiceTitan use (ask the server for
+  // exactly the view you want, don't sync the whole database to the
+  // browser first). Uses the raw SQL query endpoint for the OR/LIKE
+  // logic the simple ?column=value filter API can't express.
+  async function d1RawQuery(sql, params) {
+    try {
+      var res = await d1Fetch('POST', '/api/query', { sql: sql, params: params || [] });
+      return (res && res.ok && Array.isArray(res.results)) ? res.results : [];
+    } catch (e) { return []; }
+  }
+
+  // "My Accounts": assigned to me by name, or genuinely unassigned --
+  // matches the same ownership rule the rest of the app already uses
+  // for leads/contacts/locations, just asked of D1 directly instead of
+  // filtering a giant local array that can no longer exist.
+  async function d1MyAccounts(repName, limit) {
+    return d1RawQuery(
+      'SELECT * FROM accounts WHERE assigned_rep = ? OR assigned_rep IS NULL OR assigned_rep = ? ORDER BY updated_at DESC LIMIT ?',
+      [repName, '', limit || 100]
+    );
+  }
+
+  // Live search across name/business/phone/address -- the actual
+  // replacement for scanning a local copy of the whole table. Caller
+  // is responsible for debouncing (same reasoning as the top search
+  // bar fix -- this shouldn't fire on every keystroke either).
+  async function d1SearchAccounts(term, limit) {
+    var like = '%' + String(term || '').trim() + '%';
+    return d1RawQuery(
+      'SELECT * FROM accounts WHERE name LIKE ? OR business LIKE ? OR phone LIKE ? OR address LIKE ? ORDER BY updated_at DESC LIMIT ?',
+      [like, like, like, like, limit || 50]
+    );
+  }
+
+  // Live phone-duplicate check against accounts specifically (leads/
+  // contacts/locations still check fine against their own small local
+  // pools -- only accounts needed to move off the local cache).
+  async function d1CheckAccountPhoneDuplicate(phone) {
+    var norm = String(phone || '').replace(/[^\d]/g, '');
+    if (norm.length < 7) return null;
+    var rows = await d1RawQuery('SELECT id, name, business, phone FROM accounts WHERE phone LIKE ? LIMIT 5', ['%' + norm.slice(-7) + '%']);
+    var match = rows.find(function(r) { return String(r.phone || '').replace(/[^\d]/g, '') === norm; });
+    return match ? { type: 'account', label: 'Account', id: match.id, name: match.business || match.name || 'Unnamed' } : null;
   }
 
   var FIELD_MAP = {
@@ -785,6 +847,7 @@
     var totalAdded = 0;
     for (var i = 0; i < D1_SYNC_TABLES.length; i++) {
       var table = D1_SYNC_TABLES[i];
+      if (D1_NO_BULK_HYDRATE.indexOf(table) !== -1) continue;
       var result = await d1Hydrate(table);
       if (result.added > 0 || result.removed > 0) {
         totalAdded += result.added;
@@ -1277,6 +1340,10 @@
     JOB_DIVISION_KEYS: JOB_DIVISION_KEYS,
     sendMailAsMe: sendMailAsMe,
     sendOrMailto: sendOrMailto,
+    d1RawQuery: d1RawQuery,
+    d1MyAccounts: d1MyAccounts,
+    d1SearchAccounts: d1SearchAccounts,
+    d1CheckAccountPhoneDuplicate: d1CheckAccountPhoneDuplicate,
   };
 
   // Also expose crmSave/crmLoad/crmDelete as plain globals if the page
@@ -1287,6 +1354,10 @@
   if (typeof global.crmDelete !== 'function') global.crmDelete = crmDelete;
   if (typeof global.sendMailAsMe !== 'function') global.sendMailAsMe = sendMailAsMe;
   if (typeof global.sendOrMailto !== 'function') global.sendOrMailto = sendOrMailto;
+  if (typeof global.d1RawQuery !== 'function') global.d1RawQuery = d1RawQuery;
+  if (typeof global.d1MyAccounts !== 'function') global.d1MyAccounts = d1MyAccounts;
+  if (typeof global.d1SearchAccounts !== 'function') global.d1SearchAccounts = d1SearchAccounts;
+  if (typeof global.d1CheckAccountPhoneDuplicate !== 'function') global.d1CheckAccountPhoneDuplicate = d1CheckAccountPhoneDuplicate;
 
   // ════════════════════════════════════════════════════════════════════
   // APP-UPDATE CHECK (added 2026-07-12 per Ted)
