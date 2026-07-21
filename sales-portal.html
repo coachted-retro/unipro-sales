@@ -6448,8 +6448,23 @@ function spOppAddDivBlock(div) {
   var ents = [];
   rows.forEach(function(r){ if (ents.indexOf(r.entity) === -1) ents.push(r.entity); });
   ents.sort();
+  // 2026-07-21 per Ted: UniPro's catalog has two legal entities on file
+  // (Capital Suppression Corp for Maryland, Ter-Pro LLC for everywhere
+  // else) but only the everywhere-else case is live right now -- don't
+  // make a rep pick between entities they don't need to think about
+  // yet. Filters Capital out of the visible list and auto-selects the
+  // one that matters, displayed under its plain-English name.
+  var entLabels = {};
+  if (div === 'UniPro') {
+    ents = ents.filter(function(e){ return e !== 'Capital Suppression Corp'; });
+    entLabels['Ter-Pro LLC (UniPro)'] = 'Universal Fire Protection (UniPro)';
+  }
   var entSel = document.getElementById('oppEntity_' + key);
-  entSel.innerHTML = '<option value="">Select entity...</option>' + ents.map(function(e){ return '<option value="' + escH(e) + '">' + escH(e) + '</option>'; }).join('');
+  entSel.innerHTML = '<option value="">Select entity...</option>' + ents.map(function(e){ return '<option value="' + escH(e) + '">' + escH(entLabels[e] || e) + '</option>'; }).join('');
+  if (ents.length === 1) {
+    entSel.value = ents[0];
+    spOppPopulateCategories(key, div);
+  }
 }
 
 function spOppRemoveDivBlock(div) {
@@ -6492,12 +6507,24 @@ function spOppRenderPricing(key) {
   var mode = spOppDetectMode(row);
   panel.setAttribute('data-mode', mode);
   panel.setAttribute('data-price', row.price);
+  // 2026-07-21 per Ted: don't let a rep quote the catalog price as if
+  // it's the final number, on a Quick Sale or a regular opportunity --
+  // same risk either way, so this applies to both since they share
+  // this same pricing panel. Standard inspection pricing covers the
+  // inspection itself; whatever it takes to actually bring the system
+  // into compliance is priced separately once it's known, not folded
+  // into this number. Same plain-language wording already approved on
+  // the formal estimate disclaimer in the Manager Portal, not new
+  // language.
+  var priceDisclaimer = row.division === 'UniPro'
+    ? '<div style="background:#FFFCF5;border:1.5px solid #E67E22;border-radius:6px;padding:8px 10px;margin-top:8px;font-size:11px;color:#78350F;line-height:1.5"><strong>\u2696\ufe0f Set this expectation with the customer:</strong> this price is the standard rate for the inspection itself <em>if</em> no additional work is needed \u2014 that\u2019s the case most of the time, but not guaranteed. If something\u2019s found that needs fixing to bring the system to code, that work is priced separately and the customer sees and approves it before it\u2019s done.</div>'
+    : '';
   if (mode === 'lease') {
     panel.innerHTML = '<div style="font-size:10px;font-weight:700;color:#B45309;text-transform:uppercase;margin-bottom:5px">Lease pricing</div>' +
       '<div style="font-size:11px;color:var(--soft);margin-bottom:5px">' + spOppMoney(row.price) + ' / month</div>' +
       '<label style="font-size:10px;color:var(--soft);display:block;margin-bottom:3px">Term (months)</label>' +
       '<input id="oppLeaseTerm_' + key + '" type="number" value="36" min="1" oninput="spOppRecalc(\'' + key + '\')" style="width:100%;padding:6px 8px;border-radius:6px;border:1.5px solid var(--line);font-size:12px;margin-bottom:5px;box-sizing:border-box">' +
-      '<div style="font-size:12px;font-weight:800" id="oppTotalDisplay_' + key + '">Total: ' + spOppMoney(row.price * 36) + '</div>';
+      '<div style="font-size:12px;font-weight:800" id="oppTotalDisplay_' + key + '">Total: ' + spOppMoney(row.price * 36) + '</div>' + priceDisclaimer;
   } else if (mode === 'tiered') {
     var overage = spOppCatalog().find(function(r){ return r.division === row.division && r.category === row.category && r.unit && r.unit.toLowerCase().indexOf('over') !== -1; });
     panel.setAttribute('data-overage', overage ? overage.price : 0);
@@ -6505,10 +6532,10 @@ function spOppRenderPricing(key) {
       '<div style="font-size:11px;color:var(--soft);margin-bottom:5px">Base ' + spOppMoney(row.price) + (overage ? ' + ' + spOppMoney(overage.price) + '/gal over 1,000' : '') + '</div>' +
       '<label style="font-size:10px;color:var(--soft);display:block;margin-bottom:3px">Gallons over 1,000 (0 if none)</label>' +
       '<input id="oppTieredQty_' + key + '" type="number" value="0" min="0" oninput="spOppRecalc(\'' + key + '\')" style="width:100%;padding:6px 8px;border-radius:6px;border:1.5px solid var(--line);font-size:12px;margin-bottom:5px;box-sizing:border-box">' +
-      '<div style="font-size:12px;font-weight:800" id="oppTotalDisplay_' + key + '">Total: ' + spOppMoney(row.price) + '</div>';
+      '<div style="font-size:12px;font-weight:800" id="oppTotalDisplay_' + key + '">Total: ' + spOppMoney(row.price) + '</div>' + priceDisclaimer;
   } else {
     panel.innerHTML = '<div style="font-size:10px;font-weight:700;color:#B45309;text-transform:uppercase;margin-bottom:5px">Flat pricing</div>' +
-      '<div style="font-size:12px;font-weight:800" id="oppTotalDisplay_' + key + '">Total: ' + spOppMoney(row.price) + '</div>';
+      '<div style="font-size:12px;font-weight:800" id="oppTotalDisplay_' + key + '">Total: ' + spOppMoney(row.price) + '</div>' + priceDisclaimer;
   }
 }
 
