@@ -143,6 +143,99 @@
     });
   }
 
+
+  // ══════════════════════════════════════════════════════════════════════
+  //  OUTLOOK CALENDAR SYNC (Graph API)
+  //  Bidirectional, per-rep, using each person's own Graph token.
+  //  Push: Termac appointment → Outlook calendar event
+  //  Pull: Outlook events → shown in Termac calendar view
+  //  Each rep only ever sees/touches their own calendar.
+  // ══════════════════════════════════════════════════════════════════════
+
+  // Push a Termac appointment to the signed-in rep's Outlook calendar.
+  // Called automatically when an appointment is saved.
+  // Returns {ok:true, eventId} on success, {ok:false, error} on failure.
+  async function pushApptToOutlook(appt) {
+    var session;
+    try { session = JSON.parse(localStorage.getItem('termac_staff_session') || 'null'); } catch(e) {}
+    if (!session || !session.email) return { ok: false, error: 'not_signed_in' };
+
+    try {
+      var startDt = appt.date + 'T' + (appt.time || '09:00') + ':00';
+      var endDt   = appt.date + 'T' + (appt.timeEnd || (appt.time ? addHour(appt.time) : '10:00')) + ':00';
+
+      var body = [
+        appt.notes || '',
+        appt.location ? ('📍 ' + appt.location) : '',
+        appt.phone    ? ('📞 ' + appt.phone)    : '',
+        '',
+        'Created in Termac One — ' + (appt.id || '')
+      ].filter(Boolean).join('
+');
+
+      var event = {
+        subject: appt.title || appt.business || 'Termac Stop',
+        body: { contentType: 'text', content: body },
+        start: { dateTime: startDt, timeZone: 'America/New_York' },
+        end:   { dateTime: endDt,   timeZone: 'America/New_York' },
+        location: appt.location ? { displayName: appt.location } : undefined,
+        categories: ['Termac One'],
+      };
+
+      var res = await fetch(STAFF_AUTH_URL + '/calendar-push', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from_email: session.email, event: event, termac_appt_id: appt.id })
+      });
+      var data = await res.json();
+      return data;
+    } catch(e) {
+      return { ok: false, error: e.message };
+    }
+  }
+
+  // Pull Outlook calendar events for the signed-in rep for a given date range.
+  // Returns array of {id, title, start, end, location, isOutlook:true}
+  async function pullOutlookEvents(startDate, endDate) {
+    var session;
+    try { session = JSON.parse(localStorage.getItem('termac_staff_session') || 'null'); } catch(e) {}
+    if (!session || !session.email) return [];
+
+    try {
+      var res = await fetch(STAFF_AUTH_URL + '/calendar-pull?email=' + encodeURIComponent(session.email)
+        + '&start=' + encodeURIComponent(startDate) + '&end=' + encodeURIComponent(endDate));
+      var data = await res.json();
+      if (!data.ok || !Array.isArray(data.events)) return [];
+      return data.events.map(function(ev) {
+        return {
+          id: 'outlook_' + (ev.id || Math.random()),
+          title: ev.subject || 'Outlook Event',
+          date: (ev.start && ev.start.dateTime) ? ev.start.dateTime.slice(0, 10) : startDate,
+          time: (ev.start && ev.start.dateTime) ? ev.start.dateTime.slice(11, 16) : '',
+          timeEnd: (ev.end && ev.end.dateTime) ? ev.end.dateTime.slice(11, 16) : '',
+          location: (ev.location && ev.location.displayName) || '',
+          notes: (ev.body && ev.body.content) || '',
+          isOutlook: true,
+          outlookId: ev.id,
+          color: '#0078D4',
+          bg: '#EBF5FB',
+          label: '📅 Outlook',
+          type: 'outlook',
+        };
+      });
+    } catch(e) {
+      return [];
+    }
+  }
+
+  // Helper: add 1 hour to a HH:MM string
+  function addHour(timeStr) {
+    var parts = (timeStr || '09:00').split(':');
+    var h = parseInt(parts[0], 10) + 1;
+    return (h < 10 ? '0' : '') + h + ':' + (parts[1] || '00');
+  }
+
+
   // 2026-07-20 per Ted: accounts is too large to ever hold client-side
   // (see D1_NO_BULK_HYDRATE above) -- these query D1 live instead,
   // the actual right way to do this at this scale, same pattern
@@ -1365,6 +1458,8 @@
     SYNC_TABLES: D1_SYNC_TABLES,
     JOB_DIVISION_KEYS: JOB_DIVISION_KEYS,
     sendMailAsMe: sendMailAsMe,
+    pushApptToOutlook: pushApptToOutlook,
+    pullOutlookEvents: pullOutlookEvents,
     sendOrMailto: sendOrMailto,
     d1RawQuery: d1RawQuery,
     d1MyAccounts: d1MyAccounts,
@@ -1380,6 +1475,8 @@
   if (typeof global.crmLoad !== 'function') global.crmLoad = crmLoad;
   if (typeof global.crmDelete !== 'function') global.crmDelete = crmDelete;
   if (typeof global.sendMailAsMe !== 'function') global.sendMailAsMe = sendMailAsMe;
+  if (typeof global.pushApptToOutlook !== 'function') global.pushApptToOutlook = pushApptToOutlook;
+  if (typeof global.pullOutlookEvents !== 'function') global.pullOutlookEvents = pullOutlookEvents;
   if (typeof global.sendOrMailto !== 'function') global.sendOrMailto = sendOrMailto;
   if (typeof global.d1RawQuery !== 'function') global.d1RawQuery = d1RawQuery;
   if (typeof global.d1MyAccounts !== 'function') global.d1MyAccounts = d1MyAccounts;
