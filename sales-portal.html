@@ -1667,6 +1667,95 @@ function spToggleAutoSuggest() {
   spToast(spIsAutoSuggestOn() ? '🔁 Suggested stops will show automatically every day' : '🔁 Suggested stops turned off — tap Plan My Day whenever you want them');
   if (typeof spRenderHome === 'function') spRenderHome();
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+//  ABCD WEEK ROTATION ENGINE
+//  Anchor: Monday 2026-07-20 = C tech service week
+//  Sales reps visit accounts ONE WEEK AHEAD of tech service.
+//  Pattern: A, B, C, D repeating every 4 weeks starting Monday.
+//  Colors: A=green #22C55E, B=amber #F59E0B, C=orange #F97316, D=red #EF4444
+// ══════════════════════════════════════════════════════════════════════════
+var SP_WEEK_ANCHOR = new Date('2026-07-20T00:00:00'); // Monday, C tech week
+var SP_WEEK_ANCHOR_TECH_IDX = 2; // C = index 2 in [A,B,C,D]
+var SP_WEEK_LETTERS = ['A','B','C','D'];
+var SP_WEEK_COLORS = { A:'#22C55E', B:'#F59E0B', C:'#F97316', D:'#EF4444' };
+var SP_WEEK_LABELS = { A:'A Week', B:'B Week', C:'C Week', D:'D Week' };
+
+function spGetWeekMonday(d) {
+  var dt = d ? new Date(d) : new Date();
+  var day = dt.getDay(); // 0=Sun
+  var diff = (day === 0) ? -6 : 1 - day; // Monday
+  var mon = new Date(dt);
+  mon.setDate(dt.getDate() + diff);
+  mon.setHours(0,0,0,0);
+  return mon;
+}
+
+function spGetWeekInfo(dateOrStr) {
+  var dt = dateOrStr ? new Date(typeof dateOrStr === 'string' ? dateOrStr + (dateOrStr.length === 10 ? 'T12:00:00' : '') : dateOrStr) : new Date();
+  var weekMon = spGetWeekMonday(dt);
+  var anchorMon = new Date(SP_WEEK_ANCHOR);
+  anchorMon.setHours(0,0,0,0);
+  var weeksSince = Math.round((weekMon - anchorMon) / (7 * 86400000));
+  var techIdx = ((SP_WEEK_ANCHOR_TECH_IDX + weeksSince) % 4 + 4) % 4;
+  var visitIdx = (techIdx + 1) % 4;
+  var techLetter = SP_WEEK_LETTERS[techIdx];
+  var visitLetter = SP_WEEK_LETTERS[visitIdx];
+  return {
+    weekMonday: weekMon,
+    techLetter: techLetter,   // which letter tech services this week
+    visitLetter: visitLetter, // which accounts rep should visit this week
+    techColor: SP_WEEK_COLORS[techLetter],
+    visitColor: SP_WEEK_COLORS[visitLetter],
+    techLabel: SP_WEEK_LABELS[techLetter],
+    visitLabel: SP_WEEK_LABELS[visitLetter],
+  };
+}
+
+// Returns the ABCD letter(s) a billing_cycle value maps to, as a Set
+function spBillingCycleLetters(bc) {
+  if (!bc) return new Set();
+  bc = String(bc).trim().toUpperCase();
+  // Pure letters: A, B, C, D, AC, BD, etc.
+  if (/^[ABCD]+$/.test(bc)) return new Set(bc.split(''));
+  return new Set();
+}
+
+// Returns true if this account's billing_cycle includes the given letter
+function spAccountInWeek(account, letter) {
+  var letters = spBillingCycleLetters(account.billing_cycle || account.billingCycle || '');
+  return letters.has(letter);
+}
+
+// Render the week banner -- shows at top of Home
+function spRenderWeekBanner() {
+  var info = spGetWeekInfo();
+  var visitColor = info.visitColor;
+  var techColor = info.techColor;
+  return '<div style="background:linear-gradient(135deg,' + visitColor + 'dd,' + visitColor + '99);border-radius:10px;padding:12px 16px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">'
+    + '<div>'
+      + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:18px;color:#fff;letter-spacing:.04em">'
+        + info.visitLabel.toUpperCase() + ' — YOUR VISIT WEEK'
+      + '</div>'
+      + '<div style="font-size:11px;color:rgba(255,255,255,.9);margin-top:2px">'
+        + 'This week: visit <b>' + info.visitLabel + '</b> accounts &nbsp;·&nbsp; Tech services <b>' + info.techLabel + '</b> accounts this week'
+      + '</div>'
+    + '</div>'
+    + '<div style="display:flex;gap:6px">'
+      + ['A','B','C','D'].map(function(l) {
+          var isVisit = l === info.visitLetter;
+          var isTech = l === info.techLetter;
+          var bg = isVisit ? '#fff' : 'rgba(255,255,255,.2)';
+          var fg = isVisit ? SP_WEEK_COLORS[l] : '#fff';
+          var border = isTech ? '2px dashed rgba(255,255,255,.7)' : 'none';
+          return '<div style="width:30px;height:30px;border-radius:6px;background:' + bg + ';border:' + border + ';display:flex;align-items:center;justify-content:center;font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:14px;color:' + fg + '">'
+            + l
+            + '</div>';
+        }).join('')
+    + '</div>'
+  + '</div>';
+}
+
 function spIsDayPlanned(dateStr) {
   if (spIsAutoSuggestOn()) return true;
   try {
@@ -2066,7 +2155,7 @@ async function spPatchAgendaFromD1(dateStr) {
 }
 
 // ── Build the agenda ─────────────────────────────────────────────────────────
-function spBuildAgenda(dateStr) {
+async function spBuildAgenda(dateStr) {
   var viewDate = dateStr || _spAgendaDate;
   var realTodayStr = new Date().toISOString().slice(0,10);
   var isToday = viewDate === realTodayStr;
@@ -2083,6 +2172,70 @@ function spBuildAgenda(dateStr) {
   // populated," the rep or someone else already put them there on
   // purpose.
   var planned = isToday && spIsDayPlanned(viewDate);
+
+
+  // ── 0. ABCD Rotation stops for this week ─────────────────────────────
+  // Rotation accounts for the rep's assigned visit letter this week
+  // surface FIRST, ahead of all other suggestions, when Plan My Day is
+  // tapped. These are mandatory existing-account stops -- non-negotiable.
+  // Uses live D1 query since accounts don't bulk-sync.
+  if (planned && isToday) {
+    var weekInfo = spGetWeekInfo(viewDate);
+    var visitLetter = weekInfo.visitLetter; // letter rep should visit this week
+    var repTerr = _spRep ? (_spRep.territory || '') : '';
+    // Map rep name to territory for D1 query
+    var TERR_MAP = {
+      'Tom Jordan': ['P1'],
+      'TJ O'Reilly': ['P2'],
+      'Matt Belz': ['P3'],
+      'Chris Carzo': ['P4','D1'],
+      'Joe McDonnell': ['N1','N2','N9'],
+      'Dan Rini': ['NJ1','NJ2'],
+      'Tom Pittakas': ['S1'],
+      'Brad Fickes': ['S2'],
+      'Todd Grill': ['S4'],
+    };
+    var repName2 = _spRep ? _spRep.name : '';
+    var territories = TERR_MAP[repName2] || [];
+    if (territories.length) {
+      // Build IN clause for territories
+      var terrList = territories.map(function(t){ return "'" + t + "'"; }).join(',');
+      // billing_cycle contains the visit letter (A, B, C, D, AC, BD, etc.)
+      var bcFilter = "billing_cycle LIKE '%" + visitLetter + "%' AND (billing_cycle GLOB '*[ABCD]*') AND billing_cycle NOT GLOB '*[0-9]*'";
+      var rotationSql = "SELECT id, name, business, address, zip, phone, billing_cycle, territory FROM accounts WHERE territory IN (" + terrList + ") AND (" + bcFilter + ") AND status = 'active' AND (assigned_rep = ? OR assigned_rep IS NULL OR assigned_rep = '') ORDER BY last_rep_visit ASC NULLS FIRST LIMIT 60";
+      try {
+        var rotResp = await fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/query', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+          body: JSON.stringify({ sql: rotationSql, params: [repName2] })
+        });
+        var rotData = await rotResp.json();
+        (rotData.results || []).forEach(function(a) {
+          if (agenda.some(function(x){ return x.accountId === a.id; })) return;
+          var wLetter = (a.billing_cycle || '').replace(/[^ABCD]/g,'')[0] || visitLetter;
+          var wColor = SP_WEEK_COLORS[wLetter] || '#1B5FA8';
+          agenda.push({
+            type:       'rotation',
+            id:         'rot_' + a.id,
+            accountId:  a.id,
+            title:      a.name || a.business || 'Account',
+            address:    a.address || '',
+            zip:        a.zip || '',
+            time:       '',
+            notes:      weekInfo.visitLabel + ' rotation visit — rep stop ahead of tech service next week',
+            phone:      a.phone || '',
+            color:      wColor,
+            bg:         wColor + '18',
+            label:      '🔁 ' + weekInfo.visitLabel + ' Rotation',
+            action:     'visit',
+            weekLetter: wLetter,
+            priority:   true,
+          });
+        });
+      } catch(e) { /* rotation fetch failed silently */ }
+    }
+  }
+
 
   // -- 1. Confirmed appointments for the viewed date -----------------------
   var appts = crmLoad('appointments') || [];
@@ -2348,6 +2501,7 @@ function spBuildAgenda(dateStr) {
 function spRenderHome() {
   const el = document.getElementById('spContent');
   const html = `
+  ${spRenderWeekBanner()}
   ${spRecentlyViewed()}
   ${spPlanMyDay()}
   ${spRenderQuarterlySnapshot()}
@@ -2489,7 +2643,7 @@ function spRenderIdlePanel() {
   }).join('');
 
   // Today's agenda account ids, so hot leads already scheduled don't duplicate
-  const agendaAcctIds = new Set(spBuildAgenda().map(s => s.accountId).filter(Boolean));
+  const agendaAcctIds = new Set(); // rotation query handled in async spBuildAgenda
   const todayStr = new Date().toISOString().slice(0,10);
   const dayPlanned = spIsDayPlanned(todayStr);
   const hotLeads = myLeads
@@ -2630,7 +2784,7 @@ function spRenderPaceInsight() {
   const callGap = Math.max(0, dailyCallTarget - callsToday);
   const visitGap = Math.max(0, dailyVisitTarget - visitsToday);
 
-  const agendaAcctIds = new Set(spBuildAgenda().map(s => s.accountId).filter(Boolean));
+  const agendaAcctIds = new Set(); // rotation query handled in async spBuildAgenda
   const hotLeads = myLeads
     .filter(r => !agendaAcctIds.has(r.id) && ((r.score||0) >= 7 || r.status === 'hot'))
     .sort((a,b) => (b.score||0) - (a.score||0));
@@ -2850,14 +3004,14 @@ function spRenderRecentActivityFeed() {
   </div>`;
 }
 
-function spRenderTodayAgenda() {
+async function spRenderTodayAgenda() {
   // After rendering from localStorage, kick off an async D1 patch so any
   // appointment that was moved or created on another device shows up
   // immediately without requiring a manual Refresh My Data. The patch
   // re-renders this section in place only if it finds something new or stale.
   setTimeout(function(){ spPatchAgendaFromD1(_spAgendaDate); }, 0);
 
-  var agenda = spBuildAgenda(_spAgendaDate);
+  var agenda = await spBuildAgenda(_spAgendaDate);
   var realTodayStr = new Date().toISOString().slice(0,10);
   var viewDateObj = new Date(_spAgendaDate + 'T00:00:00');
   var dayDiff = Math.round((viewDateObj - new Date(realTodayStr + 'T00:00:00')) / 86400000);
@@ -3300,7 +3454,7 @@ function spBuildRouteSummaryBar(stopCount, estMiles, estTime, mapUrl, sourceLabe
     </div>`;
 }
 async function spOpenRouteMap() {
-  const stops = spBuildAgenda().filter(s => s.address);
+  const stops = (await spBuildAgenda()).filter(s => s.address);
   if (!stops.length) {
     spToast('No addresses on today\u2019s agenda yet to route.');
     return;
