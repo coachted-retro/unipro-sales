@@ -1559,6 +1559,20 @@ function spSaveCollection(){
 }
 
 
+// Check-in interval constants -- how many days before an account is
+// considered overdue for a rep visit, by service division
+var CHECKIN_INTERVAL_DAYS = 90; // default fallback
+var CHECKIN_INTERVAL_BY_DIVISION = {
+  unipro:    90,  // fire suppression / UniPro inspections
+  filterman: 90,  // filter exchange
+  gto:       90,  // grease trap
+  quality3:  90,  // Quality III
+  allpro:    180, // AllPro stainless (less frequent)
+  termac:    30,  // Termac dish machine (monthly chemical service)
+  termacdish:30,
+  termacclean:30,
+};
+
 function spCheckinDaysFor(account) {
   var svcs = (account && account.services) ? account.services : [];
   var days = null;
@@ -4956,7 +4970,13 @@ function spViewRecord(id, tab) {
   let r = null; let foundTab = tab;
   for (const p of pools) {
     r = crmLoad(p).find(x => x.id === id);
-    if (r) { foundTab = p; break; }
+    if (r) { 
+      // Honor the explicitly requested tab for back-button routing
+      // (e.g. a record in 'leads' pool opened from the Accounts grid
+      // should still say "Back to Accounts", not "Back to Leads")
+      foundTab = (tab && tab !== 'undefined') ? tab : p;
+      break;
+    }
   }
   if (!r) {
     // Record not in local cache -- try D1. Order: locations first (the
@@ -10262,7 +10282,7 @@ async function spCommitAppt(patternKeysToClear) {
         var startDt = date + 'T' + (time || '08:00') + ':00';
         var endDt   = date + 'T' + (timeEnd || (time ? time.replace(/(\d+):(\d+)/, function(_,h,m){ var eh=parseInt(h)+1; return (eh<10?'0':'')+eh+':'+m; }) : '09:00')) + ':00';
         var eventBody = (notes || '') + (location ? '\n\n📍 ' + location : '');
-        fetch('https://termac-staff-auth.termac-one.workers.dev/create-calendar-event', {
+        fetch('https://termac-staff-auth.termac-one.workers.dev/calendar-push', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
