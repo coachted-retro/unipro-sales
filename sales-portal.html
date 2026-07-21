@@ -6191,9 +6191,22 @@ function spLocationCard(loc) {
   </div>`;
 }
 
-function spOpenAddLocationModal(prefillAccountId, prefillAccountName, editLocationId) {
+function spOpenAddLocationModal(prefillAccountId, prefillAccountName, editLocationId, extraPrefill, onSaved) {
   var existing = editLocationId ? (crmLoad('locations')||[]).find(l => l.id === editLocationId) : null;
-  var v = function(k){ return existing ? escH(existing[k]||'') : ''; };
+  // 2026-07-21 per Ted: this is the one real, standard way a Location
+  // ever gets created in this app -- name/parent/address/phone only,
+  // never a contact, on purpose, since a rep often knows the address
+  // of a place and nothing else yet. extraPrefill lets a caller (like
+  // the AI Camera tag scan) hand this form a best-guess starting point
+  // without duplicating the form itself; onSaved lets that caller do
+  // something after the real save (like attaching a follow-up task)
+  // without this modal needing to know anything about tasks at all.
+  var v = function(k){
+    if (existing) return escH(existing[k]||'');
+    if (extraPrefill && extraPrefill[k]) return escH(extraPrefill[k]);
+    return '';
+  };
+  window._spLocModalOnSaved = onSaved || null;
   var wrap = document.createElement('div');
   wrap.id = 'spLocModal';
   wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9700;display:flex;align-items:center;justify-content:center;padding:16px;overflow-y:auto';
@@ -6201,6 +6214,7 @@ function spOpenAddLocationModal(prefillAccountId, prefillAccountName, editLocati
     '<div style="padding:20px">' +
       '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:18px;color:var(--ink);margin-bottom:16px">📍 ' + (existing ? 'Edit Location' : 'Add Location') + '</div>' +
       (prefillAccountName ? '<div style="font-size:12px;color:var(--soft);margin-bottom:12px">New site under <strong>' + escH(prefillAccountName) + '</strong></div>' : '') +
+      (extraPrefill && extraPrefill.contextNote ? '<div style="font-size:12px;color:var(--soft);margin-bottom:12px;background:#F8F9FA;border-radius:7px;padding:8px 10px">' + escH(extraPrefill.contextNote) + '</div>' : '') +
       '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Parent Company / Franchise Group</label>' +
       '<input id="locParent" type="text" value="' + v('parentCompany') + '" placeholder="e.g. Cintas, XYZ Food Service (leave blank if independent)" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:10px;box-sizing:border-box">' +
       '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Location Name / Site * <span style="font-weight:400;text-transform:none">(generally the business name)</span></label>' +
@@ -6212,11 +6226,14 @@ function spOpenAddLocationModal(prefillAccountId, prefillAccountName, editLocati
         '<input id="locState" type="text" value="' + v('state') + '" placeholder="State" style="padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;box-sizing:border-box">' +
         '<input id="locZip" type="text" value="' + v('zip') + '" placeholder="Zip" style="padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;box-sizing:border-box">' +
       '</div>' +
-      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Phone</label>' +
+      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Phone <span style="font-weight:400;text-transform:none">(optional -- most reps won\'t have this yet, that\'s fine)</span></label>' +
       '<input id="locPhone" type="text" value="' + v('phone') + '" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:4px;box-sizing:border-box">' +
-      '<div id="locPhoneDupeWarn" style="display:none;background:#FEF3C7;color:#92400E;border-radius:6px;padding:6px 9px;font-size:11px;margin-bottom:14px"></div>' +
+      '<div id="locPhoneDupeWarn" style="display:none;background:#FEF3C7;color:#92400E;border-radius:6px;padding:6px 9px;font-size:11px;margin-bottom:10px"></div>' +
+      (extraPrefill && extraPrefill.notes ? '<input type="hidden" id="locExtraNotes" value="' + escH(extraPrefill.notes) + '">' : '') +
+      (extraPrefill && extraPrefill.followUpDate ? '<input type="hidden" id="locExtraFollowUp" value="' + escH(extraPrefill.followUpDate) + '">' : '') +
+      (extraPrefill && extraPrefill.followUpTitle ? '<input type="hidden" id="locExtraFollowUpTitle" value="' + escH(extraPrefill.followUpTitle) + '">' : '') +
       '<div style="display:flex;gap:8px">' +
-        '<button onclick="document.getElementById(\'spLocModal\').remove()" style="flex:1;background:#fff;border:1.5px solid var(--line);border-radius:8px;padding:10px;font-weight:700;font-size:13px;cursor:pointer">Cancel</button>' +
+        '<button onclick="document.getElementById(\'spLocModal\').remove();window._spLocModalOnSaved=null" style="flex:1;background:#fff;border:1.5px solid var(--line);border-radius:8px;padding:10px;font-weight:700;font-size:13px;cursor:pointer">Cancel</button>' +
         '<button onclick="spSaveNewLocation(' + (prefillAccountId ? "'"+prefillAccountId+"'" : 'null') + ',' + (existing ? "'"+existing.id+"'" : 'null') + ')" style="flex:1;background:var(--red);color:#fff;border:none;border-radius:8px;padding:10px;font-weight:700;font-size:13px;cursor:pointer">Save</button>' +
       '</div>' +
     '</div>' +
@@ -6230,6 +6247,7 @@ function spSaveNewLocation(prefillAccountId, editLocationId) {
   if (!name) { alert('Enter a location name.'); return; }
   var now = Date.now();
   var locs = crmLoad('locations') || [];
+  var extraNotes = document.getElementById('locExtraNotes')?.value || '';
   var vals = {
     name: name,
     parentCompany: document.getElementById('locParent').value.trim(),
@@ -6240,7 +6258,9 @@ function spSaveNewLocation(prefillAccountId, editLocationId) {
     phone: document.getElementById('locPhone').value.trim(),
     updatedAt: now,
   };
+  if (extraNotes) vals.notes = extraNotes;
   var rec;
+  var isNew = !editLocationId;
   if (editLocationId) {
     var idx = locs.findIndex(l => l.id === editLocationId);
     if (idx !== -1) { Object.assign(locs[idx], vals); rec = locs[idx]; }
@@ -6259,6 +6279,14 @@ function spSaveNewLocation(prefillAccountId, editLocationId) {
   document.getElementById('spLocModal').remove();
   if (!rec) { spToast('⚠ Could not find that location to update'); return; }
   spToast(editLocationId ? '📍 Location updated' : '📍 Location added');
+
+  if (isNew && typeof window._spLocModalOnSaved === 'function') {
+    var followUpDate = document.getElementById('locExtraFollowUp')?.value || '';
+    var followUpTitle = document.getElementById('locExtraFollowUpTitle')?.value || '';
+    window._spLocModalOnSaved(rec, { followUpDate: followUpDate, followUpTitle: followUpTitle });
+  }
+  window._spLocModalOnSaved = null;
+
   spViewRecord(rec.id, 'locations');
 }
 
@@ -11322,126 +11350,61 @@ function spCamRenderTagResult(p) {
       ⏰ <strong>A follow-up task will be set for ${reminderStr}</strong> — 60 days before their next inspection. It'll show up on this location right on schedule, so the rep knows exactly which site to revisit and when.
     </div>` : ''}
     ${p.tagNotes ? `<div style="font-size:12px;color:#5A616B;margin-bottom:12px"><strong>Tag Notes:</strong> ${p.tagNotes}</div>` : ''}
-    <!-- Editable fields before creating the location. Contact is
-         deliberately not collected here -- per Ted, a rep scanning a
-         tag while passing by often knows the address but not who to
-         ask for, and shouldn't be blocked on that. Contact gets added
-         later, from the Location page, once it's actually known. -->
-    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">
-      <div>
-        <label style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#5A616B;display:block;margin-bottom:3px">Business Name at This Location</label>
-        <input id="spTagBizName" type="text" placeholder="Restaurant / facility name" style="width:100%;padding:7px 10px;border:1.5px solid #D7DBE0;border-radius:6px;font-size:13px;outline:none;font-family:inherit">
-      </div>
-      <div>
-        <label style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#5A616B;display:block;margin-bottom:3px">Address</label>
-        <input id="spTagAddress" type="text" placeholder="Street address" style="width:100%;padding:7px 10px;border:1.5px solid #D7DBE0;border-radius:6px;font-size:13px;outline:none;font-family:inherit">
-      </div>
-      <div>
-        <label style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#5A616B;display:block;margin-bottom:3px">Service Type to Pitch</label>
-        <input id="spTagService" type="text" value="${p.serviceType || ''}" placeholder="e.g. Fire Extinguisher Inspection" style="width:100%;padding:7px 10px;border:1.5px solid #D7DBE0;border-radius:6px;font-size:13px;outline:none;font-family:inherit">
-      </div>
-      <div>
-        <label style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#5A616B;display:block;margin-bottom:3px">Site Notes</label>
-        <textarea id="spTagNotes" rows="2" placeholder="Hours of operation, contact name if you happen to know it, anything relevant…" style="width:100%;padding:7px 10px;border:1.5px solid #D7DBE0;border-radius:6px;font-size:13px;resize:vertical;font-family:inherit;outline:none"></textarea>
-      </div>
-    </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button onclick="spCamCreateTagLocation()" style="flex:1;padding:10px;background:#C8102E;color:#fff;border:none;border-radius:8px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">📍 Create Location + Set Reminder</button>
+      <button onclick="spCamOpenLocationFromTag()" style="flex:1;padding:10px;background:#C8102E;color:#fff;border:none;border-radius:8px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">📍 Add Location + Set Reminder</button>
       <button onclick="spCamClear()" style="padding:10px 16px;background:#fff;border:1.5px solid #D7DBE0;border-radius:8px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;cursor:pointer;color:#5A616B">Clear</button>
     </div>`;
 }
 
-function spCamCreateTagLocation() {
+// 2026-07-21 per Ted: use the one real, standard Add Location form
+// (same one every other "+ Add Location" button in the app opens)
+// instead of a separate bespoke mini-form -- it already never
+// requires a contact, exactly matching what a rep scanning a tag
+// while passing by actually knows at that moment. Prefills whatever
+// the AI actually extracted; the rep still types the business name
+// and confirms/edits the address themselves, same as any other
+// location entry.
+function spCamOpenLocationFromTag() {
   const p = _spCamParsed || {};
-  const bizName = document.getElementById('spTagBizName')?.value.trim();
-  const address = document.getElementById('spTagAddress')?.value.trim();
-  const service = document.getElementById('spTagService')?.value.trim();
-  const notes = document.getElementById('spTagNotes')?.value.trim();
-
-  if (!bizName) { alert('Please enter the business name.'); return; }
-
-  // Build follow-up date (60 days before inspection)
   let followUpDate = null;
   if (p.nextInspectionDate) {
     const next = new Date(p.nextInspectionDate + 'T00:00:00');
     followUpDate = new Date(next.getTime() - 60 * 86400000).toISOString().slice(0,10);
   }
-
-  const siteNotes = [
+  const notes = [
     p.competitor ? `Current provider: ${p.competitor}` : null,
-    p.nextInspectionDate ? `Next inspection due: ${p.nextInspectionDate}` : null,
     p.serviceType ? `Service: ${p.serviceType}` : null,
+    p.nextInspectionDate ? `Next inspection due: ${p.nextInspectionDate}` : null,
     p.technicianName ? `Current tech: ${p.technicianName}` : null,
-    notes || null,
     '[Source: AI Camera — Inspection Tag Scan]',
   ].filter(Boolean).join('\n');
 
-  const now = Date.now();
-  const repName = (typeof _spRep !== 'undefined' && _spRep?.name) || (typeof _currentUser !== 'undefined' && _currentUser?.name) || '';
-  const locId = 'loc_' + now;
-
-  // 2026-07-20 per Ted: a rep passing by a competitor's tag usually
-  // knows the address, not who to ask for -- this creates the
-  // Location itself (the thing that doesn't change), not a Contact
-  // (which may not be known yet, and can be added later straight from
-  // this Location page once it is). Notes is a real field on
-  // locations already.
-  const allLocs = typeof crmLoad === 'function' ? crmLoad('locations') : JSON.parse(localStorage.getItem('termac_crm_locations') || '[]');
-  const newLoc = {
-    id: locId,
-    name: bizName,
-    address: address || '',
-    phone: '',
-    services: service ? [service] : [],
-    notes: siteNotes,
-    competitorName: p.competitor || '',
-    nextInspectionDate: p.nextInspectionDate || '',
-    assignedRep: repName,
-    source: 'ai_camera_tag_scan',
-    status: 'active',
-    createdAt: now,
-    updatedAt: now,
-  };
-  allLocs.push(newLoc);
-  if (typeof crmSave === 'function') crmSave('locations', allLocs);
-  else localStorage.setItem('termac_crm_locations', JSON.stringify(allLocs));
-
-  // Real Task, not a bolt-on reminder field -- shows up on Home's
-  // Tasks & Follow-Ups panel and directly on this Location, same
-  // system every other reminder in the app already uses.
-  if (followUpDate) {
-    const allTasks = typeof crmLoad === 'function' ? crmLoad('tasks') : JSON.parse(localStorage.getItem('termac_crm_tasks') || '[]');
-    allTasks.push({
-      id: 'task_' + (now + 1),
-      title: 'Revisit — ' + bizName + ' (competitor inspection expiring)',
-      notes: (p.competitor ? 'Currently serviced by ' + p.competitor + '. ' : '') + 'Tag scanned ' + new Date(now).toLocaleDateString() + '. Next inspection due ' + (p.nextInspectionDate || 'unknown') + '.',
-      dueDate: followUpDate,
-      status: 'open',
-      assignedRep: repName,
-      recordType: 'location',
-      recordId: locId,
-      recordLabel: bizName,
-      createdAt: now + 1,
-      updatedAt: now + 1,
-    });
-    if (typeof crmSave === 'function') crmSave('tasks', allTasks);
-    else localStorage.setItem('termac_crm_tasks', JSON.stringify(allTasks));
-  }
-
-  spCloseCamera();
-
-  // Navigate to the new location
-  if (typeof spNav === 'function') {
-    spNav('locations');
-    setTimeout(() => {
-      if (typeof spViewRecord === 'function') spViewRecord(locId, 'locations');
-    }, 300);
-  }
-
-  const reminderMsg = followUpDate ? ` Follow-up task set for ${followUpDate}.` : '';
-  if (typeof spToast === 'function') spToast('📍 Location created from tag scan.' + reminderMsg);
-  else if (typeof showToast === 'function') showToast('📍 Location created from tag scan.' + reminderMsg);
-  else alert('Location created!' + reminderMsg);
+  spOpenAddLocationModal(null, null, null, {
+    notes: notes,
+    followUpDate: followUpDate || '',
+    contextNote: '🏷️ From a tag scan' + (p.competitor ? ' — currently serviced by ' + p.competitor : '') + '. Contact isn\'t required, add one later once you know who to ask for.',
+  }, function(rec, extra) {
+    spCloseCamera();
+    if (extra.followUpDate) {
+      const now = Date.now();
+      const allTasks = crmLoad('tasks') || [];
+      allTasks.push({
+        id: 'task_' + now,
+        title: 'Revisit — ' + (rec.name || 'this location') + ' (competitor inspection expiring)',
+        notes: rec.notes || '',
+        dueDate: extra.followUpDate,
+        status: 'open',
+        assignedRep: _spRep.name,
+        recordType: 'location',
+        recordId: rec.id,
+        recordLabel: rec.name || '',
+        createdAt: now,
+        updatedAt: now,
+      });
+      crmSave('tasks', allTasks);
+      spToast('📍 Location added — follow-up task set for ' + extra.followUpDate);
+    }
+  });
 }
 
 /* ══════════════════════════════════════
