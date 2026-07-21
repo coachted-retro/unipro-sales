@@ -1077,7 +1077,7 @@ function spNav(tab) {
 function spRender(tab) {
   const el = document.getElementById('spContent');
   el.innerHTML = '';
-  if      (tab === 'home')          { spRenderHome(); setTimeout(processCrossSellAlerts, 0); }
+  if      (tab === 'home')          { spRenderHome().catch(function(e){ console.error('Home render error:', e); }); setTimeout(processCrossSellAlerts, 0); }
   else if (tab === 'leads')         spRenderCRM('leads');
   else if (tab === 'locations')     spRenderLocationsTab();
   else if (tab === 'contacts')      spRenderCRM('contacts');
@@ -1558,79 +1558,7 @@ function spSaveCollection(){
   if(typeof spToast==='function') spToast('\uD83D\uDCB5 Payment logged \u2014 turn in to the office within 48h');
 }
 
-function spOpenApptModal(accountId, tab) {
-  // Build a mini modal for date/time/notes appointment entry
-  var existing = null;
-  if (accountId) {
-    var data = crmLoad('leads');
-    existing = data.find(function(x){ return x.id === accountId; });
-  }
-  var today = new Date().toISOString().slice(0,10);
-  var bizName = existing ? (existing.business || existing.name || '') : '';
 
-  // Remove any old modal
-  var old = document.getElementById('spApptPickerModal');
-  if (old) old.remove();
-
-  var modal = document.createElement('div');
-  modal.id = 'spApptPickerModal';
-  modal.dataset.accountId = accountId || '';
-  modal.dataset.tab = tab || 'contacts';
-  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:5000;display:flex;align-items:center;justify-content:center;padding:20px';
-  modal.innerHTML = '<div style="background:#fff;border-radius:14px;width:min(440px,96vw);box-shadow:0 16px 48px rgba(0,0,0,.3);overflow:hidden">'
-    + '<div style="background:#1A1D21;padding:16px 20px;display:flex;align-items:center;justify-content:space-between">'
-      + '<div>'
-        + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:16px;color:#fff;letter-spacing:.08em;text-transform:uppercase">📅 Schedule Appointment</div>'
-        + (bizName ? '<div style="font-size:12px;color:#9CA3AF;margin-top:2px">' + escH(bizName) + '</div>' : '')
-      + '</div>'
-      + '<button onclick="spCloseApptModal()" style="background:none;border:1.5px solid #3A3E43;border-radius:6px;color:#9CA3AF;padding:4px 10px;font-size:12px;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:700">✕</button>'
-    + '</div>'
-    + '<div style="padding:20px;display:flex;flex-direction:column;gap:14px">'
-      + '<div><label style="font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#5A616B;display:block;margin-bottom:5px">Account / Business</label>'
-        + '<input id="apptBizField" value="' + escH(bizName) + '" placeholder="Business name or address..." style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 12px;font-family:Barlow,sans-serif;font-size:13px;outline:none"></div>'
-      + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'
-        + '<div><label style="font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#5A616B;display:block;margin-bottom:5px">Date *</label>'
-          + '<input type="date" id="apptDateField" value="' + today + '" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 12px;font-family:Barlow,sans-serif;font-size:13px;outline:none"></div>'
-        + '<div><label style="font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#5A616B;display:block;margin-bottom:5px">Time</label>'
-          + '<input type="time" id="apptTimeField" value="09:00" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 12px;font-family:Barlow,sans-serif;font-size:13px;outline:none"></div>'
-      + '</div>'
-      + '<div><label style="font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#5A616B;display:block;margin-bottom:5px">Notes (optional)</label>'
-        + '<textarea id="apptNotesField" rows="2" placeholder="What to cover, directions, contact name..." style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 12px;font-family:Barlow,sans-serif;font-size:13px;outline:none;resize:none"></textarea></div>'
-      + '<div style="display:flex;gap:10px;justify-content:flex-end">'
-        + '<button onclick="spCloseApptModal()" style="background:#F3F4F6;color:#6B7280;border:none;border-radius:8px;padding:9px 18px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;cursor:pointer;letter-spacing:.06em;text-transform:uppercase">Cancel</button>'
-        + '<button onclick="spSaveApptFromModal()" style="background:#C8102E;color:#fff;border:none;border-radius:8px;padding:9px 18px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;cursor:pointer;letter-spacing:.06em;text-transform:uppercase">📅 Save Appointment</button>'
-      + '</div>'
-    + '</div>'
-  + '</div>';
-  document.body.appendChild(modal);
-}
-
-// ════════════════════════════════════════════════════════
-//  TODAY'S AGENDA — The rep's entire day in one view
-//  Types: appointment (confirmed) | opportunity (nearby lead)
-//         check_in (existing account due for visit) | ai_scan (new from AI)
-// ════════════════════════════════════════════════════════
-
-// ════════════════════════════════════════════════════════
-//  TODAY'S AGENDA — unified calendar-first workflow
-//  Stored in localStorage so rep's additions persist across refresh
-// ════════════════════════════════════════════════════════
-
-// Rep check-in cadence (days): how often an active account resurfaces on the
-// agenda for a relationship / inventory check-in. Configurable per division —
-// tune any value here. Keys match normalized service names (lowercase, no spaces).
-var CHECKIN_INTERVAL_DAYS = 30; // global fallback when an account's division is unknown
-var CHECKIN_INTERVAL_BY_DIVISION = {
-  gto:        30,   // monthly grease-trap service — frequent touch
-  filterman:  45,   // hood-filter exchange
-  termac:     60,   // dish machine / chemical program
-  unipro:     90,   // annual fire — keep a quarterly relationship touch
-  qualityiii: 90,   // Delaware fire — same cadence as UniPro
-  allpro:     90    // project-based fabrication
-};
-
-// Resolve the check-in interval for an account from its services.
-// Multi-division accounts use the SHORTEST cadence (most active service drives the touch).
 function spCheckinDaysFor(account) {
   var svcs = (account && account.services) ? account.services : [];
   var days = null;
@@ -2524,8 +2452,9 @@ async function spBuildAgenda(dateStr) {
 //  then a quick pulse of what's happened recently, then the actual
 //  batched stop-by-stop route, account check-ins, and anything overdue.
 // ══════════════════════════════════════════════════════
-function spRenderHome() {
+async function spRenderHome() {
   const el = document.getElementById('spContent');
+  const agendaHtml = await spRenderTodayAgenda();
   const html = `
   ${spRenderWeekBanner()}
   ${spRecentlyViewed()}
@@ -2534,7 +2463,7 @@ function spRenderHome() {
   ${spRenderTodaysPace()}
   ${spRenderPaceInsight()}
   ${spRenderTimeEfficiency()}
-  ${spRenderTodayAgenda()}
+  ${agendaHtml}
   <div id="agendaAiResults"></div>
   ${spRenderAccountsToWatch()}
   ${spRenderWinBack()}
@@ -5119,7 +5048,11 @@ function spOpenDetail(r, tab) {
   if (tab === 'locations') { spOpenLocationDetail(r); return; }
   if (tab === 'accounts') spBuildServiceTagIndex();
   const stage = SP_STAGES[spNormalizeStage(r.lifecycleStage)] || SP_STAGES.lead;
-  const svcs = (r.services || []).map(s => { const c = spSvcColor(s); return `<span style="background:${c.bg};color:${c.color};border-radius:4px;padding:3px 9px;font-size:11px;font-weight:700">${spSvcLabel(s)}</span>`; }).join(' ');
+  // Use record services OR fall back to the tag index built from jobs/assets
+    const rawSvcs = r.services && r.services.length ? r.services
+      : (typeof spBuildServiceTagIndex === 'function' && window._spSvcTagIndex && window._spSvcTagIndex[r.id])
+        ? window._spSvcTagIndex[r.id] : [];
+    const svcs = rawSvcs.map(s => { const c = spSvcColor(s); return `<span style="background:${c.bg};color:${c.color};border-radius:4px;padding:3px 9px;font-size:11px;font-weight:700">${spSvcLabel(s)}</span>`; }).join(' ');
   const extraContacts = (r.extraContacts || []).map((c,i) => `<div style="border-top:1px dashed var(--line);padding-top:8px;margin-top:8px">
     <div style="font-size:10px;font-weight:700;color:var(--soft);text-transform:uppercase;margin-bottom:4px">Contact ${i+2}${c.role?' — '+escH(c.role):''}</div>
     ${c.name ? `<div style="font-size:13px;font-weight:600">${escH(c.name)}</div>` : ''}
@@ -9865,21 +9798,24 @@ async function spConfirmArchive(id, tab) {
   var tableMap = { leads: 'leads', contacts: 'leads', accounts: 'accounts', locations: 'locations' };
   var table = tableMap[tab] || tab;
 
-  // Update status in D1
+  // Update status in D1 -- only use columns that exist in each table
   try {
-    await fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/' + table + '/' + id, {
+    var archivePayload = { status: 'archived', updated_at: now };
+    // Store reason in status_flag where available (accounts/leads)
+    if (table === 'accounts' || table === 'leads') {
+      archivePayload.status_flag = 'archived:' + reason + (note ? ':' + note.slice(0,80) : '');
+    }
+    var archiveRes = await fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/' + table + '/' + id, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
-      body: JSON.stringify({
-        status: 'archived',
-        archive_reason: reason,
-        archive_note: note,
-        archived_by: repName,
-        archived_at: now,
-        updated_at: now
-      })
+      body: JSON.stringify(archivePayload)
     });
-  } catch(e) {}
+    var archiveData = await archiveRes.json();
+    if (!archiveData.ok) throw new Error(archiveData.error || 'Archive failed');
+  } catch(e) {
+    spToast('Archive failed: ' + e.message);
+    return;
+  }
 
   // Also update local cache
   try {
@@ -9890,6 +9826,14 @@ async function spConfirmArchive(id, tab) {
       pool[idx].archiveReason = reason;
       crmSave(tab === 'contacts' ? 'leads' : tab, pool);
     }
+  } catch(e) {}
+
+  // Update local cache too so the record disappears immediately without waiting for D1 sync
+  try {
+    var poolName = (tab === 'contacts' || tab === 'leads') ? 'leads' : tab;
+    var localPool = crmLoad(poolName) || [];
+    var localIdx = localPool.findIndex(function(r){ return r.id === id; });
+    if (localIdx >= 0) { localPool[localIdx].status = 'archived'; crmSave(poolName, localPool); }
   } catch(e) {}
 
   spToast('Record archived. Managers can restore it from the Manager Portal.');
