@@ -595,6 +595,20 @@ async function apGoHome() {
       <div class="pj-tab-panel" id="panel-costing">
         <table class="cost-table" id="costTable"></table>
         <button class="btn btn-ghost btn-sm" onclick="addCostLine()">+ Add Line</button>
+
+        <!-- ── Market Comp ─────────────────────────────────────────────── -->
+        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+            <div>
+              <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink)">📊 Market Comp</div>
+              <div style="font-size:11px;color:var(--soft);margin-top:2px">Pulls market range for this scope + ZIP, applies Termac +25% rule, and recommends a quote target.</div>
+            </div>
+            <button id="apRunCompBtn" onclick="apRunComp()" style="background:#1B5FA8;color:#fff;border:none;border-radius:7px;padding:8px 16px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;white-space:nowrap;flex-shrink:0">⚡ Run Comp</button>
+          </div>
+          <div id="apCompResult" style="display:none"></div>
+        </div>
+        <!-- ──────────────────────────────────────────────────────────────── -->
+
         <div style="margin-top:14px" class="form-row">
           <div class="form-field"><label>Sale Price (customer quote)</label><input id="detSalePrice" type="number" onchange="updateProjectField('sale_price', Number(this.value))"></div>
           <div class="form-field"><label>Estimated Project Value (forecasting)</label><input id="detEstValue" type="number" onchange="updateProjectField('estimated_value', Number(this.value))"></div>
@@ -2926,6 +2940,116 @@ function addCostLine() {
 function deleteCostLine(id) {
   saveCostLines(loadCostLines().filter(function(l){return l.id!==id;}));
   renderCostTable(getProject(currentProjectId));
+}
+
+// ── MARKET COMP ─────────────────────────────────────────────────────────────
+// Reads the current project's type, scope, site address (ZIP extracted),
+// duct run, and cost line descriptions, then calls the AI to produce a
+// market comp for Eastern PA/NJ/DE. Applies Termac's standing +25% rule
+// on the market average and shows a recommended quote range inline.
+// "Use This Price" drops the target into the Sale Price field.
+async function apRunComp() {
+  var p = getProject(currentProjectId);
+  if (!p) return;
+
+  var btn = document.getElementById('apRunCompBtn');
+  var resultEl = document.getElementById('apCompResult');
+  btn.disabled = true;
+  btn.textContent = '⏳ Running…';
+  resultEl.style.display = 'none';
+
+  // Extract ZIP from site address — try 5-digit match
+  var zipMatch = (p.site_address || '').match(/\b(\d{5})\b/);
+  var zip = zipMatch ? zipMatch[1] : '';
+
+  // Summarize cost lines for scope context
+  var costLines = loadCostLines().filter(function(l){ return l.project_id === currentProjectId; });
+  var linesSummary = costLines.length
+    ? costLines.map(function(l){ return l.description + ' (' + l.line_type + ', est $' + (l.estimated_amount||0).toLocaleString() + ')'; }).join('; ')
+    : 'No cost lines entered yet.';
+
+  var typeLabel = { kitchen_hood:'Kitchen Hood', fire_suppression:'Fire Suppression System', custom_fabrication:'Custom Stainless Fabrication', combined:'Combined Hood + Suppression' }[p.project_type] || p.project_type;
+
+  var prompt = [
+    'You are a commercial kitchen equipment and fire suppression pricing expert for the Eastern PA/NJ/DE market.',
+    'Analyze this project and return a JSON object ONLY — no prose, no markdown fences.',
+    '',
+    'PROJECT:',
+    'Type: ' + typeLabel,
+    'Site address: ' + (p.site_address || 'not entered') + (zip ? ' (ZIP ' + zip + ')' : ''),
+    'Facility: ' + (p.facility_type || 'not specified'),
+    'Scope summary: ' + (p.scope_summary || 'not entered'),
+    'Estimated duct run: ' + (p.estimated_duct_ft ? p.estimated_duct_ft + ' ft' : 'not entered'),
+    'Cost lines on file: ' + linesSummary,
+    '',
+    'RULES:',
+    '- Base your comp on actual Eastern PA/NJ/DE contractor market rates for 2026.',
+    '- For hood jobs: include hood fabrication, exhaust fan, makeup air unit, ductwork, roof penetration.',
+    '- For suppression: include Ansul R-102 or equivalent parts + certification labor.',
+    '- Account for job complexity signals in the scope (elbow count, charbroiler vs standard range, fryer count, single vs multi-story).',
+    '- NFPA 96 compliance is assumed standard on all suppression-bearing jobs.',
+    '- Termac standing rule: Termac target quote = market average + 25%.',
+    '',
+    'Return exactly this JSON shape (numbers in dollars, no $ signs):',
+    '{"market_low":0,"market_high":0,"market_avg":0,"termac_target":0,"quote_range_low":0,"quote_range_high":0,"complexity_flags":["..."],"assumptions":["..."],"nfpa_notes":"..."}'
+  ].join('\n');
+
+  try {
+    var res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 1000,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+    var data = await res.json();
+    var raw = (data.content || []).map(function(b){ return b.text || ''; }).join('');
+    var clean = raw.replace(/```[a-z]*|```/g, '').trim();
+    var comp = JSON.parse(clean);
+
+    var flags = (comp.complexity_flags || []).map(function(f){ return '<li>' + f + '</li>'; }).join('');
+    var assumptions = (comp.assumptions || []).map(function(a){ return '<li>' + a + '</li>'; }).join('');
+
+    resultEl.innerHTML = [
+      '<div style="background:#F0F7FF;border:1.5px solid #BFD4F9;border-radius:8px;padding:14px 16px;font-size:12px">',
+        '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px">',
+          '<div style="flex:1;min-width:120px">',
+            '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#64748b;margin-bottom:2px">Market Range</div>',
+            '<div style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:18px;color:#1B5FA8">$' + Math.round(comp.market_low/1000) + 'K – $' + Math.round(comp.market_high/1000) + 'K</div>',
+            '<div style="font-size:10px;color:#64748b">avg $' + Math.round(comp.market_avg).toLocaleString() + '</div>',
+          '</div>',
+          '<div style="flex:1;min-width:120px;background:#1B5FA8;border-radius:6px;padding:8px 12px">',
+            '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:rgba(255,255,255,.75);margin-bottom:2px">Termac Target (+25%)</div>',
+            '<div style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:22px;color:#fff">$' + Math.round(comp.termac_target).toLocaleString() + '</div>',
+            '<div style="font-size:10px;color:rgba(255,255,255,.75)">range $' + Math.round(comp.quote_range_low/1000) + 'K – $' + Math.round(comp.quote_range_high/1000) + 'K</div>',
+          '</div>',
+          '<div style="display:flex;align-items:center">',
+            '<button onclick="apUseCompPrice(' + Math.round(comp.termac_target) + ')" style="background:#059669;color:#fff;border:none;border-radius:7px;padding:10px 16px;font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:12px;letter-spacing:.05em;text-transform:uppercase;cursor:pointer;white-space:nowrap">✓ Use This Price</button>',
+          '</div>',
+        '</div>',
+        flags ? '<div style="margin-bottom:8px"><strong>Complexity flags:</strong><ul style="margin:4px 0 0 16px;padding:0">' + flags + '</ul></div>' : '',
+        assumptions ? '<div style="margin-bottom:8px"><strong>Assumptions:</strong><ul style="margin:4px 0 0 16px;padding:0">' + assumptions + '</ul></div>' : '',
+        comp.nfpa_notes ? '<div><strong>NFPA 96:</strong> ' + comp.nfpa_notes + '</div>' : '',
+      '</div>'
+    ].join('');
+    resultEl.style.display = 'block';
+
+  } catch (e) {
+    resultEl.innerHTML = '<div style="background:#FEF2F2;border:1.5px solid #FCA5A5;border-radius:8px;padding:12px;font-size:12px;color:#991B1B">Comp failed — ' + (e.message || 'network error') + '. Fill in site address, project type, and scope summary for best results.</div>';
+    resultEl.style.display = 'block';
+  }
+
+  btn.disabled = false;
+  btn.textContent = '⚡ Run Comp';
+}
+
+function apUseCompPrice(amount) {
+  document.getElementById('detSalePrice').value = amount;
+  updateProjectField('sale_price', amount);
+  if (typeof spToast === 'function') spToast('✓ Sale price set to $' + amount.toLocaleString());
+  else if (typeof apToast === 'function') apToast('✓ Sale price set to $' + amount.toLocaleString());
 }
 
 // ── PERMITTING / AHJ ──
