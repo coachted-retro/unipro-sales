@@ -320,6 +320,23 @@ live scheduled cron, until told otherwise.
 
 ---
 
+### 2026-07-21 — All role guides need the same treatment (NOT tonight)
+
+Sales Rep's in-app Help content (user-manuals.html, `sales:` section) was
+brought fully current tonight -- Locations, Quick Sale, My/Recently
+Viewed/Hot views, the AI Camera (both modes), appointment scheduling.
+That's the only role updated.
+
+Every other role's guide in that same file (DMS, Reception, Scheduler,
+Tech, Manager, etc.) is stale to varying degrees -- at minimum they
+still describe the pre-Location, stage-based lead model the same way
+Sales's did before July 17. Ted explicitly does not want this done
+tonight -- just Sales, for tomorrow's launch. This is a real, confirmed
+follow-up, not a maybe: go through each remaining role's section the
+same way Sales just got done, once there's time after launch.
+
+---
+
 If anything in this file looks stale or contradicts what you find live in
 the repo or dashboard, trust the live state, but flag the discrepancy to
 Ted so this file can be corrected -- don't silently work around it.
