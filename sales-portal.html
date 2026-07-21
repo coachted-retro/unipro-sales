@@ -2293,7 +2293,7 @@ async function spBuildAgenda(dateStr) {
   // what was actually scheduled (appointments, follow-ups), not a
   // recomputed "right now" priority list, which would be misleading for
   // a day that already happened or hasn't happened yet.
-  var leads = crmLoad('leads');
+  var leads = (crmLoad('leads') || []).filter(function(r){ return r.status !== 'archived'; });
   if (planned) leads.filter(function(r) {
     var stage = r.lifecycleStage || '';
     // Fixed 2026-07-11: unassigned records used to count as "everyone's",
@@ -5414,7 +5414,10 @@ function spOpenDetail(r, tab) {
   const backTab = isContact ? 'contacts' : (isAccount ? 'accounts' : 'leads');
   const backLabel = isContact ? 'Contacts' : (isAccount ? 'Accounts' : 'Leads');
   el.innerHTML = `
-  <button class="sp-btn sp-btn-ghost" style="margin-bottom:14px" onclick="spNav('${backTab}')">← Back to ${backLabel}</button>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+    <button class="sp-btn sp-btn-ghost" onclick="spNav('${backTab}')">← Back to ${backLabel}</button>
+    <button onclick="spArchiveRecord('${r.id}','${tab}','${escH(r.business||r.name||'this record')}')" style="background:none;border:1.5px solid #FCA5A5;color:#C8102E;border-radius:7px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer;font-family:'Barlow Condensed',sans-serif;letter-spacing:.04em;text-transform:uppercase">🗑 Archive</button>
+  </div>
 
   <div class="sp-card">
     <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px">
@@ -5608,7 +5611,10 @@ function spOpenLocationDetail(r) {
 
   const el = document.getElementById('spContent');
   el.innerHTML = `
-  <button class="sp-btn sp-btn-ghost" style="margin-bottom:14px" onclick="spNav('locations')">← Back to Locations</button>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+    <button class="sp-btn sp-btn-ghost" onclick="spNav('locations')">← Back to Locations</button>
+    <button onclick="spArchiveRecord(r.id,'locations',r.name||'this location')" style="background:none;border:1.5px solid #FCA5A5;color:#C8102E;border-radius:7px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer;font-family:'Barlow Condensed',sans-serif;letter-spacing:.04em;text-transform:uppercase">🗑 Archive</button>
+  </div>
 
   <div class="sp-card">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">
@@ -9760,6 +9766,87 @@ function spMapsDirectionsLink(address) {
   return 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(address);
 }
 
+
+
+// ══════════════════════════════════════════════════════════════════════
+//  ARCHIVE / TRASH SYSTEM
+//  Records are never hard-deleted by reps. Archiving sets status='archived'
+//  in D1 and removes from all normal views. Managers can restore from
+//  the Manager Portal. A reason is always captured.
+// ══════════════════════════════════════════════════════════════════════
+function spArchiveRecord(id, tab, nameHint) {
+  // Show confirm overlay
+  var existing = document.getElementById('spArchiveModal');
+  if (existing) existing.remove();
+
+  var html = '<div id="spArchiveModal" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px">'
+    + '<div style="background:#fff;border-radius:14px;width:100%;max-width:380px;padding:22px">'
+      + '<div style="font-family:\'Barlow Condensed\',sans-serif;font-weight:900;font-size:17px;margin-bottom:6px;color:#1A1D21">Archive This Record?</div>'
+      + '<div style="font-size:13px;color:#6B7280;margin-bottom:14px">Archiving removes <b>' + escH(nameHint) + '</b> from all views. Nothing is permanently deleted — it can be restored from the Manager Portal.</div>'
+      + '<select id="archiveReason" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:9px 10px;font-size:13px;margin-bottom:10px">'
+        + '<option value="demo">Demo / test record</option>'
+        + '<option value="duplicate">Duplicate</option>'
+        + '<option value="wrong_info">Wrong information entered</option>'
+        + '<option value="out_of_territory">Out of our territory</option>'
+        + '<option value="closed">Business closed</option>'
+        + '<option value="not_a_prospect">Not a prospect</option>'
+        + '<option value="other">Other</option>'
+      + '</select>'
+      + '<textarea id="archiveNote" rows="2" placeholder="Optional note..." style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:9px 10px;font-size:13px;margin-bottom:14px;resize:none"></textarea>'
+      + '<div style="display:flex;gap:8px">'
+        + '<button onclick="document.getElementById(\'spArchiveModal\').remove()" style="flex:1;border:1.5px solid #D7DBE0;background:#fff;border-radius:8px;padding:10px;font-family:\'Barlow Condensed\',sans-serif;font-weight:700;font-size:13px;cursor:pointer">Cancel</button>'
+        + '<button onclick="spConfirmArchive(\'' + id + '\',\'' + tab + '\')" style="flex:2;background:#C8102E;color:#fff;border:none;border-radius:8px;padding:10px;font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:13px;cursor:pointer;text-transform:uppercase;letter-spacing:.04em">Archive</button>'
+      + '</div>'
+    + '</div>'
+  + '</div>';
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+async function spConfirmArchive(id, tab) {
+  var reason = document.getElementById('archiveReason')?.value || 'other';
+  var note = (document.getElementById('archiveNote')?.value || '').trim();
+  var repName = _spRep ? _spRep.name : '';
+  var now = Date.now();
+
+  document.getElementById('spArchiveModal')?.remove();
+
+  // Map tab to D1 table
+  var tableMap = { leads: 'leads', contacts: 'leads', accounts: 'accounts', locations: 'locations' };
+  var table = tableMap[tab] || tab;
+
+  // Update status in D1
+  try {
+    await fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/' + table + '/' + id, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+      body: JSON.stringify({
+        status: 'archived',
+        archive_reason: reason,
+        archive_note: note,
+        archived_by: repName,
+        archived_at: now,
+        updated_at: now
+      })
+    });
+  } catch(e) {}
+
+  // Also update local cache
+  try {
+    var pool = crmLoad(tab === 'contacts' ? 'leads' : tab) || [];
+    var idx = pool.findIndex(function(r){ return r.id === id; });
+    if (idx >= 0) {
+      pool[idx].status = 'archived';
+      pool[idx].archiveReason = reason;
+      crmSave(tab === 'contacts' ? 'leads' : tab, pool);
+    }
+  } catch(e) {}
+
+  spToast('Record archived. Managers can restore it from the Manager Portal.');
+
+  // Navigate back to the list
+  var backTab = (tab === 'contacts') ? 'contacts' : (tab === 'accounts') ? 'accounts' : (tab === 'locations') ? 'locations' : 'leads';
+  spNav(backTab);
+}
 
 // ══════════════════════════════════════════════════════════════════════
 //  START VISIT SYSTEM
