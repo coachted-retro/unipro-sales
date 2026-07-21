@@ -294,7 +294,7 @@ async function handleDedup(request, env, origin, url) {
       try {
         await executeMerge(env.DB, plan);
         results.push({
-          group:    p.group_label,
+          group:    plan.group_label,
           winner:   plan.winner_id,
           losers:   plan.loser_ids,
           services: plan.merged_services,
