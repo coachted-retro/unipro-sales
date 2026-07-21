@@ -3854,6 +3854,23 @@ function spSaveAppt(accountId, tab) {
     }
   })(newAppt);
 
+  // Push to Outlook calendar silently -- per rep, individual, no cross-population
+  (function(appt) {
+    if (typeof pushApptToOutlook === 'function') {
+      pushApptToOutlook(appt).then(function(result) {
+        if (result && result.ok) {
+          // Store outlook event ID back on the appointment so we can update it later
+          try {
+            var appts2 = crmLoad('appointments') || [];
+            var idx2 = appts2.findIndex(function(a){ return a.id === appt.id; });
+            if (idx2 >= 0) { appts2[idx2].outlookEventId = result.eventId; crmSave('appointments', appts2); }
+          } catch(e) {}
+        }
+        // Silent on failure -- calendar sync is best-effort
+      }).catch(function(){});
+    }
+  })(newAppt);
+
   // If we have an account ID, update the lead/contact record
   if (accountId) {
     var data = crmLoad('leads');
@@ -4098,10 +4115,41 @@ function spCopyCardLink(url) {
 // ══════════════════════════════════════════════════════
 var _spCalViewYear = null, _spCalViewMonth = null, _spCalSelectedDay = null;
 
+var _spOutlookEvents = [];
+
+// Fetch Outlook events for current calendar month view -- called when calendar opens
+async function spFetchOutlookForCalendar(year, month) {
+  if (typeof pullOutlookEvents !== 'function') return;
+  var start = year + '-' + String(month + 1).padStart(2, '0') + '-01';
+  var lastDay = new Date(year, month + 1, 0).getDate();
+  var end = year + '-' + String(month + 1).padStart(2, '0') + '-' + String(lastDay).padStart(2, '0');
+  try {
+    var events = await pullOutlookEvents(start, end);
+    _spOutlookEvents = events || [];
+    // Re-render calendar panel to show Outlook events
+    var panel = document.getElementById('spCalDayPanel');
+    if (panel && typeof spRenderCalDayPanel === 'function') {
+      panel.innerHTML = spRenderCalDayPanel();
+    }
+    // Add dots to calendar days that have Outlook events
+    (_spOutlookEvents || []).forEach(function(ev) {
+      var dayNum = parseInt((ev.date || '').slice(8), 10);
+      var cell = document.getElementById('calDay_' + dayNum);
+      if (cell && !cell.querySelector('.outlook-dot')) {
+        var dot = document.createElement('div');
+        dot.className = 'outlook-dot';
+        dot.style.cssText = 'width:6px;height:6px;border-radius:50%;background:#0078D4;margin:1px auto 0;';
+        cell.appendChild(dot);
+      }
+    });
+  } catch(e) {}
+}
+
 function spOpenCalendarModal() {
   const now = new Date();
   if (_spCalViewYear === null) { _spCalViewYear = now.getFullYear(); _spCalViewMonth = now.getMonth(); }
   _spCalSelectedDay = null;
+  _spOutlookEvents = []; // clear stale cache
   var old = document.getElementById('spCalendarModal');
   if (old) old.remove();
   var wrap = document.createElement('div');
@@ -4183,8 +4231,11 @@ function spRenderCalDayPanel() {
   const dateStr = yr + '-' + String(mo+1).padStart(2,'0') + '-' + String(d).padStart(2,'0');
   const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   const dayAppts = (crmLoad('appointments') || []).filter(function(a){ return a.date === dateStr; });
+  // Merge in any Outlook events for this day (stored in _spOutlookEvents cache)
+  const outlookForDay = (_spOutlookEvents || []).filter(function(ev){ return ev.date === dateStr; });
+  const allDayItems = dayAppts.concat(outlookForDay);
   return '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:16px;color:var(--ink);margin-bottom:14px">' + monthNames[mo] + ' ' + d + ', ' + yr + '</div>'
-    + (dayAppts.length ? dayAppts.map(function(a) {
+    + (allDayItems.length ? allDayItems.map(function(a) {
         return '<div onclick="spViewApptDetail(\'' + a.id + '\')" style="background:#EFF6FF;border-radius:9px;padding:13px 14px;margin-bottom:10px;font-size:13px;cursor:pointer;border:1.5px solid transparent" onmouseover="this.style.borderColor=\'#1B5FA8\'" onmouseout="this.style.borderColor=\'transparent\'">'
           + '<div style="font-weight:700;color:var(--ink);font-size:14px">' + escH(a.title || a.business || 'Appointment') + '</div>'
           + (a.time ? '<div style="color:var(--soft);margin-top:3px">🕐 ' + escH(a.time) + '</div>' : '')
