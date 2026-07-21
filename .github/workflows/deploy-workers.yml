@@ -2,16 +2,11 @@ name: Deploy Cloudflare Workers
 
 # Deploys all Cloudflare Workers on any push to main that touches workers/.
 #
-# 2026-07-12 rebuild (per Ted): the previous version had continue-on-error:true
-# on every deploy step, so a FAILED deploy still showed a green check and
-# nobody found out until an employee hit a broken login. That silent-failure
-# behavior is removed here. Now:
-#   - Each worker deploys independently (one failing does not stop the others),
-#     but a real failure is recorded and fails the overall run at the end.
-#   - After deploys, the login-critical worker (termac-staff-auth) is
-#     health-checked with a real request. If it does not respond correctly,
-#     the whole run is marked failed and visible in the Actions tab / email.
-#   - A summary lists exactly which workers deployed and which did not.
+# 2026-07-21: Added SSO_CLIENT_ID guard -- deployment will REFUSE to proceed
+# if wrangler.toml contains the old/wrong client ID. This protects the login
+# for all staff. DO NOT change SSO_CLIENT_ID without updating this guard.
+# CORRECT ID: cdab96ff-2083-48fe-a359-2900a189f2fd (Termac One app, owned by tscholl@termac.com)
+# WRONG ID:   703deca4-b245-49d5-8d17-f354d906321b (old Altek-managed app, DEAD)
 
 on:
   push:
@@ -35,10 +30,27 @@ jobs:
       - name: Install Wrangler
         run: npm install -g wrangler@4
 
-      # Deploy every worker. We loop instead of one step per worker so adding
-      # or removing a worker is a one-line change, and so a single failure is
-      # captured without aborting the rest (set -e is deliberately not used;
-      # we track failures and report them at the end).
+      # ── CRITICAL GUARD: Reject deploy if wrong SSO client ID is present ──
+      # This prevents the old Altek app ID from ever being deployed again.
+      # If this step fails, fix wrangler.toml to use cdab96ff before deploying.
+      - name: Verify SSO_CLIENT_ID is correct
+        run: |
+          CORRECT_ID="cdab96ff-2083-48fe-a359-2900a189f2fd"
+          WRONG_ID="703deca4-b245-49d5-8d17-f354d906321b"
+          TOML="workers/termac-staff-auth/wrangler.toml"
+
+          if grep -q "$WRONG_ID" "$TOML"; then
+            echo "::error::DEPLOYMENT BLOCKED -- wrangler.toml contains the WRONG SSO client ID ($WRONG_ID). This is the dead Altek app registration. Update SSO_CLIENT_ID to $CORRECT_ID in $TOML and try again."
+            exit 1
+          fi
+
+          if ! grep -q "$CORRECT_ID" "$TOML"; then
+            echo "::error::DEPLOYMENT BLOCKED -- wrangler.toml does not contain the correct SSO client ID ($CORRECT_ID). Check workers/termac-staff-auth/wrangler.toml before deploying."
+            exit 1
+          fi
+
+          echo "SSO_CLIENT_ID verified correct: $CORRECT_ID"
+
       - name: Deploy all workers
         id: deploy
         env:
@@ -73,27 +85,18 @@ jobs:
             exit 1
           fi
 
-      # Post-deploy health check on the login-critical worker. If staff-auth
-      # is down or returning the wrong shape, every employee login is affected,
-      # so this is the one we verify with a real request rather than trusting
-      # the deploy step's exit code alone. /my-access is a safe read-only GET.
       - name: Health check termac-staff-auth
         run: |
           URL="https://termac-staff-auth.termac-one.workers.dev/my-access?email=healthcheck@termac.com"
           echo "Checking $URL"
-          # Retry a few times — a worker can take a few seconds to go live.
           for i in 1 2 3 4 5; do
             BODY=$(curl -s --max-time 10 "$URL" || true)
             echo "Attempt $i response: $BODY"
-            # A healthy worker returns JSON with "ok":true even for an unknown
-            # email (it just reports active:false). The old, pre-role version
-            # also returns ok:true, so this confirms the worker is UP; the
-            # front-end roster fallback covers the role-field case separately.
             if echo "$BODY" | grep -q '"ok":true'; then
               echo "termac-staff-auth is responding correctly."
               exit 0
             fi
             sleep 5
           done
-          echo "::error::termac-staff-auth did NOT respond correctly after deploy. Login may be broken — check the worker in the Cloudflare dashboard before assuming this deploy succeeded."
+          echo "::error::termac-staff-auth did NOT respond correctly after deploy. Login may be broken."
           exit 1
