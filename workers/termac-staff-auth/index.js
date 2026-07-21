@@ -426,6 +426,74 @@ async function handleResendInvite(request, env) {
 // Lightweight lookup for employee-portal.html to decide which tiles to
 // show for the currently logged-in person, without exposing the full
 // account list (handleList) to every employee.
+
+// ── CALENDAR SYNC ────────────────────────────────────────────────────────
+async function handleCalendarPush(request, env) {
+  const body = await request.json();
+  const fromEmail = String(body.from_email || '').trim().toLowerCase();
+  const event = body.event;
+  const termacApptId = body.termac_appt_id || '';
+  if (!fromEmail || !event) return jsonResponse({ ok: false, error: 'Missing from_email or event.' }, 400);
+
+  let tokenRow = await env.DB.prepare('SELECT * FROM staff_graph_tokens WHERE staff_email = ?').bind(fromEmail).first();
+  if (!tokenRow || !tokenRow.access_token) return jsonResponse({ ok: false, error: 'no_graph_token', message: 'Sign out and back in to enable calendar sync.' }, 409);
+
+  // Refresh if near expiry
+  if (tokenRow.expires_at < Date.now() + 60000 && tokenRow.refresh_token) {
+    try {
+      const rp = new URLSearchParams({ client_id: env.SSO_CLIENT_ID, client_secret: env.SSO_CLIENT_SECRET, grant_type: 'refresh_token', refresh_token: tokenRow.refresh_token, scope: 'openid profile email offline_access https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/Calendars.ReadWrite' });
+      const rr = await fetch('https://login.microsoftonline.com/' + env.SSO_TENANT_ID + '/oauth2/v2.0/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: rp.toString() });
+      const rd = await rr.json();
+      if (rd.access_token) {
+        await env.DB.prepare('UPDATE staff_graph_tokens SET access_token=?,refresh_token=?,expires_at=?,updated_at=? WHERE staff_email=?').bind(rd.access_token, rd.refresh_token || tokenRow.refresh_token, Date.now() + (rd.expires_in || 3600) * 1000, Date.now(), fromEmail).run();
+        tokenRow = Object.assign({}, tokenRow, { access_token: rd.access_token });
+      }
+    } catch(e) {}
+  }
+
+  // Check for existing sync mapping to avoid duplicates
+  let outlookEventId = null;
+  if (termacApptId) {
+    try {
+      const ex = await env.DB.prepare('SELECT outlook_event_id FROM calendar_sync WHERE termac_appt_id=? AND staff_email=?').bind(termacApptId, fromEmail).first();
+      if (ex) outlookEventId = ex.outlook_event_id;
+    } catch(e) {}
+  }
+
+  try {
+    const graphRes = outlookEventId
+      ? await fetch('https://graph.microsoft.com/v1.0/me/events/' + outlookEventId, { method: 'PATCH', headers: { 'Authorization': 'Bearer ' + tokenRow.access_token, 'Content-Type': 'application/json' }, body: JSON.stringify(event) })
+      : await fetch('https://graph.microsoft.com/v1.0/me/events', { method: 'POST', headers: { 'Authorization': 'Bearer ' + tokenRow.access_token, 'Content-Type': 'application/json' }, body: JSON.stringify(event) });
+
+    if (!graphRes.ok) { const t = await graphRes.text(); return jsonResponse({ ok: false, error: 'graph_calendar_failed', message: t.slice(0, 300) }, 502); }
+    const created = await graphRes.json();
+    const eventId = created.id;
+    if (termacApptId && eventId) {
+      try { await env.DB.prepare('INSERT OR REPLACE INTO calendar_sync (termac_appt_id, staff_email, outlook_event_id, synced_at) VALUES (?,?,?,?)').bind(termacApptId, fromEmail, eventId, Date.now()).run(); } catch(e) {}
+    }
+    return jsonResponse({ ok: true, eventId });
+  } catch(e) { return jsonResponse({ ok: false, error: e.message }, 502); }
+}
+
+async function handleCalendarPull(request, env) {
+  const url = new URL(request.url);
+  const fromEmail = (url.searchParams.get('email') || '').trim().toLowerCase();
+  const start = url.searchParams.get('start') || new Date().toISOString().slice(0,10);
+  const end   = url.searchParams.get('end')   || new Date(Date.now() + 7*86400000).toISOString().slice(0,10);
+  if (!fromEmail) return jsonResponse({ ok: false, error: 'Missing email.' }, 400);
+
+  const tokenRow = await env.DB.prepare('SELECT access_token FROM staff_graph_tokens WHERE staff_email = ?').bind(fromEmail).first();
+  if (!tokenRow || !tokenRow.access_token) return jsonResponse({ ok: true, events: [] });
+
+  try {
+    const gr = await fetch('https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=' + encodeURIComponent(start + 'T00:00:00') + '&endDateTime=' + encodeURIComponent(end + 'T23:59:59') + '&$select=id,subject,start,end,location,categories&$top=50', { headers: { 'Authorization': 'Bearer ' + tokenRow.access_token } });
+    if (!gr.ok) return jsonResponse({ ok: true, events: [] });
+    const data = await gr.json();
+    const events = (data.value || []).filter(ev => !(ev.categories || []).includes('Termac One'));
+    return jsonResponse({ ok: true, events });
+  } catch(e) { return jsonResponse({ ok: true, events: [] }); }
+}
+
 async function handleMyAccess(request, env) {
   const url = new URL(request.url);
   const email = (url.searchParams.get('email') || '').trim().toLowerCase();
@@ -467,6 +535,8 @@ export default {
         case '/resend-invite': return await handleResendInvite(request, env);
         case '/my-access': return await handleMyAccess(request, env);
         case '/send-mail': return await handleSendMail(request, env);
+        case '/calendar-push': return await handleCalendarPush(request, env);
+        case '/calendar-pull': return await handleCalendarPull(request, env);
         default: return jsonResponse({ ok: false, error: 'Unknown endpoint.' }, 404);
       }
     } catch (e) {
