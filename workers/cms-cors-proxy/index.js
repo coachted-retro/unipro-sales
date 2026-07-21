@@ -31,6 +31,12 @@ const ALLOWED_ORIGINS = [
   'https://data.nj.gov',
   // MD — Baltimore County ArcGIS development permits
   'https://bcgis.baltimorecountymd.gov',
+  // PA — Philadelphia L&I permits (Carto SQL API)
+  'https://phl.carto.com',
+  // PA — Philadelphia open data portal
+  'https://opendata.phila.gov',
+  // NJ — additional open data
+  'https://data.nj.gov',
 ];
 
 export default {
