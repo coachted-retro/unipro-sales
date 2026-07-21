@@ -6,6 +6,28 @@ real breakage. Before touching ANY file in this repo, read this file in
 full. Do not assume, do not guess, do not invent placeholder data — check
 this file and the live repo/D1 state first.
 
+## Rule 0 — MANDATORY SESSION START PROTOCOL (no exceptions, ever)
+Before saying or doing ANYTHING in a new session, Claude must:
+1. Read this CLAUDE.md file in full
+2. Read the previous session transcript/chat history
+3. Read the D1 database config and current state
+4. Read memory files in /areas/termac-one.md and /areas/termac-one-2026-07-20.md
+
+The domain is **sales.mytermac.com** — Ted owns mytermac.com through Cloudflare.
+This is NOT my.termac.com. NOT termac.com. NOT any Altek-managed domain.
+Ted's domain, Ted's Cloudflare account, Ted's control. Full stop.
+
+The live URL for the sales portal is: https://sales.mytermac.com/sales-portal.html
+The Pages project is: unipro-sales (unipro-sales.pages.dev)
+The custom domain on that project is: sales.mytermac.com
+SSO redirect URI: https://sales.mytermac.com/auth/callback
+SSO is Microsoft Entra via Altek (Fernando Fontanez-Hein, ffontanez-hein@altekimaging.com)
+Client ID: 703deca4-b245-49d5-8d17-f354d906321b
+Tenant ID: 62642d6d-0c0a-4cba-be8c-5c83f0020c57
+
+If a session starts and Claude has not read all of the above — STOP. Read first.
+No code. No assumptions. No guessing. Read. Then act.
+
 ## Rule 1 — NEVER give partial code, snippets, or "find this line and change
 it" instructions. ALWAYS give the FULL file content, ready for a wholesale
 copy/paste replacement. Ted has explicitly stated this is a hard rule: he
