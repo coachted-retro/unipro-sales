@@ -1637,7 +1637,7 @@ setTimeout(function(){ if(typeof TECHS!=='undefined' && typeof renderLB==='funct
    CRM DATA STORE (localStorage-based)
 ══════════════════════════════════════ */
 function crmLoad(key){ try{ return JSON.parse(localStorage.getItem('termac_crm_'+key)||'[]'); }catch(e){return[];} }
-function crmSave(key, val){ try{ localStorage.setItem('termac_crm_'+key, JSON.stringify(val)); }catch(e){} }
+function crmSave(key, val){ try{ safeSetItem('termac_crm_'+key, JSON.stringify(val)); }catch(e){} }
 
 // Ted, 2026-07-12: one-time cleanup for every browser that already has
 // fake demo records sitting in it from before today -- disabling the
@@ -1688,7 +1688,7 @@ function crmSave(key, val){ try{ localStorage.setItem('termac_crm_'+key, JSON.st
       var arr = JSON.parse(raw);
       var knownFake = new Set(UNFLAGGED_DEMO_IDS[key] || []);
       var cleaned = arr.filter(function(r){ return !r._seeded && !knownFake.has(r.id); });
-      if (cleaned.length !== arr.length) localStorage.setItem('termac_crm_'+key, JSON.stringify(cleaned));
+      if (cleaned.length !== arr.length) safeSetItem('termac_crm_'+key, JSON.stringify(cleaned));
     } catch(e) {}
   });
 
@@ -1713,7 +1713,7 @@ function crmSave(key, val){ try{ localStorage.setItem('termac_crm_'+key, JSON.st
       if (!raw) return;
       var arr = JSON.parse(raw);
       var cleaned = arr.filter(function(r){ return !r._seeded; });
-      if (cleaned.length !== arr.length) localStorage.setItem(key, JSON.stringify(cleaned));
+      if (cleaned.length !== arr.length) safeSetItem(key, JSON.stringify(cleaned));
     } catch(e) {}
   });
 
@@ -1722,10 +1722,10 @@ function crmSave(key, val){ try{ localStorage.setItem('termac_crm_'+key, JSON.st
   try {
     var calls = JSON.parse(localStorage.getItem('termac_inbound_calls')||'[]');
     var cleanedCalls = calls.filter(function(c){ return !(c.id && c.id.indexOf('rcp_d') === 0); });
-    if (cleanedCalls.length !== calls.length) localStorage.setItem('termac_inbound_calls', JSON.stringify(cleanedCalls));
+    if (cleanedCalls.length !== calls.length) safeSetItem('termac_inbound_calls', JSON.stringify(cleanedCalls));
   } catch(e) {}
 
-  localStorage.setItem('termac_demo_purge_version', PURGE_VERSION);
+  safeSetItem('termac_demo_purge_version', PURGE_VERSION);
 })();
 
 // ── SEED DEMO ACCOUNTS if none exist ─────────────────────────
@@ -1807,7 +1807,7 @@ function crmSave(key, val){ try{ localStorage.setItem('termac_crm_'+key, JSON.st
       var existing = JSON.parse(localStorage.getItem(key)||'[]');
       var real = existing.filter(function(r){ return !r._seeded; });
       var seeded = seedRecords.map(function(r){ return Object.assign({},r,{_seeded:true}); });
-      localStorage.setItem(key, JSON.stringify(real.concat(seeded)));
+      safeSetItem(key, JSON.stringify(real.concat(seeded)));
     } catch(e) {}
   }
   const today = new Date();
@@ -1858,7 +1858,7 @@ function crmSave(key, val){ try{ localStorage.setItem('termac_crm_'+key, JSON.st
     try { const d = JSON.parse(localStorage.getItem('termac_crm_'+key)||'[]'); return d.length > 0; } catch(e) { return false; }
   }
   function crmSet(key, val) {
-    try { localStorage.setItem('termac_crm_'+key, JSON.stringify(val)); } catch(e) {}
+    try { safeSetItem('termac_crm_'+key, JSON.stringify(val)); } catch(e) {}
   }
 
   // Always reseed if data is in old format (missing healthScore)
@@ -1982,7 +1982,7 @@ function crmSave(key, val){ try{ localStorage.setItem('termac_crm_'+key, JSON.st
       opportunities: sampleOpps.slice(1,5), savedAt:Date.now()
     },
   };
-  try { localStorage.setItem('termac_rep_plans', JSON.stringify(plans)); } catch(e) {}
+  try { safeSetItem('termac_rep_plans', JSON.stringify(plans)); } catch(e) {}
 })();
 
 // ── CRM Backup Layer (Cloudflare KV) ────────────────────────────────────
@@ -2013,7 +2013,7 @@ async function crmHydrateBackup(){
       const res = await fetch(CRM_BACKUP_URL + '?key=' + encodeURIComponent(key));
       const remote = await res.json();
       if (Array.isArray(remote) && remote.length > 0) {
-        localStorage.setItem('termac_crm_'+key, JSON.stringify(remote));
+        safeSetItem('termac_crm_'+key, JSON.stringify(remote));
         if (typeof renderCRMView === 'function' && typeof crmCurrentTab !== 'undefined' && crmCurrentTab === key) {
           renderCRMView();
         }
@@ -2478,7 +2478,7 @@ async function d1Hydrate(table) {
       if (res.results.length < PAGE_SIZE) break;
     }
     if (added > 0) {
-      try { localStorage.setItem('termac_crm_' + table, JSON.stringify(local)); } catch(e) {}
+      try { safeSetItem('termac_crm_' + table, JSON.stringify(local)); } catch(e) {}
       if (typeof renderCRMView === 'function') renderCRMView();
     }
   } catch(e) {}
@@ -2487,7 +2487,7 @@ async function d1Hydrate(table) {
 
 // Patch crmSave to also push to D1 (override rather than wrap to avoid TDZ)
 window.crmSave = crmSave = function(key, val) {
-  try { localStorage.setItem('termac_crm_'+key, JSON.stringify(val)); } catch(e) {}
+  try { safeSetItem('termac_crm_'+key, JSON.stringify(val)); } catch(e) {}
   if (D1_SYNC_TABLES.includes(key)) {
     d1PushBatch(key, val).catch(()=>{});
   }
@@ -2540,8 +2540,8 @@ d1HydrateAll();
       });
       if (res.results.length < PAGE_SIZE) break;
     }
-    localStorage.setItem('termac_crm_leads', JSON.stringify(local));
-    localStorage.setItem(FLAG, String(Date.now()));
+    safeSetItem('termac_crm_leads', JSON.stringify(local));
+    safeSetItem(FLAG, String(Date.now()));
     if (typeof renderCRMView === 'function') renderCRMView();
     console.log('Lead stage repair complete - refreshed', fixed, 'records from D1.');
   } catch(e) { console.warn('Lead stage repair failed, will retry next load:', e); }
@@ -2785,7 +2785,7 @@ setInterval(d1HydrateAll, 30000);
   // Never overwrites records that don't have _seeded:true
   const SEED_VERSION = 'v3_25leads_safe';
   if(localStorage.getItem('termac_seed_version') === SEED_VERSION) return;
-  localStorage.setItem('termac_seed_version', SEED_VERSION);
+  safeSetItem('termac_seed_version', SEED_VERSION);
   const now = Date.now();
 
   // Helper: merge seed records into existing store, preserving real data
@@ -2801,7 +2801,7 @@ setInterval(d1HydrateAll, 30000);
                            .filter(function(r){ return !existingIds.has(r.id) || existing.find(function(e){ return e.id===r.id && e._seeded; }); });
     // Replace any existing seeded records, keep real records untouched
     var merged = realData.concat(toAdd);
-    try { localStorage.setItem('termac_crm_'+storeKey, JSON.stringify(merged)); } catch(e) {}
+    try { safeSetItem('termac_crm_'+storeKey, JSON.stringify(merged)); } catch(e) {}
   }
   crmLoad; // touch
   safeSeed('leads',[
@@ -3108,7 +3108,7 @@ function addRecent(tab,record){
   arr=arr.filter(r=>r.id!==record.id);
   arr.unshift({id:record.id,name:record.name,sub:record.business||record.company||'',ts:Date.now()});
   if(arr.length>10) arr=arr.slice(0,10);
-  localStorage.setItem('termac_crm_recent_'+tab, JSON.stringify(arr));
+  safeSetItem('termac_crm_recent_'+tab, JSON.stringify(arr));
 }
 
 /* ═══════════════════════════════════
@@ -3342,7 +3342,7 @@ function lcSetAppointment(leadId) {
     lead.status = 'opportunity';
     lead.appointmentDate = dateStr;
     lead.updated = Date.now();
-    localStorage.setItem('leads', JSON.stringify(leads));
+    safeSetItem('leads', JSON.stringify(leads));
     showToast('📅 Appointment set — ' + dateStr);
     renderCRMView();
   }
@@ -4266,7 +4266,7 @@ function advanceStage(id, pool, newStage, selectEl) {
     // Add to manager review queue
     const mgr_queue = JSON.parse(localStorage.getItem('termac_mgr_disq_queue') || '[]');
     mgr_queue.push({ id: r.id, name: r.business||r.name, reason, by: r.disqualifiedBy, ts: Date.now(), stage: oldStage });
-    localStorage.setItem('termac_mgr_disq_queue', JSON.stringify(mgr_queue));
+    safeSetItem('termac_mgr_disq_queue', JSON.stringify(mgr_queue));
     r.activityLog = r.activityLog || [];
     r.activityLog.push({ ts:Date.now(), type:'stage', icon:'🚫', title:`${newStage==='lost'?'Lost':'Disqualified'}: ${reason}`, who: r.disqualifiedBy });
     r.lifecycleStage = newStage;
@@ -8345,6 +8345,23 @@ document.addEventListener('keydown', e=>{
 
 
 <script>
+// 2026-07-21 per Ted: found via a real "Harvest failed" error --
+// localStorage.setItem was called bare (no try/catch) in 74+ places
+// across this file. When the browser's total storage for this origin
+// gets tight (which happens fast after a long session of testing --
+// every log, cache, and queue in the app writes here), ANY of those
+// bare calls throws an uncaught QuotaExceededError that silently halts
+// whatever function it's inside, even when the actual valuable work
+// that function was doing (like saving harvested leads) already
+// succeeded moments earlier. This is the same root cause behind
+// tonight's other storage-quota failures, just surfacing in a
+// different corner of the app. Every localStorage.setItem call in this
+// file now goes through this wrapper instead -- a failed write here is
+// never fatal to whatever feature triggered it.
+function safeSetItem(key, value) {
+  try { localStorage.setItem(key, value); } catch (e) { /* storage full or unavailable -- never let this break the calling feature */ }
+}
+
 /* ══════════════════════════════════════════════════════════════
    SITE VISIT FLOW ENGINE
    State: svState holds account, visitType, selectedServices,
@@ -8593,7 +8610,7 @@ function generateAccountNumber(division){
   try { seq = JSON.parse(localStorage.getItem(ACCOUNT_NUMBER_SEQ_KEY) || '{}'); } catch(e) {}
   const next = (seq[prefix] || ACCOUNT_NUMBER_START - 1) + 1;
   seq[prefix] = next;
-  localStorage.setItem(ACCOUNT_NUMBER_SEQ_KEY, JSON.stringify(seq));
+  safeSetItem(ACCOUNT_NUMBER_SEQ_KEY, JSON.stringify(seq));
   return prefix + '-' + String(next).padStart(5, '0');
 }
 
@@ -8871,7 +8888,7 @@ function svSaveProgress() {
     const r = data.find(x => x.id === svState.accountId);
     if (r) {
       // Safety: check localStorage space before writing
-      try { localStorage.setItem('_quota_test', '1'); localStorage.removeItem('_quota_test'); }
+      try { safeSetItem('_quota_test', '1'); localStorage.removeItem('_quota_test'); }
       catch(qe) { console.warn('svSaveProgress: localStorage full, skipping progress save'); return; }
       // Strip photos from progress snapshot too
       const _sdProgress = {};
@@ -11029,7 +11046,7 @@ function fsSubmitCreditApp(action) {
   try {
     const existing = JSON.parse(localStorage.getItem('termac_credit_apps') || '[]');
     existing.push(app);
-    localStorage.setItem('termac_credit_apps', JSON.stringify(existing));
+    safeSetItem('termac_credit_apps', JSON.stringify(existing));
   } catch(e) {}
 
   // Update the payment terms field and status badge
@@ -12708,7 +12725,7 @@ function _initScorecardCharts() {
     try {
       const all = JSON.parse(localStorage.getItem('termac_qb_state') || '{}');
       all[repName + '_' + period] = data;
-      localStorage.setItem('termac_qb_state', JSON.stringify(all));
+      safeSetItem('termac_qb_state', JSON.stringify(all));
     } catch (e) {}
   }
 
@@ -12739,7 +12756,7 @@ function _initScorecardCharts() {
         ],
         flagBehindPct: 15
       };
-      localStorage.setItem('termac_goals_quotas', JSON.stringify(all));
+      safeSetItem('termac_goals_quotas', JSON.stringify(all));
       try {
         d1Fetch('POST', '/api/rep_targets', {
           id: 'TGT-' + repName.replace(/\s+/g, ''),
@@ -14052,7 +14069,7 @@ let _triviaCurrentQ = null;
 
 // ── STORAGE HELPERS ────────────────────────────────────────────────────────
 function tsGet(k)    { try { return JSON.parse(localStorage.getItem('termac_trivia_'+k)||'null'); } catch(e) { return null; } }
-function tsSet(k, v) { try { localStorage.setItem('termac_trivia_'+k, JSON.stringify(v)); } catch(e) {} }
+function tsSet(k, v) { try { safeSetItem('termac_trivia_'+k, JSON.stringify(v)); } catch(e) {} }
 
 function getTriviaScores() {
   return tsGet('scores') || {};
@@ -14371,7 +14388,7 @@ const HARVEST_DC_LICENSES_URL = 'https://maps2.dcgis.dc.gov/dcgis/rest/services/
 const HARVEST_FOOD_LICENSE_KEYWORDS = ['food', 'restaurant', 'catering', 'eating', 'drinking'];
 
 function harvestLoadLog(){ try{ return JSON.parse(localStorage.getItem('termac_harvest_log')||'[]'); }catch(e){ return []; } }
-function harvestSaveLog(log){ localStorage.setItem('termac_harvest_log', JSON.stringify(log)); }
+function harvestSaveLog(log){ safeSetItem('termac_harvest_log', JSON.stringify(log)); }
 
 // Weekly auto-clean runs silently on load — removes blank/TBD junk records older than 7 days
 try { weeklyAutoClean(); } catch(e) {}
@@ -14600,7 +14617,7 @@ function markNotifRead(id) {
     const notifs = JSON.parse(localStorage.getItem('termac_hotlead_notifs') || '[]');
     const n = notifs.find(x => x.id === id);
     if (n) n.read = true;
-    localStorage.setItem('termac_hotlead_notifs', JSON.stringify(notifs));
+    safeSetItem('termac_hotlead_notifs', JSON.stringify(notifs));
     renderHotLeadPanel();
   renderDebriefPanel();
   renderLifecyclePanel();
@@ -14611,7 +14628,7 @@ function markAllNotifsRead() {
   try {
     const notifs = JSON.parse(localStorage.getItem('termac_hotlead_notifs') || '[]');
     notifs.forEach(n => n.read = true);
-    localStorage.setItem('termac_hotlead_notifs', JSON.stringify(notifs));
+    safeSetItem('termac_hotlead_notifs', JSON.stringify(notifs));
     renderHotLeadPanel();
   } catch(e) {}
 }
@@ -14620,7 +14637,7 @@ function clearReadNotifs() {
   try {
     const notifs = JSON.parse(localStorage.getItem('termac_hotlead_notifs') || '[]');
     const unread = notifs.filter(n => !n.read);
-    localStorage.setItem('termac_hotlead_notifs', JSON.stringify(unread));
+    safeSetItem('termac_hotlead_notifs', JSON.stringify(unread));
     renderHotLeadPanel();
   } catch(e) {}
 }
@@ -14676,7 +14693,7 @@ function resolveException(id) {
     const exceptions = JSON.parse(localStorage.getItem('termac_exceptions') || '[]');
     const ex = exceptions.find(e => e.id === id);
     if (ex) { ex.resolved = true; ex.resolvedAt = Date.now(); ex.resolvedBy = _currentUser?.name || 'Manager'; }
-    localStorage.setItem('termac_exceptions', JSON.stringify(exceptions));
+    safeSetItem('termac_exceptions', JSON.stringify(exceptions));
     renderExceptionPanel();
   renderHotLeadPanel();
   } catch(e) {}
@@ -14686,7 +14703,7 @@ function clearResolvedExceptions() {
   try {
     const exceptions = JSON.parse(localStorage.getItem('termac_exceptions') || '[]');
     const open = exceptions.filter(e => !e.resolved);
-    localStorage.setItem('termac_exceptions', JSON.stringify(open));
+    safeSetItem('termac_exceptions', JSON.stringify(open));
     renderExceptionPanel();
   } catch(e) {}
 }
@@ -18024,7 +18041,7 @@ function bidsVaultSave() {
   vault.lastUpdated = new Date().toISOString().slice(0,10);
   vault.updatedBy = 'Ted Scholl';
 
-  localStorage.setItem('termac_company_vault', JSON.stringify(vault));
+  safeSetItem('termac_company_vault', JSON.stringify(vault));
 
   // Count required fields still missing
   var vaultStr = JSON.stringify(vault);
@@ -18344,7 +18361,7 @@ async function bidsHarvest(){
     });
 
     bidsSave(existing);
-    localStorage.setItem('termac_bid_scraper_last', JSON.stringify({
+    safeSetItem('termac_bid_scraper_last', JSON.stringify({
       ts: now, counts: data.counts||{}, total: incoming.length,
       added, errors: data.errors||[], sources: sourcesChecked
     }));
@@ -20229,7 +20246,7 @@ function bidsMarkOutcome(id, outcome){
         crossSellCount: (b.crossSellSignals||[]).length,
         loggedAt: Date.now()
       });
-      localStorage.setItem('termac_bid_outcomes', JSON.stringify(wlLog));
+      safeSetItem('termac_bid_outcomes', JSON.stringify(wlLog));
     } catch(e){}
 
     bidsSave(bids);
@@ -20251,7 +20268,7 @@ function bidsAllProHandoff(b){
   var proj={ id:'bid'+(b.id||Date.now()), client:(b.agency||b.title||'Awarded bid'), site:(b.county||''), accountId:'', division:'AllPro', pm:'', status:'sold', source:'bid', soldBy:'Bid Pipeline'+(b.refNo?' · '+b.refNo:''), jobType:'Hood / Stainless (bid award)', estimatedPrice:(b.estValue||0), createdAt:Date.now(),
     spec:{dims:'',grade:'304',gauge:'14 ga',finish:'#4 Brushed',weld:'TIG continuous',drains:'',backsplash:'',edges:'',hardware:'',nsf:'',notes:(b.title||'')+(b.scopeRaw?(' — '+b.scopeRaw):'')},
     layout:{units:'in',pieces:[]}, photos:[], scanUrls:[], revisions:[], approval:{status:'',client:'',date:'',note:''} };
-  try { var all=JSON.parse(localStorage.getItem(DESIGN_KEY)||'[]'); all.unshift(proj); localStorage.setItem(DESIGN_KEY,JSON.stringify(all)); } catch(e){}
+  try { var all=JSON.parse(localStorage.getItem(DESIGN_KEY)||'[]'); all.unshift(proj); safeSetItem(DESIGN_KEY,JSON.stringify(all)); } catch(e){}
   var lines=['Bid won — AllPro hood / stainless work','','Award: '+(b.title||''),'Agency: '+(b.agency||'')];
   if (b.refNo) lines.push('Ref: '+b.refNo);
   lines.push('Estimated value: $'+((b.estValue||0).toLocaleString()));
@@ -23628,7 +23645,7 @@ function estPrint(){
 
 <script>
 function rcpLoadCalls(){try{return JSON.parse(localStorage.getItem('termac_inbound_calls')||'[]');}catch(e){return[];}}
-function rcpSaveCalls(c){try{localStorage.setItem('termac_inbound_calls',JSON.stringify(c));}catch(e){}}
+function rcpSaveCalls(c){try{safeSetItem('termac_inbound_calls',JSON.stringify(c));}catch(e){}}
 
 // ── DEMO SEED: Inbound call log ───────────────────────────────────
 const RCP_DEMO_VERSION = 'demo_v1';
@@ -23665,7 +23682,7 @@ function rcpSeedDemoCalls() {
   ];
   const existing = rcpLoadCalls().filter(c => !c.id.startsWith('rcp_d'));
   rcpSaveCalls([...demos, ...existing]);
-  localStorage.setItem('termac_rcp_demo_seeded', RCP_DEMO_VERSION);
+  safeSetItem('termac_rcp_demo_seeded', RCP_DEMO_VERSION);
 }
 
 function openReceptionPrompt(){
@@ -24019,7 +24036,7 @@ function rcpPushRoutingNotification(call) {
       ts: Date.now()
     });
     // Keep last 100
-    localStorage.setItem('termac_routing_notifications', JSON.stringify(notes.slice(0,100)));
+    safeSetItem('termac_routing_notifications', JSON.stringify(notes.slice(0,100)));
   } catch(e) {}
 }
 
@@ -24065,7 +24082,7 @@ function rcpMarkNotificationRead(id) {
   try {
     const notes = JSON.parse(localStorage.getItem('termac_routing_notifications')||'[]');
     const n = notes.find(x => x.id === id);
-    if (n) { n.read = true; localStorage.setItem('termac_routing_notifications', JSON.stringify(notes)); }
+    if (n) { n.read = true; safeSetItem('termac_routing_notifications', JSON.stringify(notes)); }
     renderCRMView();
   } catch(e) {}
 }
@@ -27756,7 +27773,7 @@ function checkCollectionsOverdue() {
       recipient:'Manager', read:false,
       date:new Date().toLocaleDateString('en-US'), time:new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}),
     });
-    localStorage.setItem('termac_hotlead_notifs', JSON.stringify(notifs.slice(0,100)));
+    safeSetItem('termac_hotlead_notifs', JSON.stringify(notifs.slice(0,100)));
   } catch(e){}
 }
 
@@ -28592,7 +28609,7 @@ function compMarkStatus(idx, newStatus) {
   const real = queue.find(q => q.ts === item.ts && q.jobId === item.jobId);
   if (real) {
     real.status = newStatus;
-    localStorage.setItem('officeFormQueue', JSON.stringify(queue));
+    safeSetItem('officeFormQueue', JSON.stringify(queue));
   } else {
     // Item was demo seed data, not in real localStorage yet -- just
     // update in place for this render so the UI still responds.
@@ -28766,7 +28783,7 @@ function defSaveQuote() {
         sentBy: 'Lexi',
         message: `Deficiency quote of $${total.toLocaleString()} sent to ${item.account} — for your awareness.`
       });
-      localStorage.setItem('repNotifications', JSON.stringify(alerts));
+      safeSetItem('repNotifications', JSON.stringify(alerts));
     } catch(e) {}
   }
 
@@ -29015,7 +29032,7 @@ function mgrToggle(id) {
   const isOpen = body.style.display !== 'none';
   body.style.display = isOpen ? 'none' : '';
   if (icon) icon.style.transform = isOpen ? 'rotate(-90deg)' : 'rotate(0deg)';
-  try { localStorage.setItem('cs_state_' + id, isOpen ? '0' : '1'); } catch(e) {}
+  try { safeSetItem('cs_state_' + id, isOpen ? '0' : '1'); } catch(e) {}
   if (!isOpen && id === 'termacPnl' && typeof renderTermacPnlCard === 'function') {
     renderTermacPnlCard();
   }
@@ -29517,7 +29534,7 @@ function requestReferral(accountId) {
       requestedBy: (_currentUser&&_currentUser.name)||'Rep',
       status: 'pending', convertedAt: null
     });
-    localStorage.setItem('termac_referrals', JSON.stringify(refLog));
+    safeSetItem('termac_referrals', JSON.stringify(refLog));
   } catch(e){}
 
   if (typeof renderCRM === 'function') renderCRM();
@@ -29532,7 +29549,7 @@ function markReferralConverted(leadId) {
     if (idx >= 0) {
       refLog[idx].status = 'converted';
       refLog[idx].convertedAt = Date.now();
-      localStorage.setItem('termac_referrals', JSON.stringify(refLog));
+      safeSetItem('termac_referrals', JSON.stringify(refLog));
     }
   } catch(e){}
 }
@@ -30687,13 +30704,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function openLearningCenter() {
   // Pre-set admin session so PIN screen is bypassed
-  localStorage.setItem('lc_user', JSON.stringify({
+  safeSetItem('lc_user', JSON.stringify({
     name: 'Ted Scholl', role: 'admin', pin: '1234',
     loggedIn: true, ts: Date.now()
   }));
-  localStorage.setItem('lc_admin_unlocked', '1');
-  localStorage.setItem('lc_logged_in', 'true');
-  localStorage.setItem('lc_current_user', 'Ted Scholl');
+  safeSetItem('lc_admin_unlocked', '1');
+  safeSetItem('lc_logged_in', 'true');
+  safeSetItem('lc_current_user', 'Ted Scholl');
   // Navigate
   window.open('learning-center-v2.html', '_blank');
 }
@@ -30712,7 +30729,7 @@ function openHRPortal() {
   const hrUsername = user ? user.email.split('@')[0].replace(/[^a-z0-9.]/g,'') : 'ted.scholl';
   const hrName = user ? user.name : 'Ted Scholl';
 
-  localStorage.setItem('hr_session', JSON.stringify({
+  safeSetItem('hr_session', JSON.stringify({
     username: hrUsername,
     email: userEmail,
     name: hrName,
@@ -30721,10 +30738,10 @@ function openHRPortal() {
     loggedIn: true,
     ts: Date.now()
   }));
-  localStorage.setItem('hr_logged_in', 'true');
-  localStorage.setItem('hr_current_user', hrUsername);
-  localStorage.setItem('hr_user_role', hrRole);
-  localStorage.setItem('hr_self_only', isFullHR ? 'false' : 'true');
+  safeSetItem('hr_logged_in', 'true');
+  safeSetItem('hr_current_user', hrUsername);
+  safeSetItem('hr_user_role', hrRole);
+  safeSetItem('hr_self_only', isFullHR ? 'false' : 'true');
   window.open('hr-portal.html', '_blank');
 }
 
@@ -30734,11 +30751,11 @@ function openLearningCenterForUser() {
   const name = user ? user.name : 'Ted Scholl';
   const division = user ? (user.division || 'All') : 'All';
   // Set all bypass keys so learning center skips login screen
-  localStorage.setItem('lc_logged_in', 'true');
-  localStorage.setItem('lc_current_user', JSON.stringify({
+  safeSetItem('lc_logged_in', 'true');
+  safeSetItem('lc_current_user', JSON.stringify({
     name, email: user?.email || '', division, ts: Date.now()
   }));
-  localStorage.setItem('lc_bypass_user', JSON.stringify({ name, division, ts: Date.now() }));
+  safeSetItem('lc_bypass_user', JSON.stringify({ name, division, ts: Date.now() }));
   window.open('learning-center-v2.html', '_blank');
 }
 </script>
@@ -32338,7 +32355,7 @@ function goalsSaveQuotaData(rep, period, data) {
     const all = JSON.parse(localStorage.getItem(GOALS_QUOTA) || '{}');
     const key = (rep || 'Ted Scholl') + '_' + (period || 'q2');
     all[key] = { ...data };
-    localStorage.setItem(GOALS_QUOTA, JSON.stringify(all));
+    safeSetItem(GOALS_QUOTA, JSON.stringify(all));
   } catch(e) {}
 }
 
@@ -32355,7 +32372,7 @@ function goalsSaveActivityData(rep, weekKey, data) {
     const all = JSON.parse(localStorage.getItem(GOALS_ACTIVITY) || '{}');
     const k = (rep || 'Ted Scholl') + '_' + (weekKey || goalsCurrentWeekKey());
     all[k] = data;
-    localStorage.setItem(GOALS_ACTIVITY, JSON.stringify(all));
+    safeSetItem(GOALS_ACTIVITY, JSON.stringify(all));
   } catch(e) {}
 }
 
@@ -32370,7 +32387,7 @@ function goalsSaveWinLoss(rep, records) {
   try {
     const all = JSON.parse(localStorage.getItem(GOALS_WL) || '{}');
     all[rep || 'Ted Scholl'] = records;
-    localStorage.setItem(GOALS_WL, JSON.stringify(all));
+    safeSetItem(GOALS_WL, JSON.stringify(all));
   } catch(e) {}
 }
 
@@ -33138,7 +33155,7 @@ function weeklySaveDraft() {
     confidence: _wqConfidence,
     savedAt:    Date.now()
   };
-  localStorage.setItem('weekly_draft_' + goalsCurrentWeekKey(), JSON.stringify(data));
+  safeSetItem('weekly_draft_' + goalsCurrentWeekKey(), JSON.stringify(data));
   const t = document.createElement('div');
   t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1A1D21;color:#fff;border-radius:8px;padding:10px 20px;font-size:13px;font-weight:600;z-index:999';
   t.textContent = '💾 Draft saved';
@@ -33243,7 +33260,7 @@ function weeklyLogSend(recipients) {
     recipients: recipients
   });
   log = log.slice(0, 20); // keep last 20
-  localStorage.setItem('weekly_sent_log', JSON.stringify(log));
+  safeSetItem('weekly_sent_log', JSON.stringify(log));
   weeklyRenderSentLog();
 }
 
@@ -33290,9 +33307,9 @@ document.addEventListener('DOMContentLoaded', () => {
 // ── SHARED STORAGE ──────────────────────────────────────────
 const IS = {
   load: k => { try { return JSON.parse(localStorage.getItem('tis_'+k)||'null'); } catch(e) { return null; } },
-  save: (k,v) => localStorage.setItem('tis_'+k, JSON.stringify(v)),
+  save: (k,v) => safeSetItem('tis_'+k, JSON.stringify(v)),
   loadArr: k => { try { return JSON.parse(localStorage.getItem('tis_'+k)||'[]'); } catch(e) { return []; } },
-  saveArr: (k,v) => localStorage.setItem('tis_'+k, JSON.stringify(v)),
+  saveArr: (k,v) => safeSetItem('tis_'+k, JSON.stringify(v)),
 };
 
 // ── AI CALL (shared proxy) ───────────────────────────────────
@@ -33971,7 +33988,7 @@ async function planDaysForDates(dateList) {
       savedAt: Date.now()
     };
   });
-  localStorage.setItem('termac_rep_plans', JSON.stringify(saved));
+  safeSetItem('termac_rep_plans', JSON.stringify(saved));
 
   renderPlanDayResults(dayPlans, wlbNudge, repName);
 }
@@ -35620,7 +35637,7 @@ function weeklyAutoClean() {
   const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
   if (now - last < SEVEN_DAYS) return;
   const removed = purgeJunkRecords(true);
-  localStorage.setItem(WEEK_KEY, now.toString());
+  safeSetItem(WEEK_KEY, now.toString());
   if (removed > 0) console.log('[Termac] Weekly auto-clean: removed ' + removed + ' junk records');
 }
 
@@ -35650,7 +35667,7 @@ function renderDuplicatePanel() {
         <div style="font-weight:700;font-size:12px;text-transform:capitalize;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${key}</div>
         <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
           <span style="font-size:10px;color:var(--soft)">${records.length} records</span>
-          <button onclick="event.stopPropagation();(function(){var d=JSON.parse(localStorage.getItem('mgr_dismissed_dupes')||'[]');d.push('${key.replace(/'/g,"\\'")}');localStorage.setItem('mgr_dismissed_dupes',JSON.stringify(d));renderDuplicatePanel();})()" style="background:none;border:1px solid var(--line);border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer;color:var(--soft)">Dismiss</button>
+          <button onclick="event.stopPropagation();(function(){var d=JSON.parse(localStorage.getItem('mgr_dismissed_dupes')||'[]');d.push('${key.replace(/'/g,"\\'")}');safeSetItem('mgr_dismissed_dupes',JSON.stringify(d));renderDuplicatePanel();})()" style="background:none;border:1px solid var(--line);border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer;color:var(--soft)">Dismiss</button>
           <span id="cs-icon-${gid}" style="color:var(--soft);font-size:13px;transition:transform .2s">▾</span>
         </div>
       </div>
@@ -36260,7 +36277,7 @@ const PRODUCT_CATALOG = [
 // checks first (svGetProducts()) -- this is what actually connects the two
 // pages. Without this write, sales-portal.html silently falls back to its
 // own bare-bones list with no dilution or competitor data.
-try { localStorage.setItem('termac_product_catalog', JSON.stringify(PRODUCT_CATALOG)); } catch(e) {}
+try { safeSetItem('termac_product_catalog', JSON.stringify(PRODUCT_CATALOG)); } catch(e) {}
 
 function openCatalog() {
   catRender();
@@ -38016,7 +38033,7 @@ function mgrCreditSaveEvaluation() {
     creditLimit:  document.getElementById('ev_creditLimit')?.value  || '',
     cardOnFile:   document.getElementById('ev_cardOnFile')?.checked || false,
   };
-  try { localStorage.setItem('termac_credit_apps', JSON.stringify(apps)); } catch(e) {}
+  try { safeSetItem('termac_credit_apps', JSON.stringify(apps)); } catch(e) {}
   // Brief visual confirmation
   const btn = event.target;
   const orig = btn.textContent;
@@ -38042,7 +38059,7 @@ function mgrCreditDecide(decision) {
   apps[idx].reviewedAt    = Date.now();
   apps[idx].reviewedBy    = _currentUser?.name || 'Manager';
   apps[idx].declineReason = reason || null;
-  try { localStorage.setItem('termac_credit_apps', JSON.stringify(apps)); } catch(e) {}
+  try { safeSetItem('termac_credit_apps', JSON.stringify(apps)); } catch(e) {}
 
   closeModal('mgrCreditReviewModal');
   mgrCreditQueueRender();
@@ -38568,7 +38585,7 @@ function executeReset() {
       var seeded = all.filter(isSeed);
       seedRemoved += seeded.length;
       realKept    += real.length;
-      localStorage.setItem(key, JSON.stringify(real));
+      safeSetItem(key, JSON.stringify(real));
       // Also push the cleaned list to D1 so a demo record removed here
       // doesn't silently reappear on the next sync sweep from another
       // device that still has it cached locally.
@@ -38722,7 +38739,7 @@ window.addEventListener('load', tcFinanceBanners);
   var DAY = 86400000;
 
   function loadAlerts() { try { return JSON.parse(localStorage.getItem(LC_ALERTS_KEY) || '[]'); } catch(e) { return []; } }
-  function saveAlerts(a) { try { localStorage.setItem(LC_ALERTS_KEY, JSON.stringify(a.slice(0, 200))); } catch(e) {} }
+  function saveAlerts(a) { try { safeSetItem(LC_ALERTS_KEY, JSON.stringify(a.slice(0, 200))); } catch(e) {} }
 
   function healthScore(acct) {
     if (typeof acctCalcHealth === 'function') return acctCalcHealth(acct).score;
@@ -38760,7 +38777,7 @@ window.addEventListener('load', tcFinanceBanners);
   }
 
   function runLifecycleCheck() {
-    localStorage.setItem(LC_LAST_RUN, Date.now().toString());
+    safeSetItem(LC_LAST_RUN, Date.now().toString());
 
     var accounts = [];
     var leads = [];
@@ -38853,7 +38870,7 @@ window.addEventListener('load', tcFinanceBanners);
 
     // Write updated health scores back
     if (acctUpdated) {
-      try { localStorage.setItem('termac_crm_accounts', JSON.stringify(accounts)); } catch(e) {}
+      try { safeSetItem('termac_crm_accounts', JSON.stringify(accounts)); } catch(e) {}
     }
 
     // Opportunity follow-up: any open opportunity not touched in 4 days
@@ -38948,7 +38965,7 @@ window.addEventListener('load', tcFinanceBanners);
             + '</div>'
             + '<div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0">'
             + (a.accountId ? '<button onclick="document.getElementById(\'lcAlertModal\').style.display=\'none\';if(typeof openAcctDetail===\'function\')openAcctDetail(\''+a.accountId+'\');" style="font-size:10px;background:#0F172A;color:#fff;border:none;border-radius:6px;padding:4px 10px;cursor:pointer;font-weight:700">View</button>' : '')
-            + '<button onclick="(function(){var a=JSON.parse(localStorage.getItem(\''+LC_ALERTS_KEY+'\')||\'[]\');var i=a.findIndex(function(x){return x.id===\''+a.id+'\';});if(i>=0){a[i].dismissed=true;localStorage.setItem(\''+LC_ALERTS_KEY+'\',JSON.stringify(a));}openLCAlertModal();renderRepAlertBanner();renderMgrAlertPanel();})()" style="font-size:10px;background:none;border:1px solid #CBD5E1;border-radius:6px;padding:4px 10px;cursor:pointer;color:#64748B">Dismiss</button>'
+            + '<button onclick="(function(){var a=JSON.parse(localStorage.getItem(\''+LC_ALERTS_KEY+'\')||\'[]\');var i=a.findIndex(function(x){return x.id===\''+a.id+'\';});if(i>=0){a[i].dismissed=true;safeSetItem(\''+LC_ALERTS_KEY+'\',JSON.stringify(a));}openLCAlertModal();renderRepAlertBanner();renderMgrAlertPanel();})()" style="font-size:10px;background:none;border:1px solid #CBD5E1;border-radius:6px;padding:4px 10px;cursor:pointer;color:#64748B">Dismiss</button>'
             + '</div>'
             + '</div>';
         }).join('') : '<div style="text-align:center;padding:24px;color:#94A3B8">No active alerts</div>')
