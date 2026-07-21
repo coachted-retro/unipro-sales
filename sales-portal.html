@@ -11319,10 +11319,14 @@ function spCamRenderTagResult(p) {
       ].map(([l,v,bg,col]) => `<div style="background:${bg};border-radius:7px;padding:8px 10px"><div style="font-size:9px;color:${col};text-transform:uppercase;letter-spacing:.08em;font-family:'Barlow Condensed',sans-serif;font-weight:700;margin-bottom:2px">${l}</div><div style="font-size:13px;font-weight:700;color:${col}">${v}</div></div>`).join('')}
     </div>
     ${reminderDate ? `<div style="background:#DBEAFE;border:1px solid #93C5FD;border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:#1E40AF">
-      ⏰ <strong>Follow-Up Reminder will be set for ${reminderStr}</strong> — 60 days before their next inspection. The rep will be prompted to reach out and try to take this account.
+      ⏰ <strong>A follow-up task will be set for ${reminderStr}</strong> — 60 days before their next inspection. It'll show up on this location right on schedule, so the rep knows exactly which site to revisit and when.
     </div>` : ''}
     ${p.tagNotes ? `<div style="font-size:12px;color:#5A616B;margin-bottom:12px"><strong>Tag Notes:</strong> ${p.tagNotes}</div>` : ''}
-    <!-- Editable fields before creating contact -->
+    <!-- Editable fields before creating the location. Contact is
+         deliberately not collected here -- per Ted, a rep scanning a
+         tag while passing by often knows the address but not who to
+         ask for, and shouldn't be blocked on that. Contact gets added
+         later, from the Location page, once it's actually known. -->
     <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">
       <div>
         <label style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#5A616B;display:block;margin-bottom:3px">Business Name at This Location</label>
@@ -11338,16 +11342,16 @@ function spCamRenderTagResult(p) {
       </div>
       <div>
         <label style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#5A616B;display:block;margin-bottom:3px">Site Notes</label>
-        <textarea id="spTagNotes" rows="2" placeholder="Hours of operation, contact name, anything relevant…" style="width:100%;padding:7px 10px;border:1.5px solid #D7DBE0;border-radius:6px;font-size:13px;resize:vertical;font-family:inherit;outline:none"></textarea>
+        <textarea id="spTagNotes" rows="2" placeholder="Hours of operation, contact name if you happen to know it, anything relevant…" style="width:100%;padding:7px 10px;border:1.5px solid #D7DBE0;border-radius:6px;font-size:13px;resize:vertical;font-family:inherit;outline:none"></textarea>
       </div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button onclick="spCamCreateTagContact()" style="flex:1;padding:10px;background:#C8102E;color:#fff;border:none;border-radius:8px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">📋 Create Contact + Set Reminder</button>
+      <button onclick="spCamCreateTagLocation()" style="flex:1;padding:10px;background:#C8102E;color:#fff;border:none;border-radius:8px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">📍 Create Location + Set Reminder</button>
       <button onclick="spCamClear()" style="padding:10px 16px;background:#fff;border:1.5px solid #D7DBE0;border-radius:8px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;cursor:pointer;color:#5A616B">Clear</button>
     </div>`;
 }
 
-function spCamCreateTagContact() {
+function spCamCreateTagLocation() {
   const p = _spCamParsed || {};
   const bizName = document.getElementById('spTagBizName')?.value.trim();
   const address = document.getElementById('spTagAddress')?.value.trim();
@@ -11372,58 +11376,72 @@ function spCamCreateTagContact() {
     '[Source: AI Camera — Inspection Tag Scan]',
   ].filter(Boolean).join('\n');
 
-  const allRecs = typeof crmLoad === 'function' ? crmLoad('leads') : JSON.parse(localStorage.getItem('termac_crm_leads') || '[]');
-  const id = 'lead_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
-  const newLead = {
-    id,
+  const now = Date.now();
+  const repName = (typeof _spRep !== 'undefined' && _spRep?.name) || (typeof _currentUser !== 'undefined' && _currentUser?.name) || '';
+  const locId = 'loc_' + now;
+
+  // 2026-07-20 per Ted: a rep passing by a competitor's tag usually
+  // knows the address, not who to ask for -- this creates the
+  // Location itself (the thing that doesn't change), not a Contact
+  // (which may not be known yet, and can be added later straight from
+  // this Location page once it is). Notes is a real field on
+  // locations already.
+  const allLocs = typeof crmLoad === 'function' ? crmLoad('locations') : JSON.parse(localStorage.getItem('termac_crm_locations') || '[]');
+  const newLoc = {
+    id: locId,
     name: bizName,
-    business: bizName,
     address: address || '',
     phone: '',
-    email: '',
-    role: 'prospect',
     services: service ? [service] : [],
-    lifecycleStage: 'lead',
-    score: 7,
-    siteNotes,
     notes: siteNotes,
-    lastContactDate: new Date().toISOString().slice(0,10),
-    followUpDate: followUpDate || '',
     competitorName: p.competitor || '',
     nextInspectionDate: p.nextInspectionDate || '',
-    source: 'AI Camera — Tag Scan',
-    assignedRep: (typeof _currentUser !== 'undefined' && _currentUser?.name) || '',
-    activityLog: [{
-      ts: Date.now(), type: 'note', icon: '🏷️',
-      title: 'Inspection tag scanned',
-      note: `Tag scanned at location. Current provider: ${p.competitor || 'unknown'}. Next inspection: ${p.nextInspectionDate || 'unknown'}.${followUpDate ? ` Follow-up reminder set for ${followUpDate} (60 days before inspection).` : ''}`,
-      who: (typeof _currentUser !== 'undefined' && _currentUser?.name) || 'Rep',
-    }],
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
+    assignedRep: repName,
+    source: 'ai_camera_tag_scan',
+    status: 'active',
+    createdAt: now,
+    updatedAt: now,
   };
+  allLocs.push(newLoc);
+  if (typeof crmSave === 'function') crmSave('locations', allLocs);
+  else localStorage.setItem('termac_crm_locations', JSON.stringify(allLocs));
 
-  // Save lead
-  allRecs.push(newLead);
-  if (typeof crmSave === 'function') {
-    crmSave('leads', allRecs);
-  } else {
-    localStorage.setItem('termac_crm_leads', JSON.stringify(allRecs));
+  // Real Task, not a bolt-on reminder field -- shows up on Home's
+  // Tasks & Follow-Ups panel and directly on this Location, same
+  // system every other reminder in the app already uses.
+  if (followUpDate) {
+    const allTasks = typeof crmLoad === 'function' ? crmLoad('tasks') : JSON.parse(localStorage.getItem('termac_crm_tasks') || '[]');
+    allTasks.push({
+      id: 'task_' + (now + 1),
+      title: 'Revisit — ' + bizName + ' (competitor inspection expiring)',
+      notes: (p.competitor ? 'Currently serviced by ' + p.competitor + '. ' : '') + 'Tag scanned ' + new Date(now).toLocaleDateString() + '. Next inspection due ' + (p.nextInspectionDate || 'unknown') + '.',
+      dueDate: followUpDate,
+      status: 'open',
+      assignedRep: repName,
+      recordType: 'location',
+      recordId: locId,
+      recordLabel: bizName,
+      createdAt: now + 1,
+      updatedAt: now + 1,
+    });
+    if (typeof crmSave === 'function') crmSave('tasks', allTasks);
+    else localStorage.setItem('termac_crm_tasks', JSON.stringify(allTasks));
   }
 
   spCloseCamera();
 
-  // Navigate to the new lead
+  // Navigate to the new location
   if (typeof spNav === 'function') {
-    spNav('leads');
+    spNav('locations');
     setTimeout(() => {
-      if (typeof spLoadIntelPanel === 'function') spLoadIntelPanel(id, 'leads');
+      if (typeof spViewRecord === 'function') spViewRecord(locId, 'locations');
     }, 300);
   }
 
-  const reminderMsg = followUpDate ? ` Follow-up reminder set for ${followUpDate}.` : '';
-  if (typeof showToast === 'function') showToast('📋 Contact created from tag scan.' + reminderMsg);
-  else alert('Contact created!' + reminderMsg);
+  const reminderMsg = followUpDate ? ` Follow-up task set for ${followUpDate}.` : '';
+  if (typeof spToast === 'function') spToast('📍 Location created from tag scan.' + reminderMsg);
+  else if (typeof showToast === 'function') showToast('📍 Location created from tag scan.' + reminderMsg);
+  else alert('Location created!' + reminderMsg);
 }
 
 /* ══════════════════════════════════════
