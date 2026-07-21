@@ -10,6 +10,7 @@
 const ALLOWED_ORIGINS = [
   'https://unipro-sales.pages.dev',
   'https://my.termac.com',
+  'https://sales.mytermac.com',
   'https://coachted-retro.github.io',
 ];
 
