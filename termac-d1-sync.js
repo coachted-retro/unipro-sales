@@ -170,8 +170,7 @@
         appt.phone    ? ('📞 ' + appt.phone)    : '',
         '',
         'Created in Termac One — ' + (appt.id || '')
-      ].filter(Boolean).join('
-');
+      ].filter(Boolean).join('\n');
 
       var event = {
         subject: appt.title || appt.business || 'Termac Stop',
