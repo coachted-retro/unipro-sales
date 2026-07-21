@@ -1985,6 +1985,86 @@ function spOptimizeRoute(stops) {
   return result;
 }
 
+// ── D1 appointment patch for the agenda ──────────────────────────────────────
+// spBuildAgenda is synchronous and reads from localStorage. Appointments that
+// were created or moved on another device (or directly in D1) won't appear
+// until hydration runs. This async function fetches D1 appointments for the
+// target date, writes any missing or stale ones into localStorage, then
+// re-renders the agenda in place — so the view is always fresh without
+// requiring a full page refresh or a manual "Refresh My Data" tap.
+//
+// Rules:
+//  - A TBD appointment with only notes/time is valid. No business or account
+//    required. Never skip an appointment just because account_id is null.
+//  - If an appointment exists locally with the SAME id but a DIFFERENT date,
+//    the D1 version wins (the user moved it; local is stale).
+//  - Called once after each spRenderTodayAgenda() call; guarded by a flag
+//    to prevent re-entrant loops.
+var _spD1AgendaPatchInFlight = false;
+async function spPatchAgendaFromD1(dateStr) {
+  if (_spD1AgendaPatchInFlight) return;
+  if (typeof TermacD1Sync === 'undefined' || !TermacD1Sync.d1Fetch) return;
+  _spD1AgendaPatchInFlight = true;
+  try {
+    var res = await TermacD1Sync.d1Fetch('GET', '/api/appointments?date=' + dateStr + '&limit=200');
+    if (!res || !res.results || !res.results.length) return;
+
+    var localAppts = crmLoad('appointments') || [];
+    var changed = false;
+
+    res.results.forEach(function(d1Appt) {
+      var localIdx = localAppts.findIndex(function(a){ return a.id === d1Appt.id; });
+      if (localIdx < 0) {
+        // Not in localStorage at all — add it
+        localAppts.push({
+          id:         d1Appt.id,
+          accountId:  d1Appt.account_id || null,
+          recordId:   d1Appt.record_id  || d1Appt.account_id || null,
+          tab:        d1Appt.tab        || null,
+          title:      d1Appt.title      || 'Appointment',
+          business:   d1Appt.business   || d1Appt.title || '',
+          date:       d1Appt.date,
+          time:       d1Appt.time       || '',
+          type:       d1Appt.type       || 'appointment',
+          notes:      d1Appt.notes      || '',
+          location:   d1Appt.location   || '',
+          rep:        d1Appt.rep        || '',
+          createdBy:  d1Appt.rep        || '',
+          division:   d1Appt.division   || '',
+          status:     d1Appt.status     || '',
+          updated:    d1Appt.updated_at || 0,
+        });
+        changed = true;
+      } else if (localAppts[localIdx].date !== d1Appt.date) {
+        // Date mismatch — D1 has been updated (user moved the appointment),
+        // local is stale. Overwrite the local record.
+        localAppts[localIdx].date    = d1Appt.date;
+        localAppts[localIdx].time    = d1Appt.time    || localAppts[localIdx].time;
+        localAppts[localIdx].title   = d1Appt.title   || localAppts[localIdx].title;
+        localAppts[localIdx].notes   = d1Appt.notes   || localAppts[localIdx].notes;
+        localAppts[localIdx].updated = d1Appt.updated_at || Date.now();
+        changed = true;
+      }
+    });
+
+    if (changed) {
+      crmSave('appointments', localAppts);
+      // Re-render the agenda section in place
+      var agendaEl = document.getElementById('spTodayAgendaSection');
+      if (agendaEl && typeof spRenderTodayAgenda === 'function') {
+        agendaEl.innerHTML = spRenderTodayAgenda();
+      } else if (typeof spRenderHome === 'function') {
+        spRenderHome();
+      }
+    }
+  } catch (e) {
+    // Silent fail — agenda still shows whatever localStorage has
+    console.warn('spPatchAgendaFromD1 failed:', e);
+  } finally {
+    _spD1AgendaPatchInFlight = false;
+  }
+}
+
 // ── Build the agenda ─────────────────────────────────────────────────────────
 function spBuildAgenda(dateStr) {
   var viewDate = dateStr || _spAgendaDate;
@@ -2771,6 +2851,12 @@ function spRenderRecentActivityFeed() {
 }
 
 function spRenderTodayAgenda() {
+  // After rendering from localStorage, kick off an async D1 patch so any
+  // appointment that was moved or created on another device shows up
+  // immediately without requiring a manual Refresh My Data. The patch
+  // re-renders this section in place only if it finds something new or stale.
+  setTimeout(function(){ spPatchAgendaFromD1(_spAgendaDate); }, 0);
+
   var agenda = spBuildAgenda(_spAgendaDate);
   var realTodayStr = new Date().toISOString().slice(0,10);
   var viewDateObj = new Date(_spAgendaDate + 'T00:00:00');
@@ -3575,6 +3661,15 @@ function spSaveAppt(accountId, tab) {
   };
   appts.push(newAppt);
   crmSave('appointments', appts);
+
+  // Push new appointment to D1 immediately so the agenda on this and
+  // other devices sees it without waiting for the background sweep.
+  // TBD appointments (no business/account) are fully valid — no guard needed.
+  (function(appt) {
+    if (typeof TermacD1Sync !== 'undefined' && TermacD1Sync.d1Push) {
+      TermacD1Sync.d1Push('appointments', appt).catch(function(){});
+    }
+  })(newAppt);
 
   // If we have an account ID, update the lead/contact record
   if (accountId) {
@@ -4562,6 +4657,16 @@ function spSaveApptEdit(apptId) {
   appts[idx].type    = newType;
   appts[idx].updated = Date.now();
   crmSave('appointments', appts);
+
+  // Push edit to D1 immediately so other devices and the agenda see the
+  // updated date without waiting for the background sweep. This also
+  // means a moved appointment shows up on the new date right away
+  // instead of still appearing on the old date until the next hydration.
+  (function(updatedAppt) {
+    if (typeof TermacD1Sync !== 'undefined' && TermacD1Sync.d1Push) {
+      TermacD1Sync.d1Push('appointments', updatedAppt).catch(function(){});
+    }
+  })(appts[idx]);
 
   document.getElementById('spApptEditModal').remove();
   if (typeof spToast === 'function') spToast('Appointment updated.');
