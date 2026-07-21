@@ -76,7 +76,7 @@ function resolveDestinationUrl(role, division, portals) {
 // page to figure out on their own.
 function buildLoginUrl(role, division, portals) {
   const dest = resolveDestinationUrl(role, division, portals);
-  return 'https://my.termac.com/staff-login.html?dest=' + encodeURIComponent(dest);
+  return 'https://sales.mytermac.com/staff-login.html?dest=' + encodeURIComponent(dest);
 }
 
 async function jsonResponse(body, status) {
