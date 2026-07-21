@@ -1202,7 +1202,15 @@ function spRenderCRM(tab) {
   // Load from unified leads pool (matches termac-os architecture).
   // Stages are normalized on read — old names like 'qualified' or
   // 'site_visit' fold into the current clean progression automatically.
-  let data = crmLoad('leads').filter(r => stageKeys.includes(spNormalizeStage(r.lifecycleStage)));
+  // 2026-07-21 FIX per Ted: a lead that's already been converted into a
+  // real Location (has a locationId) needs to stop showing up here as
+  // if it were still a standalone lead or contact -- this is the real
+  // root cause behind "TBD" and "Charlie" looking like duplicates. The
+  // underlying link was already correct (the lead points at its real
+  // location), but nothing was hiding the original lead record from
+  // this view once that conversion happened, so it kept appearing
+  // alongside the real Contact on that Location.
+  let data = crmLoad('leads').filter(r => stageKeys.includes(spNormalizeStage(r.lifecycleStage)) && !r.locationId);
 
   // Also include legacy per-tab pools — but only records that actually
   // belong on THIS tab once normalized. Previously this merged in every
@@ -4696,7 +4704,7 @@ function spViewRecord(id, tab) {
 
     function tryNextTable(tables) {
       if (!tables.length) {
-        if (typeof spToast === 'function') spToast('Record not found. It may not be linked yet.');
+        if (typeof spToast === 'function') spToast('Record not found \u2014 try My Accounts again to refresh the list.', 4000);
         return;
       }
       var tbl = tables[0];
@@ -5103,8 +5111,14 @@ function spOpenDetail(r, tab) {
   }
 
   const el = document.getElementById('spContent');
+  // 2026-07-21 FIX per Ted: this always said "Back to Home" regardless
+  // of which tab a rep actually came from -- the only way back to
+  // Leads/Contacts/Accounts was re-clicking the tab in the nav bar.
+  // Route back to whichever list this record actually belongs on.
+  const backTab = isContact ? 'contacts' : (isAccount ? 'accounts' : 'leads');
+  const backLabel = isContact ? 'Contacts' : (isAccount ? 'Accounts' : 'Leads');
   el.innerHTML = `
-  <button class="sp-btn sp-btn-ghost" style="margin-bottom:14px" onclick="spNav('home')">← Back to Home</button>
+  <button class="sp-btn sp-btn-ghost" style="margin-bottom:14px" onclick="spNav('${backTab}')">← Back to ${backLabel}</button>
 
   <div class="sp-card">
     <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px">
@@ -5297,7 +5311,10 @@ function spOpenLocationDetail(r) {
     </div>`).join('');
 
   const el = document.getElementById('spContent');
-  el.innerHTML = `<div class="sp-card">
+  el.innerHTML = `
+  <button class="sp-btn sp-btn-ghost" style="margin-bottom:14px" onclick="spNav('locations')">← Back to Locations</button>
+
+  <div class="sp-card">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">
       <div>
         <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:20px;color:var(--ink)">📍 ${escH(r.name||'Unnamed Location')}</div>
@@ -11981,8 +11998,28 @@ function spLoadIntelPanel(id, tab) {
   // real bug: for any Contact record this always failed silently and left
   // whichever record was last successfully loaded still on screen.
   const all = [...crmLoad('leads'), ...crmLoad('accounts'), ...crmLoad('contacts')];
-  const r = all.find(x => x.id === id);
+  let r = all.find(x => x.id === id);
+  // 2026-07-21 FIX per Ted: accounts no longer bulk-syncs locally (too
+  // large -- see D1_NO_BULK_HYDRATE), so the line above alone silently
+  // fails for almost every account now. Falls back to a live, scoped
+  // D1 lookup for that one record instead of just giving up.
+  if (!r && tab === 'accounts' && typeof d1RawQuery === 'function') {
+    d1RawQuery('SELECT * FROM accounts WHERE id = ? LIMIT 1', [id]).then(function(rows) {
+      if (rows && rows[0] && _spIntelId === id) {
+        var rec = (typeof TermacD1Sync !== 'undefined' && TermacD1Sync.d1ReverseMap) ? TermacD1Sync.d1ReverseMap('accounts', rows[0]) : rows[0];
+        spLoadIntelPanelRender(rec, tab);
+      }
+    }).catch(function(){});
+    return;
+  }
   if (!r) return;
+  spLoadIntelPanelRender(r, tab);
+}
+
+function spLoadIntelPanelRender(r, tab) {
+  const panel = document.getElementById('spLeftContent');
+  if (!panel) return;
+  const id = r.id;
 
   const stage = SP_STAGES[spNormalizeStage(r.lifecycleStage)] || {label: r.lifecycleStage, color:'#6B7280', bg:'#F3F4F6'};
   const score = r.score || 0;
