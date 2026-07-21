@@ -741,6 +741,17 @@
     // r.lifecycleStage from r.status only when it's not already set, so
     // nothing that already relies on r.lifecycleStage is touched.
     if (out.status !== undefined && out.lifecycleStage === undefined) out.lifecycleStage = out.status;
+    // 2026-07-21 FIX per Ted: a raw D1 row where services didn't parse
+    // as JSON (null, empty string, a stray non-array value from an
+    // older import pass) left out.services as something other than a
+    // real array -- and there are many .services.map() call sites
+    // across the app that all assume it always is one, crashing the
+    // whole page the moment a rep clicked into an affected record.
+    // Fixing it once here, the one place every live-query fallback
+    // already routes through, protects all of them at once.
+    if (table === 'accounts' || table === 'leads' || table === 'contacts' || table === 'locations') {
+      if (!Array.isArray(out.services)) out.services = out.services ? [out.services] : [];
+    }
     return out;
   }
 
