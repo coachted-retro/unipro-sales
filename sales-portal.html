@@ -1211,6 +1211,65 @@ function spRecentlyViewedIds(tab) {
   return rv.filter(function(item) { return item.tab === tab; }).map(function(item) { return item.id; });
 }
 
+
+async function spRenderOpportunitiesTab() {
+  var el = document.getElementById('spContent');
+  if (!el) return;
+
+  // Show loading state
+  el.innerHTML = '<div style="padding:40px;text-align:center;color:var(--soft);font-size:14px;">Loading opportunities...</div>';
+
+  var opps = [];
+  try {
+    var sql = "SELECT * FROM opportunities WHERE resolution_status != 'archived' ORDER BY created_at DESC LIMIT 200";
+    var res = await fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+      body: JSON.stringify({ sql: sql, params: [] })
+    });
+    var data = await res.json();
+    opps = (data.results || []).map(function(r) {
+      return {
+        id: r.id, name: r.name, division: r.division,
+        value: r.value || 0, resolutionStatus: r.resolution_status || 'open',
+        locationId: r.location_id, accountId: r.account_id,
+        assignedRep: r.assigned_rep, notes: r.notes, created: r.created_at,
+        lostReasonCode: r.lost_reason_code, resolutionNotes: r.resolution_notes,
+      };
+    });
+  } catch(e) {
+    opps = crmLoad('opportunities') || [];
+  }
+
+  var STATUS_COLOR = { open:'#D97706', won:'#166534', lost:'#C8102E', pending:'#0D7490' };
+  var STATUS_BG    = { open:'#FEF3C7', won:'#DCFCE7', lost:'#FEE9EC', pending:'#E0F2FE' };
+  var STATUS_LABEL = { open:'Open', won:'Won', lost:'Lost', pending:'Pending' };
+
+  if (!opps.length) {
+    el.innerHTML = '<div style="padding:40px;text-align:center;color:var(--soft);font-size:14px;">No open opportunities yet. Create one from a location or contact record.</div>';
+    return;
+  }
+
+  var html = '<div style="padding:16px"><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">';
+  html += opps.map(function(o) {
+    var status = o.resolutionStatus || 'open';
+    var color = STATUS_COLOR[status] || '#6B7280';
+    var bg = STATUS_BG[status] || '#F3F4F6';
+    var value = parseFloat(o.value || 0);
+    var valueStr = '$' + value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return '<div onclick="spOpenOppDetail('' + o.id + '')" style="background:#fff;border-radius:10px;border:1.5px solid var(--line);padding:14px;cursor:pointer;border-left:4px solid ' + color + '">'
+      + '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">'
+        + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:14px;color:var(--ink);flex:1;margin-right:8px">' + escH(o.name || 'Opportunity') + '</div>'
+        + '<span style="background:' + bg + ';color:' + color + ';border-radius:5px;padding:2px 8px;font-size:10px;font-weight:700;white-space:nowrap">' + (STATUS_LABEL[status] || status) + '</span>'
+      + '</div>'
+      + '<div style="font-size:11px;color:var(--soft);margin-bottom:6px">' + escH(o.division || '') + '</div>'
+      + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:18px;color:var(--ink)">' + valueStr + '</div>'
+    + '</div>';
+  }).join('');
+  html += '</div></div>';
+  el.innerHTML = html;
+}
+
 function spRenderCRM(tab) {
   if (tab === 'opportunities') { spRenderOpportunitiesTab(); return Promise.resolve(); }
   const el = document.getElementById('spContent');
@@ -2207,7 +2266,31 @@ async function spBuildAgenda(dateStr) {
 
 
   // -- 1. Confirmed appointments for the viewed date -----------------------
-  var appts = crmLoad('appointments') || [];
+  // Query D1 directly for this date -- per Ted's standing rule, D1 is the source of truth
+  var appts = [];
+  try {
+    var apptSql = "SELECT * FROM appointments WHERE date = ? ORDER BY time ASC LIMIT 100";
+    var apptRes = await fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+      body: JSON.stringify({ sql: apptSql, params: [todayStr] })
+    });
+    var apptData = await apptRes.json();
+    if (apptData.results && apptData.results.length) {
+      appts = apptData.results.map(function(r) {
+        return {
+          id: r.id, date: r.date, time: r.time, timeEnd: r.time_end,
+          title: r.title || r.business, business: r.business, notes: r.notes,
+          location: r.location || r.address, type: r.type || 'appointment',
+          recordId: r.record_id, tab: r.tab, createdBy: r.created_by,
+          status: r.status, allDay: r.all_day
+        };
+      });
+    }
+  } catch(e) {
+    // Fallback to localStorage if D1 unavailable
+    appts = crmLoad('appointments') || [];
+  }
   appts.filter(function(a) {
     return a.date === todayStr && (!a.createdBy || a.createdBy === repName);
   }).forEach(function(a) {
