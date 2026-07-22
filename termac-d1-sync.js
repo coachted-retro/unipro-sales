@@ -874,6 +874,27 @@
     }
   }
 
+  // Remove a single record by id from local storage and mark it deleted in D1.
+  // Callers pass the table key (e.g. 'leads') and the record id to remove.
+  function crmDelete(key, id) {
+    try {
+      var pool = JSON.parse(localStorage.getItem('termac_crm_' + key) || '[]');
+      pool = pool.filter(function(r) { return r && r.id !== id; });
+      localStorage.setItem('termac_crm_' + key, JSON.stringify(pool));
+    } catch (e) {}
+    // Push deletion to D1 by setting status=deleted so the server record
+    // is marked and hydration skips it on next load
+    if (D1_SYNC_TABLES.includes(key)) {
+      try {
+        fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/' + key + '/' + id, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+          body: JSON.stringify({ status: 'deleted', updated_at: Date.now() })
+        }).catch(function() {});
+      } catch(e) {}
+    }
+  }
+
   // Additive merge, not a full replace. Fetches D1's current rows for a
   // table and adds any whose id isn't already in local storage — never
   // overwrites an existing local record, so an active edit on this
