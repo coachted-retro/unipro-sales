@@ -6481,7 +6481,7 @@ async function spRenderAccountsTab(view) {
 
   el.innerHTML = `
   <div style="margin-bottom:14px">${tabBtn('mine','👤 My Accounts')}${tabBtn('recent','🕐 Recently Viewed')}${tabBtn('search','🔍 Search All')}</div>
-  ${activeView === 'search' ? '<div class="sp-filter-bar"><input class="sp-search" id="spAcctSearchBox" placeholder="Search all accounts by name, business, phone, address…" oninput="spDebouncedAcctSearch(this.value)" autofocus></div>' : ''}
+  ${activeView === 'search' ? '<div class="sp-filter-bar"><input class="sp-search" id="spAcctSearchBox" placeholder="Search by name, business, phone, address, or ZIP…" oninput="spDebouncedAcctSearch(this.value)" autofocus></div>' : ''}
   <div id="spAcctResults" class="sp-record-grid"><div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--soft);font-size:14px">Loading…</div></div>`;
 
   if (activeView === 'mine') {
@@ -6537,6 +6537,32 @@ function spDebouncedAcctSearch(term) {
     var rows = await d1SearchAccounts(term, 50);
     spRenderAcctResults(rows, 'No accounts match "' + term + '".');
   }, 250);
+}
+
+var _spAcctZipTimer = null;
+function spFilterAcctsByZip(zip) {
+  clearTimeout(_spAcctZipTimer);
+  var grid = document.getElementById('spAcctZipResults');
+  if (!zip || zip.trim().length < 3) {
+    if (grid) grid.innerHTML = '<div style="grid-column:1/-1;font-size:13px;color:var(--soft)">Start typing a ZIP code above.</div>';
+    return;
+  }
+  _spAcctZipTimer = setTimeout(async function() {
+    if (grid) grid.innerHTML = '<div style="grid-column:1/-1;font-size:13px;color:var(--soft)">Searching…</div>';
+    var rows = await d1SearchAccounts(zip.trim(), 100);
+    var filtered = rows.filter(function(r) { return String(r.zip || r.address || '').indexOf(zip.trim()) !== -1; });
+    if (!filtered.length) {
+      if (grid) grid.innerHTML = '<div style="grid-column:1/-1;font-size:13px;color:var(--soft)">No accounts found in ZIP ' + escH(zip.trim()) + '.</div>';
+      return;
+    }
+    var mapped = filtered.map(function(raw) {
+      var r = (typeof TermacD1Sync !== 'undefined' && TermacD1Sync.d1ReverseMap) ? TermacD1Sync.d1ReverseMap('accounts', raw) : raw;
+      r.lifecycleStage = r.status || 'active';
+      return r;
+    });
+    spBuildServiceTagIndex();
+    if (grid) grid.innerHTML = '<div style="grid-column:1/-1;font-size:11px;color:var(--soft);margin-bottom:8px">' + mapped.length + ' account' + (mapped.length === 1 ? '' : 's') + ' in ZIP ' + escH(zip.trim()) + '</div>' + mapped.map(function(r) { return spRecordCard(r, 'accounts'); }).join('');
+  }, 300);
 }
 
 function spRenderLocationsTab() {
