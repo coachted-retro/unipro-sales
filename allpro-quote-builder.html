@@ -876,12 +876,48 @@ function qbUpdateLineFields(type) {
     html += fieldGroup('dim_l', 'Duct Length (ft)', 'number', '', 'Linear ft');
     html += fieldGroup('duct_bends', 'No. of 90 Bends', 'number', '0', '');
   }
-  // Fan specs
+  // Hood: CFM calculator fields (NFPA 96)
+  if (cfg.isHood) {
+    html += '</div>';
+    html += '<div style="background:#FFF8E7;border:1.5px solid #F2B705;border-radius:8px;padding:12px 14px;margin-bottom:12px">';
+    html += '<div style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#D97706;margin-bottom:8px">Ventilation / CFM Calculator (NFPA 96)</div>';
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:10px">';
+    html += fieldGroup('dim_l', 'Hood Length (in)', 'number', '', 'Inches');
+    html += fieldGroup('dim_w', 'Hood Width (in)', 'number', '', 'Inches');
+    html += fieldGroup('dim_h', 'Hood Height (in)', 'number', '', 'Inches');
+    html += '<div><div class="field-label">Equipment Type Under Hood</div>'
+      + '<select id="equip_type" class="field-input" style="font-size:12px;padding:7px 10px">'
+      + '<option value="light_duty">Light Duty (sandwich press, small griddle)</option>'
+      + '<option value="medium_duty" selected>Medium Duty (range, fryer, griddle)</option>'
+      + '<option value="heavy_duty">Heavy Duty (charbroiler, wok, braising)</option>'
+      + '<option value="extra_heavy">Extra Heavy (open-flame, multiple charbroilers)</option>'
+      + '<option value="dishwasher">Dishwasher / Dish Machine</option>'
+      + '</select></div>';
+    html += '<div><div class="field-label">Hood Type</div>'
+      + '<select id="hood_install_type" class="field-input" style="font-size:12px;padding:7px 10px">'
+      + '<option value="wall_mounted" selected>Wall Mounted (3 sides enclosed)</option>'
+      + '<option value="island">Island (4 sides open)</option>'
+      + '<option value="captive_air">Captive Air (supply air integrated)</option>'
+      + '</select></div>';
+    html += fieldGroup('ceiling_ht_in', 'Ceiling Height (in)', 'number', '108', '108 = 9 ft');
+    html += '</div>';
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:4px">';
+    html += '<div style="background:#fff;border-radius:6px;padding:8px 10px"><div class="field-label">Exhaust CFM Required</div><div id="cfm_exhaust_display" style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:16px;color:#C8102E">—</div></div>';
+    html += '<div style="background:#fff;border-radius:6px;padding:8px 10px"><div class="field-label">Makeup Air CFM (80%)</div><div id="cfm_mua_display" style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:16px;color:#1B5FA8">—</div></div>';
+    html += '<div style="background:#fff;border-radius:6px;padding:8px 10px"><div class="field-label">Min Duct Diameter</div><div id="cfm_duct_display" style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:16px;color:#1E7B3C">—</div></div>';
+    html += '</div>';
+    html += '<div id="cfm_notes" style="margin-top:8px;font-size:10px;color:#92400E;line-height:1.5"></div>';
+    html += '</div>';
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;margin-bottom:12px">';
+  }
+  // Fan specs (standalone fan line)
   if (cfg.hasFanSpecs) {
+    html += fieldGroup('fan_cfm', 'Fan CFM', 'number', '', 'Required CFM');
+    html += fieldGroup('fan_sp', 'Static Pressure (in wc)', 'number', '0.5', 'Typically 0.5-1.0');
     html += fieldGroup('fan_hp', 'Horsepower', 'text', '', 'e.g. 1 HP');
-    html += fieldGroup('fan_volts', 'Voltage', 'text', '', 'e.g. 220');
+    html += fieldGroup('fan_volts', 'Voltage', 'text', '', 'e.g. 208/230');
     html += fieldGroup('fan_phase', 'Phase', 'text', '', 'Single/Three');
-    html += fieldGroup('fan_mount', 'Mount / Attachment', 'text', '', 'Roof / Wall / Top of Duct');
+    html += fieldGroup('fan_mount', 'Mount', 'text', '', 'Roof / Wall');
   }
   // Material
   if (cfg.hasMaterial) {
@@ -899,14 +935,108 @@ function qbUpdateLineFields(type) {
   html += fieldGroup('new_price', 'Unit Price Override ($)', 'number', '', 'Leave blank to auto-calc');
   html += '</div>';
   container.innerHTML = html;
-  // Wire inputs to estimate
-  container.querySelectorAll('input').forEach(function(i) { i.addEventListener('input', qbEstimateLine); });
+  // Wire inputs to estimate + CFM calc
+  container.querySelectorAll('input,select').forEach(function(i) {
+    i.addEventListener('input', function() { qbCalcCFM(); qbEstimateLine(); });
+    i.addEventListener('change', function() { qbCalcCFM(); qbEstimateLine(); });
+  });
+  qbCalcCFM();
   qbEstimateLine();
 }
 
 function fieldGroup(id, label, type, val, placeholder) {
   return '<div><div class="field-label">' + label + '</div>'
     + '<input id="' + id + '" type="' + type + '" class="field-input" style="font-size:12px;padding:7px 10px" value="' + val + '" placeholder="' + placeholder + '"></div>';
+}
+
+// ============================================================
+// CFM ENGINE -- NFPA 96 ventilation calculations
+// ============================================================
+// Exhaust rate factors (CFM per sq ft of hood face area) by equipment type.
+// Source: NFPA 96 Table 6.1 / ASHRAE 2015 HVAC Applications Ch.33
+// These are minimum required values; AllPro specs to next standard size up.
+var CFM_FACTORS = {
+  light_duty:   { exhaust: 50,  label: 'Light Duty (sandwich press, small griddle)' },
+  medium_duty:  { exhaust: 75,  label: 'Medium Duty (range, fryer, griddle)' },
+  heavy_duty:   { exhaust: 100, label: 'Heavy Duty (charbroiler, wok, braising)' },
+  extra_heavy:  { exhaust: 150, label: 'Extra Heavy (open-flame, multiple charbroilers)' },
+  dishwasher:   { exhaust: 40,  label: 'Dishwasher / Dish Machine' }
+};
+// Island hoods (4 sides open) require 25% more CFM than wall-mounted per NFPA 96 6.1.3
+// Captive Air hoods recirculate a portion -- exhaust is 60% of standard Type I
+var HOOD_TYPE_MULTIPLIER = { wall_mounted: 1.0, island: 1.25, captive_air: 0.60 };
+// Makeup air (return/MUA) = 80% of exhaust for Type I balanced system.
+// Remaining 20% is positive pressure from kitchen to prevent conditioned air loss.
+var MUA_RATIO = 0.80;
+
+function qbCalcCFM() {
+  var exEl = document.getElementById('cfm_exhaust_display');
+  var muaEl = document.getElementById('cfm_mua_display');
+  var ductEl = document.getElementById('cfm_duct_display');
+  var notesEl = document.getElementById('cfm_notes');
+  if (!exEl) return; // not a hood line item
+
+  var lenIn = parseFloat((document.getElementById('dim_l') || {}).value) || 0;
+  var widIn = parseFloat((document.getElementById('dim_w') || {}).value) || 0;
+  var htIn  = parseFloat((document.getElementById('dim_h') || {}).value) || 0;
+  var equipType = ((document.getElementById('equip_type') || {}).value) || 'medium_duty';
+  var hoodType  = ((document.getElementById('hood_install_type') || {}).value) || 'wall_mounted';
+  var ceilIn = parseFloat((document.getElementById('ceiling_ht_in') || {}).value) || 108;
+
+  if (!lenIn || !widIn) {
+    exEl.textContent = '—'; muaEl.textContent = '—'; ductEl.textContent = '—';
+    if (notesEl) notesEl.textContent = 'Enter hood length and width to calculate.';
+    return;
+  }
+
+  // Hood face area in sq ft (length x width footprint, not the opening face)
+  var hoodSqFt = (lenIn / 12) * (widIn / 12);
+
+  // Base exhaust CFM
+  var factor = CFM_FACTORS[equipType] || CFM_FACTORS.medium_duty;
+  var mult = HOOD_TYPE_MULTIPLIER[hoodType] || 1.0;
+  var rawExhaust = hoodSqFt * factor.exhaust * mult;
+
+  // NFPA 96 6.1.2: minimum 50 CFM per linear foot of hood length for any Type I
+  var minByLength = (lenIn / 12) * 50;
+  var exhaustCFM = Math.max(rawExhaust, minByLength);
+  // Round up to nearest 50 CFM increment (standard fan sizing practice)
+  exhaustCFM = Math.ceil(exhaustCFM / 50) * 50;
+
+  // Makeup air CFM
+  var muaCFM = Math.ceil((exhaustCFM * MUA_RATIO) / 50) * 50;
+
+  // Minimum duct diameter: CFM / (duct velocity 1,500 fpm max per NFPA 96 7.2)
+  // Area (sq ft) = CFM / 1500; Diameter = sqrt(4 * area / pi) in inches
+  var ductAreaSqFt = exhaustCFM / 1500;
+  var ductDiamIn = Math.sqrt(4 * ductAreaSqFt / Math.PI) * 12;
+  // Round up to next standard duct size (6,7,8,9,10,12,14,16,18,20")
+  var stdDucts = [6,7,8,9,10,12,14,16,18,20,24];
+  var ductSize = stdDucts.find(function(d) { return d >= ductDiamIn; }) || 24;
+
+  // Overhang check: NFPA 96 requires hood to overhang cooking equipment by 6" on all sides
+  // We flag if height above cooking surface is outside 18"-48" recommended range
+  var notes = [];
+  var cookingSurfaceHt = 36; // standard commercial cooking surface height (inches)
+  var hoodClearance = ceilIn - htIn - cookingSurfaceHt;
+  if (htIn > 0 && (hoodClearance < 18 || hoodClearance > 48)) {
+    notes.push('Hood mounting height yields ' + Math.round(hoodClearance) + '" clearance above cooking surface. NFPA 96 recommends 18"-48". Verify with field conditions.');
+  }
+  if (hoodType === 'island') {
+    notes.push('Island hood: CFM increased 25% per NFPA 96 6.1.3 for 4-sided open exposure.');
+  }
+  if (hoodType === 'captive_air') {
+    notes.push('Captive Air: exhaust reduced to 60% — integrated supply air handles remaining ventilation load.');
+  }
+  notes.push('MUA at 80% exhaust maintains slight negative pressure per NFPA 96 balanced system design. Remaining 20% make-up air via transfer air from dining / adjacent conditioned space.');
+
+  exEl.textContent = exhaustCFM.toLocaleString() + ' CFM';
+  muaEl.textContent = muaCFM.toLocaleString() + ' CFM';
+  ductEl.textContent = ductSize + '"';
+  if (notesEl) notesEl.innerHTML = notes.map(function(n) { return '• ' + n; }).join('<br>');
+
+  // Store on window so qbCommitLine can save these values
+  window._lastCFM = { exhaust: exhaustCFM, mua: muaCFM, duct: ductSize, factor: factor.exhaust, mult: mult, hoodSqFt: hoodSqFt };
 }
 
 function qbEstimateLine() {
@@ -942,10 +1072,18 @@ function qbCommitLine() {
   var unitPrice = overridePrice || autoPrice;
   var lineTotal = unitPrice * qty;
   var specs = {};
-  ['duct_bends','fan_hp','fan_volts','fan_phase','fan_mount','mat_gauge','mat_finish','mat_grade','sink_count','drawer_count'].forEach(function(k) {
+  ['duct_bends','fan_hp','fan_cfm','fan_sp','fan_volts','fan_phase','fan_mount','mat_gauge','mat_finish','mat_grade','sink_count','drawer_count','equip_type','hood_install_type','ceiling_ht_in'].forEach(function(k) {
     var el = document.getElementById(k);
     if (el && el.value) specs[k] = el.value;
   });
+  // Save CFM results for hood items
+  if (window._lastCFM && cfg.isHood) {
+    specs.cfm_exhaust = window._lastCFM.exhaust;
+    specs.cfm_mua = window._lastCFM.mua;
+    specs.duct_diameter = window._lastCFM.duct;
+    specs.cfm_factor = window._lastCFM.factor;
+    specs.hood_sqft = window._lastCFM.hoodSqFt;
+  }
   var dimL = parseFloat((document.getElementById('dim_l') || {}).value) || null;
   var dimW = parseFloat((document.getElementById('dim_w') || {}).value) || null;
   var dimH = parseFloat((document.getElementById('dim_h') || {}).value) || null;
@@ -993,12 +1131,19 @@ function qbRenderLines() {
     var matStr = '';
     if (line.material_grade && line.material_gauge) matStr = line.material_grade + ' ss, ' + line.material_gauge + 'ga';
     if (line.material_finish) matStr += (matStr ? ', ' : '') + line.material_finish;
+    var cfmStr = '';
+    if (line.specs && line.specs.cfm_exhaust) {
+      cfmStr = 'Exhaust: ' + Number(line.specs.cfm_exhaust).toLocaleString() + ' CFM'
+        + ' | MUA: ' + Number(line.specs.cfm_mua).toLocaleString() + ' CFM'
+        + ' | Duct: ' + line.specs.duct_diameter + '"';
+    }
     return '<div class="line-item">'
       + '<div class="line-item-hdr">'
       + '<span class="line-item-num">' + (i + 1) + '</span>'
       + '<div style="flex:1">'
       + '<div class="line-item-type">' + line.description + '</div>'
       + (dimStr ? '<div style="font-size:11px;color:var(--soft);margin-top:1px">' + dimStr + (matStr ? ' | ' + matStr : '') + '</div>' : '')
+      + (cfmStr ? '<div style="font-size:11px;color:var(--red);margin-top:2px;font-weight:700">&#128168; ' + cfmStr + '</div>' : '')
       + (line.notes ? '<div style="font-size:11px;color:var(--soft);margin-top:1px;font-style:italic">' + line.notes + '</div>' : '')
       + '</div>'
       + '<span class="line-item-total">$' + (line.line_total || 0).toLocaleString('en-US', { minimumFractionDigits:2, maximumFractionDigits:2 }) + '</span>'
