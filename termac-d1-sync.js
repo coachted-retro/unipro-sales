@@ -257,8 +257,8 @@
   // filtering a giant local array that can no longer exist.
   async function d1MyAccounts(repName, limit) {
     return d1RawQuery(
-      "SELECT * FROM accounts WHERE (assigned_rep = ? OR assigned_rep IS NULL OR assigned_rep = '') AND (status IS NULL OR status != 'archived') ORDER BY updated_at DESC LIMIT ?",
-      [repName, limit || 100]
+      "SELECT * FROM accounts WHERE assigned_rep = ? AND (status IS NULL OR status != 'archived') ORDER BY updated_at DESC LIMIT ?",
+            [repName, limit || 100]
     );
   }
 
