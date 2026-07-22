@@ -937,6 +937,12 @@ function spEnterPortal() {
   })();
   // ── END USER CHIP ───────────────────────────────────────────────────────
   spUpdateQueueBadge();
+
+  // Pre-warm D1 cache for all tables on login -- per Ted's rule, everything from D1
+  if (typeof crmWarmCache === 'function') {
+    crmWarmCache().catch(function(e){ console.warn('Cache warm failed:', e); });
+  }
+
   spNav('home');
 
   // Pulls anything new from D1 on load, then keeps checking every 30
@@ -1928,9 +1934,17 @@ async function spForceRefreshMyData() {
   var btn = document.getElementById('spRefreshDataBtn');
   if (btn) { btn.disabled = true; btn.textContent = '🔄 Refreshing…'; }
   spToast('🔄 Refreshing your data from the server…');
+  // Clear D1 in-memory cache so next crmLoad re-fetches everything fresh
+  if (typeof crmInvalidate === 'function') {
+    SP_REFRESH_POOLS.forEach(function(p) { crmInvalidate(p); });
+  }
   SP_REFRESH_POOLS.forEach(function(p) {
     try { localStorage.removeItem('termac_crm_' + p); } catch (e) {}
   });
+  // Re-warm from D1
+  if (typeof crmWarmCache === 'function') {
+    crmWarmCache().catch(function(){});
+  }
   var failed = [];
   var totalAdded = 0;
   for (var i = 0; i < SP_REFRESH_POOLS.length; i++) {
