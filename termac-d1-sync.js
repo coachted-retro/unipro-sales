@@ -909,16 +909,17 @@
       var data = await res.json();
       if (data.results) {
         _crmMemCache[key] = { data: data.results, ts: Date.now() };
-        // Notify any waiting renders -- re-render if a render function exists
+        // Only re-render if the user is currently on that tab
+        // NEVER fire a render that would overwrite whatever tab the user is on
         var renderFns = {
           leads: typeof spRenderCRM === 'function' ? function(){ spRenderCRM('leads'); } : null,
           contacts: typeof spRenderCRM === 'function' ? function(){ spRenderCRM('contacts'); } : null,
           locations: typeof spRenderLocationsTab === 'function' ? spRenderLocationsTab : null,
           opportunities: typeof spRenderOpportunitiesTab === 'function' ? spRenderOpportunitiesTab : null,
-          appointments: typeof spRenderTodayAgenda === 'function' ? spRenderTodayAgenda : null,
         };
         var fn = renderFns[key];
-        if (fn && document.getElementById('spContent')) {
+        var currentTab = typeof _spTab !== 'undefined' ? _spTab : '';
+        if (fn && document.getElementById('spContent') && currentTab === key) {
           try { fn(); } catch(e) {}
         }
       }
