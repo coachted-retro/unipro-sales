@@ -162,7 +162,7 @@ async function handleSsoExchange(request, env) {
     grant_type: 'authorization_code',
     code: code,
     redirect_uri: env.SSO_REDIRECT_URI,
-    scope: 'openid profile email offline_access https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/Calendars.ReadWrite',
+    scope: 'openid profile email offline_access https://graph.microsoft.com/Mail.Send',
   });
 
   let tokenData;
@@ -272,7 +272,7 @@ async function handleSendMail(request, env) {
       client_secret: env.SSO_CLIENT_SECRET,
       grant_type: 'refresh_token',
       refresh_token: tokenRow.refresh_token,
-      scope: 'openid profile email offline_access https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/Calendars.ReadWrite',
+      scope: 'openid profile email offline_access https://graph.microsoft.com/Mail.Send',
     });
     let refreshData;
     try {
@@ -441,7 +441,7 @@ async function handleCalendarPush(request, env) {
   // Refresh if near expiry
   if (tokenRow.expires_at < Date.now() + 60000 && tokenRow.refresh_token) {
     try {
-      const rp = new URLSearchParams({ client_id: env.SSO_CLIENT_ID, client_secret: env.SSO_CLIENT_SECRET, grant_type: 'refresh_token', refresh_token: tokenRow.refresh_token, scope: 'openid profile email offline_access https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/Calendars.ReadWrite https://graph.microsoft.com/Calendars.ReadWrite' });
+      const rp = new URLSearchParams({ client_id: env.SSO_CLIENT_ID, client_secret: env.SSO_CLIENT_SECRET, grant_type: 'refresh_token', refresh_token: tokenRow.refresh_token, scope: 'openid profile email offline_access https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/Calendars.ReadWrite' });
       const rr = await fetch('https://login.microsoftonline.com/' + env.SSO_TENANT_ID + '/oauth2/v2.0/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: rp.toString() });
       const rd = await rr.json();
       if (rd.access_token) {
