@@ -1337,9 +1337,23 @@ function spRenderCRM(tab) {
   const q = (document.getElementById('spCrmSearch')?.value || '').trim().toLowerCase();
   const co = document.getElementById('spCrmCo')?.value || '';
   const st = document.getElementById('spCrmSt')?.value || '';
+  const svc = document.getElementById('spCrmSvc')?.value || '';
+  const zipF = (document.getElementById('spCrmZip')?.value || '').trim();
   if (q) data = data.filter(r => JSON.stringify(r).toLowerCase().includes(q));
   if (co) data = data.filter(r => (r.company||'').toLowerCase() === co.toLowerCase());
   if (st) data = data.filter(r => (r.status||'') === st);
+  if (svc) {
+    var svcKey = svc.toLowerCase().replace(/[^a-z0-9]/g,'').replace('qualityiii','quality3').replace('filterman','filterman').replace('allpro','allpro');
+    data = data.filter(function(r) {
+      var divMatch = (r.division||'').toLowerCase().replace(/[^a-z0-9]/g,'') === svcKey;
+      var svcArr = Array.isArray(r.services) ? r.services : (typeof r.services === 'string' ? JSON.parse(r.services || '[]') : []);
+      var svcMatch = svcArr.some(function(s) { return String(s).toLowerCase().replace(/[^a-z0-9]/g,'') === svcKey; });
+      return divMatch || svcMatch;
+    });
+  }
+  if (zipF) data = data.filter(function(r) {
+    return String(r.zip || r.address || '').toLowerCase().includes(zipF.toLowerCase());
+  });
 
   // Sort: hot inbound leads first (fire-flagged, newest of those on top),
   // then everything else by most recent — so a lead a customer sent in
@@ -1380,12 +1394,17 @@ function spRenderCRM(tab) {
   </div>` : ''}
   <!-- Filter bar -->
   <div class="sp-filter-bar">
-    <input class="sp-search" id="spCrmSearch" placeholder="Search by name, business, zip…" oninput="spRenderCRM('${tab}')" value="${escH(q)}">
-    <select class="sp-filter-sel" id="spCrmCo" onchange="spRenderCRM('${tab}')">
-      <option value="">All Divisions</option>
-      <option>UniPro</option><option>Quality III</option><option>AllPro</option>
-      <option>Filter Man</option><option>GTO</option><option>Termac</option>
+    <input class="sp-search" id="spCrmSearch" placeholder="Search by name, business, phone, address, zip…" oninput="spRenderCRM('${tab}')" value="${escH(q)}">
+    <select class="sp-filter-sel" id="spCrmSvc" onchange="spRenderCRM('${tab}')" title="Filter by service">
+      <option value="">All Services</option>
+      <option value="unipro">UniPro</option>
+      <option value="quality3">Quality III</option>
+      <option value="allpro">AllPro</option>
+      <option value="filterman">Filter Man</option>
+      <option value="gto">GTO</option>
+      <option value="termac">Termac</option>
     </select>
+    <input class="sp-search sp-filter-sel" id="spCrmZip" placeholder="ZIP…" maxlength="10" oninput="spRenderCRM('${tab}')" style="max-width:90px" title="Filter by ZIP code">
     <select class="sp-filter-sel" id="spCrmSt" onchange="spRenderCRM('${tab}')">
       <option value="">All Statuses</option>
       <option>new</option><option>hot</option><option>warm</option><option>cold</option><option>active</option>
@@ -1421,9 +1440,11 @@ function spRenderCRM(tab) {
   el.innerHTML = html;
 
   // Restore filter values
-  if (q) document.getElementById('spCrmSearch').value = q;
-  if (co) document.getElementById('spCrmCo').value = co;
-  if (st) document.getElementById('spCrmSt').value = st;
+  if (q)    { var s = document.getElementById('spCrmSearch'); if (s) s.value = q; }
+  if (co)   { var s = document.getElementById('spCrmCo');     if (s) s.value = co; }
+  if (svc)  { var s = document.getElementById('spCrmSvc');    if (s) s.value = svc; }
+  if (zipF) { var s = document.getElementById('spCrmZip');    if (s) s.value = zipF; }
+  if (st)   { var s = document.getElementById('spCrmSt');     if (s) s.value = st; }
 }
 
 // 2026-07-20 per Ted: real service tags per account, derived from
@@ -6551,14 +6572,38 @@ async function spRenderAccountsTab(view) {
     return '<button onclick="spRenderAccountsTab(\'' + key + '\')" style="padding:8px 16px;border-radius:7px;border:1.5px solid ' + (active ? 'var(--red)' : 'var(--line)') + ';background:' + (active ? 'var(--red)' : '#fff') + ';color:' + (active ? '#fff' : 'var(--ink)') + ';font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer;margin-right:8px">' + label + '</button>';
   };
 
+  // Service + ZIP filter bar -- shown on service/zip/search views
+  var svcFilterBar = '<div class="sp-filter-bar" style="margin-bottom:10px">' +
+    '<select id="spAcctSvcFilter" class="sp-filter-sel" onchange="spAcctApplyFilters()" title="Filter by service division">' +
+    '<option value="">All Services</option>' +
+    '<option value="unipro">UniPro</option>' +
+    '<option value="quality3">Quality III</option>' +
+    '<option value="allpro">AllPro</option>' +
+    '<option value="filterman">Filter Man</option>' +
+    '<option value="gto">GTO</option>' +
+    '<option value="termac">Termac</option>' +
+    '</select>' +
+    '<input class="sp-search sp-filter-sel" id="spAcctZipFilter" placeholder="ZIP…" maxlength="10" ' +
+    'oninput="spAcctApplyFilters()" style="max-width:90px" title="Filter by ZIP code">' +
+    '</div>';
+
   el.innerHTML = `
-  <div style="margin-bottom:14px">${tabBtn('mine','👤 My Accounts')}${tabBtn('recent','🕐 Recently Viewed')}${tabBtn('search','🔍 Search All')}</div>
-  ${activeView === 'search' ? '<div class="sp-filter-bar"><input class="sp-search" id="spAcctSearchBox" placeholder="Search by name, business, phone, address, or ZIP…" oninput="spDebouncedAcctSearch(this.value)" autofocus></div>' : ''}
+  <div style="margin-bottom:10px">
+    ${tabBtn('mine','👤 My Accounts')}${tabBtn('recent','🕐 Recently Viewed')}${tabBtn('search','🔍 Search All')}${tabBtn('service','🛠️ By Service')}${tabBtn('zip','📍 By ZIP')}
+  </div>
+  ${activeView === 'search' ? '<div class="sp-filter-bar" style="margin-bottom:8px"><input class="sp-search" id="spAcctSearchBox" placeholder="Search by name, business, phone, address, ZIP…" oninput="spDebouncedAcctSearch(this.value)" autofocus></div>' : ''}
+  ${(activeView === 'service' || activeView === 'zip') ? svcFilterBar : ''}
   <div id="spAcctResults" class="sp-record-grid"><div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--soft);font-size:14px">Loading…</div></div>`;
 
-  if (activeView === 'mine') {
+  if (activeView === 'service') {
+    document.getElementById('spAcctResults').innerHTML = '<div style="grid-column:1/-1;font-size:13px;color:var(--soft);padding:20px 0">Pick a service division above to see your accounts. Add a ZIP to narrow further.</div>';
+    return;
+  } else if (activeView === 'zip') {
+    document.getElementById('spAcctResults').innerHTML = '<div style="grid-column:1/-1;font-size:13px;color:var(--soft);padding:20px 0">Enter a ZIP code above to filter your accounts. Add a service to narrow further.</div>';
+    return;
+  } else if (activeView === 'mine') {
     const rows = await d1MyAccounts(_spRep.name, 100);
-    spRenderAcctResults(rows, 'No accounts assigned to you yet, and none sitting unassigned right now. Try Search All to find a specific one.');
+    spRenderAcctResults(rows, 'No accounts assigned to you yet. Try Search All to find a specific one.');
   } else if (activeView === 'recent') {
     const rv = JSON.parse(sessionStorage.getItem('sp_recently_viewed') || '[]');
     const ids = rv.filter(function(item) { return item.tab === 'accounts'; }).map(function(item) { return item.id; });
@@ -6634,6 +6679,53 @@ function spFilterAcctsByZip(zip) {
     });
     spBuildServiceTagIndex();
     if (grid) grid.innerHTML = '<div style="grid-column:1/-1;font-size:11px;color:var(--soft);margin-bottom:8px">' + mapped.length + ' account' + (mapped.length === 1 ? '' : 's') + ' in ZIP ' + escH(zip.trim()) + '</div>' + mapped.map(function(r) { return spRecordCard(r, 'accounts'); }).join('');
+  }, 300);
+}
+
+var _spAcctSvcTimer = null;
+function spAcctApplyFilters() {
+  clearTimeout(_spAcctSvcTimer);
+  var svc = (document.getElementById('spAcctSvcFilter')?.value || '').trim();
+  var zip = (document.getElementById('spAcctZipFilter')?.value || '').trim();
+  var grid = document.getElementById('spAcctResults');
+  if (!svc && !zip) {
+    if (grid) grid.innerHTML = '<div style="grid-column:1/-1;font-size:13px;color:var(--soft);padding:20px 0">Pick a service or enter a ZIP code above to filter your accounts.</div>';
+    return;
+  }
+  _spAcctSvcTimer = setTimeout(async function() {
+    if (grid) grid.innerHTML = '<div style="grid-column:1/-1;font-size:13px;color:var(--soft)">Searching…</div>';
+    // Build SQL dynamically based on which filters are active
+    var conditions = ["status != 'archived' OR status IS NULL"];
+    var params = [];
+    if (svc) {
+      conditions.push("(LOWER(division) LIKE ? OR LOWER(services) LIKE ?)");
+      params.push('%' + svc + '%', '%' + svc + '%');
+    }
+    if (zip) {
+      conditions.push("(zip LIKE ? OR address LIKE ?)");
+      params.push('%' + zip + '%', '%' + zip + '%');
+    }
+    var sql = 'SELECT * FROM accounts WHERE ' + conditions.join(' AND ') + ' ORDER BY updated_at DESC LIMIT 200';
+    var rows = await d1RawQuery(sql, params);
+    if (!rows || !rows.length) {
+      var msg = svc && zip ? 'No accounts found for that service in ZIP ' + zip + '.'
+               : svc ? 'No accounts found for ' + svc + '.'
+               : 'No accounts found in ZIP ' + zip + '.';
+      if (grid) grid.innerHTML = '<div style="grid-column:1/-1;font-size:13px;color:var(--soft)">' + escH(msg) + '</div>';
+      return;
+    }
+    var svcLabel = {'unipro':'UniPro','quality3':'Quality III','allpro':'AllPro','filterman':'Filter Man','gto':'GTO','termac':'Termac'}[svc] || svc;
+    var summary = (svc ? svcLabel : '') + (svc && zip ? ' · ' : '') + (zip ? 'ZIP ' + zip : '');
+    var mapped = rows.map(function(raw) {
+      var r = (typeof TermacD1Sync !== 'undefined' && TermacD1Sync.d1ReverseMap) ? TermacD1Sync.d1ReverseMap('accounts', raw) : raw;
+      r.lifecycleStage = r.status || 'active';
+      return r;
+    });
+    spBuildServiceTagIndex();
+    if (grid) grid.innerHTML =
+      '<div style="grid-column:1/-1;font-size:11px;color:var(--soft);margin-bottom:8px">' +
+      rows.length + ' account' + (rows.length === 1 ? '' : 's') + (summary ? ' — ' + escH(summary) : '') + '</div>' +
+      mapped.map(function(r) { return spRecordCard(r, 'accounts'); }).join('');
   }, 300);
 }
 
