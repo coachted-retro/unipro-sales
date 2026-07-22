@@ -1081,7 +1081,7 @@ function spRender(tab) {
   else if (tab === 'leads')         spRenderCRM('leads');
   else if (tab === 'locations')     spRenderLocationsTab();
   else if (tab === 'contacts')      spRenderCRM('contacts');
-  else if (tab === 'opportunities') spRenderCRM('opportunities');
+  else if (tab === 'opportunities') spRenderCRM('opportunities').catch(function(e){ console.error('Opp render error:', e); });
   else if (tab === 'accounts')      spRenderAccountsTab();
   else if (tab === 'goals')         spRenderGoals();
   else if (tab === 'leaderboard')   spRenderLeaderboard();
@@ -1211,7 +1211,7 @@ function spRecentlyViewedIds(tab) {
 }
 
 function spRenderCRM(tab) {
-  if (tab === 'opportunities') { spRenderOpportunitiesTab(); return; }
+  if (tab === 'opportunities') { spRenderOpportunitiesTab(); return Promise.resolve(); }
   const el = document.getElementById('spContent');
   const stageKeys = SP_TAB_STAGES[tab] || ['lead'];
 
@@ -7188,9 +7188,14 @@ function spOpenResolveModal(id, outcome) {
       '<select id="oppLostPriceDivision" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px"><option value="">— Select a service —</option>' + priceDivOpts + '</select>' +
     '</div>'
   ) : '';
+    var pendingCount = o.pendingCount || 0;
+  var pendingDaysMin = pendingCount >= 1 ? 7 : 3;
+  var pendingDaysMax = pendingCount >= 1 ? 14 : 5;
+  var autoFollowUp = new Date(Date.now() + pendingDaysMin * 86400000).toISOString().slice(0,10);
   var pendingDateHtml = outcome === 'pending' ? (
-    '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">New target close date</label>' +
-    '<input id="oppResolveNewDate" type="date" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:12px;box-sizing:border-box">'
+    '<div style="background:#EFF6FF;border-radius:7px;padding:9px 12px;font-size:12px;color:#1E40AF;margin-bottom:10px">📅 ' + (pendingCount >= 1 ? 'Second follow-up: 7–14 day window' : 'First follow-up: 3–5 day window') + ' — auto-set below, adjust if needed.</div>' +
+    '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Follow-up date</label>' +
+    '<input id="oppResolveNewDate" type="date" value="' + autoFollowUp + '" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:12px;box-sizing:border-box">'
   ) : '';
 
   var wrap = document.createElement('div');
@@ -7201,7 +7206,13 @@ function spOpenResolveModal(id, outcome) {
       '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:18px;color:var(--ink);margin-bottom:4px">' + titleMap[outcome] + '</div>' +
       '<div style="font-size:12px;color:var(--soft);margin-bottom:16px">' + escH(o.name || 'Opportunity') + '</div>' +
       reasonHtml + priceDivHtml + pendingDateHtml +
-      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Notes</label>' +
+      (outcome === 'lost' ? (
+      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Value of lost opportunity</label>' +
+      '<input id="oppLostValue" type="number" step="0.01" value="' + (o.value || '') + '" placeholder="$ amount" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:10px;box-sizing:border-box">' +
+      '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Competitor name <span style="font-weight:400;text-transform:none">(if applicable)</span></label>' +
+      '<input id="oppLostCompetitor" type="text" placeholder="Who did they go with?" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;margin-bottom:10px;box-sizing:border-box">'
+    ) : '') +
+    '<label style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Notes</label>' +
       '<textarea id="oppResolveNotes" placeholder="What happened, what was said..." rows="3" style="width:100%;padding:8px 10px;border-radius:7px;border:1.5px solid var(--line);font-size:13px;resize:vertical;box-sizing:border-box;margin-bottom:16px"></textarea>' +
       '<div style="display:flex;gap:10px;justify-content:flex-end">' +
         '<button onclick="document.getElementById(\'spResolveModal\').remove()" style="padding:8px 18px;border-radius:7px;border:1.5px solid var(--line);background:#fff;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:700">Cancel</button>' +
@@ -7227,7 +7238,15 @@ function spResolveOpportunity(id, outcome) {
   if (outcome === 'lost' || outcome === 'pending') {
     var reason = document.getElementById('oppResolveReason')?.value;
     if (!reason) { alert('Please select a reason.'); return; }
-    if (outcome === 'lost') o.lostReasonCode = reason; else o.pendingReasonCode = reason;
+    if (outcome === 'lost') {
+      o.lostReasonCode = reason;
+      var lostVal = document.getElementById('oppLostValue')?.value;
+      if (lostVal) o.lostValue = parseFloat(lostVal);
+      var competitor = (document.getElementById('oppLostCompetitor')?.value || '').trim();
+      if (competitor) o.lostCompetitor = competitor;
+    } else {
+      o.pendingReasonCode = reason;
+    }
     if (!notes) { alert('A quick note on context is required — this is what a manager will see when reviewing why this deal is stalled or lost.'); return; }
   }
   // 2026-07-16 per Ted: "Price too high" alone isn't trackable -- need
@@ -7240,13 +7259,11 @@ function spResolveOpportunity(id, outcome) {
   }
   if (outcome === 'pending') {
     var newDate = document.getElementById('oppResolveNewDate')?.value;
-    if (!newDate) { alert('A new target close date is required when marking something pending — otherwise it just sits flagged again with no plan.'); return; }
+    if (!newDate) { alert('A new target close date is required when marking something pending.'); return; }
     o.expectedClose = newDate;
-    // Resets the 60-day check-in clock -- this confirmation IS the
-    // check-in, so the SLA badge and the dashboard nag banner both go
-    // quiet until 60 more days pass from right now, instead of still
-    // measuring from the opportunity's original creation date.
     o.flaggedAt = Date.now();
+    // Track how many times this has been marked pending
+    o.pendingCount = (o.pendingCount || 0) + 1;
   }
 
   o.resolutionStatus = outcome;
@@ -7411,11 +7428,160 @@ function spResolveOpportunity(id, outcome) {
 // Contact or Account it's attached to, shows here with a click-through
 // to its real parent record. This is search/reporting surface only —
 // creation and resolution happen on the parent record itself.
-function spRenderOpportunitiesTab() {
+
+// ══════════════════════════════════════════════════════════════════════
+//  OPPORTUNITY DETAIL PAGE
+//  Full detail view for a single opportunity -- value, division, status,
+//  notes, photos, linked location, Won/Pending/Lost buttons.
+// ══════════════════════════════════════════════════════════════════════
+async function spOpenOppDetail(oppId) {
   var el = document.getElementById('spContent');
+  if (!el) return;
+
+  // Load from D1
+  var o = null;
+  try {
+    var res = await fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/opportunities/' + oppId, {
+      headers: { 'X-API-Secret': 'termac2026' }
+    });
+    var data = await res.json();
+    if (data.ok && data.result) {
+      o = data.result;
+      // Normalize field names
+      o.resolutionStatus = o.resolution_status || o.resolutionStatus || 'open';
+      o.locationId = o.location_id || o.locationId;
+      o.accountId = o.account_id || o.accountId;
+      o.lostReasonCode = o.lost_reason_code || o.lostReasonCode;
+      o.resolutionNotes = o.resolution_notes || o.resolutionNotes;
+    }
+  } catch(e) {}
+
+  // Fallback to localStorage
+  if (!o) {
+    o = (crmLoad('opportunities') || []).find(function(x){ return x.id === oppId; });
+  }
+  if (!o) { spToast('Opportunity not found.'); return; }
+
+  var status = o.resolutionStatus || 'open';
+  var STATUS_COLOR = { open:'#D97706', won:'#166534', lost:'#C8102E', pending:'#0D7490' };
+  var STATUS_BG    = { open:'#FEF3C7', won:'#DCFCE7', lost:'#FEE9EC', pending:'#E0F2FE' };
+  var STATUS_LABEL = { open:'Open', won:'Won', lost:'Lost', pending:'Pending' };
+  var color = STATUS_COLOR[status] || '#6B7280';
+  var bg = STATUS_BG[status] || '#F3F4F6';
+
+  var value = parseFloat(o.value || o.monthlyValue || 0);
+  var valueStr = '$' + value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  // Load linked location
+  var loc = null;
+  if (o.locationId) {
+    try {
+      var locRes = await fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/locations/' + o.locationId, {
+        headers: { 'X-API-Secret': 'termac2026' }
+      });
+      var locData = await locRes.json();
+      if (locData.ok) loc = locData.result;
+    } catch(e) {}
+    if (!loc) loc = (crmLoad('locations') || []).find(function(x){ return x.id === o.locationId; });
+  }
+
+  var locName = loc ? (loc.name || loc.location_name || '') : '';
+  var locAddr = loc ? (loc.address || '') : '';
+
+  var isOpen = status === 'open' || status === 'pending';
+
+  el.innerHTML = '<div style="max-width:680px;margin:0 auto">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">'
+      + '<button class="sp-btn sp-btn-ghost" onclick="spNav('opportunities')">← Back to Opportunities</button>'
+    + '</div>'
+    + '<div class="sp-card">'
+      + '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px">'
+        + '<div>'
+          + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:22px;color:var(--ink)">' + escH(o.name || 'Opportunity') + '</div>'
+          + '<div style="font-size:13px;color:var(--soft);margin-top:3px">' + escH(o.division || '') + '</div>'
+        + '</div>'
+        + '<span style="background:' + bg + ';color:' + color + ';border-radius:6px;padding:5px 14px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px">' + (STATUS_LABEL[status] || status) + '</span>'
+      + '</div>'
+
+      + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">'
+        + '<div style="background:var(--bg);border-radius:8px;padding:12px">'
+          + '<div style="font-size:10px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">Value</div>'
+          + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:24px;color:var(--ink)">' + valueStr + '</div>'
+        + '</div>'
+        + '<div style="background:var(--bg);border-radius:8px;padding:12px">'
+          + '<div style="font-size:10px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">Division</div>'
+          + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:16px;color:var(--ink)">' + escH(o.division || '—') + '</div>'
+        + '</div>'
+      + '</div>'
+
+      + (locName ? '<div style="padding:10px 12px;background:var(--bg);border-radius:8px;margin-bottom:14px;cursor:pointer" onclick="spViewRecord('' + escH(o.locationId || '') + '','locations')">'
+          + '<div style="font-size:10px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px">Location</div>'
+          + '<div style="font-size:13px;font-weight:700;color:var(--ink)">📍 ' + escH(locName) + '</div>'
+          + (locAddr ? '<div style="font-size:11px;color:var(--soft)">' + escH(locAddr) + '</div>' : '')
+        + '</div>' : '')
+
+      + (o.notes ? '<div style="margin-bottom:14px">'
+          + '<div style="font-size:10px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">Notes</div>'
+          + '<div style="font-size:13px;color:var(--ink);white-space:pre-wrap">' + escH(o.notes) + '</div>'
+        + '</div>' : '')
+
+      + (o.lostReasonCode ? '<div style="background:#FEE9EC;border-radius:8px;padding:10px 12px;margin-bottom:14px">'
+          + '<div style="font-size:10px;font-weight:700;color:#C8102E;text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px">Lost Reason</div>'
+          + '<div style="font-size:13px;color:#C8102E;font-weight:700">' + escH(o.lostReasonCode) + '</div>'
+          + (o.resolutionNotes ? '<div style="font-size:12px;color:#991B1B;margin-top:4px">' + escH(o.resolutionNotes) + '</div>' : '')
+        + '</div>' : '')
+
+      + (isOpen ? '<div style="display:flex;gap:8px;margin-top:6px">'
+          + '<button onclick="spOpenResolveModal('' + oppId + '','won')" style="flex:1;background:#166534;color:#fff;border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;cursor:pointer">✅ Won</button>'
+          + '<button onclick="spOpenResolveModal('' + oppId + '','pending')" style="flex:1;background:#0D7490;color:#fff;border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;cursor:pointer">⏳ Pending</button>'
+          + '<button onclick="spOpenResolveModal('' + oppId + '','lost')" style="flex:1;background:#C8102E;color:#fff;border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;cursor:pointer">🚫 Lost</button>'
+        + '</div>' : '')
+
+    + '</div>'
+  + '</div>';
+}
+
+async function spRenderOpportunitiesTab() {
+  var el = document.getElementById('spContent');
+  if (!el) return;
+  // Show loading state immediately
   var activeView = _spMultiView['opportunities'] || 'mine';
   var divisionFilter = document.getElementById('spOppDivisionFilter')?.value || '';
-  var opps = crmLoad('opportunities') || [];
+
+  // Query D1 live -- opportunities are stored in D1, not localStorage
+  var opps = [];
+  try {
+    var repName = _spRep ? _spRep.name : '';
+    var sql = "SELECT * FROM opportunities WHERE resolution_status != 'archived' ORDER BY created_at DESC LIMIT 200";
+    var result = await fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+      body: JSON.stringify({ sql: sql, params: [] })
+    });
+    var data = await result.json();
+    opps = (data.results || []).map(function(r) {
+      return {
+        id: r.id,
+        name: r.name,
+        division: r.division,
+        value: r.value || 0,
+        monthlyValue: r.monthly_value,
+        resolutionStatus: r.resolution_status || 'open',
+        locationId: r.location_id,
+        accountId: r.account_id,
+        contactId: r.contact_id,
+        assignedRep: r.assigned_rep,
+        notes: r.notes,
+        created: r.created_at,
+        lostReasonCode: r.lost_reason_code,
+        resolutionNotes: r.resolution_notes,
+        flaggedAt: r.flagged_at,
+      };
+    });
+  } catch(e) {
+    // Fallback to localStorage if D1 unavailable
+    opps = crmLoad('opportunities') || [];
+  }
 
   if (activeView === 'recent') {
     var recentIds = spRecentlyViewedIds('opportunities');
@@ -7474,7 +7640,7 @@ function spRenderOpportunitiesTab() {
       else parent = (crmLoad('locations')||[]).find(function(l){ return l.id === parentId; });
     }
     var parentName = parent ? (parent.business || parent.name || parent.location_name || 'Unknown') : (o.name ? '' : 'Unlinked');
-    var clickAction = parentId ? 'spViewRecord(\'' + parentId + '\',\'' + parentType + '\')' : 'spToast(\'No linked location yet — edit the opportunity to add one.\')';
+        var clickAction = 'spOpenOppDetail(\\'' + o.id + '\\')'
     var slaAnchor = o.flaggedAt || o.created;
     var daysOpen = slaAnchor ? Math.floor((Date.now() - slaAnchor) / 86400000) : 0;
     var slaDays = o.slaDays || 60;
