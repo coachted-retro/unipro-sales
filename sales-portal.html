@@ -1051,6 +1051,7 @@ document.addEventListener('click', function(e) {
 });
 
 function spNav(tab) {
+  _spNavOrigin = null; // navigating to a main tab clears any saved origin
   _spTab = tab;
   _spDetailOpen = false;
   // Update tab active state
@@ -1195,6 +1196,7 @@ const SP_TAB_STAGES = {
 //  rearchitecture needed the way Accounts required.
 // ══════════════════════════════════════════════════════
 var _spMultiView = {};
+var _spNavOrigin = null;
 function spSwitchView(tab, view) {
   _spMultiView[tab] = view;
   spRender(tab);
@@ -5205,6 +5207,11 @@ function spViewRecord(id, tab) {
             localPool.push(rec);
             try { localStorage.setItem('termac_crm_' + tbl, JSON.stringify(localPool)); } catch(e) {}
           }
+          if (!_spNavOrigin && typeof _spTab !== 'undefined' && _spTab) {
+            var _tl = { home:'Home', leads:'Leads', contacts:'Contacts', locations:'Locations',
+                        opportunities:'Opportunities', accounts:'Accounts' };
+            _spNavOrigin = { tab: _spTab, label: _tl[_spTab] || _spTab };
+          }
           spOpenDetail(rec, tbl);
           if (typeof spLoadIntelPanel === 'function') spLoadIntelPanel(id, tbl);
         } else {
@@ -5228,6 +5235,12 @@ function spViewRecord(id, tab) {
   const newRv = [{ id, tab:foundTab, name:r.name||r.contact||'', business:r.business||'' }, ...rv.filter(x => x.id !== id)].slice(0,8);
   sessionStorage.setItem('sp_recently_viewed', JSON.stringify(newRv));
   // Open detail
+  // Record where the rep is navigating FROM so the back button can return them there
+  if (!_spNavOrigin && typeof _spTab !== 'undefined' && _spTab) {
+    var _tabLabels = { home:'Home', leads:'Leads', contacts:'Contacts', locations:'Locations',
+                       opportunities:'Opportunities', accounts:'Accounts' };
+    _spNavOrigin = { tab: _spTab, label: _tabLabels[_spTab] || _spTab };
+  }
   spOpenDetail(r, foundTab);
   // Keep the left Site Intel panel in lockstep with whatever record is
   // open in the center — previously only a direct list-row click did this,
@@ -5601,11 +5614,14 @@ function spOpenDetail(r, tab) {
   // of which tab a rep actually came from -- the only way back to
   // Leads/Contacts/Accounts was re-clicking the tab in the nav bar.
   // Route back to whichever list this record actually belongs on.
-  const backTab = isContact ? 'contacts' : (isAccount ? 'accounts' : 'leads');
-  const backLabel = isContact ? 'Contacts' : (isAccount ? 'Accounts' : 'Leads');
+  // Back button: return to where the rep actually came from if we tracked it,
+  // otherwise fall back to the record type's default list tab.
+  var _backTab   = (_spNavOrigin && _spNavOrigin.tab)   ? _spNavOrigin.tab   : (isContact ? 'contacts' : (isAccount ? 'accounts' : 'leads'));
+  var _backLabel = (_spNavOrigin && _spNavOrigin.label) ? _spNavOrigin.label : (isContact ? 'Contacts' : (isAccount ? 'Accounts' : 'Leads'));
+  _spNavOrigin = null; // clear after use so the next navigation starts fresh
   el.innerHTML = `
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-    <button class="sp-btn sp-btn-ghost" onclick="spNav('${backTab}')">← Back to ${backLabel}</button>
+    <button class="sp-btn sp-btn-ghost" onclick="spNav('${_backTab}')">&#8592; Back to ${_backLabel}</button>
     <button onclick="spArchiveRecord('${r.id}','${tab}','${escH(r.business||r.name||'this record')}')" style="background:none;border:1.5px solid #FCA5A5;color:#C8102E;border-radius:7px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer;font-family:'Barlow Condensed',sans-serif;letter-spacing:.04em;text-transform:uppercase">🗑 Archive</button>
   </div>
 
