@@ -867,6 +867,13 @@
     catch (e) { return []; }
   }
 
+  function crmSave(key, val) {
+    try { localStorage.setItem('termac_crm_' + key, JSON.stringify(val)); } catch (e) {}
+    if (D1_SYNC_TABLES.includes(key)) {
+      d1PushBatch(key, val).catch(function () {});
+    }
+  }
+
   // Additive merge, not a full replace. Fetches D1's current rows for a
   // table and adds any whose id isn't already in local storage — never
   // overwrites an existing local record, so an active edit on this
