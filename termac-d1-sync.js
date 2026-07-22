@@ -269,8 +269,8 @@
   async function d1SearchAccounts(term, limit) {
     var like = '%' + String(term || '').trim() + '%';
     return d1RawQuery(
-      'SELECT * FROM accounts WHERE name LIKE ? OR business LIKE ? OR phone LIKE ? OR address LIKE ? ORDER BY updated_at DESC LIMIT ?',
-      [like, like, like, like, limit || 50]
+      'SELECT * FROM accounts WHERE name LIKE ? OR business LIKE ? OR phone LIKE ? OR address LIKE ? OR zip LIKE ? ORDER BY updated_at DESC LIMIT ?',
+      [like, like, like, like, like, limit || 50]
     );
   }
 
