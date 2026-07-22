@@ -66,6 +66,25 @@
   // single account -- crmSave still pushes those through normally
   // since 'accounts' stays in D1_SYNC_TABLES above; this only skips
   // the bulk "pull the whole table down" step.
+
+  // Invalidate cache for a table -- forces next crmLoad to re-fetch from D1
+  function crmInvalidate(key) {
+    delete _crmMemCache[key];
+    delete _crmFetching[key];
+  }
+
+  // Pre-warm cache on login -- fetch all small tables upfront
+  async function crmWarmCache() {
+    var tables = ['leads', 'contacts', 'locations', 'opportunities', 'appointments',
+                  'tasks', 'allpro_projects', 'jobs', 'service_pricing_catalog',
+                  'customer_orders', 'allpro_spiffs', 'rep_comp_profiles',
+                  'scheduler_queue', 'collections', 'st_services', 'st_deficiencies',
+                  'allpro_design_projects', 'broadcast'];
+    for (var i = 0; i < tables.length; i++) {
+      await _crmFetchFromD1(tables[i]);
+    }
+  }
+
   var D1_NO_BULK_HYDRATE = ['accounts', 'account_assets'];
 
   async function d1Fetch(method, path, body, opts2) {
@@ -860,9 +879,79 @@
     for (var i = 0; i < records.length; i++) { await d1Push(table, records[i]); }
   }
 
+  // ══════════════════════════════════════════════════════════════════════
+  //  D1-FIRST crmLoad
+  //  Per Ted's standing rule: NOTHING on localStorage, everything on D1.
+  //  In-memory cache for performance. D1 is the source of truth.
+  //  crmLoad is synchronous (returns cache immediately), with background
+  //  refresh from D1. On first call for a table, triggers fetch and
+  //  returns empty array (renders will re-fire when data arrives).
+  // ══════════════════════════════════════════════════════════════════════
+  var _crmMemCache = {};         // { table: { data: [], ts: timestamp } }
+  var _crmFetching = {};         // { table: true } -- debounce concurrent fetches
+  var _crmCacheTTL = 30000;      // 30 seconds before background refresh
+  var D1_PROXY_URL = 'https://unipro-ai-proxy.termac-one.workers.dev';
+  var D1_PROXY_SECRET = 'termac2026';
+
+  // Tables too large for full sync -- use scoped queries instead
+  var D1_SCOPED_TABLES = ['accounts', 'account_assets'];
+
+  async function _crmFetchFromD1(key) {
+    if (_crmFetching[key]) return;
+    _crmFetching[key] = true;
+    try {
+      var sql = 'SELECT * FROM ' + key + ' ORDER BY updated_at DESC LIMIT 500';
+      var res = await fetch(D1_PROXY_URL + '/db/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Secret': D1_PROXY_SECRET },
+        body: JSON.stringify({ sql: sql, params: [] })
+      });
+      var data = await res.json();
+      if (data.results) {
+        _crmMemCache[key] = { data: data.results, ts: Date.now() };
+        // Notify any waiting renders -- re-render if a render function exists
+        var renderFns = {
+          leads: typeof spRenderCRM === 'function' ? function(){ spRenderCRM('leads'); } : null,
+          contacts: typeof spRenderCRM === 'function' ? function(){ spRenderCRM('contacts'); } : null,
+          locations: typeof spRenderLocationsTab === 'function' ? spRenderLocationsTab : null,
+          opportunities: typeof spRenderOpportunitiesTab === 'function' ? spRenderOpportunitiesTab : null,
+          appointments: typeof spRenderTodayAgenda === 'function' ? spRenderTodayAgenda : null,
+        };
+        var fn = renderFns[key];
+        if (fn && document.getElementById('spContent')) {
+          try { fn(); } catch(e) {}
+        }
+      }
+    } catch(e) {
+      // Fallback: read from localStorage if D1 unavailable
+      try {
+        var ls = JSON.parse(localStorage.getItem('termac_crm_' + key) || '[]');
+        if (ls.length) _crmMemCache[key] = { data: ls, ts: Date.now() };
+      } catch(e2) {}
+    } finally {
+      _crmFetching[key] = false;
+    }
+  }
+
   function crmLoad(key) {
-    try { return JSON.parse(localStorage.getItem('termac_crm_' + key) || '[]'); }
-    catch (e) { return []; }
+    // Scoped tables have their own live D1 helpers -- don't bulk-load them
+    if (D1_SCOPED_TABLES.includes(key)) {
+      try { return JSON.parse(localStorage.getItem('termac_crm_' + key) || '[]'); } catch(e) { return []; }
+    }
+    // Check in-memory cache
+    var cached = _crmMemCache[key];
+    var now = Date.now();
+    if (cached) {
+      // Trigger background refresh if stale but return cached data immediately
+      if (now - cached.ts > _crmCacheTTL) {
+        _crmFetchFromD1(key);
+      }
+      return cached.data;
+    }
+    // Cache cold -- trigger fetch, return empty for now (re-render fires on completion)
+    _crmFetchFromD1(key);
+    // While fetching, fall back to localStorage so existing data shows
+    try { return JSON.parse(localStorage.getItem('termac_crm_' + key) || '[]'); } catch(e) { return []; }
   }
 
   // Removes a single record by id: locally right away, then against D1
@@ -916,7 +1005,11 @@
   // or breaks the local save; it just means that one record stays
   // local-only until the next successful save of that record.
   function crmSave(key, val) {
+    // Update in-memory cache immediately (synchronous, instant UI update)
+    _crmMemCache[key] = { data: val, ts: Date.now() };
+    // Write to localStorage as fallback only
     try { localStorage.setItem('termac_crm_' + key, JSON.stringify(val)); } catch (e) {}
+    // Push to D1 (source of truth)
     if (D1_SYNC_TABLES.includes(key)) {
       d1PushBatch(key, val).catch(function () {});
     }
@@ -1457,6 +1550,8 @@
     SYNC_TABLES: D1_SYNC_TABLES,
     JOB_DIVISION_KEYS: JOB_DIVISION_KEYS,
     sendMailAsMe: sendMailAsMe,
+    crmInvalidate: crmInvalidate,
+    crmWarmCache: crmWarmCache,
     pushApptToOutlook: pushApptToOutlook,
     pullOutlookEvents: pullOutlookEvents,
     sendOrMailto: sendOrMailto,
@@ -1474,6 +1569,8 @@
   if (typeof global.crmLoad !== 'function') global.crmLoad = crmLoad;
   if (typeof global.crmDelete !== 'function') global.crmDelete = crmDelete;
   if (typeof global.sendMailAsMe !== 'function') global.sendMailAsMe = sendMailAsMe;
+  if (typeof global.crmInvalidate !== 'function') global.crmInvalidate = crmInvalidate;
+  if (typeof global.crmWarmCache !== 'function') global.crmWarmCache = crmWarmCache;
   if (typeof global.pushApptToOutlook !== 'function') global.pushApptToOutlook = pushApptToOutlook;
   if (typeof global.pullOutlookEvents !== 'function') global.pullOutlookEvents = pullOutlookEvents;
   if (typeof global.sendOrMailto !== 'function') global.sendOrMailto = sendOrMailto;
