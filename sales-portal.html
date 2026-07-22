@@ -1566,8 +1566,14 @@ function spOpenCollectModal(accountId, tab, prefillName, prefillDivision){
         +'<div><label style="'+L+'">Method</label><select id="colMethodField" onchange="spCollectMethodToggle()" style="'+F+'"><option value="cash">Cash</option><option value="check">Check</option></select></div>'
       +'</div>'
       +'<div id="colCheckWrap" style="display:none">'
-        +'<label style="'+L+'">Check Number</label><input id="colCheckField" placeholder="e.g. 1042" style="'+F+'">'
-        +'<div style="margin-top:10px;background:#FFF9E6;border:1.5px solid #F2B705;border-radius:8px;padding:10px 12px">'
+        +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">'
+          +'<div><label style="'+L+'">Check Number *</label><input id="colCheckField" placeholder="e.g. 1042" style="'+F+'"></div>'
+          +'<div><label style="'+L+'">Routing Number *</label><input id="colRoutingField" placeholder="9-digit ABA" maxlength="9" oninput="spValidateRouting(this)" style="'+F+'">'
+            +'<div id="colRoutingStatus" style="font-size:10px;margin-top:3px;min-height:14px"></div></div>'
+        +'</div>'
+        +'<div style="margin-bottom:10px"><label style="'+L+'">Account Number *</label><input id="colAcctNumField" placeholder="Customer bank account number" style="'+F+'"></div>'
+        +'<div style="margin-bottom:10px;background:#F0FDF4;border:1.5px solid #22C55E;border-radius:8px;padding:8px 12px;font-size:11px;color:#166534;display:none" id="colRoutingBankName"></div>'
+        +'<div style="background:#FFF9E6;border:1.5px solid #F2B705;border-radius:8px;padding:10px 12px">'
           +'<div style="font-size:11px;font-weight:700;color:#92400E;margin-bottom:6px">\uD83D\uDCF7 CHECK PHOTO \u2014 Required</div>'
           +'<div style="font-size:11px;color:#78350F;margin-bottom:8px">Take a photo of the check before turning it in. This protects you and the office.</div>'
           +'<input type="file" id="colCheckPhotoInput" accept="image/*" capture="environment" style="display:none" onchange="spPreviewCollectPhoto(this)">'
@@ -1604,19 +1610,29 @@ function spSaveCollection(){
   var amt=parseFloat(document.getElementById('colAmtField')?.value||0)||0;
   var method=document.getElementById('colMethodField')?.value||'cash';
   var checkNum=(document.getElementById('colCheckField')?.value||'').trim();
+  var routing=(document.getElementById('colRoutingField')?.value||'').replace(/\D/g,'');
+  var acctNum=(document.getElementById('colAcctNumField')?.value||'').trim();
   var invNum=(document.getElementById('colInvField')?.value||'').trim();
   var notes=(document.getElementById('colNotesField')?.value||'').trim();
   if(!biz){ alert('Enter the account or business name.'); return; }
   if(!(amt>0)){ alert('Enter the amount collected.'); return; }
-  if(method==='check' && !checkNum){ alert('Enter the check number.'); return; }
-  if(method==='check' && !window._spCheckPhotoData){ alert('Take a photo of the check before saving.'); return; }
+  if(method==='check'){
+    if(!checkNum){ alert('Enter the check number.'); return; }
+    if(!routing || routing.length!==9){ alert('Enter the 9-digit ABA routing number from the bottom of the check.'); return; }
+    if(!spAbaChecksum(routing)){ alert('That routing number is not valid. Double-check the 9-digit number at the bottom-left of the check.'); return; }
+    if(!acctNum){ alert('Enter the bank account number from the bottom of the check.'); return; }
+    if(!window._spCheckPhotoData){ alert('Take a photo of the check before saving.'); return; }
+  }
   var rep=(typeof _spRep!=='undefined' && _spRep && _spRep.name) ? _spRep.name : 'Rep';
+  var bankName=(document.getElementById('colRoutingBankName')?.textContent||'').replace(/^[^ ]+ /,'').trim();
   var colls=(typeof crmLoad==='function'?crmLoad('collections'):[])||[];
   colls.unshift({
     id:'col_'+Date.now(), collectedBy:rep,
     accountName:biz, division:(modal.dataset.division||''), amount:amt, method:method,
-    checkNum:checkNum, payableTo:'Termac', invoiceNum:invNum,
+    checkNum:checkNum, routingNum:(method==='check'?routing:''), bankName:(method==='check'?bankName:''),
+    acctNum:(method==='check'?acctNum:''), payableTo:'Termac', invoiceNum:invNum,
     notes:notes||'Collected by sales rep', photoData:(method==='check'?(window._spCheckPhotoData||null):null),
+    abaVerified:(method==='check' && routing.length===9 && spAbaChecksum(routing)),
     status:'collected', collectedAt:Date.now(),
     collectedDate:new Date().toLocaleDateString('en-US'),
     history:[{ts:Date.now(),action:'Logged from sales portal',by:rep}]
@@ -1625,6 +1641,62 @@ function spSaveCollection(){
   window._spCheckPhotoData = null;
   spCloseCollectModal();
   if(typeof spToast==='function') spToast('\uD83D\uDCB5 Payment logged \u2014 turn in to the office within 48h');
+}
+
+// ABA routing number validation -- MOD 10 weighted checksum (Federal Reserve standard).
+// Returns true if the 9-digit string is mathematically valid -- catches typos and
+// obviously fake numbers without any external API or fee.
+function spAbaChecksum(r) {
+  if (!r || r.length !== 9 || !/^\d{9}$/.test(r)) return false;
+  var d = r.split('').map(Number);
+  var sum = 3*(d[0]+d[3]+d[6]) + 7*(d[1]+d[4]+d[7]) + (d[2]+d[5]+d[8]);
+  return sum % 10 === 0 && sum > 0;
+}
+
+// Live routing number validation with bank name lookup (Federal Reserve public data).
+// Called on every keystroke in the routing field -- shows green bank name or red error.
+function spValidateRouting(input) {
+  var val = input.value.replace(/\D/g,'').slice(0,9);
+  input.value = val;
+  var status = document.getElementById('colRoutingStatus');
+  var bankBox = document.getElementById('colRoutingBankName');
+  if (!status || !bankBox) return;
+  if (val.length < 9) {
+    status.textContent = val.length > 0 ? (val.length + '/9 digits') : '';
+    status.style.color = '#94A3B8';
+    bankBox.style.display = 'none';
+    return;
+  }
+  if (!spAbaChecksum(val)) {
+    status.textContent = '\u274C Invalid routing number';
+    status.style.color = '#DC2626';
+    bankBox.style.display = 'none';
+    return;
+  }
+  // ABA checksum passed -- look up the bank name via the Fed's public API
+  status.textContent = 'Verifying...';
+  status.style.color = '#94A3B8';
+  fetch('https://www.routingnumbers.info/api/data.json?rn=' + val)
+    .then(function(r){ return r.ok ? r.json() : null; })
+    .then(function(d){
+      if (d && d.customer_name && d.code === 200) {
+        status.textContent = '\u2705 Valid';
+        status.style.color = '#16A34A';
+        bankBox.textContent = '\uD83C\uDFE6 ' + d.customer_name;
+        bankBox.style.display = 'block';
+      } else {
+        // Checksum passed but not in the lookup -- still structurally valid
+        status.textContent = '\u2705 Format valid';
+        status.style.color = '#16A34A';
+        bankBox.style.display = 'none';
+      }
+    })
+    .catch(function(){
+      // No network -- checksum passed, that's enough
+      status.textContent = '\u2705 Format valid (offline)';
+      status.style.color = '#16A34A';
+      bankBox.style.display = 'none';
+    });
 }
 
 
