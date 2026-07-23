@@ -1000,6 +1000,7 @@ export default {
         case '/calendar-push': return await handleCalendarPush(request, env);
         case '/calendar-pull': return await handleCalendarPull(request, env);
         case '/allpro-survey-submit': return await handleAllProSurveySubmit(request, env);
+        case '/allpro-assessment-save': return await handleAssessmentSave(request, env);
         case '/allpro-proposal-send': return await handleAllProProposalSend(request, env);
         case '/allpro-draw-send': return await handleAllProDrawSend(request, env);
         case '/allpro-final-send': return await handleAllProFinalSend(request, env);
@@ -1440,4 +1441,102 @@ async function processPaymentReminders(env) {
   }
 
   console.log('Payment reminder cron: processed ' + processed + ' of ' + rows.length + ' due reminders');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ALLPRO INSTALL ASSESSMENT — Save and Score
+// POST /allpro-assessment-save
+// Body: all allpro_install_assessments fields as JSON
+// Returns: { ok, assessment_id, install_tier, risk_score, co_allowance, risk_flags, co_line_items }
+// ─────────────────────────────────────────────────────────────────────────────
+function scoreInstallAssessment(a) {
+  var score = 0;
+  var flags = [];
+  var coItems = []; // { label, low, high, trigger }
+
+  // Structural
+  if (a.struct_drop_ceiling) { score += 2; flags.push('Drop ceiling present — unistrut framing required'); coItems.push({ label: 'Structural Unistrut / Trapeze Framing', low: 800, high: 2500, trigger: 'drop_ceiling' }); }
+  if (!a.struct_support_above || a.struct_support_above === 'none' || a.struct_support_above === 'unknown') { score += 3; flags.push('No structural support directly above hood footprint'); }
+  if (a.struct_fire_rated_wrap) { score += 2; flags.push('Fire-rated duct wrap required (NFPA 96)'); coItems.push({ label: 'Fire-Rated Duct Wrap (NFPA 96)', low: 1500, high: 4500, trigger: 'fire_rated_wrap' }); }
+  if (a.struct_multi_story) { score += 3; flags.push('Multi-story building — extended duct run and fire wrap likely'); }
+
+  // Roof/penetration
+  if (['concrete', 'brick', 'masonry'].includes((a.roof_deck_type || '').toLowerCase())) { score += 2; flags.push('Concrete/masonry roof deck — custom curbing required'); coItems.push({ label: 'Roof Penetration, Curbing & Flashing', low: 1000, high: 3000, trigger: 'hard_roof' }); }
+  if (a.roof_core_drilling) { score += 2; flags.push('Core drilling required — ' + (a.roof_core_material || 'material TBD')); coItems.push({ label: 'Core Drilling / Masonry Penetration', low: 500, high: 1800, trigger: 'core_drilling' }); }
+  if ((a.roof_offset_count || 0) >= 2) { score += 2; flags.push((a.roof_offset_count) + ' duct offsets required'); }
+  if ((a.mech_duct_run_ft || 0) > 10) { score += 2; flags.push('Duct run over 10ft (' + a.mech_duct_run_ft + 'ft) — cleanout access doors required'); }
+
+  // Electrical
+  if (!a.elec_dedicated_circuit) { score += 2; flags.push('No dedicated circuit — new circuit required'); }
+  if ((a.elec_panel_open_slots || 0) === 0) { score += 2; flags.push('Panel has no open slots — sub-panel or upgrade may be required'); coItems.push({ label: 'Electrical Panel Upgrade / Sub-Panel', low: 1200, high: 3000, trigger: 'no_panel_slots' }); }
+  if (!a.elec_shunt_trip || a.elec_shunt_trip === 'missing' || a.elec_shunt_trip === 'needs_install') { score += 2; flags.push('Shunt-trip breaker not installed — required by code'); coItems.push({ label: 'Gas Solenoid Valve & Electrical Shunt-Trip', low: 1200, high: 3000, trigger: 'missing_shunt_trip' }); }
+  if (!a.elec_gas_solenoid || a.elec_gas_solenoid === 'missing' || a.elec_gas_solenoid === 'needs_install') { score += 2; flags.push('Gas solenoid valve not installed — required for suppression interlock'); }
+  if ((a.elec_panel_distance_ft || 0) > 25) { score += 1; flags.push('Panel over 25ft from hood — extended interlock wiring run'); }
+
+  // Mechanical
+  if (!a.mech_mua_present || a.mech_mua_present === 'none' || a.mech_mua_present === 'missing') { score += 3; flags.push('No make-up air unit — MUA integration required to prevent negative pressure'); coItems.push({ label: 'Make-Up Air Interlock / Control Package', low: 3500, high: 9000, trigger: 'no_mua' }); }
+
+  // Fire alarm
+  if (!a.fire_facp_present || a.fire_facp_present === 'unknown') { score += 1; flags.push('Fire alarm panel status unknown — verify before install'); }
+  if ((a.fire_facp_distance_ft || 0) > 25) { score += 2; flags.push('FACP over 25ft from hood — extended low-voltage wiring run'); coItems.push({ label: 'Fire Alarm Panel Tie-In / Relay Module', low: 750, high: 2200, trigger: 'facp_distance' }); }
+
+  // Determine tier and allowance
+  var tier, allowance;
+  if (score <= 3) { tier = 'L1'; allowance = 0; }
+  else if (score <= 8) { tier = 'L2'; allowance = 1500; }
+  else { tier = 'L3'; allowance = 3000; }
+
+  return { score, tier, allowance, flags, coItems };
+}
+
+async function handleAssessmentSave(request, env) {
+  var body; try { body = await request.json(); } catch(e) { return jsonResponse({ ok: false, error: 'Invalid JSON' }, 400); }
+  if (!body.survey_id && !body.opportunity_id) return jsonResponse({ ok: false, error: 'survey_id or opportunity_id required' }, 400);
+
+  var scored = scoreInstallAssessment(body);
+  var id = body.id || ('AIA-' + Date.now().toString(36).toUpperCase());
+  var now = Date.now();
+
+  await env.DB.prepare(`INSERT OR REPLACE INTO allpro_install_assessments
+    (id, survey_id, opportunity_id, location_id, rep_name, assessed_date,
+     struct_ceiling_access, struct_drop_ceiling, struct_deck_type, struct_support_above,
+     struct_unistrut_required, struct_fire_rated_wrap, struct_multi_story,
+     roof_deck_type, roof_penetration_type, roof_core_drilling, roof_core_material,
+     roof_straight_run, roof_offset_count,
+     elec_dedicated_circuit, elec_panel_open_slots, elec_shunt_trip, elec_gas_solenoid,
+     elec_panel_distance_ft, elec_sub_panel_needed,
+     mech_mua_present, mech_mua_cfm, mech_exhaust_fan_ok, mech_duct_run_ft, mech_duct_elbow_count,
+     fire_facp_present, fire_facp_distance_ft, fire_facp_age, fire_prior_suppression,
+     access_roof, access_ceiling, access_height_ft, access_confined_space, access_notes,
+     install_risk_score, install_tier, co_allowance, risk_flags_json, co_line_items_json,
+     photos_json, created_at, updated_at)
+   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+  ).bind(
+    id, body.survey_id||null, body.opportunity_id||null, body.location_id||null,
+    body.rep_name||'Ted Scholl', body.assessed_date||new Date(now).toISOString().slice(0,10),
+    body.struct_ceiling_access||null, body.struct_drop_ceiling?1:0, body.struct_deck_type||null, body.struct_support_above||null,
+    body.struct_unistrut_required?1:0, body.struct_fire_rated_wrap?1:0, body.struct_multi_story?1:0,
+    body.roof_deck_type||null, body.roof_penetration_type||null, body.roof_core_drilling?1:0, body.roof_core_material||null,
+    body.roof_straight_run!==false?1:0, body.roof_offset_count||0,
+    body.elec_dedicated_circuit?1:0, body.elec_panel_open_slots||0, body.elec_shunt_trip||null, body.elec_gas_solenoid||null,
+    body.elec_panel_distance_ft||null, body.elec_sub_panel_needed?1:0,
+    body.mech_mua_present||null, body.mech_mua_cfm||null, body.mech_exhaust_fan_ok?1:0, body.mech_duct_run_ft||null, body.mech_duct_elbow_count||0,
+    body.fire_facp_present||null, body.fire_facp_distance_ft||null, body.fire_facp_age||null, body.fire_prior_suppression?1:0,
+    body.access_roof||null, body.access_ceiling||null, body.access_height_ft||null, body.access_confined_space?1:0, body.access_notes||null,
+    scored.score, scored.tier, scored.allowance,
+    JSON.stringify(scored.flags), JSON.stringify(scored.coItems),
+    body.photos_json ? JSON.stringify(body.photos_json) : null,
+    now, now
+  ).run();
+
+  return jsonResponse({
+    ok: true,
+    assessment_id: id,
+    install_tier: scored.tier,
+    risk_score: scored.score,
+    co_allowance: scored.allowance,
+    risk_flags: scored.flags,
+    co_line_items: scored.coItems,
+    message: 'Assessment saved. Install tier: ' + scored.tier + ' (score: ' + scored.score + '). ' + scored.flags.length + ' risk flag(s) identified.'
+  });
 }
