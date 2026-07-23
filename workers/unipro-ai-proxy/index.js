@@ -148,6 +148,10 @@ const ALLOWED_TABLES = new Set([
   'servicetrade_sync_progress',
   // AllPro Site Survey, Material Costs, Job Bundles, Calendar Sync -- added 2026-07-23
   'allpro_site_surveys','allpro_material_costs','allpro_job_bundles','calendar_sync',
+  // Termac dish machine quote builder -- added 2026-07-23
+  // Stores one row per dish machine quote built by Tom Pittakas or any rep.
+  // Full site survey, equipment selection, chemical program, payment terms.
+  'termac_dish_quotes',
 ]);
 
 const TABLE_PREFIX = {
@@ -202,6 +206,7 @@ const TABLE_PREFIX = {
   allpro_material_costs:'AMC',
   allpro_job_bundles:'AJB',
   calendar_sync:'CAL',
+  termac_dish_quotes:'TDQ',
 };
 
 function corsHeaders(origin) {

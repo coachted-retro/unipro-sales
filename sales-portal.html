@@ -947,6 +947,9 @@ function spEnterPortal() {
   // ── END USER CHIP ───────────────────────────────────────────────────────
   spUpdateQueueBadge();
 
+  // Inject Manager Portal back button for manager-tier reps
+  if (typeof spInitManagerControls === 'function') spInitManagerControls();
+
   spNav('home');
 
   // Pulls anything new from D1 on load, then keeps checking every 30
@@ -2676,6 +2679,7 @@ async function spRenderHome() {
   ${spRenderTimeEfficiency()}
   ${agendaHtml}
   <div id="agendaAiResults"></div>
+  ${spRenderDishMachineTile()}
   ${spRenderAccountsToWatch()}
   ${spRenderWinBack()}
   ${spRenderFollowUpsDueToday()}
@@ -2747,6 +2751,80 @@ function spRenderAccountsToWatch() {
 // termac-os.html's Manager Dashboard — same fields (lostDate, lostReason,
 // reengageAfter), same shared account data, just surfaced here too instead
 // of only being visible in the Manager Portal.
+// ── DISH MACHINE TILE ──────────────────────────────────────────────────────
+// Shown for all reps — anyone can spot a dish machine opportunity.
+// Shows recent dish quotes for the current rep, plus a New Quote button
+// that opens the standalone termac-dish-quote.html builder.
+// Tom Pittakas additionally sees a Manager Portal back button in the nav
+// (wired below in spInitManagerControls).
+function spRenderDishMachineTile() {
+  // Load recent dish quotes for this rep from D1 — async, patches in after render
+  setTimeout(function() {
+    var container = document.getElementById('spDishRecentList');
+    if (!container) return;
+    var repEmail = (_spRep && _spRep.email) ? _spRep.email : '';
+    fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/termac_dish_quotes?limit=5', {
+      headers: { 'X-API-Secret': 'termac2026' }
+    }).then(function(r) { return r.json(); }).then(function(res) {
+      if (!res.ok || !res.records || !res.records.length) {
+        container.innerHTML = '<div style="color:var(--sp-soft);font-size:12px;font-style:italic">No quotes yet — start one below.</div>';
+        return;
+      }
+      var repName = _spRep && _spRep.name ? _spRep.name : '';
+      container.innerHTML = res.records.slice(0, 5).map(function(q) {
+        var statusColor = q.status === 'signed' ? 'var(--sp-green)' : q.status === 'sent' ? 'var(--sp-blue)' : 'var(--sp-soft)';
+        var statusLabel = q.status ? (q.status.charAt(0).toUpperCase() + q.status.slice(1)) : 'Draft';
+        return '<div onclick="window.location.href=\'termac-dish-quote.html?quote_id=' + q.id + '\'" style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--sp-line);cursor:pointer">' +
+          '<div style="width:8px;height:8px;border-radius:50%;background:' + statusColor + ';flex-shrink:0"></div>' +
+          '<div style="flex:1;min-width:0">' +
+            '<div style="font-size:13px;font-weight:700;color:var(--sp-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escH(q.customer_name || 'Untitled Quote') + '</div>' +
+            '<div style="font-size:11px;color:var(--sp-soft)">' + statusLabel + (q.machine_mode ? ' &bull; ' + (q.machine_mode === 'rental' ? 'Rental' : 'Sell') : '') + (q.customer_address ? ' &bull; ' + escH(q.customer_address.split(',')[0]) : '') + '</div>' +
+          '</div>' +
+          '<div style="font-size:11px;color:var(--sp-soft);flex-shrink:0">' + (q.updated_at ? new Date(q.updated_at).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '') + '</div>' +
+        '</div>';
+      }).join('');
+    }).catch(function() {
+      container.innerHTML = '<div style="color:var(--sp-soft);font-size:12px">Could not load recent quotes.</div>';
+    });
+  }, 0);
+
+  return '<div class="sp-card">' +
+    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">' +
+      '<div class="sp-card-title" style="margin:0">🧼 Dish Machine Quotes</div>' +
+      '<button onclick="window.location.href=\'termac-dish-quote.html\'" style="background:var(--sp-red);color:#fff;border:none;border-radius:7px;padding:7px 14px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">+ New Quote</button>' +
+    '</div>' +
+    '<div id="spDishRecentList" style="min-height:40px">' +
+      '<div style="color:var(--sp-soft);font-size:12px">Loading...</div>' +
+    '</div>' +
+  '</div>';
+}
+
+// ── MANAGER PORTAL BACK BUTTON (Tom Pittakas + Jim Kennedy only) ──────────
+// Injected into the nav bar once on login so it's always accessible
+// regardless of which tab the manager is on.
+var _SP_MANAGER_REPS = ['Tom Pittakas', 'Jim Kennedy', 'Ted Scholl'];
+function spInitManagerControls() {
+  if (!_spRep || !_spRep.name) return;
+  if (_SP_MANAGER_REPS.indexOf(_spRep.name) === -1) return;
+  // Only inject once
+  if (document.getElementById('spMgrPortalBtn')) return;
+  var navRight = document.querySelector('.trn-inner');
+  if (!navRight) return;
+  var btn = document.createElement('button');
+  btn.id = 'spMgrPortalBtn';
+  btn.className = 'trn-btn';
+  btn.style.cssText = 'background:#1B5FA8;border-color:#1B5FA8;margin-right:6px';
+  btn.textContent = 'Manager Portal';
+  btn.onclick = function() { window.location.href = 'termac-os.html'; };
+  // Insert before the Employee Portal button (last .trn-btn.primary)
+  var empBtn = navRight.querySelector('.trn-btn.primary');
+  if (empBtn) {
+    navRight.insertBefore(btn, empBtn);
+  } else {
+    navRight.appendChild(btn);
+  }
+}
+
 function spRenderWinBack() {
   const repName = _spRep.name;
   const now = Date.now();

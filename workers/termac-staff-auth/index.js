@@ -969,6 +969,185 @@ async function handleAllProProposalSend(request, env) {
   });
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// TERMAC DISH MACHINE PROPOSAL SEND
+// Builds a JotForm pre-fill URL from the termac_dish_quotes D1 row,
+// emails the customer a signing link via Graph (sendMailAsMe pattern),
+// and marks the quote status 'sent'.
+// Uses the same Termac letterhead as AllPro but with Termac branding text.
+// ─────────────────────────────────────────────────────────────────────────────
+const TERMAC_DISH_PROPOSAL_FORM_ID = 'PLACEHOLDER_SET_AFTER_JOTFORM_CREATED';
+const TERMAC_DISH_JOTFORM_BASE = 'https://form.jotform.com/' + TERMAC_DISH_PROPOSAL_FORM_ID;
+
+async function handleTermacDishProposalSend(request, env) {
+  var body;
+  try { body = await request.json(); } catch(e) { return jsonResponse({ ok:false, error:'Invalid JSON' }, 400); }
+
+  var quoteId = body.quote_id;
+  var senderEmail = body.sender_email || 'tpittakas@termac.com';
+  if (!quoteId) return jsonResponse({ ok:false, error:'quote_id required' }, 400);
+
+  var q = await env.DB.prepare('SELECT * FROM termac_dish_quotes WHERE id = ?').bind(quoteId).first();
+  if (!q) return jsonResponse({ ok:false, error:'Quote not found' }, 404);
+
+  function usd(n) { return '$' + (parseFloat(n) || 0).toLocaleString('en-US', { minimumFractionDigits:2, maximumFractionDigits:2 }); }
+
+  var RENTAL_MACHINES = [
+    { model:'ADC-44', leaseService:400, deposit:800 },
+    { model:'ADC-66', leaseService:490, deposit:800 },
+    { model:'AFB / AFBC', leaseService:310, deposit:600 },
+    { model:'ASQ', leaseService:290, deposit:600 },
+    { model:'Double Tank Straight / Corner', leaseService:330, deposit:600 },
+    { model:'ET / ETPD / ET3', leaseService:290, deposit:600 },
+    { model:'HT-25', leaseService:310, deposit:600 },
+    { model:'Single Tank Straight / Corner', leaseService:290, deposit:600 },
+    { model:'UC-180', leaseService:310, deposit:600 }
+  ];
+  var SELL_MACHINES = [
+    { model:'5AG-S', price:7651.49 },
+    { model:'5-CD-LF', price:8762.44 },
+    { model:'5-CD-RF', price:8762.44 },
+    { model:'ASQ II', price:7195.55 },
+    { model:'ET-AF-M-PH', price:6122.66 },
+    { model:'ET-AF-3-PH', price:6242.68 },
+    { model:'L-90-3DW-S', price:5867.97 },
+    { model:'L-90-3DWC-S', price:6001.17 },
+    { model:'AFB w/Bakery', price:7017.71 },
+    { model:'AFB-C', price:7142.12 },
+    { model:'HT-25', price:11202.43 },
+    { model:'ADC-44 L-R', price:17240.19 },
+    { model:'ADC-44 R-L', price:17240.19 },
+    { model:'ADC-66 L-R', price:27650.76 },
+    { model:'ADC-66 R-L', price:27650.76 }
+  ];
+  var SOFTENERS = [
+    { model:'Small Water Softener', leaseService:100 },
+    { model:'Large Water Softener', leaseService:120 }
+  ];
+
+  var isRental = q.machine_mode === 'rental';
+  var machineLabel = 'Not selected';
+  var monthlyTotal = 0;
+  var depositTotal = 0;
+  var oneTimeTotal = 0;
+
+  if (q.machine_model_val) {
+    if (isRental && q.machine_model_val.startsWith('r_')) {
+      var rm = RENTAL_MACHINES[parseInt(q.machine_model_val.slice(2))];
+      if (rm) { machineLabel = rm.model; monthlyTotal += rm.leaseService; depositTotal = rm.deposit; }
+    } else if (!isRental && q.machine_model_val.startsWith('s_')) {
+      var sm = SELL_MACHINES[parseInt(q.machine_model_val.slice(2))];
+      if (sm) { machineLabel = sm.model; oneTimeTotal += sm.price; }
+    }
+  }
+  if (q.softener_model_idx !== '' && q.softener_model_idx != null) {
+    var sf = SOFTENERS[parseInt(q.softener_model_idx)];
+    if (sf) { monthlyTotal += sf.leaseService * (parseInt(q.softener_qty) || 1); }
+  }
+
+  var today = new Date().toLocaleDateString('en-US', { month:'2-digit', day:'2-digit', year:'numeric' });
+  var proposalNum = quoteId;
+
+  var scopeLines = [];
+  scopeLines.push('Equipment: ' + machineLabel + (isRental ? ' (Monthly Rental)' : ' (Purchase)'));
+  if (q.install_notes) scopeLines.push('Installation: ' + q.install_notes);
+  if (q.detergent_sku) scopeLines.push('Detergent: ' + q.detergent_sku + (q.detergent_qty ? ' x ' + q.detergent_qty + '/mo' : ''));
+  if (q.rinse_sku) scopeLines.push('Rinse Aid: ' + q.rinse_sku + (q.rinse_qty ? ' x ' + q.rinse_qty + '/mo' : ''));
+  if (q.sanitizer_sku) scopeLines.push('Sanitizer: ' + q.sanitizer_sku + (q.sanitizer_qty ? ' x ' + q.sanitizer_qty + '/mo' : ''));
+  if (q.pot_sink === 'yes') scopeLines.push('Pot Sink Chemical Program included — ' + (q.pot_sink_comp || '3') + '-compartment');
+  if (q.chem_notes) scopeLines.push('Notes: ' + q.chem_notes);
+
+  var rentalTermsText = isRental ? [
+    'RENTAL TERMS:',
+    'This agreement is month-to-month with no long-term contract. Either party may terminate with 30 days written notice. Termac may terminate immediately for cause.',
+    'AUTHORIZED PRODUCTS: Only Termac-supplied chemicals may be used on Termac-owned equipment. Use of any third-party chemicals on leased equipment constitutes a material breach of this agreement and entitles Termac Family of Companies to immediate repossession of the equipment without refund of any deposit or prior payments, and without further obligation to the customer.',
+    'PAYMENT: Monthly lease-service fee is due on the ' + (q.charge_date || '1st') + ' of each month. A valid payment method must remain on file at all times. Payments more than 5 days past due may result in a late fee. Payments more than 10 days past due trigger Termac\'s right of repossession per Pennsylvania UCC Article 9.',
+    'EQUIPMENT OWNERSHIP: Termac Family of Companies retains title to all leased equipment at all times. The customer has no ownership interest and may not sell, sublease, encumber, or modify the equipment.',
+    'REPOSSESSION: Termac may repossess equipment without court process for any material breach, including unauthorized chemical use, non-payment, attempted transfer, or unauthorized modification.',
+    'CARD ON FILE AUTHORIZATION: By signing this agreement, the customer authorizes Termac to charge the monthly lease-service fee to the card on file automatically on the agreed billing date.',
+    'DEPOSIT: Security deposit of ' + usd(depositTotal) + ' is due at signing. Deposit is non-refundable if equipment is repossessed due to breach. Deposit is refunded within 30 days of equipment return in acceptable condition.',
+    'MAINTENANCE: Termac is responsible for normal machine maintenance and repair. Damage resulting from misuse, unauthorized chemicals, or negligence is billed to the customer.',
+    'INDEMNIFICATION: Customer indemnifies Termac against all claims, losses, and liabilities arising from customer\'s use or misuse of the equipment.',
+  ].join('\n\n') : 'PAYMENT TERMS: Price covers equipment and installation. Chemical program billed separately per consumption. Tax not included. Price subject to change after 30 days.';
+
+  var params = new URLSearchParams({
+    'customerBusinessName':   q.customer_name || '',
+    'contactName':            q.customer_contact || '',
+    'siteAddress':            q.customer_address || '',
+    'phone':                  q.customer_phone || '',
+    'email':                  q.customer_email || '',
+    'proposalNumber':         proposalNum,
+    'proposalDate':           today,
+    'agreementType':          isRental ? 'Rental Agreement' : 'Equipment Purchase',
+    'machineModel':           machineLabel,
+    'equipmentScope':         scopeLines.join('\n'),
+    'monthlyLeaseService':    isRental ? usd(monthlyTotal) + '/month' : 'N/A',
+    'depositAmount':          isRental ? usd(depositTotal) : 'N/A',
+    'purchasePrice':          !isRental ? usd(oneTimeTotal) : 'N/A',
+    'billingDate':            isRental ? (q.charge_date || '1st') + ' of each month' : 'N/A',
+    'rentalTermsAndConditions': rentalTermsText,
+    'authorizedRepresentative': senderEmail.split('@')[0].replace('.', ' ').replace(/\b\w/g, function(c){ return c.toUpperCase(); }),
+  });
+
+  var prefillUrl = TERMAC_DISH_JOTFORM_BASE + '?' + params.toString();
+
+  await env.DB.prepare('UPDATE termac_dish_quotes SET status=?, sent_at=?, updated_at=? WHERE id=?')
+    .bind('sent', Date.now(), Date.now(), quoteId).run();
+
+  var customerEmail = q.customer_email;
+  var emailSent = false;
+
+  if (customerEmail) {
+    var tokenRow = await env.DB.prepare('SELECT * FROM staff_graph_tokens WHERE staff_email = ?').bind(senderEmail).first();
+    if (tokenRow && tokenRow.access_token) {
+      var customerName = q.customer_name || 'Valued Customer';
+      var emailHtml = '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">'
+        + '<img src="https://sales.mytermac.com/allpro-letterhead.png" alt="Termac" style="width:260px;height:auto;margin-bottom:16px"><br>'
+        + '<p>Dear ' + customerName + ',</p>'
+        + '<p>Thank you for the opportunity to serve your commercial warewashing and chemical program needs.</p>'
+        + '<p>Please review your proposal and ' + (isRental ? 'rental agreement' : 'purchase agreement') + ' by clicking the button below. Once signed, you will receive a copy for your records and our team will contact you within 24 hours to confirm your installation schedule.</p>'
+        + '<div style="text-align:center;margin:28px 0">'
+        + '<a href="' + prefillUrl + '" style="background:#C8102E;color:#fff;text-decoration:none;padding:14px 32px;border-radius:8px;font-family:Arial,sans-serif;font-weight:700;font-size:16px;display:inline-block">Review and Sign ' + (isRental ? 'Rental Agreement' : 'Proposal') + '</a>'
+        + '</div>'
+        + '<p><strong>Proposal Number:</strong> ' + proposalNum + '<br>'
+        + (isRental ? '<strong>Monthly Service:</strong> ' + usd(monthlyTotal) + '/month<br>'
+            + '<strong>Security Deposit:</strong> ' + usd(depositTotal) + ' (due at signing)<br>'
+            + '<strong>Billing Date:</strong> ' + (q.charge_date || '1st') + ' of each month' : '<strong>Equipment Total:</strong> ' + usd(oneTimeTotal)) + '</p>'
+        + (isRental ? '<p style="background:#FEF3C7;border-left:4px solid #D97706;padding:12px;font-size:13px"><strong>Important:</strong> This is a month-to-month rental with no long-term commitment. Only Termac-supplied chemicals may be used on leased equipment. Unauthorized chemicals void this agreement and trigger immediate repossession rights.</p>' : '')
+        + '<p>If you have any questions, please call us at <strong>215-676-5200</strong> or reply to this email.</p>'
+        + '<p>Thank you for choosing Termac Family of Companies.</p>'
+        + '<hr style="margin:24px 0;border:none;border-top:1px solid #E5E7EB">'
+        + '<p style="font-size:12px;color:#6B7280">Termac Family of Companies | Philadelphia, PA<br>'
+        + 'Payment processed by TerPro LLC</p>'
+        + '</div>';
+
+      if (tokenRow.expires_at && tokenRow.expires_at < Date.now() + 60000) {
+        try {
+          var refreshRes = await fetch('https://login.microsoftonline.com/' + env.SSO_TENANT_ID + '/oauth2/v2.0/token', {
+            method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
+            body: new URLSearchParams({ grant_type:'refresh_token', client_id:env.SSO_CLIENT_ID, client_secret:env.SSO_CLIENT_SECRET, refresh_token:tokenRow.refresh_token, scope:'openid profile email Mail.Send offline_access' })
+          });
+          var refreshJson = await refreshRes.json();
+          if (refreshJson.access_token) {
+            await env.DB.prepare('UPDATE staff_graph_tokens SET access_token=?,expires_at=?,updated_at=? WHERE staff_email=?')
+              .bind(refreshJson.access_token, Date.now()+(refreshJson.expires_in||3600)*1000, Date.now(), senderEmail).run();
+            tokenRow.access_token = refreshJson.access_token;
+          }
+        } catch(e) {}
+      }
+
+      var graphRes = await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
+        method:'POST',
+        headers:{ 'Authorization':'Bearer '+tokenRow.access_token, 'Content-Type':'application/json' },
+        body: JSON.stringify({ message: { subject: 'Termac ' + (isRental ? 'Rental Agreement' : 'Proposal') + ' #' + proposalNum + ' - ' + customerName, body:{ contentType:'HTML', content:emailHtml }, toRecipients:[{ emailAddress:{ address:customerEmail } }] } })
+      });
+      emailSent = graphRes.status === 202;
+    }
+  }
+
+  return jsonResponse({ ok:true, prefill_url:prefillUrl, sent_to:customerEmail||null, email_sent:emailSent, quote_id:quoteId, status:'sent', message: emailSent ? 'Proposal emailed to ' + customerEmail + ' with signing link.' : 'Proposal URL ready. Send manually or check Graph token.' });
+}
+
 export default {
   async fetch(request, env) {
     if (request.method === 'OPTIONS') {
@@ -1006,6 +1185,7 @@ export default {
         case '/allpro-final-send': return await handleAllProFinalSend(request, env);
         case '/allpro-payment-logged': return await handleAllProPaymentLogged(request, env);
         case '/square-webhook': return await handleSquareWebhook(request, env);
+        case '/termac-dish-proposal-send': return await handleTermacDishProposalSend(request, env);
         default: return jsonResponse({ ok: false, error: 'Unknown endpoint.' }, 404);
       }
     } catch (e) {
