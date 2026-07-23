@@ -976,7 +976,7 @@ async function handleAllProProposalSend(request, env) {
 // and marks the quote status 'sent'.
 // Uses the same Termac letterhead as AllPro but with Termac branding text.
 // ─────────────────────────────────────────────────────────────────────────────
-const TERMAC_DISH_PROPOSAL_FORM_ID = 'PLACEHOLDER_SET_AFTER_JOTFORM_CREATED';
+const TERMAC_DISH_PROPOSAL_FORM_ID = '262037458503052';
 const TERMAC_DISH_JOTFORM_BASE = 'https://form.jotform.com/' + TERMAC_DISH_PROPOSAL_FORM_ID;
 
 async function handleTermacDishProposalSend(request, env) {
