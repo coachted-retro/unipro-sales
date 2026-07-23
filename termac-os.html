@@ -4854,6 +4854,10 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
 <style>
 .full-overlay{display:none;position:fixed;top:0;left:var(--rail-w);width:calc(100% - var(--rail-w));height:100%;background:var(--bg);z-index:300;flex-direction:column;overflow:hidden;transition:left .2s ease,width .2s ease}
 .full-overlay.open{display:flex}
+/* Hide Messages widget inside Manager Portal -- it blocks the AllPro panel footer */
+#ovMgr.open ~ * #termacMsgLauncher,
+#ovMgr.open ~ #termacMsgLauncher,
+body:has(#ovMgr.open) #termacMsgLauncher { display:none!important; }
 .ov-header{background:#1A1D21;border-bottom:3px solid var(--red);padding:0 20px;height:52px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
 .ov-header h2{font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:16px;letter-spacing:.12em;text-transform:uppercase;color:#fff;margin:0}
 .ov-header-btns{display:flex;align-items:center;gap:8px}
@@ -5714,8 +5718,29 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
       <button onclick="apkFilter('all')" id="apkFAll" style="font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;padding:4px 10px;border-radius:5px;border:1px solid var(--line);background:var(--red);color:#fff;cursor:pointer">All</button>
       <button onclick="apkFilter('unbilled')" id="apkFUnbilled" style="font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;padding:4px 10px;border-radius:5px;border:1px solid var(--line);background:#fff;color:var(--soft);cursor:pointer">🔴 Unbilled</button>
       <button onclick="apkFilter('active')" id="apkFActive" style="font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;padding:4px 10px;border-radius:5px;border:1px solid var(--line);background:#fff;color:var(--soft);cursor:pointer">Active</button>
+      <button onclick="apkFilter('payqueue')" id="apkFPayqueue" style="font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;padding:4px 10px;border-radius:5px;border:1.5px solid #7330A8;background:#fff;color:#7330A8;cursor:pointer">💳 Payment Queue</button>
     </div>
   </div>
+
+  <!-- Payment Queue panel -- shown when filter = payqueue -->
+  <div id="apk_payqueue_panel" style="display:none;margin-bottom:16px">
+    <div style="background:#fff;border-radius:10px;box-shadow:0 2px 8px rgba(26,29,33,.10);overflow:hidden">
+      <div style="background:#7330A8;color:#fff;padding:12px 18px;display:flex;align-items:center;justify-content:space-between">
+        <div>
+          <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:14px;letter-spacing:.10em;text-transform:uppercase">💳 Payment Link Queue</div>
+          <div style="font-size:11px;color:rgba(255,255,255,.75);margin-top:2px">Projects waiting on a Square link from you — paste &amp; send each one</div>
+        </div>
+        <div style="font-size:11px;color:rgba(255,255,255,.75)" id="apkQueueCount">Loading...</div>
+      </div>
+      <div id="apk_payqueue_rows" style="padding:0">
+        <div style="padding:20px;text-align:center;color:var(--soft)">Loading queue...</div>
+      </div>
+      <div style="padding:12px 18px;background:#F8F9FA;border-top:1px solid var(--line);font-size:11px;color:var(--soft)">
+        💡 Open the Square app → Payments → Create a link → enter the amount → copy the link → paste above → Send. The email goes out immediately and the drip reminder sequence starts automatically.
+      </div>
+    </div>
+  </div>
+
   <div id="apk_cards_grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-bottom:16px">
     <div style="color:var(--soft);font-size:13px;padding:20px;text-align:center;grid-column:1/-1">Loading projects...</div>
   </div>
@@ -12213,11 +12238,181 @@ var _apkCurrentFilter = 'all';
 
 function apkFilter(f) {
   _apkCurrentFilter = f;
-  ['all','unbilled','active'].forEach(function(k) {
-    var btn = document.getElementById('apkF'+k.charAt(0).toUpperCase()+k.slice(1));
-    if (btn) { btn.style.background = (k === f) ? 'var(--red)' : '#fff'; btn.style.color = (k === f) ? '#fff' : 'var(--soft)'; }
+  ['all','unbilled','active','payqueue'].forEach(function(k) {
+    var id = 'apkF' + k.charAt(0).toUpperCase() + k.slice(1);
+    var btn = document.getElementById(id);
+    if (!btn) return;
+    var isActive = k === f;
+    if (k === 'payqueue') {
+      btn.style.background = isActive ? '#7330A8' : '#fff';
+      btn.style.color = isActive ? '#fff' : '#7330A8';
+    } else {
+      btn.style.background = (k === f) ? 'var(--red)' : '#fff';
+      btn.style.color = (k === f) ? '#fff' : 'var(--soft)';
+    }
   });
-  apkRenderCards(f);
+  var queuePanel = document.getElementById('apk_payqueue_panel');
+  var cardsGrid = document.getElementById('apk_cards_grid');
+  if (f === 'payqueue') {
+    if (queuePanel) queuePanel.style.display = 'block';
+    if (cardsGrid) cardsGrid.style.display = 'none';
+    apkRenderPayQueue();
+  } else {
+    if (queuePanel) queuePanel.style.display = 'none';
+    if (cardsGrid) cardsGrid.style.display = 'grid';
+    apkRenderCards(f);
+  }
+}
+
+function apkRenderPayQueue() {
+  var container = document.getElementById('apk_payqueue_rows');
+  var countEl = document.getElementById('apkQueueCount');
+  if (!container) return;
+
+  var projects = window._apkProjects || [];
+
+  // Build queue items -- one row per milestone that needs a link sent
+  var queueItems = [];
+  projects.forEach(function(p, idx) {
+    var total = (p.contractValue || 0) + (p.approvedChangeOrders || 0);
+    if (!total) return;
+
+    var customer = p.business || p.accountName || 'Unnamed';
+    var email = p.customer_email || p.email || '';
+    var quoteId = p.opportunityId || p.id || '';
+
+    // 40% Draw needed: project is at Pre-Construction or beyond, draw not yet sent
+    var stageIdx = ['Discovery','Proposal','Pre-Construction','Fabrication','Installation','Inspection / Closeout','Ongoing Service'].indexOf(p.apStage || '');
+    var atOrPastPreConstruction = stageIdx >= 2 || p.status === 'active' || p._isUnbilled;
+
+    if (!p.draw_paid_at && !p._drawPaidAt) {
+      if (!p.draw_sent_at && !p._drawSentAt && atOrPastPreConstruction) {
+        queueItems.push({ p: p, idx: idx, milestone: 'draw', label: '40% Pre-Construction Draw', amount: total * 0.40, quoteId: quoteId, customer: customer, email: email, status: 'unsent', priority: 1 });
+      } else if (p.draw_sent_at || p._drawSentAt) {
+        queueItems.push({ p: p, idx: idx, milestone: 'draw', label: '40% Pre-Construction Draw', amount: total * 0.40, quoteId: quoteId, customer: customer, email: email, status: 'sent_awaiting', priority: 2 });
+      }
+    }
+
+    // 10% Final needed: installation complete, final not yet sent/paid
+    if (p._isComplete && !p.final_paid_at && !p._finalPaidAt) {
+      if (!p.final_sent_at && !p._finalSentAt) {
+        queueItems.push({ p: p, idx: idx, milestone: 'final', label: '10% Final Balance', amount: total * 0.10, quoteId: quoteId, customer: customer, email: email, status: 'unsent', priority: 1 });
+      } else if (p.final_sent_at || p._finalSentAt) {
+        queueItems.push({ p: p, idx: idx, milestone: 'final', label: '10% Final Balance', amount: total * 0.10, quoteId: quoteId, customer: customer, email: email, status: 'sent_awaiting', priority: 2 });
+      }
+    }
+  });
+
+  // Sort: unsent first (priority 1), then awaiting payment (priority 2), then by amount desc
+  queueItems.sort(function(a, b) { return a.priority - b.priority || b.amount - a.amount; });
+
+  if (countEl) countEl.textContent = queueItems.length + ' item' + (queueItems.length !== 1 ? 's' : '') + ' need attention';
+
+  if (!queueItems.length) {
+    container.innerHTML = '<div style="padding:32px;text-align:center;color:var(--soft)">' +
+      '<div style="font-size:32px;margin-bottom:8px">✅</div>' +
+      '<div style="font-weight:700;margin-bottom:4px">Payment queue is clear</div>' +
+      '<div style="font-size:12px">No projects are waiting on a Square payment link right now.</div>' +
+      '</div>';
+    return;
+  }
+
+  function fmtMoney(v) { return '$' + parseFloat(v).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}); }
+
+  var html = '';
+  var currentSection = null;
+
+  queueItems.forEach(function(item, i) {
+    var sectionLabel = item.status === 'unsent' ? '🔴 Link Not Yet Sent — Send Now' : '⏳ Link Sent — Awaiting Payment';
+    if (item.status !== currentSection) {
+      if (currentSection !== null) html += '</div>';
+      html += '<div style="background:#F8F9FA;padding:6px 18px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:' + (item.status === 'unsent' ? '#C8102E' : '#D8690B') + '">' + sectionLabel + '</div><div>';
+      currentSection = item.status;
+    }
+
+    var rowBg = i % 2 === 0 ? '#fff' : '#FAFBFC';
+    var rowId = 'pqrow_' + i;
+
+    html += '<div id="' + rowId + '" style="background:' + rowBg + ';padding:14px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px;flex-wrap:wrap">' +
+
+      // Left: project info
+      '<div style="min-width:180px;flex:1">' +
+        '<div style="font-weight:700;font-size:14px;color:var(--ink)">' + escH(item.customer) + '</div>' +
+        '<div style="font-size:11px;color:var(--soft);margin-top:2px">' +
+          '<span style="background:' + (item.milestone === 'draw' ? '#DBEAFE' : '#F3E8FF') + ';color:' + (item.milestone === 'draw' ? '#1E40AF' : '#6D28D9') + ';border-radius:4px;padding:2px 7px;font-weight:700;font-size:10px;text-transform:uppercase;letter-spacing:.06em">' + escH(item.label) + '</span>' +
+          ' &nbsp;' + escH(item.email || 'No email on file') +
+        '</div>' +
+      '</div>' +
+
+      // Center: amount
+      '<div style="text-align:center;min-width:100px">' +
+        '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:20px;color:#7330A8">' + fmtMoney(item.amount) + '</div>' +
+        '<div style="font-size:10px;color:var(--soft);text-transform:uppercase;letter-spacing:.06em">Due</div>' +
+      '</div>' +
+
+      // Right: link input + send button
+      '<div style="display:flex;gap:8px;align-items:center;flex:2;min-width:280px">' +
+        '<input id="pqlink_' + i + '" type="url" placeholder="Paste Square payment link here (https://square.link/...)" style="flex:1;padding:9px 12px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;font-family:Barlow,sans-serif;outline:none" oninput="document.getElementById(\'pqsend_'+i+'\').style.background=this.value.startsWith(\'http\')?\'#7330A8\':\'var(--soft)\'">' +
+        '<button id="pqsend_' + i + '" onclick="apkQueueSend(' + i + ')" style="background:var(--soft);color:#fff;border:none;border-radius:7px;padding:9px 16px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;white-space:nowrap">Send →</button>' +
+        (item.status === 'sent_awaiting' ? '<button onclick="apkLogPayment(window._apkProjects[' + item.idx + '],\'' + item.milestone + '\')" style="background:#16A34A;color:#fff;border:none;border-radius:7px;padding:9px 12px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;white-space:nowrap">✅ Mark Paid</button>' : '') +
+      '</div>' +
+
+    '</div>';
+  });
+
+  if (currentSection !== null) html += '</div>';
+
+  // Store queue items for send handler
+  window._apkQueueItems = queueItems;
+  container.innerHTML = html;
+}
+
+function apkQueueSend(i) {
+  var item = (window._apkQueueItems || [])[i];
+  if (!item) return;
+  var linkInput = document.getElementById('pqlink_' + i);
+  var squareLink = linkInput ? linkInput.value.trim() : '';
+  if (!squareLink || !squareLink.startsWith('http')) {
+    linkInput.style.borderColor = '#C8102E';
+    linkInput.placeholder = '⚠️ Paste a valid Square link first (https://square.link/...)';
+    linkInput.focus();
+    return;
+  }
+  var btn = document.getElementById('pqsend_' + i);
+  if (btn) { btn.textContent = 'Sending...'; btn.disabled = true; }
+
+  var endpoint = item.milestone === 'draw' ? '/allpro-draw-send' : '/allpro-final-send';
+  fetch('https://termac-staff-auth.termac-one.workers.dev' + endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ quote_id: item.quoteId, sender_email: 'tscholl@termac.com', square_link: squareLink })
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (d.ok) {
+      // Update row to show sent state
+      var row = document.getElementById('pqrow_' + i);
+      if (row) {
+        row.style.background = '#F0FFF4';
+        row.innerHTML = '<div style="display:flex;align-items:center;gap:12px;width:100%">' +
+          '<span style="font-size:20px">✅</span>' +
+          '<div><strong>' + escH(item.customer) + '</strong> — ' + escH(item.label) + '</div>' +
+          '<div style="font-weight:700;color:#16A34A;margin-left:auto">' + new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(item.amount) + ' invoice sent to ' + escH(item.email) + '</div>' +
+          '<div style="font-size:11px;color:var(--soft)">Reminders scheduled · ' + (d.email_sent ? 'Email delivered' : 'Email queued') + '</div>' +
+        '</div>';
+      }
+      // Mark on project object
+      if (item.milestone === 'draw') { item.p._drawSentAt = Date.now(); item.p.draw_sent_at = Date.now(); }
+      if (item.milestone === 'final') { item.p._finalSentAt = Date.now(); item.p.final_sent_at = Date.now(); }
+      // Update queue count
+      var remaining = (window._apkQueueItems || []).filter(function(qi, ii) { return ii > i || (ii < i && !document.getElementById('pqrow_'+ii)?.style.background?.includes('F0FFF4')); });
+      showToast('📧 ' + item.label + ' invoice sent to ' + item.customer + ' — drip reminders activated');
+    } else {
+      if (btn) { btn.textContent = 'Send →'; btn.disabled = false; }
+      showToast('⚠️ Send failed: ' + (d.message || d.error || 'Check Graph token'));
+    }
+  }).catch(function() {
+    if (btn) { btn.textContent = 'Send →'; btn.disabled = false; }
+    showToast('⚠️ Server unreachable — check connection');
+  });
 }
 
 function apkRenderCards(filter) {

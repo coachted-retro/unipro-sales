@@ -229,6 +229,7 @@
   function buildUI() {
     // Launcher: bottom-LEFT, slate -- distinct from the Ask AI pill (bottom-right)
     launcher = el('button', { position: 'fixed', left: '20px', bottom: '20px', zIndex: '99990', padding: '0 16px', height: '48px', borderRadius: '24px', border: 'none', background: '#334155', color: '#fff', fontSize: '14px', fontWeight: '800', boxShadow: '0 6px 20px rgba(15,23,42,.35)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '8px', fontFamily: '-apple-system,Segoe UI,Roboto,sans-serif' });
+    launcher.id = 'termacMsgLauncher';
     launcher.innerHTML = '<span style="font-size:18px">\uD83D\uDCAC</span><span>Messages</span>';
     launcher.title = 'Team Messages';
     badge = el('span', { display: 'none', minWidth: '18px', height: '18px', padding: '0 5px', borderRadius: '9px', background: '#C8102E', color: '#fff', fontSize: '11px', fontWeight: '900', lineHeight: '18px', textAlign: 'center', marginLeft: '2px' });
