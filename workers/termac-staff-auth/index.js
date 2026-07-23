@@ -1001,6 +1001,9 @@ export default {
         case '/calendar-pull': return await handleCalendarPull(request, env);
         case '/allpro-survey-submit': return await handleAllProSurveySubmit(request, env);
         case '/allpro-proposal-send': return await handleAllProProposalSend(request, env);
+        case '/allpro-draw-send': return await handleAllProDrawSend(request, env);
+        case '/allpro-final-send': return await handleAllProFinalSend(request, env);
+        case '/allpro-payment-logged': return await handleAllProPaymentLogged(request, env);
         default: return jsonResponse({ ok: false, error: 'Unknown endpoint.' }, 404);
       }
     } catch (e) {
@@ -1008,3 +1011,183 @@ export default {
     }
   },
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ALLPRO PAYMENT MILESTONE EMAILS — 40% Draw and 10% Final Balance
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Square is used via the Square app on Samsung tablets (no API).
+// Payment links are configured once in the SQUARE_LINKS env variable or
+// pasted directly by Ted when sending. The system handles all email
+// automation, drip reminders, and stage-gate logic.
+//
+// ENV VARIABLE: SQUARE_DEPOSIT_LINK (set in Cloudflare Worker env settings)
+// Format: the Square payment link URL from your Square dashboard
+// If not set, emails include a placeholder and Ted pastes the link manually.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function allproPaymentEmailHtml({ customerName, milestoneLabel, milestonePct, amount, totalContract, squareLink, jobDescription, proposalNum, isReminder, reminderNum, blockMessage }) {
+  var usd = function(n) { return '$' + parseFloat(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+  var linkHtml = squareLink
+    ? '<div style="text-align:center;margin:28px 0"><a href="' + squareLink + '" style="background:#F2B705;color:#1A1D21;text-decoration:none;padding:14px 32px;border-radius:8px;font-family:Arial,sans-serif;font-weight:700;font-size:16px;display:inline-block">Pay ' + usd(amount) + ' via Square →</a></div>'
+    : '<div style="background:#FFF8E6;border:1px solid #F2B705;border-radius:8px;padding:14px 18px;margin:24px 0;font-family:Arial,sans-serif;font-size:14px"><strong>Payment Amount Due: ' + usd(amount) + '</strong><br>Ted Scholl will send you a Square payment link shortly at this email address, or you may pay in person via the AllPro tablet.</div>';
+  var subjectPrefix = isReminder ? ('REMINDER ' + (reminderNum === 2 ? '— FINAL NOTICE ' : '') + '— ') : '';
+  var urgencyHtml = '';
+  if (isReminder && reminderNum === 1) {
+    urgencyHtml = '<div style="background:#FEF3C7;border-left:4px solid #F2B705;padding:12px 16px;margin-bottom:20px;font-size:14px"><strong>Friendly Reminder:</strong> We have not yet received your ' + milestoneLabel + ' payment of ' + usd(amount) + '. Please complete payment at your earliest convenience to keep your project on schedule.</div>';
+  }
+  if (isReminder && reminderNum === 2) {
+    urgencyHtml = '<div style="background:#FEE2E2;border-left:4px solid #C8102E;padding:12px 16px;margin-bottom:20px;font-size:14px"><strong>⚠️ Action Required:</strong> Your ' + milestoneLabel + ' payment of ' + usd(amount) + ' is outstanding. ' + (blockMessage || '') + ' Please contact Ted Scholl at 267-421-6336 or reply to this email immediately.</div>';
+  }
+  return '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">'
+    + '<img src="https://my.termac.com/allpro-letterhead.png" alt="AllPro Stainless Steel" style="width:260px;height:auto;margin-bottom:16px"><br>'
+    + '<p>Dear ' + customerName + ',</p>'
+    + urgencyHtml
+    + '<p>' + (isReminder ? 'This is a reminder that your ' : 'Your project has reached the ') + '<strong>' + milestoneLabel + ' (' + milestonePct + '%)</strong>' + (isReminder ? ' payment remains outstanding.' : ' milestone.') + '</p>'
+    + '<p>As outlined in your signed proposal, a payment of <strong>' + usd(amount) + '</strong> is due at this stage of your project.</p>'
+    + '<table style="width:100%;border-collapse:collapse;margin:20px 0;font-size:14px">'
+    + '<tr><td style="padding:8px 12px;background:#F8F9FA;font-weight:700">Project</td><td style="padding:8px 12px;background:#F8F9FA">' + (jobDescription || proposalNum) + '</td></tr>'
+    + '<tr><td style="padding:8px 12px">Proposal #</td><td style="padding:8px 12px">' + proposalNum + '</td></tr>'
+    + '<tr><td style="padding:8px 12px;background:#F8F9FA">Contract Total</td><td style="padding:8px 12px;background:#F8F9FA">' + usd(totalContract) + '</td></tr>'
+    + '<tr><td style="padding:8px 12px"><strong>' + milestoneLabel + ' Due</strong></td><td style="padding:8px 12px"><strong style="color:#C8102E">' + usd(amount) + '</strong></td></tr>'
+    + '</table>'
+    + linkHtml
+    + (squareLink ? '<p style="font-size:12px;color:#6B7280;text-align:center">You can also pay in person at our office or at the job site via the AllPro tablet.</p>' : '')
+    + '<p>Questions? Call Ted Scholl directly at <strong>267-421-6336</strong> or reply to this email.</p>'
+    + '<p>Thank you — we look forward to completing your project.</p>'
+    + '<hr style="margin:24px 0;border:none;border-top:1px solid #E5E7EB">'
+    + '<p style="font-size:12px;color:#6B7280">AllPro Stainless Steel and Metal Fabrication | 7330 Tulip Street, Philadelphia PA 19136<br>'
+    + 'Phone: 215-928-9191 | Fax: 215-333-9133 | Toll-Free: 1-800-601-4663<br>'
+    + 'Primary Contact: Ted Scholl — tscholl@termac.com | 267-421-6336</p>'
+    + '</div>';
+}
+
+async function sendAllProMilestoneEmail(env, { customerEmail, customerName, subject, htmlBody, senderEmail }) {
+  senderEmail = senderEmail || 'tscholl@termac.com';
+  if (!customerEmail) return false;
+  var tokenRow = await env.DB.prepare('SELECT * FROM staff_graph_tokens WHERE staff_email = ?').bind(senderEmail).first();
+  if (!tokenRow || !tokenRow.access_token) return false;
+  // Refresh if needed
+  if (tokenRow.expires_at && tokenRow.expires_at < Date.now() + 60000) {
+    try {
+      var refreshRes = await fetch('https://login.microsoftonline.com/' + env.SSO_TENANT_ID + '/oauth2/v2.0/token', {
+        method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ grant_type: 'refresh_token', client_id: env.SSO_CLIENT_ID, client_secret: env.SSO_CLIENT_SECRET, refresh_token: tokenRow.refresh_token, scope: 'openid profile email Mail.Send offline_access' })
+      });
+      var rj = await refreshRes.json();
+      if (rj.access_token) { await env.DB.prepare('UPDATE staff_graph_tokens SET access_token=?,expires_at=?,updated_at=? WHERE staff_email=?').bind(rj.access_token, Date.now() + (rj.expires_in || 3600) * 1000, Date.now(), senderEmail).run(); tokenRow.access_token = rj.access_token; }
+    } catch(e) {}
+  }
+  var res = await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + tokenRow.access_token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: { subject, body: { contentType: 'HTML', content: htmlBody }, toRecipients: [{ emailAddress: { address: customerEmail } }], ccRecipients: [{ emailAddress: { address: 'tscholl@termac.com' } }] } })
+  });
+  return res.status === 202;
+}
+
+// ── 40% PRE-CONSTRUCTION DRAW ─────────────────────────────────────────────────
+// POST: { quote_id, sender_email, square_link? }
+// Triggered when stage advances to Pre-Construction (Stage 3)
+async function handleAllProDrawSend(request, env) {
+  var body; try { body = await request.json(); } catch(e) { return jsonResponse({ ok: false, error: 'Invalid JSON' }, 400); }
+  var quoteId = body.quote_id;
+  var senderEmail = body.sender_email || 'tscholl@termac.com';
+  var squareLink = body.square_link || env.SQUARE_DRAW_LINK || null;
+  if (!quoteId) return jsonResponse({ ok: false, error: 'quote_id required' }, 400);
+
+  var q = await env.DB.prepare('SELECT * FROM allpro_quotes WHERE id = ?').bind(quoteId).first();
+  if (!q) return jsonResponse({ ok: false, error: 'Quote not found' }, 404);
+
+  var total = parseFloat(q.grand_total || 0);
+  var depositPaid = parseFloat(q.deposit_paid || total * 0.50);
+  var drawAmount = total * 0.40;
+  var proposalNum = q.project_number || quoteId;
+  var customerName = q.customer_name || 'Valued Customer';
+  var customerEmail = q.customer_email;
+  var jobDescription = q.customer_address || '';
+
+  var htmlBody = allproPaymentEmailHtml({ customerName, milestoneLabel: 'Pre-Construction Draw', milestonePct: 40, amount: drawAmount, totalContract: total, squareLink, jobDescription, proposalNum, isReminder: false });
+  var subject = 'AllPro Project #' + proposalNum + ' — Pre-Construction Draw (' + new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(drawAmount) + ' due)';
+
+  var emailSent = await sendAllProMilestoneEmail(env, { customerEmail, customerName, subject, htmlBody, senderEmail });
+
+  // Log milestone in D1
+  await env.DB.prepare('UPDATE allpro_quotes SET draw_sent_at=?, payment_stage=?, updated_at=? WHERE id=?').bind(Date.now(), 'draw_sent', Date.now(), quoteId).run().catch(()=>{});
+
+  // Schedule reminder emails via D1 table (Worker cron will pick these up)
+  // Reminder 1: 48 hours; Reminder 2: 5 days (with block warning)
+  var reminders = [
+    { fire_at: Date.now() + 48*60*60*1000, reminder_num: 1, milestone: 'draw', block_message: '' },
+    { fire_at: Date.now() + 5*24*60*60*1000, reminder_num: 2, milestone: 'draw', block_message: 'Fabrication cannot begin until this payment is received.' }
+  ];
+  for (var r of reminders) {
+    await env.DB.prepare('INSERT OR REPLACE INTO allpro_payment_reminders (quote_id, milestone, reminder_num, fire_at, sent, created_at) VALUES (?,?,?,?,0,?)').bind(quoteId, r.milestone, r.reminder_num, r.fire_at, Date.now()).run().catch(()=>{});
+  }
+
+  return jsonResponse({ ok: true, email_sent: emailSent, draw_amount: drawAmount, quote_id: quoteId, milestone: 'draw', message: emailSent ? 'Draw invoice emailed to ' + customerEmail : 'Email not sent — check Graph token. Ted CC\'d on all AllPro payment emails.' });
+}
+
+// ── 10% FINAL BALANCE ─────────────────────────────────────────────────────────
+// POST: { quote_id, sender_email, square_link? }
+// Triggered when installation is marked complete (Stage 5 → 6)
+async function handleAllProFinalSend(request, env) {
+  var body; try { body = await request.json(); } catch(e) { return jsonResponse({ ok: false, error: 'Invalid JSON' }, 400); }
+  var quoteId = body.quote_id;
+  var senderEmail = body.sender_email || 'tscholl@termac.com';
+  var squareLink = body.square_link || env.SQUARE_FINAL_LINK || null;
+  if (!quoteId) return jsonResponse({ ok: false, error: 'quote_id required' }, 400);
+
+  var q = await env.DB.prepare('SELECT * FROM allpro_quotes WHERE id = ?').bind(quoteId).first();
+  if (!q) return jsonResponse({ ok: false, error: 'Quote not found' }, 404);
+
+  var total = parseFloat(q.grand_total || 0);
+  var finalAmount = total * 0.10;
+  var proposalNum = q.project_number || quoteId;
+  var customerName = q.customer_name || 'Valued Customer';
+  var customerEmail = q.customer_email;
+  var jobDescription = q.customer_address || '';
+
+  var htmlBody = allproPaymentEmailHtml({ customerName, milestoneLabel: 'Final Balance', milestonePct: 10, amount: finalAmount, totalContract: total, squareLink, jobDescription, proposalNum, isReminder: false });
+  var subject = 'AllPro Project #' + proposalNum + ' — Final Balance (' + new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(finalAmount) + ' due) — Installation Complete';
+
+  var emailSent = await sendAllProMilestoneEmail(env, { customerEmail, customerName, subject, htmlBody, senderEmail });
+
+  await env.DB.prepare('UPDATE allpro_quotes SET final_sent_at=?, payment_stage=?, updated_at=? WHERE id=?').bind(Date.now(), 'final_sent', Date.now(), quoteId).run().catch(()=>{});
+
+  var reminders = [
+    { fire_at: Date.now() + 48*60*60*1000, reminder_num: 1, milestone: 'final', block_message: '' },
+    { fire_at: Date.now() + 5*24*60*60*1000, reminder_num: 2, milestone: 'final', block_message: 'AHJ inspection sign-off, warranty filing, and ongoing service account setup are on hold pending final payment.' }
+  ];
+  for (var r of reminders) {
+    await env.DB.prepare('INSERT OR REPLACE INTO allpro_payment_reminders (quote_id, milestone, reminder_num, fire_at, sent, created_at) VALUES (?,?,?,?,0,?)').bind(quoteId, r.milestone, r.reminder_num, r.fire_at, Date.now()).run().catch(()=>{});
+  }
+
+  return jsonResponse({ ok: true, email_sent: emailSent, final_amount: finalAmount, quote_id: quoteId, milestone: 'final', message: emailSent ? 'Final balance invoice emailed to ' + customerEmail : 'Email not sent — check Graph token.' });
+}
+
+// ── LOG PAYMENT RECEIVED ──────────────────────────────────────────────────────
+// POST: { quote_id, milestone ('deposit'|'draw'|'final'), amount_received, payment_method, logged_by }
+// Called manually by Ted when Square confirms payment cleared
+async function handleAllProPaymentLogged(request, env) {
+  var body; try { body = await request.json(); } catch(e) { return jsonResponse({ ok: false, error: 'Invalid JSON' }, 400); }
+  var quoteId = body.quote_id;
+  var milestone = body.milestone; // 'deposit', 'draw', 'final'
+  var amount = parseFloat(body.amount_received || 0);
+  var method = body.payment_method || 'Square';
+  var loggedBy = body.logged_by || 'tscholl@termac.com';
+  if (!quoteId || !milestone) return jsonResponse({ ok: false, error: 'quote_id and milestone required' }, 400);
+
+  var fieldMap = { deposit: 'deposit_paid_at', draw: 'draw_paid_at', final: 'final_paid_at' };
+  var amtMap   = { deposit: 'deposit_paid', draw: 'draw_paid', final: 'final_paid' };
+  var field = fieldMap[milestone];
+  var amtField = amtMap[milestone];
+  if (!field) return jsonResponse({ ok: false, error: 'Invalid milestone' }, 400);
+
+  await env.DB.prepare('UPDATE allpro_quotes SET ' + field + '=?, ' + amtField + '=?, payment_stage=?, updated_at=? WHERE id=?').bind(Date.now(), amount, milestone + '_paid', Date.now(), quoteId).run().catch(()=>{});
+
+  // Cancel pending reminders for this milestone
+  await env.DB.prepare('UPDATE allpro_payment_reminders SET sent=1, cancelled=1 WHERE quote_id=? AND milestone=? AND sent=0').bind(quoteId, milestone).run().catch(()=>{});
+
+  return jsonResponse({ ok: true, quote_id: quoteId, milestone, amount_received: amount, payment_method: method, logged_by: loggedBy, message: milestone.charAt(0).toUpperCase() + milestone.slice(1) + ' payment of $' + amount.toLocaleString('en-US',{minimumFractionDigits:2}) + ' logged via ' + method + '.' });
+}

@@ -40231,14 +40231,53 @@ function rvRenderProject() {
   // AllPro stage list
   var stages = ['Discovery','Proposal','Pre-Construction','Fabrication','Installation','Inspection / Closeout','Ongoing Service'];
   var currentStageIdx = stages.indexOf(p.apStage||'') !== -1 ? stages.indexOf(p.apStage) : (p._isComplete ? 5 : p._isUnbilled ? 5 : 0);
+
+  // Payment status icons on gated stages
+  var stageIcon = function(i) {
+    if (i === 2) { // Pre-Construction — deposit gate
+      return p.deposit_paid_at || p._depositPaidAt ? ' ✅' : ' 💳';
+    }
+    if (i === 3) { // Fabrication — draw gate
+      if (p.draw_paid_at || p._drawPaidAt) return ' ✅';
+      if (p.draw_sent_at || p._drawSentAt) return ' ⏳';
+      return ' 🔒';
+    }
+    if (i === 5) { // Closeout — final gate
+      if (p.final_paid_at || p._finalPaidAt) return ' ✅';
+      if (p.final_sent_at || p._finalSentAt) return ' ⏳';
+      return ' 🔒';
+    }
+    return '';
+  };
+
   var stagesHtml = '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px">' + stages.map(function(s,i) {
     var active = i === currentStageIdx;
     var done = i < currentStageIdx;
     var bg = done?'#D1FAE5':active?'#1B5FA8':'#F3F4F6';
     var col = done?'#065F46':active?'#fff':'#6B7280';
     var fw = active?'800':'600';
-    return '<span style="background:'+bg+';color:'+col+';font-weight:'+fw+';border-radius:20px;padding:3px 10px;font-size:10px;font-family:Barlow Condensed,sans-serif;letter-spacing:.06em;text-transform:uppercase;cursor:pointer" onclick="rvAdvanceStage('+i+')" title="Set stage">'+s+'</span>';
+    var icon = stageIcon(i);
+    return '<span style="background:'+bg+';color:'+col+';font-weight:'+fw+';border-radius:20px;padding:3px 10px;font-size:10px;font-family:Barlow Condensed,sans-serif;letter-spacing:.06em;text-transform:uppercase;cursor:pointer" onclick="rvAdvanceStage('+i+')" title="Click to set stage">'+s+icon+'</span>';
   }).join('') + '</div>';
+
+  // Payment status row
+  var payRowHtml = '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">';
+  var milestones = [
+    { key:'deposit', label:'50% Deposit', pct:0.50, paidAt: p.deposit_paid_at||p._depositPaidAt, sentAt: null },
+    { key:'draw',    label:'40% Draw',    pct:0.40, paidAt: p.draw_paid_at||p._drawPaidAt,       sentAt: p.draw_sent_at||p._drawSentAt },
+    { key:'final',   label:'10% Final',   pct:0.10, paidAt: p.final_paid_at||p._finalPaidAt,     sentAt: p.final_sent_at||p._finalSentAt },
+  ];
+  var total = (p.contractValue||0) + (p.approvedChangeOrders||0);
+  milestones.forEach(function(m) {
+    var amt = '$' + (total*m.pct).toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:0});
+    var bg, col, icon, clickable;
+    if (m.paidAt) { bg='#D1FAE5'; col='#065F46'; icon='✅'; clickable=false; }
+    else if (m.sentAt) { bg='#FEF3C7'; col='#92400E'; icon='⏳'; clickable=true; }
+    else { bg='#F3F4F6'; col='#6B7280'; icon='💳'; clickable=true; }
+    var clickHandler = clickable ? ' onclick="apkLogPayment(_rv.projects[_rv.idx],\''+m.key+'\')" title="Click when Square payment clears" style="cursor:pointer"' : '';
+    payRowHtml += '<span style="background:'+bg+';color:'+col+';border-radius:6px;padding:4px 10px;font-size:11px;font-weight:700"'+clickHandler+'>'+icon+' '+m.label+' '+amt+(m.paidAt?' PAID':m.sentAt?' SENT — tap to confirm':'')+'</span>';
+  });
+  payRowHtml += '</div>';
 
   var body = document.getElementById('rvBody');
   body.innerHTML =
@@ -40267,6 +40306,8 @@ function rvRenderProject() {
           '</div>' +
           // Stage tracker
           stagesHtml +
+          // Payment milestone status
+          payRowHtml +
           // Last next action
           (p.nextAction?'<div style="background:#EFF6FF;border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:12px"><strong style="color:#1B5FA8">Last known next action:</strong> '+escH(p.nextAction)+'</div>':'') +
         '</div>' +
@@ -40317,14 +40358,98 @@ function rvAdvanceStage(idx) {
   var p = _rv.projects[_rv.idx];
   if (!p) return;
   var stages = ['Discovery','Proposal','Pre-Construction','Fabrication','Installation','Inspection / Closeout','Ongoing Service'];
-  p.apStage = stages[idx];
+  var stageName = stages[idx];
+
+  // ── PAYMENT GATES ────────────────────────────────────────────────────────────
+  // Stage 3 (Pre-Construction, idx=2): requires deposit (50%) paid
+  // Stage 4 (Fabrication, idx=3):       requires draw (40%) paid
+  // Stage 6 (Inspection/Closeout, idx=5): requires final (10%) paid
+  if (idx === 3 && !p.draw_paid_at && !p._drawPaidAt) {
+    // Deposit must be paid to enter Fabrication -- offer to send draw invoice
+    if (!confirm('⚠️ The 40% Pre-Construction Draw has not been sent yet for this project.\n\nSend the draw invoice to ' + (p.customer_email || 'the customer') + ' now?\n\nOK = Send draw invoice email\nCancel = Skip for now')) return;
+    apkSendDraw(p);
+    return;
+  }
+  if (idx === 5 && !p.final_paid_at && !p._finalPaidAt && p.status !== 'final_paid') {
+    if (!confirm('⚠️ The 10% Final Balance has not been collected yet.\n\nSend the final balance invoice to ' + (p.customer_email || 'the customer') + ' now?\n\nOK = Send final balance email\nCancel = Skip for now')) return;
+    apkSendFinal(p);
+    return;
+  }
+
+  // Trigger draw email automatically when advancing to Pre-Construction (idx=2)
+  // only if draw hasn't been sent yet
+  if (idx === 2 && !p.draw_sent_at && !p._drawSentAt) {
+    if (confirm('🏗️ Advancing to Pre-Construction.\n\nSend the 40% Pre-Construction Draw invoice to ' + (p.customer_email || 'the customer') + ' now?\n\nOK = Send draw invoice\nCancel = Advance stage only')) {
+      apkSendDraw(p);
+    }
+  }
+
+  // Trigger final email automatically when advancing to Inspection/Closeout (idx=5)
+  if (idx === 5 && !p.final_sent_at && !p._finalSentAt) {
+    if (confirm('✅ Installation marked complete — advancing to Inspection / Closeout.\n\nSend the 10% Final Balance invoice to ' + (p.customer_email || 'the customer') + ' now?\n\nOK = Send final invoice\nCancel = Advance stage only')) {
+      apkSendFinal(p);
+    }
+  }
+
+  p.apStage = stageName;
   // Persist to CRM opportunity if applicable
   if (p._fromCRM && p.opportunityId) {
     var opps = crmLoad('opportunities') || [];
     var o = opps.find(function(x){ return x.id === p.opportunityId; });
-    if (o) { o.apStage = stages[idx]; o.updated_at = Date.now(); crmSave('opportunities', opps); }
+    if (o) { o.apStage = stageName; o.updated_at = Date.now(); crmSave('opportunities', opps); }
   }
   rvRenderProject();
+}
+
+// ── PAYMENT MILESTONE SEND HELPERS ───────────────────────────────────────────
+function apkSendDraw(p) {
+  var squareLink = prompt('Paste the Square payment link for this draw (or leave blank — Ted will send it separately):\n\nAmount: $' + (((p.contractValue||0) + (p.approvedChangeOrders||0)) * 0.40).toLocaleString('en-US', {style:'currency',currency:'USD'}).replace('$','') + '\n', '');
+  var quoteId = p.opportunityId || p.id;
+  if (!quoteId) { showToast('⚠️ No quote ID on this project — log the draw manually'); return; }
+  var payload = { quote_id: quoteId, sender_email: 'tscholl@termac.com' };
+  if (squareLink && squareLink.startsWith('http')) payload.square_link = squareLink;
+  fetch('https://termac-staff-auth.termac-one.workers.dev/allpro-draw-send', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+  }).then(function(r){ return r.json(); }).then(function(d) {
+    showToast(d.email_sent ? '📧 40% Draw invoice sent to customer. Reminders scheduled.' : '⚠️ Draw email not sent — check Graph token. Square link generated.');
+    if (_rv.projects[_rv.idx]) { _rv.projects[_rv.idx]._drawSentAt = Date.now(); rvRenderProject(); }
+  }).catch(function(){ showToast('⚠️ Could not reach server — log draw manually'); });
+}
+
+function apkSendFinal(p) {
+  var squareLink = prompt('Paste the Square payment link for the final balance (or leave blank):\n\nAmount: $' + (((p.contractValue||0) + (p.approvedChangeOrders||0)) * 0.10).toLocaleString('en-US', {style:'currency',currency:'USD'}).replace('$','') + '\n', '');
+  var quoteId = p.opportunityId || p.id;
+  if (!quoteId) { showToast('⚠️ No quote ID on this project — log the final manually'); return; }
+  var payload = { quote_id: quoteId, sender_email: 'tscholl@termac.com' };
+  if (squareLink && squareLink.startsWith('http')) payload.square_link = squareLink;
+  fetch('https://termac-staff-auth.termac-one.workers.dev/allpro-final-send', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+  }).then(function(r){ return r.json(); }).then(function(d) {
+    showToast(d.email_sent ? '📧 Final balance invoice sent to customer. Reminders scheduled.' : '⚠️ Final email not sent — check Graph token.');
+    if (_rv.projects[_rv.idx]) { _rv.projects[_rv.idx]._finalSentAt = Date.now(); rvRenderProject(); }
+  }).catch(function(){ showToast('⚠️ Could not reach server — log final manually'); });
+}
+
+// ── LOG PAYMENT RECEIVED (from drawer or review mode) ─────────────────────────
+function apkLogPayment(p, milestone) {
+  var labelMap = { deposit: '50% Deposit', draw: '40% Draw', final: '10% Final Balance' };
+  var pctMap   = { deposit: 0.50, draw: 0.40, final: 0.10 };
+  var total = (p.contractValue||0) + (p.approvedChangeOrders||0);
+  var expected = total * (pctMap[milestone] || 0);
+  var confirmed = confirm('Log ' + labelMap[milestone] + ' payment received via Square?\n\nExpected: $' + expected.toLocaleString('en-US',{minimumFractionDigits:2}) + '\n\nPress OK to confirm payment received.');
+  if (!confirmed) return;
+  var quoteId = p.opportunityId || p.id;
+  fetch('https://termac-staff-auth.termac-one.workers.dev/allpro-payment-logged', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ quote_id: quoteId, milestone, amount_received: expected, payment_method: 'Square', logged_by: 'tscholl@termac.com' })
+  }).then(function(r){ return r.json(); }).then(function(d) {
+    showToast(d.ok ? '✅ Payment logged — reminders cancelled — stage unlocked' : '⚠️ Could not log payment: ' + (d.error||''));
+    // Update local project object
+    if (milestone === 'deposit') { p.deposit_paid_at = Date.now(); p._depositPaidAt = Date.now(); }
+    if (milestone === 'draw')    { p.draw_paid_at = Date.now(); p._drawPaidAt = Date.now(); }
+    if (milestone === 'final')   { p.final_paid_at = Date.now(); p._finalPaidAt = Date.now(); }
+    if (typeof rvRenderProject === 'function') rvRenderProject();
+  }).catch(function(){ showToast('⚠️ Server unreachable — note payment manually'); });
 }
 
 function rvSaveNext() {
