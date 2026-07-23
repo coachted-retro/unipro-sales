@@ -507,6 +507,308 @@ async function handleMyAccess(request, env) {
   return jsonResponse({ ok: true, portals: portals, active: true, division: user.division || '', role: user.role || 'employee' });
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// AllPro Site Survey Webhook
+// Called by JotForm webhook on every survey submission.
+// Also callable directly from the sales portal "Start Site Survey" button.
+//
+// Responsibilities:
+//  1. Parse the incoming survey payload (JotForm POST or JSON from portal)
+//  2. Deduplicate against locations, accounts, contacts, leads in D1
+//     (same 2-of-3 signal logic as the sales portal spCheckPhoneDuplicate)
+//  3. Create or link the Location record in D1
+//  4. Create a new AllPro Opportunity on that Location
+//  5. Write the survey record to allpro_site_surveys
+//  6. Return { ok, survey_id, location_id, opportunity_id, quote_builder_url }
+// ─────────────────────────────────────────────────────────────────────────────
+async function handleAllProSurveySubmit(request, env) {
+  let body;
+  const contentType = request.headers.get('Content-Type') || '';
+  try {
+    if (contentType.includes('application/json')) {
+      body = await request.json();
+    } else {
+      // JotForm sends application/x-www-form-urlencoded
+      const text = await request.text();
+      const params = new URLSearchParams(text);
+      body = {};
+      for (const [k, v] of params.entries()) { body[k] = v; }
+      // JotForm also sends a rawRequest JSON field with the full submission
+      if (body.rawRequest) {
+        try { const raw = JSON.parse(body.rawRequest); Object.assign(body, raw); } catch(e) {}
+      }
+    }
+  } catch (e) {
+    return jsonResponse({ ok: false, error: 'Invalid payload: ' + e.message }, 400);
+  }
+
+  // ── Extract core identity fields ──────────────────────────────────────────
+  const customerName  = (body.customer_name || body.q1_customerName || '').trim();
+  const siteAddress   = (body.site_address  || body.q3_siteAddress  || '').trim();
+  const siteZip       = (body.site_zip      || body.q4_siteZip      || '').trim();
+  const customerPhone = (body.customer_phone || body.q6_customerPhone || '').replace(/\D/g, '');
+  const customerEmail = (body.customer_email || body.q7_customerEmail || '').trim().toLowerCase();
+  const customerContact = (body.customer_contact || body.q5_customerContact || '').trim();
+  const repName       = (body.rep_name      || body.q2_repName      || 'Ted Scholl').trim();
+  const projectType   = (body.project_type  || body.q8_projectType  || 'hood_install').trim();
+  const jotformSubId  = (body.submissionID  || body.submission_id   || '').trim();
+
+  if (!customerName && !siteAddress) {
+    return jsonResponse({ ok: false, error: 'Customer name or address required.' }, 400);
+  }
+
+  const now = Date.now();
+
+  // ── Dedup check: 2-of-3 signals across locations, accounts, contacts, leads ─
+  let existingLocationId = body.location_id || null; // pre-linked from portal button
+  let existingAccountId  = null;
+  let dupeMatch          = null;
+
+  if (!existingLocationId) {
+    // Build parallel dedup queries
+    const queries = [];
+
+    // name + address match in locations
+    if (customerName && siteAddress) {
+      queries.push(
+        env.DB.prepare(
+          "SELECT id, 'location' as src, name, address FROM locations WHERE LOWER(name) LIKE ? AND LOWER(address) LIKE ? LIMIT 1"
+        ).bind('%' + customerName.toLowerCase() + '%', '%' + siteAddress.toLowerCase().slice(0, 20) + '%').first()
+      );
+    } else {
+      queries.push(Promise.resolve(null));
+    }
+
+    // phone + name match in locations
+    if (customerPhone && customerName) {
+      queries.push(
+        env.DB.prepare(
+          "SELECT id, 'location' as src, name, address FROM locations WHERE phone LIKE ? AND LOWER(name) LIKE ? LIMIT 1"
+        ).bind('%' + customerPhone.slice(-7) + '%', '%' + customerName.toLowerCase() + '%').first()
+      );
+    } else {
+      queries.push(Promise.resolve(null));
+    }
+
+    // phone + address match in accounts
+    if (customerPhone && siteAddress) {
+      queries.push(
+        env.DB.prepare(
+          "SELECT id, 'account' as src, name, address FROM accounts WHERE phone LIKE ? AND LOWER(address) LIKE ? LIMIT 1"
+        ).bind('%' + customerPhone.slice(-7) + '%', '%' + siteAddress.toLowerCase().slice(0, 20) + '%').first()
+      );
+    } else {
+      queries.push(Promise.resolve(null));
+    }
+
+    // name + address match in accounts (chain restaurant fallback)
+    if (customerName && siteAddress) {
+      queries.push(
+        env.DB.prepare(
+          "SELECT id, 'account' as src, name, address FROM accounts WHERE LOWER(name) LIKE ? AND LOWER(address) LIKE ? LIMIT 1"
+        ).bind('%' + customerName.toLowerCase() + '%', '%' + siteAddress.toLowerCase().slice(0, 20) + '%').first()
+      );
+    } else {
+      queries.push(Promise.resolve(null));
+    }
+
+    const [locByNameAddr, locByPhoneName, accByPhoneAddr, accByNameAddr] = await Promise.all(queries);
+
+    dupeMatch = locByNameAddr || locByPhoneName || accByPhoneAddr || accByNameAddr;
+
+    if (dupeMatch) {
+      if (dupeMatch.src === 'location') {
+        existingLocationId = dupeMatch.id;
+      } else if (dupeMatch.src === 'account') {
+        existingAccountId = dupeMatch.id;
+        // Try to find the linked location for this account
+        const locForAcc = await env.DB.prepare(
+          "SELECT id FROM locations WHERE account_id = ? LIMIT 1"
+        ).bind(dupeMatch.id).first();
+        if (locForAcc) existingLocationId = locForAcc.id;
+      }
+    }
+  }
+
+  // ── If caller passed ?confirm_link=false, return dupe info for UI prompt ──
+  if (dupeMatch && body.confirm_link === 'false') {
+    return jsonResponse({
+      ok: true,
+      dupe_found: true,
+      dupe: {
+        id: dupeMatch.id,
+        src: dupeMatch.src,
+        name: dupeMatch.name,
+        address: dupeMatch.address,
+        location_id: existingLocationId,
+      },
+      message: 'Existing record found. Pass confirm_link=true to link, or create_new=true to create a new location.',
+    });
+  }
+
+  // ── Create or resolve Location ────────────────────────────────────────────
+  let locationId = existingLocationId;
+  if (!locationId && body.create_new !== 'false') {
+    const newLocId = 'LOC-AP-' + now + '-' + Math.floor(Math.random() * 9000 + 1000);
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO locations
+        (id, name, address, phone, parent_company, assigned_rep, source, status,
+         division, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'allpro_survey', 'active', 'allpro', ?, ?)`
+    ).bind(
+      newLocId,
+      customerName,
+      siteAddress + (siteZip ? ', ' + siteZip : ''),
+      customerPhone || null,
+      customerName, // parent_company defaults to business name
+      repName,
+      now, now
+    ).run();
+    locationId = newLocId;
+
+    // Create a contact on the new location if contact name provided
+    if (customerContact) {
+      const conId = 'CON-AP-' + now + '-' + Math.floor(Math.random() * 9000 + 1000);
+      await env.DB.prepare(
+        `INSERT OR IGNORE INTO contacts
+          (id, location_id, name, phone, email, role, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'Primary Contact', ?, ?)`
+      ).bind(conId, locationId, customerContact, customerPhone || null, customerEmail || null, now, now).run();
+    }
+  }
+
+  if (!locationId) {
+    return jsonResponse({ ok: false, error: 'Could not resolve or create location.' }, 500);
+  }
+
+  // ── Create AllPro Opportunity ─────────────────────────────────────────────
+  const oppId = 'OPP-AP-' + now + '-' + Math.floor(Math.random() * 9000 + 1000);
+  const oppDivision = projectType === 'dishwasher' ? 'termac_dish' : 'allpro';
+  const oppLabel = projectType === 'tm_service'
+    ? 'T&M Service - ' + customerName
+    : projectType === 'custom_stainless'
+    ? 'Custom Stainless - ' + customerName
+    : projectType === 'dishwasher'
+    ? 'Dishwasher - ' + customerName
+    : 'Hood Install - ' + customerName;
+
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO opportunities
+      (id, locationId, division, status, notes, assigned_rep,
+       source, created_at, updated_at)
+     VALUES (?, ?, ?, 'pending', ?, ?, 'allpro_site_survey', ?, ?)`
+  ).bind(
+    oppId, locationId, oppDivision,
+    'AllPro site survey submitted ' + new Date(now).toLocaleDateString('en-US'),
+    repName,
+    now, now
+  ).run();
+
+  // ── Write the full survey record ──────────────────────────────────────────
+  const surveyId = 'ASS-' + now + '-' + Math.floor(Math.random() * 9000 + 1000);
+
+  // Map all survey fields -- supports both JotForm field names and direct JSON keys
+  const hood_type      = body.hood_type      || body.q_hood_type      || null;
+  const hood_style     = body.hood_style     || body.q_hood_style     || null;
+  const hood_length    = parseFloat(body.hood_length_in  || body.q_hood_length  || 0) || null;
+  const hood_width     = parseFloat(body.hood_width_in   || body.q_hood_width   || 0) || null;
+  const hood_height    = parseFloat(body.hood_height_in  || body.q_hood_height  || 0) || null;
+  const ceiling_ht     = parseFloat(body.ceiling_height_in || body.q_ceiling_ht || 108) || 108;
+  const wall_mat       = body.wall_material  || body.q_wall_material  || null;
+  const cx_duct        = body.complexity_duct  || body.q_cx_duct  || 'L1';
+  const cx_wall        = body.complexity_wall  || body.q_cx_wall  || 'L1';
+  const cx_deck        = body.complexity_deck  || body.q_cx_deck  || 'L1';
+  const cx_notes       = body.complexity_notes || body.q_cx_notes || null;
+  const supp_required  = body.suppression_required  || null;
+  const supp_preferred = body.suppression_preferred || null;
+  const supp_in_scope  = body.suppression_in_scope  || '0';
+  const timeline       = body.project_timeline || body.q_timeline || null;
+  const budget_range   = body.budget_range     || body.q_budget   || null;
+  const field_notes    = body.field_notes      || body.q_field_notes || null;
+  const fe_count       = parseInt(body.fire_ext_count || 0) || 0;
+  const fe_condition   = body.fire_ext_condition  || null;
+  const fe_needed      = parseInt(body.fire_ext_units_needed || 0) || 0;
+  const el_count       = parseInt(body.exit_light_count || 0) || 0;
+  const el_condition   = body.exit_light_condition || null;
+  const sign_condition = body.exit_sign_condition  || null;
+  const fe_sign_cond   = body.fe_signage_condition || null;
+  const svc_hood       = body.service_hood_cleaning    || 'none';
+  const svc_fe         = body.service_fe_inspection    || 'none';
+  const svc_el         = body.service_exit_light       || 'none';
+
+  // Auto-generate upsell flags from fire safety assessment
+  const upsellFlags = [];
+  if (fe_condition && fe_condition !== 'adequate') upsellFlags.push({ type: 'fire_extinguisher', condition: fe_condition, units: fe_needed });
+  if (el_condition && el_condition !== 'good')      upsellFlags.push({ type: 'exit_light', condition: el_condition, count: el_count });
+  if (sign_condition && sign_condition !== 'all_present_lit') upsellFlags.push({ type: 'exit_sign', condition: sign_condition });
+  if (fe_sign_cond && fe_sign_cond !== 'present')   upsellFlags.push({ type: 'fe_signage', condition: fe_sign_cond });
+
+  await env.DB.prepare(
+    `INSERT INTO allpro_site_surveys
+      (id, opportunity_id, location_id, rep_name, survey_date,
+       customer_name, customer_contact, customer_phone, customer_email,
+       site_address, site_zip, project_type, project_timeline, budget_range,
+       hood_type, hood_style, hood_length_in, hood_width_in, hood_height_in,
+       ceiling_height_in, wall_material,
+       complexity_duct, complexity_wall, complexity_deck, complexity_notes,
+       suppression_required, suppression_preferred, suppression_in_scope,
+       fire_ext_count, fire_ext_condition, fire_ext_units_needed,
+       exit_light_count, exit_light_condition, exit_sign_condition,
+       fe_signage_condition, upsell_flags_json,
+       service_hood_cleaning, service_fe_inspection, service_exit_light,
+       field_notes, jotform_submission_id,
+       status, submitted_at, created_at, updated_at)
+     VALUES
+      (?,?,?,?,?,
+       ?,?,?,?,
+       ?,?,?,?,?,
+       ?,?,?,?,?,
+       ?,?,
+       ?,?,?,?,
+       ?,?,?,
+       ?,?,?,
+       ?,?,?,
+       ?,?,
+       ?,?,?,
+       ?,?,
+       ?,?,?,?)`
+  ).bind(
+    surveyId, oppId, locationId, repName, new Date(now).toISOString().slice(0,10),
+    customerName, customerContact || null, customerPhone || null, customerEmail || null,
+    siteAddress, siteZip || null, projectType, timeline || null, budget_range || null,
+    hood_type, hood_style, hood_length, hood_width, hood_height,
+    ceiling_ht, wall_mat,
+    cx_duct, cx_wall, cx_deck, cx_notes,
+    supp_required, supp_preferred, supp_in_scope === '1' || supp_in_scope === 'yes' ? 1 : 0,
+    fe_count, fe_condition, fe_needed,
+    el_count, el_condition, sign_condition,
+    fe_sign_cond, JSON.stringify(upsellFlags),
+    svc_hood, svc_fe, svc_el,
+    field_notes, jotformSubId || null,
+    'submitted', now, now, now
+  ).run();
+
+  // ── Build quote builder pre-fill URL ─────────────────────────────────────
+  const qbUrl = 'https://sales.mytermac.com/allpro-quote-builder.html'
+    + '?survey_id=' + encodeURIComponent(surveyId)
+    + '&opp_id='    + encodeURIComponent(oppId)
+    + '&loc_id='    + encodeURIComponent(locationId)
+    + '&rep='       + encodeURIComponent(repName);
+
+  return jsonResponse({
+    ok: true,
+    survey_id:       surveyId,
+    opportunity_id:  oppId,
+    location_id:     locationId,
+    dupe_found:      !!dupeMatch,
+    dupe_linked:     !!existingLocationId,
+    quote_builder_url: qbUrl,
+    message: dupeMatch
+      ? 'Survey linked to existing location. Opportunity created.'
+      : 'New location and opportunity created from survey.',
+  });
+}
+
 export default {
   async fetch(request, env) {
     if (request.method === 'OPTIONS') {
@@ -537,6 +839,7 @@ export default {
         case '/send-mail': return await handleSendMail(request, env);
         case '/calendar-push': return await handleCalendarPush(request, env);
         case '/calendar-pull': return await handleCalendarPull(request, env);
+        case '/allpro-survey-submit': return await handleAllProSurveySubmit(request, env);
         default: return jsonResponse({ ok: false, error: 'Unknown endpoint.' }, 404);
       }
     } catch (e) {

@@ -621,15 +621,171 @@ var _editLineIdx = -1;
 
 function qbInit() {
   loadRates().then(function() {
-    qbLoadList();
+    // Check for survey pre-fill params in URL
+    var params = new URLSearchParams(window.location.search);
+    var surveyId = params.get('survey_id');
+    var oppId    = params.get('opp_id');
+    var locId    = params.get('loc_id');
+    var rep      = params.get('rep');
+    if (surveyId || oppId) {
+      qbLoadFromSurvey(surveyId, oppId, locId, rep);
+    } else {
+      qbLoadList();
+    }
   });
   initCanvas();
   document.getElementById('fQuoteDate').value = new Date().toISOString().slice(0, 10);
 }
 
 // ============================================================
-// D1 HELPERS
+// LOAD FROM SITE SURVEY
+// Called when ?survey_id=... is in the URL. Pulls survey data
+// from D1 and pre-fills the quote builder, then opens directly
+// into the builder view (skipping the list).
 // ============================================================
+function qbLoadFromSurvey(surveyId, oppId, locId, rep) {
+  if (!surveyId && !oppId) { qbLoadList(); return; }
+
+  var surveyPromise = surveyId
+    ? d1Query('SELECT * FROM allpro_site_surveys WHERE id=? LIMIT 1', [surveyId])
+    : Promise.resolve({ ok: false });
+
+  var oppPromise = oppId
+    ? d1Query('SELECT o.*, l.name as loc_name, l.address as loc_address, l.phone as loc_phone FROM opportunities o LEFT JOIN locations l ON l.id=o.locationId WHERE o.id=? LIMIT 1', [oppId])
+    : Promise.resolve({ ok: false });
+
+  Promise.all([surveyPromise, oppPromise]).then(function(results) {
+    var surveyRes = results[0];
+    var oppRes    = results[1];
+
+    var s = (surveyRes.ok && surveyRes.results && surveyRes.results.length > 0) ? surveyRes.results[0] : null;
+    var o = (oppRes.ok && oppRes.results && oppRes.results.length > 0) ? oppRes.results[0] : null;
+
+    // Start a new blank quote pre-filled from survey + opportunity data
+    qbNewBlank();
+
+    // Link IDs
+    _opportunityLink = oppId || (s ? s.opportunity_id : null);
+    _locationLink    = locId || (s ? s.location_id : null);
+
+    if (_opportunityLink || _locationLink) {
+      document.getElementById('linkedBanner').style.display = 'block';
+      document.getElementById('linkedLabel').textContent =
+        (_opportunityLink ? 'Opportunity ' + _opportunityLink : '') +
+        (_locationLink ? (_opportunityLink ? ' | ' : '') + 'Location ' + _locationLink : '');
+    }
+
+    // Fill customer info from survey, fall back to opportunity
+    var custName = (s && s.customer_name) || (o && (o.loc_name || o.parent_company)) || '';
+    var custAddr = (s && s.site_address)  || (o && o.loc_address) || '';
+    var custPhone= (s && s.customer_phone) || (o && o.loc_phone)  || '';
+    var custEmail= (s && s.customer_email) || '';
+    var contact  = (s && s.customer_contact) || '';
+
+    document.getElementById('fCustName').value    = custName;
+    document.getElementById('fCustAddr').value    = custAddr;
+    document.getElementById('fCustPhone').value   = custPhone;
+    document.getElementById('fCustEmail').value   = custEmail;
+    document.getElementById('fCustContact').value = contact;
+    document.getElementById('fCeilingHt').value   = s && s.ceiling_height_in ? s.ceiling_height_in + '"' : '';
+
+    // Generate job number
+    var today = new Date();
+    var mon = String(today.getMonth()+1).padStart(2,'0');
+    var yr  = String(today.getFullYear()).slice(-2);
+    document.getElementById('fJobNum').value = 'AP-' + mon + yr + '-' + Math.floor(Math.random()*900+100);
+
+    // Pre-set complexity from survey
+    if (s) {
+      _cx = {
+        duct: s.complexity_duct || 'L1',
+        wall: s.complexity_wall || 'L1',
+        deck: s.complexity_deck || 'L1'
+      };
+      qbApplyCxState();
+
+      if (s.complexity_notes) document.getElementById('fCxNotes').value = s.complexity_notes;
+      if (s.suppression_preferred) document.getElementById('fSuppression').value = s.suppression_preferred;
+
+      // Auto-add hood line item if hood specs were captured in survey
+      if (s.hood_length_in && s.hood_type) {
+        var hoodLineType = s.hood_type === 'type2'
+          ? 'hood_type2_fab_normal'
+          : s.hood_style === 'captive_air'
+          ? 'hood_type1_captive'
+          : s.hood_style === 'low_profile'
+          ? 'hood_type1_fab_lowprofile'
+          : 'hood_type1_fab_normal';
+        var hoodCfg = LINE_TYPES[hoodLineType];
+        var hoodLen = s.hood_length_in;
+        var hoodFt  = hoodLen / 12;
+        var hoodRate= RATES[hoodCfg.rateKey] || 311;
+        var hoodPrice = Math.round(hoodRate * hoodFt);
+        _lines.push({
+          id: null,
+          item_type: hoodLineType,
+          description: hoodCfg.label,
+          qty: s.hood_count || 1,
+          unit_price: hoodPrice,
+          line_total: hoodPrice * (s.hood_count || 1),
+          notes: 'Pre-filled from site survey ' + (surveyId || ''),
+          dim_l: hoodLen,
+          dim_w: s.hood_width_in || null,
+          dim_h: s.hood_height_in || null,
+          material_gauge: '18',
+          material_finish: 'Brushed',
+          material_grade: '304',
+          specs: {
+            equip_type: s.equipment_count > 0 ? 'medium_duty' : 'medium_duty',
+            hood_install_type: s.hood_style || 'wall_mounted',
+            ceiling_ht_in: s.ceiling_height_in || 108,
+            suppression_scope: s.suppression_in_scope ? 'included_ansul' : 'excluded',
+            complexity_duct: s.complexity_duct || 'L1',
+            complexity_wall: s.complexity_wall || 'L1',
+            complexity_deck: s.complexity_deck || 'L1'
+          }
+        });
+        // Add to canvas
+        _canvasItems.push({
+          type: hoodLineType,
+          label: 'Hood ' + hoodLen + '"',
+          l: hoodLen,
+          w: s.hood_width_in || 48,
+          x: 20, y: 60,
+          selected: false
+        });
+      }
+
+      // Auto-add upsell fire safety items as notes
+      if (s.upsell_flags_json) {
+        try {
+          var flags = JSON.parse(s.upsell_flags_json);
+          if (flags.length > 0) {
+            var upsellNote = 'UPSELL FLAGS FROM SITE SURVEY: ';
+            upsellNote += flags.map(function(f) {
+              return f.type.replace(/_/g,' ') + ' (' + f.condition + ')';
+            }).join('; ');
+            document.getElementById('fLaborNotes').value = upsellNote;
+          }
+        } catch(e) {}
+      }
+    }
+
+    qbRenderLines();
+    qbRecalc();
+    qbDrawCanvas();
+    qbShowBuilder();
+    qbBreadcrumb(custName || 'Survey Quote');
+
+    // Show survey link banner
+    if (surveyId) {
+      qbToast('Survey pre-filled. Review and add remaining line items.');
+    }
+  }).catch(function(e) {
+    console.error('Survey load error:', e);
+    qbLoadList();
+  });
+}
 function d1Get(table, id) {
   var url = D1_API + '/' + table + (id ? '/' + id : '');
   return fetch(url, { headers: { 'X-API-Secret': API_SECRET } }).then(function(r) { return r.json(); });
