@@ -216,6 +216,12 @@ async function apGoHome() {
 
   <div class="kpi-row" id="apKPIs"></div>
 
+  <!-- Jim Kennedy Billing KPI Panel -->
+  <div id="apBillingKPIs" style="margin-bottom:16px"></div>
+
+  <!-- Billing Tracker (Jim's project tracker view) -->
+  <div id="apBillingTracker" style="display:none;margin-bottom:16px"></div>
+
   <div class="ap-stage-chart" id="apStageChart"></div>
 
   <div class="filter-row" id="apTypeFilters"></div>
@@ -223,6 +229,8 @@ async function apGoHome() {
   <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
     <input type="text" id="apProjectSearch" placeholder="Search projects, customers, job numbers..." oninput="renderAll()" style="flex:1;min-width:200px;padding:9px 14px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;font-family:'Barlow',sans-serif;outline:none">
     <button class="btn" id="apViewBtn-board" onclick="setProjectView('board')" style="background:var(--ink);color:#fff">🗂 Board</button>
+    <button class="btn" id="apViewBtn-list" onclick="setProjectView('list')" style="background:#fff;border:1.5px solid var(--line);color:var(--ink)">📋 List</button>
+    <button class="btn" id="apViewBtn-billing" onclick="setProjectView('billing')" style="background:#fff;border:1.5px solid var(--line);color:var(--ink)">💰 Billing Tracker</button>
     <button class="btn" id="apViewBtn-list" onclick="setProjectView('list')" style="background:#fff;border:1.5px solid var(--line);color:var(--ink)">📋 List</button>
   </div>
 
@@ -2418,14 +2426,16 @@ function renderStageChart(projects) {
 var projectView = 'board';
 function setProjectView(mode) {
   projectView = mode;
-  document.getElementById('apViewBtn-board').style.background = mode === 'board' ? 'var(--ink)' : '#fff';
-  document.getElementById('apViewBtn-board').style.color = mode === 'board' ? '#fff' : 'var(--ink)';
-  document.getElementById('apViewBtn-list').style.background = mode === 'list' ? 'var(--ink)' : '#fff';
-  document.getElementById('apViewBtn-list').style.color = mode === 'list' ? '#fff' : 'var(--ink)';
-  document.getElementById('apKanban').style.display = mode === 'board' ? 'flex' : 'none';
-  document.getElementById('apProjectList').style.display = mode === 'list' ? 'block' : 'none';
+  ['board','list','billing'].forEach(function(m) {
+    var btn = document.getElementById('apViewBtn-' + m);
+    if (btn) { btn.style.background = mode === m ? 'var(--ink)' : '#fff'; btn.style.color = mode === m ? '#fff' : 'var(--ink)'; }
+  });
+  document.getElementById('apKanban').style.display       = mode === 'board'   ? 'flex'  : 'none';
+  document.getElementById('apProjectList').style.display  = mode === 'list'    ? 'block' : 'none';
+  document.getElementById('apBillingTracker').style.display = mode === 'billing' ? 'block' : 'none';
   var projects = loadProjects();
-  if (mode === 'list') renderProjectList(projects);
+  if (mode === 'list')    renderProjectList(projects);
+  else if (mode === 'billing') renderBillingTracker(projects);
   else renderKanban(projects);
 }
 
@@ -2479,6 +2489,258 @@ function renderKPIs(projects) {
     '<div class="kpi"><div class="kpi-val" style="color:var(--green)">$'+Math.round(totalValue/1000)+'K</div><div class="kpi-lbl">Active Pipeline Value</div></div>' +
     '<div class="kpi"><div class="kpi-val" style="color:var(--amber)">'+inFab+'</div><div class="kpi-lbl">In Fabrication</div></div>' +
     '<div class="kpi"><div class="kpi-val" style="color:var(--purple)">'+closedThisSet+'</div><div class="kpi-lbl">Closed Out</div></div>';
+
+  // Jim Kennedy Billing KPIs
+  renderBillingKPIs(projects);
+}
+
+// ── JIM KENNEDY BILLING KPI PANEL ─────────────────────────────────────────
+// Builds on existing project data -- reads allpro_job_bundles from D1 for
+// billing-specific fields (invoice_date, actual_completion, contract_value,
+// amount_invoiced, billing_owner, next_action, blocker).
+// Falls back to allpro_projects stage data when bundle data not yet filled.
+function renderBillingKPIs(projects) {
+  var el = document.getElementById('apBillingKPIs');
+  if (!el) return;
+
+  // Load bundle data from D1 for billing fields
+  var bundles = [];
+  try { bundles = JSON.parse(localStorage.getItem('termac_crm_allpro_job_bundles') || '[]'); } catch(e) {}
+
+  // Build a lookup map bundle by quote_id or opportunity_id
+  var bundleMap = {};
+  bundles.forEach(function(b) { if (b.quote_id) bundleMap[b.quote_id] = b; if (b.opportunity_id) bundleMap[b.opportunity_id] = b; });
+
+  // Map Jim's project_status from our stage names
+  var statusMap = {
+    intake: 'Awarded', survey_plan_review: 'Engineering', proposal_submitted: 'Engineering',
+    design_drawings: 'Engineering', costing: 'Engineering', permitting: 'Permitting',
+    fabrication: 'In Fabrication', delivery_install: 'Installation Scheduled',
+    commissioning: 'Ready to Install', closeout: 'Completed – Not Billed'
+  };
+
+  var today = Date.now();
+
+  // Enrich projects with billing data
+  var enriched = projects.map(function(p) {
+    var b = bundleMap[p.id] || bundleMap[p.quote_id] || {};
+    var jimStatus = b.project_status || statusMap[p.stage] || 'Awarded';
+    var contractVal = b.contract_value || p.estimated_value || p.sale_price || 0;
+    var amtInvoiced = b.amount_invoiced || 0;
+    var unbilled = b.unbilled_amount || Math.max(0, contractVal - amtInvoiced);
+    var actualCompletion = b.actual_completion ? new Date(b.actual_completion).getTime() : null;
+    var invoiceDate = b.invoice_date ? new Date(b.invoice_date).getTime() : null;
+    var daysNotBilled = (jimStatus === 'Completed – Not Billed' || jimStatus === 'Invoiced') && actualCompletion
+      ? Math.floor((invoiceDate || today) - actualCompletion) / 86400000
+      : null;
+    var billingTimeliness = invoiceDate && actualCompletion
+      ? (daysNotBilled <= 5 ? 'On Time' : daysNotBilled <= 10 ? 'Late' : 'UNBILLED')
+      : (jimStatus === 'Completed – Not Billed' ? 'UNBILLED' : 'Not Complete');
+    return Object.assign({}, p, b, {
+      _jimStatus: jimStatus,
+      _contractVal: contractVal,
+      _amtInvoiced: amtInvoiced,
+      _unbilled: unbilled,
+      _daysNotBilled: daysNotBilled !== null ? Math.floor(daysNotBilled) : null,
+      _billingTimeliness: billingTimeliness,
+      _actualCompletion: actualCompletion,
+      _invoiceDate: invoiceDate
+    });
+  });
+
+  // Calculate Jim's KPIs
+  var activeCount      = enriched.filter(function(p){ return p._jimStatus !== 'Paid'; }).length;
+  var completedCount   = enriched.filter(function(p){ return p._jimStatus === 'Completed – Not Billed' || p._jimStatus === 'Invoiced' || p._jimStatus === 'Paid'; }).length;
+  var unbilledProjects = enriched.filter(function(p){ return p._jimStatus === 'Completed – Not Billed'; });
+  var unbilledCount    = unbilledProjects.length;
+  var unbilledRevenue  = unbilledProjects.reduce(function(s,p){ return s + p._unbilled; }, 0);
+  var invoicedProjs    = enriched.filter(function(p){ return p._invoiceDate && p._actualCompletion; });
+  var avgDaysToInvoice = invoicedProjs.length
+    ? Math.round(invoicedProjs.reduce(function(s,p){ return s + p._daysNotBilled; }, 0) / invoicedProjs.length)
+    : 0;
+  var invoicedWithin5  = invoicedProjs.filter(function(p){ return p._daysNotBilled <= 5; }).length;
+  var over10Days       = unbilledProjects.filter(function(p){ return p._daysNotBilled !== null && p._daysNotBilled > 10; }).length;
+  var over30Days       = enriched.filter(function(p){ return p._daysNotBilled !== null && p._daysNotBilled > 30; }).length;
+
+  // Aging buckets
+  var aging = { a03:0, a45:0, a610:0, a1130:0, a30p:0 };
+  unbilledProjects.forEach(function(p) {
+    var d = p._daysNotBilled || 0;
+    if (d <= 3) aging.a03++;
+    else if (d <= 5) aging.a45++;
+    else if (d <= 10) aging.a610++;
+    else if (d <= 30) aging.a1130++;
+    else aging.a30p++;
+  });
+
+  function kpiCell(val, label, color, target, targetLabel) {
+    var isRed = color === 'red';
+    return '<div style="background:#fff;border:1.5px solid ' + (isRed ? '#C8102E' : '#D7DBE0') + ';border-radius:10px;padding:14px 16px;text-align:center">' +
+      '<div style="font-family:\'Barlow Condensed\',sans-serif;font-weight:900;font-size:26px;color:' + (isRed ? '#C8102E' : color === 'green' ? '#1E7B3C' : '#1A1D21') + '">' + val + '</div>' +
+      '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#5A616B;margin-top:2px">' + label + '</div>' +
+      (target !== undefined ? '<div style="font-size:10px;color:#9CA3AF;margin-top:3px">Target: ' + targetLabel + '</div>' : '') +
+    '</div>';
+  }
+
+  function agingBar(label, count, color) {
+    var isRed = count > 0 && (label.indexOf('11') !== -1 || label.indexOf('30') !== -1);
+    return '<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #F3F4F6">' +
+      '<span style="width:80px;font-size:11px;font-weight:700;color:#5A616B">' + label + '</span>' +
+      '<div style="flex:1;height:14px;background:#F3F4F6;border-radius:3px;overflow:hidden">' +
+        '<div style="height:100%;width:' + Math.min(100, count * 20) + '%;background:' + (isRed ? '#C8102E' : count > 0 ? '#D97706' : '#1E7B3C') + ';border-radius:3px"></div>' +
+      '</div>' +
+      '<span style="width:24px;text-align:right;font-size:12px;font-weight:800;color:' + (isRed && count > 0 ? '#C8102E' : '#1A1D21') + '">' + count + '</span>' +
+    '</div>';
+  }
+
+  el.innerHTML =
+    '<div style="background:var(--navy);border-radius:10px;padding:14px 18px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between">' +
+      '<div style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:#F2B705">Billing KPI Dashboard — Jim Kennedy</div>' +
+      '<button onclick="setProjectView(\'billing\')" style="background:#F2B705;border:none;border-radius:6px;padding:5px 12px;font-family:\'Barlow Condensed\',sans-serif;font-weight:700;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;color:#1A1D21">Full Tracker →</button>' +
+    '</div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+      // Left: KPI numbers
+      '<div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">' +
+          kpiCell(activeCount, 'Active Projects', '#1A1D21') +
+          kpiCell(completedCount, 'Completed Projects', '#1A1D21') +
+          kpiCell(unbilledCount, 'Completed Not Billed', unbilledCount > 0 ? 'red' : 'green', 0, '0') +
+          kpiCell('$' + Math.round(unbilledRevenue / 1000) + 'K', 'Unbilled Revenue', unbilledRevenue > 0 ? 'red' : 'green', '$0', '$0') +
+          kpiCell(avgDaysToInvoice + 'd', 'Avg Days to Invoice', avgDaysToInvoice > 5 ? 'red' : 'green', 3, '≤ 3 days') +
+          kpiCell(invoicedWithin5, 'Invoiced Within 5 Days', 'green', null) +
+        '</div>' +
+      '</div>' +
+      // Right: Aging + Weekly Process
+      '<div>' +
+        '<div style="background:#fff;border:1.5px solid #D7DBE0;border-radius:10px;padding:14px 16px;margin-bottom:8px">' +
+          '<div style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#5A616B;margin-bottom:8px">Completed–Unbilled Aging</div>' +
+          agingBar('0–3 Days', aging.a03, 'green') +
+          agingBar('4–5 Days', aging.a45, 'amber') +
+          agingBar('6–10 Days', aging.a610, 'amber') +
+          agingBar('11–30 Days', aging.a1130, 'red') +
+          agingBar('Over 30 Days', aging.a30p, 'red') +
+          (over10Days > 0 ? '<div style="margin-top:8px;padding:6px 10px;background:#FEF2F2;border-radius:6px;font-size:11px;color:#C8102E;font-weight:700">⚠️ ' + over10Days + ' project' + (over10Days>1?'s':'') + ' over 10 days unbilled — leadership review required</div>' : '') +
+        '</div>' +
+        '<div style="background:#EFF6FF;border:1.5px solid #BFDBFE;border-radius:10px;padding:12px 14px">' +
+          '<div style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#1B5FA8;margin-bottom:6px">Weekly Review Process</div>' +
+          '<div style="font-size:11px;color:#1e40af;line-height:1.7">' +
+            '1. PM confirms completion date<br>' +
+            '2. Completion docs + change orders → billing owner<br>' +
+            '3. Invoice issued within 3 days (5 max)<br>' +
+            '4. Every unbilled job: owner + blocker + next-action date<br>' +
+            '5. Leadership reviews all red items weekly' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+}
+
+// ── BILLING TRACKER (Jim's full project tracker table) ─────────────────────
+function renderBillingTracker(projects) {
+  var el = document.getElementById('apBillingTracker');
+  if (!el) return;
+
+  var bundles = [];
+  try { bundles = JSON.parse(localStorage.getItem('termac_crm_allpro_job_bundles') || '[]'); } catch(e) {}
+  var bundleMap = {};
+  bundles.forEach(function(b) { if (b.quote_id) bundleMap[b.quote_id] = b; if (b.opportunity_id) bundleMap[b.opportunity_id] = b; });
+
+  var statusMap = {
+    intake:'Awarded', survey_plan_review:'Engineering', proposal_submitted:'Engineering',
+    design_drawings:'Engineering', costing:'Engineering', permitting:'Permitting',
+    fabrication:'In Fabrication', delivery_install:'Installation Scheduled',
+    commissioning:'Ready to Install', closeout:'Completed – Not Billed'
+  };
+
+  var today = Date.now();
+  var PRIORITY_COLORS = { Low:'#6B7280', Normal:'#1B5FA8', High:'#D97706', Critical:'#C8102E' };
+  var STATUS_COLORS = {
+    'Awarded':'#6B7280','Engineering':'#1B5FA8','In Fabrication':'#1E7B3C',
+    'Ready to Install':'#D97706','Installation Scheduled':'#6D28D9',
+    'Completed – Not Billed':'#C8102E','Invoiced':'#0891B2','Paid':'#1E7B3C'
+  };
+
+  var rows = projects.map(function(p, i) {
+    var b = bundleMap[p.id] || bundleMap[p.quote_id] || {};
+    var jimStatus  = b.project_status || statusMap[p.stage] || 'Awarded';
+    var priority   = b.priority || 'Normal';
+    var contractVal = b.contract_value || p.estimated_value || p.sale_price || 0;
+    var changeOrders = b.approved_change_orders || 0;
+    var totalBillable = b.total_billable_value || contractVal + changeOrders;
+    var amtInvoiced = b.amount_invoiced || 0;
+    var unbilled = Math.max(0, totalBillable - amtInvoiced);
+    var actualCompletion = b.actual_completion || null;
+    var invoiceDate = b.invoice_date || null;
+    var daysNotBilled = null;
+    if (actualCompletion) {
+      var compTs = new Date(actualCompletion).getTime();
+      var invTs  = invoiceDate ? new Date(invoiceDate).getTime() : today;
+      daysNotBilled = Math.max(0, Math.floor((invTs - compTs) / 86400000));
+    }
+    var timeliness = invoiceDate && actualCompletion
+      ? (daysNotBilled <= 5 ? '<span style="color:#1E7B3C;font-weight:700">On Time</span>'
+        : '<span style="color:#D97706;font-weight:700">Late (' + daysNotBilled + 'd)</span>')
+      : (jimStatus === 'Completed – Not Billed'
+        ? '<span style="color:#C8102E;font-weight:700">UNBILLED (' + (daysNotBilled||'?') + 'd)</span>'
+        : '<span style="color:#9CA3AF">Not Complete</span>');
+
+    var isRed = jimStatus === 'Completed – Not Billed' || (daysNotBilled !== null && daysNotBilled > 10);
+    var projId = 'APS-' + String(i+1).padStart(3,'0');
+
+    return '<tr style="border-bottom:1px solid #F3F4F6;' + (isRed ? 'background:#FFF5F5' : '') + '" onclick="openDetail(\'' + p.id + '\')" class="ap-list-row">' +
+      '<td style="padding:8px 10px;font-weight:700;font-size:12px;white-space:nowrap">' + projId + '</td>' +
+      '<td style="padding:8px 10px;font-size:12px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (p.project_name || p.client || 'Unnamed') + '</td>' +
+      '<td style="padding:8px 10px;font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (p.description || p.project_type || '') + '</td>' +
+      '<td style="padding:8px 10px;font-size:11px">' + (b.project_manager || p.rep || 'Ted Scholl') + '</td>' +
+      '<td style="padding:8px 10px;font-size:11px">' + (b.billing_owner || 'TBD') + '</td>' +
+      '<td style="padding:8px 6px;text-align:center"><span style="background:' + (PRIORITY_COLORS[priority]||'#6B7280') + '22;color:' + (PRIORITY_COLORS[priority]||'#6B7280') + ';font-size:10px;font-weight:700;padding:2px 7px;border-radius:4px">' + priority + '</span></td>' +
+      '<td style="padding:8px 6px;text-align:center"><span style="background:' + (STATUS_COLORS[jimStatus]||'#6B7280') + '22;color:' + (STATUS_COLORS[jimStatus]||'#6B7280') + ';font-size:10px;font-weight:700;padding:2px 7px;border-radius:4px;white-space:nowrap">' + jimStatus + '</span></td>' +
+      '<td style="padding:8px 10px;font-size:11px;white-space:nowrap">' + (b.award_date || '—') + '</td>' +
+      '<td style="padding:8px 10px;font-size:11px;white-space:nowrap">' + (b.promised_completion || '—') + '</td>' +
+      '<td style="padding:8px 10px;font-size:11px;white-space:nowrap">' + (actualCompletion || '—') + '</td>' +
+      '<td style="padding:8px 10px;font-size:11px;white-space:nowrap">' + (invoiceDate || '—') + '</td>' +
+      '<td style="padding:8px 10px;font-size:12px;font-weight:700;text-align:right">$' + contractVal.toLocaleString() + '</td>' +
+      '<td style="padding:8px 10px;font-size:12px;text-align:right">' + (changeOrders ? '$' + changeOrders.toLocaleString() : '—') + '</td>' +
+      '<td style="padding:8px 10px;font-size:12px;font-weight:700;text-align:right">$' + totalBillable.toLocaleString() + '</td>' +
+      '<td style="padding:8px 10px;font-size:12px;text-align:right">' + (amtInvoiced ? '$' + amtInvoiced.toLocaleString() : '—') + '</td>' +
+      '<td style="padding:8px 10px;font-size:12px;font-weight:700;text-align:right;color:' + (unbilled > 0 ? '#C8102E' : '#1E7B3C') + '">' + (unbilled > 0 ? '$' + unbilled.toLocaleString() : '—') + '</td>' +
+      '<td style="padding:8px 10px;font-size:11px">' + timeliness + '</td>' +
+      '<td style="padding:8px 10px;font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:' + (isRed ? '#C8102E' : '#6B7280') + '">' + (b.next_action || b.blocker || '—') + '</td>' +
+    '</tr>';
+  }).join('');
+
+  el.innerHTML =
+    '<div style="background:var(--navy);border-radius:10px;padding:12px 18px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between">' +
+      '<div style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:#F2B705">Project Billing Tracker — Jim Kennedy KPI Model</div>' +
+      '<div style="font-size:11px;color:#9CA3AF">Click any row to open project detail and update billing fields</div>' +
+    '</div>' +
+    '<div style="overflow-x:auto;border-radius:8px;border:1px solid #E5E7EB">' +
+      '<table style="width:100%;border-collapse:collapse;font-family:\'Barlow\',sans-serif;min-width:1400px">' +
+        '<thead>' +
+          '<tr style="background:#F9FAFB;border-bottom:2px solid #E5E7EB">' +
+            '<th style="padding:8px 10px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#5A616B;white-space:nowrap">ID</th>' +
+            '<th style="padding:8px 10px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#5A616B">Customer</th>' +
+            '<th style="padding:8px 10px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#5A616B">Description</th>' +
+            '<th style="padding:8px 10px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#5A616B">PM</th>' +
+            '<th style="padding:8px 10px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#5A616B">Billing Owner</th>' +
+            '<th style="padding:8px 6px;text-align:center;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#5A616B">Priority</th>' +
+            '<th style="padding:8px 6px;text-align:center;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#5A616B;white-space:nowrap">Status</th>' +
+            '<th style="padding:8px 10px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#5A616B;white-space:nowrap">Award</th>' +
+            '<th style="padding:8px 10px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#5A616B;white-space:nowrap">Promised Compl.</th>' +
+            '<th style="padding:8px 10px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#5A616B;white-space:nowrap">Actual Compl.</th>' +
+            '<th style="padding:8px 10px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#5A616B;white-space:nowrap">Invoice Date</th>' +
+            '<th style="padding:8px 10px;text-align:right;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#5A616B;white-space:nowrap">Contract $</th>' +
+            '<th style="padding:8px 10px;text-align:right;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#5A616B;white-space:nowrap">Change Orders</th>' +
+            '<th style="padding:8px 10px;text-align:right;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#5A616B;white-space:nowrap">Total Billable</th>' +
+            '<th style="padding:8px 10px;text-align:right;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#5A616B;white-space:nowrap">Invoiced</th>' +
+            '<th style="padding:8px 10px;text-align:right;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#C8102E;white-space:nowrap">Unbilled $</th>' +
+            '<th style="padding:8px 10px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#5A616B;white-space:nowrap">Timeliness</th>' +
+            '<th style="padding:8px 10px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#5A616B;white-space:nowrap">Next Action / Blocker</th>' +
+          '</tr>' +
+        '</thead>' +
+        '<tbody>' + (rows || '<tr><td colspan="19" style="padding:30px;text-align:center;color:#9CA3AF">No projects yet. Create a project to see billing tracking.</td></tr>') + '</tbody>' +
+      '</table>' +
+    '</div>';
 }
 
 function renderTypeFilters() {
