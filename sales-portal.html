@@ -6179,6 +6179,8 @@ async function spCheckPhoneDuplicate(phone, excludeId) {
   var norm = String(phone || '').replace(/[^\d]/g, '');
   if (norm.length < 7) return null;
   function sameNum(p) { return p && String(p).replace(/[^\d]/g, '') === norm; }
+
+  // Check local cache first (fast, catches anything already synced locally)
   var pools = [
     { data: crmLoad('leads') || [],      type: 'lead',     label: 'Lead' },
     { data: crmLoad('contacts') || [],   type: 'contact',  label: 'Contact' },
@@ -6190,9 +6192,24 @@ async function spCheckPhoneDuplicate(phone, excludeId) {
       return { type: pools[i].type, label: pools[i].label, id: match.id, name: match.business || match.name || 'Unnamed' };
     }
   }
-  // Accounts is too large to hold locally (see D1_NO_BULK_HYDRATE) --
-  // checked live against D1 instead, same as everything else that
-  // needs to know about the full accounts table now.
+
+  // Live D1 checks for tables that may not be fully in local cache.
+  // Contacts and Locations: small enough to cache but cache can be stale
+  // across devices or sessions. Accounts: too large to cache at all.
+  try {
+    var d1Res = await d1RawQuery(
+      "SELECT id, name, phone, 'contact' as rtype FROM contacts WHERE phone LIKE ? AND id != ? AND (status IS NULL OR status != 'archived') " +
+      "UNION SELECT id, name, phone, 'location' as rtype FROM locations WHERE phone LIKE ? AND id != ? AND (status IS NULL OR status != 'archived') " +
+      "LIMIT 1",
+      ['%' + norm + '%', excludeId || '', '%' + norm + '%', excludeId || '']
+    );
+    if (d1Res && d1Res.length) {
+      var r = d1Res[0];
+      return { type: r.rtype, label: r.rtype === 'contact' ? 'Contact' : 'Location', id: r.id, name: r.name || 'Unnamed' };
+    }
+  } catch(e) { /* D1 unavailable -- local check was already done above */ }
+
+  // Accounts: always live (too large for local cache)
   if (typeof d1CheckAccountPhoneDuplicate === 'function') {
     var acctMatch = await d1CheckAccountPhoneDuplicate(phone);
     if (acctMatch && acctMatch.id !== excludeId) return acctMatch;
@@ -6204,6 +6221,22 @@ async function spCheckPhoneDuplicate(phone, excludeId) {
 // on blur, since checking on every keystroke would be both noisy (mid-
 // typed numbers look "unique" until the last digit) and, at this data
 // volume, worth debouncing the same way the top search bar needed to be.
+// Global handler for dupe warning open-record button -- avoids inline
+// onclick string-escaping hell entirely. The warn div stores the match
+// object as a property; this function reads it and navigates.
+function spDupeWarnOpenRecord(btn) {
+  var warnDiv = btn.parentNode;
+  var match = warnDiv && warnDiv._dupeMatch;
+  if (!match) return;
+  // Close any open modal (Add Location / Add Contact) so the record
+  // can actually be seen when it opens behind it.
+  ['spLocModal', 'spContactModal'].forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) el.remove();
+  });
+  spViewRecord(match.id, match.type + 's');
+}
+
 function spWirePhoneDupeCheck(inputId, warnDivId, excludeId) {
   var input = document.getElementById(inputId);
   var warnDiv = document.getElementById(warnDivId);
@@ -6212,9 +6245,14 @@ function spWirePhoneDupeCheck(inputId, warnDivId, excludeId) {
     var match = await spCheckPhoneDuplicate(input.value, excludeId);
     if (match) {
       warnDiv.style.display = 'block';
-      warnDiv.innerHTML = '\u26a0\ufe0f This phone number is already on file \u2014 <strong>' + escH(match.name) + '</strong> (' + match.label + '). <a href="#" onclick="event.preventDefault();spViewRecord(\'' + match.id + '\',\'' + match.type + 's\')" style="color:var(--red);font-weight:700">View it</a> instead of creating a duplicate.';
+      warnDiv._dupeMatch = match;
+      warnDiv.innerHTML = '\u26a0\ufe0f Already on file: <strong>' + escH(match.name) + '</strong> (' + match.label + '). ' +
+        '<button onclick="spDupeWarnOpenRecord(this)" ' +
+        'style="background:var(--red);color:#fff;border:none;border-radius:5px;padding:3px 10px;font-size:11px;font-weight:700;cursor:pointer;margin-left:4px">Open Record</button> ' +
+        '<span style="font-size:10px;color:#92400E">do not create a duplicate</span>';
     } else {
       warnDiv.style.display = 'none';
+      warnDiv._dupeMatch = null;
     }
   });
 }
