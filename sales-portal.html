@@ -6175,44 +6175,36 @@ function spCompleteTask(taskId) {
 // that never checked each other. Checks leads/contacts/locations/
 // accounts by normalized phone; excludeId lets an edit-in-place skip
 // matching itself.
+// D1-only duplicate phone check. localStorage is never used.
+// Queries contacts, locations, and accounts live every time.
 async function spCheckPhoneDuplicate(phone, excludeId) {
   var norm = String(phone || '').replace(/[^\d]/g, '');
   if (norm.length < 7) return null;
-  function sameNum(p) { return p && String(p).replace(/[^\d]/g, '') === norm; }
-
-  // Check local cache first (fast, catches anything already synced locally)
-  var pools = [
-    { data: crmLoad('leads') || [],      type: 'lead',     label: 'Lead' },
-    { data: crmLoad('contacts') || [],   type: 'contact',  label: 'Contact' },
-    { data: crmLoad('locations') || [],  type: 'location', label: 'Location' },
-  ];
-  for (var i = 0; i < pools.length; i++) {
-    var match = pools[i].data.find(function(r) { return r.id !== excludeId && sameNum(r.phone); });
-    if (match) {
-      return { type: pools[i].type, label: pools[i].label, id: match.id, name: match.business || match.name || 'Unnamed' };
-    }
-  }
-
-  // Live D1 checks for tables that may not be fully in local cache.
-  // Contacts and Locations: small enough to cache but cache can be stale
-  // across devices or sessions. Accounts: too large to cache at all.
   try {
     var d1Res = await d1RawQuery(
-      "SELECT id, name, phone, 'contact' as rtype FROM contacts WHERE phone LIKE ? AND id != ? AND (status IS NULL OR status != 'archived') " +
-      "UNION SELECT id, name, phone, 'location' as rtype FROM locations WHERE phone LIKE ? AND id != ? AND (status IS NULL OR status != 'archived') " +
+      "SELECT id, name, phone, 'contact' AS rtype FROM contacts " +
+      "WHERE replace(replace(replace(replace(phone,'-',''),' ',''),'(',''),')','') LIKE ? " +
+      "AND id != ? AND (status IS NULL OR status != 'archived') " +
+      "UNION " +
+      "SELECT id, name, phone, 'location' AS rtype FROM locations " +
+      "WHERE replace(replace(replace(replace(phone,'-',''),' ',''),'(',''),')','') LIKE ? " +
+      "AND id != ? AND (status IS NULL OR status != 'archived') " +
+      "UNION " +
+      "SELECT id, business AS name, phone, 'account' AS rtype FROM accounts " +
+      "WHERE replace(replace(replace(replace(phone,'-',''),' ',''),'(',''),')','') LIKE ? " +
+      "AND id != ? AND (status IS NULL OR status != 'archived') " +
       "LIMIT 1",
-      ['%' + norm + '%', excludeId || '', '%' + norm + '%', excludeId || '']
+      ['%' + norm + '%', excludeId || '',
+       '%' + norm + '%', excludeId || '',
+       '%' + norm + '%', excludeId || '']
     );
     if (d1Res && d1Res.length) {
       var r = d1Res[0];
-      return { type: r.rtype, label: r.rtype === 'contact' ? 'Contact' : 'Location', id: r.id, name: r.name || 'Unnamed' };
+      var labelMap = { contact: 'Contact', location: 'Location', account: 'Account' };
+      return { type: r.rtype, label: labelMap[r.rtype] || r.rtype, id: r.id, name: r.name || 'Unnamed' };
     }
-  } catch(e) { /* D1 unavailable -- local check was already done above */ }
-
-  // Accounts: always live (too large for local cache)
-  if (typeof d1CheckAccountPhoneDuplicate === 'function') {
-    var acctMatch = await d1CheckAccountPhoneDuplicate(phone);
-    if (acctMatch && acctMatch.id !== excludeId) return acctMatch;
+  } catch(e) {
+    console.warn('spCheckPhoneDuplicate D1 query failed:', e);
   }
   return null;
 }
@@ -7996,43 +7988,78 @@ async function spOpenOppDetail(oppId) {
 // ══════════════════════════════════════════════════════
 //  DUPLICATE DETECTION
 // ══════════════════════════════════════════════════════
-function spDupeCheck(val, field) {
+// D1-only duplicate check. localStorage is never used.
+// Searches leads, contacts, locations, and accounts live in D1.
+async function spDupeCheck(val, field) {
   const containerId = field === 'business' ? 'spf_dupe_biz' : field === 'address' ? 'spf_dupe_addr' : 'spf_dupe_phone';
   const el = document.getElementById(containerId);
   if (!el) return;
-  const q = (val || '').trim().toLowerCase();
+  const q = (val || '').trim();
   if (q.length < 3) { el.style.display = 'none'; return; }
-  const qNorm = spNormForDupe(q);
 
-  const matches = [];
-  const seenIds = new Set();
-  ['leads','contacts','accounts','locations'].forEach(pool => {
-    (crmLoad(pool) || []).forEach(r => {
-      if (seenIds.has(r.id)) return;
-      const biz = (r.business || r.name || '').toLowerCase();
-      const phone = (r.phone || '').replace(/\D/g,'');
-      const qPhone = q.replace(/\D/g,'');
-      const addrNorm = spNormForDupe(r.address || '');
-      let hit;
-      if (field === 'business') hit = biz.includes(q);
-      else if (field === 'address') hit = qNorm.length > 6 && addrNorm && addrNorm.includes(qNorm);
-      else hit = (phone && qPhone.length >= 5 && phone.includes(qPhone));
-      if (hit) { seenIds.add(r.id); matches.push({ r, pool }); }
-    });
-  });
+  var sql, params;
+  if (field === 'business') {
+    var like = '%' + q.toLowerCase() + '%';
+    sql = "SELECT id, name AS biz, phone, 'lead' AS pool FROM leads WHERE lower(business) LIKE ? AND (status IS NULL OR status != 'archived') " +
+          "UNION SELECT id, name AS biz, phone, 'contact' AS pool FROM contacts WHERE lower(name) LIKE ? AND (status IS NULL OR status != 'archived') " +
+          "UNION SELECT id, name AS biz, phone, 'location' AS pool FROM locations WHERE lower(name) LIKE ? AND (status IS NULL OR status != 'archived') " +
+          "UNION SELECT id, business AS biz, phone, 'account' AS pool FROM accounts WHERE lower(business) LIKE ? AND (status IS NULL OR status != 'archived') " +
+          "LIMIT 3";
+    params = [like, like, like, like];
+  } else if (field === 'address') {
+    if (q.length < 7) { el.style.display = 'none'; return; }
+    var like = '%' + q.toLowerCase() + '%';
+    sql = "SELECT id, name AS biz, phone, 'lead' AS pool FROM leads WHERE lower(address) LIKE ? AND (status IS NULL OR status != 'archived') " +
+          "UNION SELECT id, name AS biz, phone, 'location' AS pool FROM locations WHERE lower(address) LIKE ? AND (status IS NULL OR status != 'archived') " +
+          "UNION SELECT id, business AS biz, phone, 'account' AS pool FROM accounts WHERE lower(address) LIKE ? AND (status IS NULL OR status != 'archived') " +
+          "LIMIT 3";
+    params = [like, like, like];
+  } else {
+    var norm = q.replace(/\D/g, '');
+    if (norm.length < 5) { el.style.display = 'none'; return; }
+    var like = '%' + norm + '%';
+    sql = "SELECT id, name AS biz, phone, 'lead' AS pool FROM leads WHERE replace(replace(replace(replace(phone,'-',''),' ',''),'(',''),')','') LIKE ? AND (status IS NULL OR status != 'archived') " +
+          "UNION SELECT id, name AS biz, phone, 'contact' AS pool FROM contacts WHERE replace(replace(replace(replace(phone,'-',''),' ',''),'(',''),')','') LIKE ? AND (status IS NULL OR status != 'archived') " +
+          "UNION SELECT id, name AS biz, phone, 'location' AS pool FROM locations WHERE replace(replace(replace(replace(phone,'-',''),' ',''),'(',''),')','') LIKE ? AND (status IS NULL OR status != 'archived') " +
+          "UNION SELECT id, business AS biz, phone, 'account' AS pool FROM accounts WHERE replace(replace(replace(replace(phone,'-',''),' ',''),'(',''),')','') LIKE ? AND (status IS NULL OR status != 'archived') " +
+          "LIMIT 3";
+    params = [like, like, like, like];
+  }
 
-  if (!matches.length) { el.style.display = 'none'; return; }
-  const stage = m => SP_STAGES[m.r.lifecycleStage || 'lead']?.label || '—';
-  el.style.display = '';
-  el.innerHTML = '<div style="background:#FEF3C7;border:1.5px solid #F59E0B;border-radius:7px;padding:8px 10px">'
-    + '<div style="font-size:10px;font-weight:800;color:#92400E;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">⚠️ Possible Duplicates Found</div>'
-    + matches.slice(0,3).map(m =>
-        '<div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;border-bottom:1px solid #FDE68A">'
-        + '<div><div style="font-weight:700;font-size:12px">' + escH(m.r.business||m.r.name||'—') + '</div>'
-        + '<div style="font-size:10px;color:#78350F">' + stage(m) + (m.r.phone?' · '+escH(m.r.phone):'') + '</div></div>'
-        + '<button type="button" onclick="spCloseModal();spViewRecord(\''+m.r.id+'\',\''+m.pool+'\')" style="background:#D97706;color:#fff;border:none;border-radius:5px;padding:3px 10px;font-size:10px;font-family:\'Barlow Condensed\',sans-serif;font-weight:700;cursor:pointer">View →</button>'
-        + '</div>').join('')
-    + '</div>';
+  try {
+    var rows = await d1RawQuery(sql, params);
+    if (!rows || !rows.length) { el.style.display = 'none'; return; }
+    el.style.display = '';
+    // Store matches on the element so View buttons can read them without
+    // string-escaping IDs through innerHTML.
+    el._dupeRows = rows;
+    el.innerHTML = '<div style="background:#FEF3C7;border:1.5px solid #F59E0B;border-radius:7px;padding:8px 10px">'
+      + '<div style="font-size:10px;font-weight:800;color:#92400E;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Already on file — open it instead of creating a duplicate</div>'
+      + rows.map(function(r, i) {
+          return '<div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;border-bottom:1px solid #FDE68A">'
+            + '<div><div style="font-weight:700;font-size:12px">' + escH(r.biz || '—') + '</div>'
+            + '<div style="font-size:10px;color:#78350F">' + escH(r.pool) + (r.phone ? ' · ' + escH(r.phone) : '') + '</div></div>'
+            + '<button type="button" data-dupeidx="' + i + '" data-dupecontainer="' + containerId + '" onclick="spDupeCheckView(this)" '
+            + 'style="background:#D97706;color:#fff;border:none;border-radius:5px;padding:3px 10px;font-size:10px;font-family:Barlow Condensed,sans-serif;font-weight:700;cursor:pointer">Open →</button>'
+            + '</div>';
+        }).join('')
+      + '</div>';
+  } catch(e) {
+    console.warn('spDupeCheck D1 query failed:', e);
+    el.style.display = 'none';
+  }
+}
+
+function spDupeCheckView(btn) {
+  var idx = parseInt(btn.dataset.dupeidx);
+  var containerId = btn.dataset.dupecontainer;
+  var container = document.getElementById(containerId);
+  var rows = container && container._dupeRows;
+  if (!rows || !rows[idx]) return;
+  var r = rows[idx];
+  spCloseModal();
+  ['spLocModal','spContactModal'].forEach(function(id){ var el=document.getElementById(id); if(el) el.remove(); });
+  spViewRecord(r.id, r.pool + 's');
 }
 
 // ══════════════════════════════════════════════════════
