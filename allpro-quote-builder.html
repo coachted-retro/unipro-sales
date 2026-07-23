@@ -537,8 +537,15 @@ select.field-input{cursor:pointer}
             <option value="ss_ornament">Custom Stainless Ornament / Trim</option>
             <option value="ss_custom">Custom Fabrication (Other)</option>
           </optgroup>
-          <optgroup label="Other">
-            <option value="suppression">Suppression System</option>
+          <optgroup label="Suppression Systems">
+            <option value="suppression_ansul_sm">Ansul R-102 — Small System (up to 6 nozzles)</option>
+            <option value="suppression_ansul_lg">Ansul R-102 — Large System (7-12 nozzles)</option>
+            <option value="suppression_amerex">Amerex KP — Small System</option>
+            <option value="suppression_pyrochem">Pyro-Chem PCL — Small System</option>
+            <option value="suppression_solenoid">Gas Solenoid Shutoff Valve</option>
+            <option value="balloon_test">Balloon / Puff Test — Fire Inspector Attendance</option>
+            <option value="suppression">Suppression System (other / custom)</option>
+          </optgroup>
             <option value="permit">Permit Fee</option>
             <option value="labor">Labor / Installation</option>
             <option value="other">Other / Misc</option>
@@ -1001,7 +1008,13 @@ var LINE_TYPES = {
   ss_grill: { label: 'Custom Wood-Burning Grill', unit: 'unit', rateKey: null, dims: ['length','width','height'], hasMaterial: true },
   ss_ornament: { label: 'Custom Stainless Ornament / Trim', unit: 'unit', rateKey: null, dims: ['length','width','height'], hasMaterial: true },
   ss_custom: { label: 'Custom Fabrication', unit: 'unit', rateKey: null, dims: ['length','width','height'], hasMaterial: true },
-  suppression: { label: 'Suppression System', unit: 'unit', rateKey: null, dims: [], hasMaterial: false },
+  suppression_ansul_sm: { label: 'Ansul R-102 Suppression System (small, up to 6 nozzles)', unit: 'kit', rateKey: 'ansul_r102_hardware_sm', dims: [], hasMaterial: false, isSuppress: true },
+  suppression_ansul_lg: { label: 'Ansul R-102 Suppression System (large, 7-12 nozzles)', unit: 'kit', rateKey: 'ansul_r102_hardware_lg', dims: [], hasMaterial: false, isSuppress: true },
+  suppression_amerex:   { label: 'Amerex KP Suppression System (small)', unit: 'kit', rateKey: 'amerex_kp_hardware_sm', dims: [], hasMaterial: false, isSuppress: true },
+  suppression_pyrochem: { label: 'Pyro-Chem PCL Suppression System (small)', unit: 'kit', rateKey: 'pyrochem_pcl_hardware_sm', dims: [], hasMaterial: false, isSuppress: true },
+  suppression_solenoid: { label: 'Gas Solenoid Shutoff Valve (suppression tie-in)', unit: 'ea', rateKey: 'ansul_r102_gas_solenoid', dims: [], hasMaterial: false },
+  balloon_test:         { label: 'Balloon / Puff Test — Fire Inspector Attendance', unit: 'ea', rateKey: 'balloon_test_fee', dims: [], hasMaterial: false, isBalloon: true },
+  suppression: { label: 'Suppression System (other)', unit: 'unit', rateKey: null, dims: [], hasMaterial: false },
   permit: { label: 'Permit Fee', unit: 'unit', rateKey: null, dims: [], hasMaterial: false },
   labor: { label: 'Labor / Installation', unit: 'unit', rateKey: null, dims: [], hasMaterial: false },
   other: { label: 'Other / Misc', unit: 'unit', rateKey: null, dims: [], hasMaterial: false }
@@ -1112,6 +1125,43 @@ function qbUpdateLineFields(type) {
     html += '</div>'; // end gold panel
     html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;margin-bottom:12px">';
   }
+  // Suppression systems: show cost breakdown panel
+  if (cfg && cfg.isSuppress) {
+    var hardware  = RATES[cfg.rateKey] || 0;
+    var installHr = RATES['ansul_r102_install_labor'] || 42;
+    var labor     = installHr * 5;
+    var solenoid  = RATES['ansul_r102_gas_solenoid'] || 285;
+    var contingencyPct = RATES['suppression_contingency_pct'] || 0.15;
+    var subtotal  = hardware + labor + solenoid;
+    var contingencyAmt = Math.round(subtotal * contingencyPct);
+    var total     = subtotal + contingencyAmt;
+    html += '</div><div style="background:#FFF0F0;border:1.5px solid #C8102E;border-radius:8px;padding:12px 14px;margin-bottom:12px">';
+    html += '<div style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#C8102E;margin-bottom:8px">Suppression Cost Breakdown (Wholesale)</div>';
+    html += '<div style="display:grid;grid-template-columns:1fr auto;gap:4px;font-size:12px">';
+    html += '<span>Hardware (wholesale)</span><span style="font-weight:700">$' + hardware.toLocaleString() + '</span>';
+    html += '<span>Install Labor (5 hrs est.)</span><span style="font-weight:700">$' + labor.toLocaleString() + '</span>';
+    html += '<span>Gas Solenoid Valve</span><span style="font-weight:700">$' + solenoid.toLocaleString() + '</span>';
+    html += '<span style="border-top:1px solid #FCA5A5;padding-top:4px">Subtotal</span><span style="border-top:1px solid #FCA5A5;padding-top:4px;font-weight:700">$' + subtotal.toLocaleString() + '</span>';
+    html += '<span style="color:#C8102E">Contingency Buffer (15%)</span><span style="color:#C8102E;font-weight:700">+ $' + contingencyAmt.toLocaleString() + '</span>';
+    html += '<span style="font-weight:800">Total AllPro Suppression Cost</span><span style="font-weight:800;font-size:14px;color:#C8102E">$' + total.toLocaleString() + '</span>';
+    html += '</div>';
+    html += '<div style="font-size:10px;color:#92400E;margin-top:8px">Buffer covers: field routing changes, additional piping, permit revisions, unexpected penetrations. Customer also needs licensed gas fitter for solenoid connection (their scope).</div>';
+    html += '</div>';
+    html += '<div style="display:grid;grid-template-columns:80px 1fr;gap:10px">';
+  }
+
+  // Balloon test: show what it covers
+  if (cfg && cfg.isBalloon) {
+    html += '</div><div style="background:#EFF6FF;border:1.5px solid #1B5FA8;border-radius:8px;padding:12px 14px;margin-bottom:12px">';
+    html += '<div style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#1B5FA8;margin-bottom:6px">Balloon / Puff Test — Separate Invoice</div>';
+    html += '<div style="font-size:12px;color:#1e40af;line-height:1.6">';
+    html += 'Invoiced <strong>separately</strong> after AHJ inspection is scheduled and completed.<br>';
+    html += 'Includes: 2 hours AllPro tech on site + travel to attend fire inspector balloon test.<br>';
+    html += 'Do not include in main job invoice. Quote it now so customer knows to expect it.';
+    html += '</div></div>';
+    html += '<div style="display:grid;grid-template-columns:80px 1fr;gap:10px">';
+  }
+
   // Fan specs (standalone fan line)
   if (cfg.hasFanSpecs) {
     html += fieldGroup('fan_cfm', 'Fan CFM', 'number', '', 'Required CFM');
@@ -1347,13 +1397,30 @@ function qbEstimateLine() {
 
 function qbAutoPrice(type) {
   var cfg = LINE_TYPES[type];
-  if (!cfg || !cfg.rateKey) return 0;
+  if (!cfg) return 0;
+
+  // Suppression systems: hardware + install labor + gas solenoid + 15% contingency
+  if (cfg.isSuppress) {
+    var hardware  = RATES[cfg.rateKey] || 0;
+    var installHr = RATES['ansul_r102_install_labor'] || 42;
+    var solenoid  = RATES['ansul_r102_gas_solenoid'] || 285;
+    var labor     = installHr * 5; // 5hr standard install estimate
+    var contingency = RATES['suppression_contingency_pct'] || 0.15;
+    var subtotal  = hardware + labor + solenoid;
+    return Math.round(subtotal * (1 + contingency));
+  }
+
+  // Balloon test: flat rate from table
+  if (cfg.isBalloon) {
+    return RATES['balloon_test_fee'] || 450;
+  }
+
+  if (!cfg.rateKey) return 0;
   var rate = RATES[cfg.rateKey] || 0;
   // For linear-ft based items, estimate from length
   var lenEl = document.getElementById('dim_l');
   var len = lenEl ? (parseFloat(lenEl.value) || 0) : 0;
   if (cfg.unit === 'linear ft' && len > 0) {
-    // Convert inches to feet for hoods
     var ft = type.startsWith('hood') ? (len / 12) : len;
     return Math.round(rate * ft);
   }
