@@ -284,26 +284,138 @@ async function renderDashboard(slug, div, elevated){
   const defOpen = deficiencies.filter(d=>d.status!=='resolved').reduce((s,d)=>s+d.n,0);
   const defTotal = deficiencies.reduce((s,d)=>s+d.n,0);
 
+  // ── AllPro Pipeline Dashboard ─────────────────────────────────────────────
+  const AP_STAGE_ORDER = ['intake','survey_plan_review','design_drawings','costing',
+    'permitting','fabrication','delivery_install','commissioning','closeout'];
+  const AP_STAGE_LABELS = {
+    intake:'Intake', survey_plan_review:'Survey / Plan Review', design_drawings:'Design Drawings',
+    costing:'Costing', permitting:'Permitting', fabrication:'Fabrication',
+    delivery_install:'Delivery / Install', commissioning:'Commissioning', closeout:'Closed Out'
+  };
+  const AP_STAGE_COLORS = {
+    intake:'#94A3B8', survey_plan_review:'#60A5FA', design_drawings:'#818CF8',
+    costing:'#F59E0B', permitting:'#F97316', fabrication:'#F2B705',
+    delivery_install:'#10B981', commissioning:'#6EE7B7', closeout:'#1E7B3C'
+  };
+
   let allproBlock = '';
   if (div.isAllPro) {
+    // Fetch all projects for drill-down (not just grouped counts)
+    let allproProjects = [];
+    try {
+      const apRes = await d1Query('SELECT id,project_name,stage,stage_updated_at,sale_price,estimated_value,project_type,scope_summary,account_id,opportunity_id,created_at FROM allpro_projects ORDER BY updated_at DESC LIMIT 300');
+      allproProjects = (apRes && apRes.results) ? apRes.results : [];
+    } catch(e) {}
+
     const totals = (allproStages||[]).reduce((acc,r)=>{ acc.sale += Number(r.sale)||0; acc.cost += Number(r.cost)||0; return acc; }, {sale:0,cost:0});
-    const margin = totals.sale - totals.cost;
+    const margin  = totals.sale - totals.cost;
     const marginPct = totals.sale ? (margin/totals.sale*100).toFixed(1) : '—';
+
+    // KPI counts
+    const activeProjects = allproProjects.filter(p => p.stage !== 'closeout');
+    const pipelineValue  = activeProjects.reduce((s,p)=>s+(Number(p.sale_price||p.estimated_value)||0),0);
+    const inFab          = allproProjects.filter(p=>p.stage==='fabrication').length;
+    const openProposals  = allproProjects.filter(p=>['costing','design_drawings'].includes(p.stage));
+    const now            = Date.now();
+
+    // Stage bar chart data
+    const stageCounts = AP_STAGE_ORDER.filter(s=>s!=='closeout').map(s=>({
+      stage: s,
+      count: allproProjects.filter(p=>p.stage===s).length,
+      value: allproProjects.filter(p=>p.stage===s).reduce((sv,p)=>sv+(Number(p.sale_price||p.estimated_value)||0),0)
+    }));
+    const maxCount = Math.max(1, ...stageCounts.map(s=>s.count));
+
+    // Bar chart rows -- clicking a stage row toggles the project list for that stage
+    const chartRows = stageCounts.map(sc => {
+      const pct   = Math.round((sc.count / maxCount) * 100);
+      const color = AP_STAGE_COLORS[sc.stage] || '#94A3B8';
+      const label = AP_STAGE_LABELS[sc.stage] || sc.stage;
+      const projs = allproProjects.filter(p=>p.stage===sc.stage);
+      const projCards = projs.length ? projs.map(p => {
+        const daysInStage = p.stage_updated_at ? Math.floor((now - p.stage_updated_at) / 86400000) : null;
+        const ageFlag = daysInStage !== null && sc.stage === 'costing'
+          ? (daysInStage > 60 ? 'background:#FEE2E2;border-left:3px solid #C8102E'
+            : daysInStage > 30 ? 'background:#FEF3C7;border-left:3px solid #F59E0B' : '')
+          : '';
+        const val = Number(p.sale_price||p.estimated_value)||0;
+        return '<div style="padding:10px 12px;border-radius:7px;margin-bottom:6px;cursor:pointer;' + ageFlag + ';background:' + (ageFlag?'':'#F9FAFB') + '" onclick="window.location.href=\'allpro-project-planner.html?project=' + esc(p.id) + '\'">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center">' +
+            '<div style="font-weight:700;font-size:13px">' + esc(p.project_name||'Unnamed Project') + '</div>' +
+            '<div style="font-size:12px;font-weight:700;color:#1E7B3C">' + (val ? fmt$(val) : '—') + '</div>' +
+          '</div>' +
+          '<div style="font-size:11px;color:#6B7280;margin-top:3px">' + esc(p.project_type||'') + (p.scope_summary ? ' · ' + esc(String(p.scope_summary).slice(0,80)) : '') + '</div>' +
+          (daysInStage !== null ? '<div style="font-size:10px;color:' + (daysInStage>60?'#C8102E':daysInStage>30?'#92400E':'#6B7280') + ';margin-top:3px">' + daysInStage + ' days in this stage' + (daysInStage>30?' ⚠️':'') + '</div>' : '') +
+        '</div>';
+      }).join('') : '<div style="font-size:12px;color:#94A3B8;padding:8px">No projects in this stage.</div>';
+
+      return '<div style="margin-bottom:6px">' +
+        '<div style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 0" onclick="var el=document.getElementById(\'apstage_' + sc.stage + '\');el.style.display=el.style.display===\'none\'?\'block\':\'none\'">' +
+          '<div style="width:110px;font-size:11px;font-weight:700;color:#374151;flex-shrink:0">' + label + '</div>' +
+          '<div style="flex:1;height:18px;background:#F1F5F9;border-radius:9px;overflow:hidden">' +
+            '<div style="height:100%;width:' + pct + '%;background:' + color + ';border-radius:9px;transition:width .4s"></div>' +
+          '</div>' +
+          '<div style="width:36px;text-align:right;font-size:12px;font-weight:800;color:#1E293B">' + sc.count + '</div>' +
+          '<div style="width:70px;text-align:right;font-size:11px;color:#64748B">' + (sc.value ? fmt$(sc.value) : '') + '</div>' +
+        '</div>' +
+        '<div id="apstage_' + sc.stage + '" style="display:none;padding-left:118px;margin-top:4px">' + projCards + '</div>' +
+      '</div>';
+    }).join('');
+
+    // Proposals needing attention (>30 days old with no activity)
+    const flaggedProposals = openProposals.filter(p => p.stage_updated_at && (now - p.stage_updated_at) > 30*86400000)
+      .sort((a,b)=>(a.stage_updated_at||0)-(b.stage_updated_at||0));
+
+    const attentionBlock = flaggedProposals.length ? `
+      <div style="margin-top:14px;background:#FEF3C7;border:1.5px solid #F59E0B;border-radius:8px;padding:12px 14px">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#92400E;margin-bottom:8px">⚠️ Proposals Needing Attention</div>
+        ${flaggedProposals.map(p=>{
+          const days = Math.floor((now-(p.stage_updated_at||now))/86400000);
+          return '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #FDE68A;cursor:pointer" onclick="window.location.href=\'allpro-project-planner.html?project='+esc(p.id)+'\'">'+
+            '<span style="font-size:13px;font-weight:600">'+esc(p.project_name||'Unnamed')+'</span>'+
+            '<span style="font-size:11px;color:'+(days>60?'#C8102E':'#92400E')+';font-weight:700">'+days+' days</span>'+
+          '</div>';
+        }).join('')}
+      </div>` : '';
+
     allproBlock = `
       <div class="card" style="grid-column:1/-1;border-left:4px solid ${div.color}">
-        <h3>AllPro Real Job Margin — live from cost lines</h3>
-        <div class="grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:0">
-          <div><div class="big-stat">${fmt$(totals.sale)}</div><div class="cap">Total sale price, all projects</div></div>
-          <div><div class="big-stat">${fmt$(totals.cost)}</div><div class="cap">Total actual cost</div></div>
-          <div><div class="big-stat" style="color:${margin>=0?'var(--green)':'var(--red)'}">${fmt$(margin)}</div><div class="cap">Real margin (${marginPct}%)</div></div>
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;margin-bottom:16px">
+          <h3 style="margin:0">🏗️ AllPro Pipeline</h3>
+          <a href="allpro-project-planner.html" style="background:#F2B705;color:#1A1D21;border:none;border-radius:6px;padding:7px 14px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12px;letter-spacing:.04em;text-transform:uppercase;text-decoration:none">Open Full Planner</a>
         </div>
-        <table style="margin-top:14px">
-          <tr><th>Stage</th><th>Projects</th><th>Sale Price</th><th>Actual Cost</th></tr>
-          ${(allproStages||[]).map(r=>`<tr><td>${esc(r.stage||'—')}</td><td>${r.n}</td><td>${fmt$(r.sale)}</td><td>${fmt$(r.cost)}</td></tr>`).join('') || '<tr><td colspan="4" class="empty">No AllPro projects yet.</td></tr>'}
-        </table>
-        <div class="linkrow" style="margin-top:14px">
-          <a class="linkbtn" href="allpro-project-planner.html">🏗️ Open AllPro Project Planner</a>
+
+        <!-- KPI strip -->
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-bottom:18px">
+          <div style="background:#F8FAFC;border-radius:8px;padding:10px;text-align:center">
+            <div style="font-size:22px;font-weight:900;color:#1E293B">${activeProjects.length}</div>
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#64748B">Active Projects</div>
+          </div>
+          <div style="background:#F8FAFC;border-radius:8px;padding:10px;text-align:center">
+            <div style="font-size:22px;font-weight:900;color:#1E7B3C">${fmt$(pipelineValue)}</div>
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#64748B">Pipeline Value</div>
+          </div>
+          <div style="background:#F8FAFC;border-radius:8px;padding:10px;text-align:center">
+            <div style="font-size:22px;font-weight:900;color:#F2B705">${inFab}</div>
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#64748B">In Fabrication</div>
+          </div>
+          <div style="background:#F8FAFC;border-radius:8px;padding:10px;text-align:center">
+            <div style="font-size:22px;font-weight:900;color:${margin>=0?'#1E7B3C':'#C8102E'}">${fmt$(margin)}</div>
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#64748B">Real Margin (${marginPct}%)</div>
+          </div>
+          <div style="background:#F8FAFC;border-radius:8px;padding:10px;text-align:center">
+            <div style="font-size:22px;font-weight:900;color:${flaggedProposals.length?'#C8102E':'#1E293B'}">${openProposals.length}</div>
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#64748B">Open Proposals</div>
+          </div>
         </div>
+
+        <!-- Stage bar chart with drill-down -->
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#64748B;margin-bottom:10px">Project Stage Pipeline — tap any stage to see projects</div>
+        <div style="margin-bottom:4px">${chartRows}</div>
+
+        ${attentionBlock}
+
+        <div style="margin-top:14px;font-size:11px;color:#94A3B8">All projects combined — Ted Scholl & Dan Soleau. Click any project to open full detail in the Project Planner.</div>
       </div>`;
   }
 
