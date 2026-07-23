@@ -146,6 +146,8 @@ const ALLOWED_TABLES = new Set([
   // ServiceTrade sync progress tracking, added 2026-07-17 -- the ST
   // sync dashboard panel was 400ing because this table was never added.
   'servicetrade_sync_progress',
+  // AllPro Site Survey, Material Costs, Job Bundles, Calendar Sync -- added 2026-07-23
+  'allpro_site_surveys','allpro_material_costs','allpro_job_bundles','calendar_sync',
 ]);
 
 const TABLE_PREFIX = {
@@ -195,6 +197,11 @@ const TABLE_PREFIX = {
   account_assets:'AST',
   st_services:'STS',
   st_deficiencies:'STD',
+  servicetrade_sync_progress:'SSP',
+  allpro_site_surveys:'ASS',
+  allpro_material_costs:'AMC',
+  allpro_job_bundles:'AJB',
+  calendar_sync:'CAL',
 };
 
 function corsHeaders(origin) {
