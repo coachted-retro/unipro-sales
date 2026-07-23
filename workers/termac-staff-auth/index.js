@@ -1004,11 +1004,18 @@ export default {
         case '/allpro-draw-send': return await handleAllProDrawSend(request, env);
         case '/allpro-final-send': return await handleAllProFinalSend(request, env);
         case '/allpro-payment-logged': return await handleAllProPaymentLogged(request, env);
+        case '/square-webhook': return await handleSquareWebhook(request, env);
         default: return jsonResponse({ ok: false, error: 'Unknown endpoint.' }, 404);
       }
     } catch (e) {
       return jsonResponse({ ok: false, error: 'Server error.' }, 500);
     }
+  },
+
+  // ── CRON: fires hourly to process payment reminders ──────────────────────────
+  // Set in wrangler.toml: [triggers] crons = ["0 * * * *"]
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(processPaymentReminders(env));
   },
 };
 
@@ -1052,13 +1059,13 @@ function allproPaymentEmailHtml({ customerName, milestoneLabel, milestonePct, am
     + '<tr><td style="padding:8px 12px"><strong>' + milestoneLabel + ' Due</strong></td><td style="padding:8px 12px"><strong style="color:#C8102E">' + usd(amount) + '</strong></td></tr>'
     + '</table>'
     + linkHtml
-    + (squareLink ? '<p style="font-size:12px;color:#6B7280;text-align:center">You can also pay in person at our office or at the job site via the AllPro tablet.</p>' : '')
+    + (squareLink ? '<p style="font-size:12px;color:#6B7280;text-align:center">You can also pay in person at the job site via the AllPro Samsung tablet.</p>' : '')
     + '<p>Questions? Call Ted Scholl directly at <strong>267-421-6336</strong> or reply to this email.</p>'
     + '<p>Thank you — we look forward to completing your project.</p>'
     + '<hr style="margin:24px 0;border:none;border-top:1px solid #E5E7EB">'
     + '<p style="font-size:12px;color:#6B7280">AllPro Stainless Steel and Metal Fabrication | 7330 Tulip Street, Philadelphia PA 19136<br>'
     + 'Phone: 215-928-9191 | Fax: 215-333-9133 | Toll-Free: 1-800-601-4663<br>'
-    + 'Primary Contact: Ted Scholl — tscholl@termac.com | 267-421-6336</p>'
+    + 'Payment processed by TerPro LLC · Primary Contact: Ted Scholl — tscholl@termac.com | 267-421-6336</p>'
     + '</div>';
 }
 
@@ -1190,4 +1197,247 @@ async function handleAllProPaymentLogged(request, env) {
   await env.DB.prepare('UPDATE allpro_payment_reminders SET sent=1, cancelled=1 WHERE quote_id=? AND milestone=? AND sent=0').bind(quoteId, milestone).run().catch(()=>{});
 
   return jsonResponse({ ok: true, quote_id: quoteId, milestone, amount_received: amount, payment_method: method, logged_by: loggedBy, message: milestone.charAt(0).toUpperCase() + milestone.slice(1) + ' payment of $' + amount.toLocaleString('en-US',{minimumFractionDigits:2}) + ' logged via ' + method + '.' });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SQUARE WEBHOOK RECEIVER
+// ─────────────────────────────────────────────────────────────────────────────
+// Setup in Square Dashboard:
+//   Developers → Webhooks → Add webhook endpoint
+//   URL: https://termac-staff-auth.termac-one.workers.dev/square-webhook
+//   Events: payment.completed
+//   Signature Key: set SQUARE_WEBHOOK_SIGNATURE_KEY in Cloudflare env vars
+//
+// When a customer pays via Square (tap, card, or link), Square POSTs here.
+// We match the payment amount to the right project milestone, log it as paid,
+// cancel reminders, advance the stage, and email Ted a notification.
+// ─────────────────────────────────────────────────────────────────────────────
+async function handleSquareWebhook(request, env) {
+  // Verify Square webhook signature (HMAC-SHA256)
+  var signatureKey = env.SQUARE_WEBHOOK_SIGNATURE_KEY;
+  if (signatureKey) {
+    var bodyText = await request.text();
+    var squareSig = request.headers.get('x-square-hmacsha256-signature') || '';
+    // Compute expected signature
+    var encoder = new TextEncoder();
+    var keyData = encoder.encode(signatureKey);
+    var msgData = encoder.encode(request.url + bodyText);
+    var cryptoKey = await crypto.subtle.importKey('raw', keyData, { name:'HMAC', hash:'SHA-256' }, false, ['sign']);
+    var sigBuf = await crypto.subtle.sign('HMAC', cryptoKey, msgData);
+    var sigB64 = btoa(String.fromCharCode(...new Uint8Array(sigBuf)));
+    if (sigB64 !== squareSig) {
+      console.error('Square webhook signature mismatch');
+      return new Response('Unauthorized', { status: 401 });
+    }
+    var payload;
+    try { payload = JSON.parse(bodyText); } catch(e) { return new Response('Bad JSON', { status: 400 }); }
+    return await processSquarePayment(payload, env);
+  }
+  // If no signature key configured yet (during setup), still process but log warning
+  var payload;
+  try { payload = await request.json(); } catch(e) { return new Response('Bad JSON', { status: 400 }); }
+  console.warn('Square webhook: no signature key configured -- set SQUARE_WEBHOOK_SIGNATURE_KEY in env');
+  return await processSquarePayment(payload, env);
+}
+
+async function processSquarePayment(payload, env) {
+  // Square sends: { type: 'payment.completed', data: { object: { payment: { amount_money: { amount, currency }, note, order_id, buyer_email_address, ... } } } }
+  if (payload.type !== 'payment.completed' && payload.type !== 'payment.updated') {
+    return new Response(JSON.stringify({ ok: true, skipped: true, reason: 'Event type not payment.completed' }), { status: 200 });
+  }
+
+  var payment = payload?.data?.object?.payment;
+  if (!payment) return new Response('No payment object', { status: 400 });
+
+  var amountCents = payment.amount_money?.amount || 0;
+  var amountDollars = amountCents / 100;
+  var note = (payment.note || '').toLowerCase();
+  var buyerEmail = payment.buyer_email_address || payment.buyer_email || '';
+  var squarePaymentId = payment.id || '';
+
+  // Try to identify project from payment note
+  // Recommended note format when generating Square link: "AllPro #QUOTE_ID Draw" or "AllPro #QUOTE_ID Final"
+  // e.g. "AllPro #Q1A2B3 Draw" or "AllPro #Q1A2B3 Final"
+  var quoteIdMatch = note.match(/allpro\s+#?([a-z0-9]+)/i);
+  var milestoneMatch = note.match(/\b(deposit|draw|final)\b/i);
+  var quoteId = quoteIdMatch ? quoteIdMatch[1].toUpperCase() : null;
+  var milestone = milestoneMatch ? milestoneMatch[1].toLowerCase() : null;
+
+  // If we can't identify from note, try to match by email + amount
+  if (!quoteId && buyerEmail) {
+    var match = await env.DB.prepare(
+      'SELECT id, customer_name, customer_email, grand_total, payment_stage FROM allpro_quotes WHERE customer_email = ? AND payment_stage NOT IN (\'paid_in_full\') ORDER BY created_at DESC LIMIT 5'
+    ).bind(buyerEmail).all();
+    var rows = match.results || [];
+    for (var r of rows) {
+      var total = parseFloat(r.grand_total || 0);
+      var pcts = [0.50, 0.40, 0.10];
+      var milestones = ['deposit', 'draw', 'final'];
+      for (var i = 0; i < pcts.length; i++) {
+        var expected = Math.round(total * pcts[i] * 100); // cents
+        if (Math.abs(expected - amountCents) < 100) { // within $1 tolerance
+          quoteId = r.id;
+          milestone = milestones[i];
+          break;
+        }
+      }
+      if (quoteId) break;
+    }
+  }
+
+  if (!quoteId || !milestone) {
+    // Can't match -- send Ted an alert and log it
+    await notifyTed(env, {
+      subject: 'Square Payment Received — Could Not Auto-Match (' + new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(amountDollars) + ')',
+      body: '<p>A Square payment of <strong>' + new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(amountDollars) + '</strong> was received but could not be automatically matched to a project.</p><p>Square Payment ID: ' + squarePaymentId + '<br>Buyer Email: ' + buyerEmail + '<br>Note on payment: ' + (payment.note || '(none)') + '</p><p>Please log this manually in the AllPro CRM.</p><p><strong>Tip:</strong> When generating Square payment links, add a note like "AllPro #QUOTE_ID Draw" so future payments match automatically.</p>'
+    });
+    return new Response(JSON.stringify({ ok: false, matched: false, reason: 'Could not match payment to project', amount: amountDollars }), { status: 200 });
+  }
+
+  // Log payment
+  var fieldMap = { deposit: 'deposit_paid_at', draw: 'draw_paid_at', final: 'final_paid_at' };
+  var amtMap   = { deposit: 'deposit_paid', draw: 'draw_paid', final: 'final_paid' };
+  var nextStageMap = { deposit: 'deposit_paid', draw: 'draw_paid', final: 'final_paid' };
+
+  // Determine new payment_stage and whether all paid
+  var q = await env.DB.prepare('SELECT * FROM allpro_quotes WHERE id = ?').bind(quoteId).first();
+  var totalPaid = (parseFloat(q?.deposit_paid || 0)) + (parseFloat(q?.draw_paid || 0)) + (parseFloat(q?.final_paid || 0)) + amountDollars;
+  var grandTotal = parseFloat(q?.grand_total || 0);
+  var newPaymentStage = totalPaid >= grandTotal * 0.99 ? 'paid_in_full' : nextStageMap[milestone];
+
+  await env.DB.prepare(
+    'UPDATE allpro_quotes SET ' + fieldMap[milestone] + '=?, ' + amtMap[milestone] + '=?, payment_stage=?, square_payment_id=?, updated_at=? WHERE id=?'
+  ).bind(Date.now(), amountDollars, newPaymentStage, squarePaymentId, Date.now(), quoteId).run().catch(()=>{});
+
+  // Cancel reminders for this milestone
+  await env.DB.prepare(
+    'UPDATE allpro_payment_reminders SET sent=1, cancelled=1 WHERE quote_id=? AND milestone=? AND sent=0'
+  ).bind(quoteId, milestone).run().catch(()=>{});
+
+  // Auto-advance stage in CRM opportunities
+  var stageAdvanceMap = { deposit: 'Pre-Construction', draw: 'Fabrication', final: 'Inspection / Closeout' };
+  var newApStage = stageAdvanceMap[milestone];
+  if (newApStage) {
+    var opps = await env.DB.prepare('SELECT * FROM allpro_quotes WHERE id = ?').bind(quoteId).all().catch(()=>({ results: [] }));
+    // Update opportunity apStage field
+    await env.DB.prepare('UPDATE allpro_quotes SET ap_stage=?, updated_at=? WHERE id=?').bind(newApStage, Date.now(), quoteId).run().catch(()=>{});
+  }
+
+  var milestoneLabel = { deposit: '50% Deposit', draw: '40% Pre-Construction Draw', final: '10% Final Balance' };
+  var usd = function(n) { return new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(n); };
+
+  // Notify Ted
+  await notifyTed(env, {
+    subject: '✅ AllPro Payment Received — ' + milestoneLabel[milestone] + ' (' + usd(amountDollars) + ') — Project ' + quoteId,
+    body: '<div style="font-family:Arial,sans-serif;max-width:600px"><img src="https://my.termac.com/allpro-letterhead.png" style="width:200px;margin-bottom:12px"><br>'
+      + '<h2 style="color:#16A34A">✅ Payment Received — Stage Advanced Automatically</h2>'
+      + '<table style="border-collapse:collapse;font-size:14px;width:100%">'
+      + '<tr><td style="padding:8px 12px;background:#F8F9FA;font-weight:700">Project</td><td style="padding:8px 12px">' + (q?.customer_name || quoteId) + '</td></tr>'
+      + '<tr><td style="padding:8px 12px;font-weight:700">Quote ID</td><td style="padding:8px 12px">' + quoteId + '</td></tr>'
+      + '<tr><td style="padding:8px 12px;background:#F8F9FA;font-weight:700">Milestone</td><td style="padding:8px 12px">' + milestoneLabel[milestone] + '</td></tr>'
+      + '<tr><td style="padding:8px 12px;font-weight:700">Amount Received</td><td style="padding:8px 12px" style="color:#16A34A"><strong>' + usd(amountDollars) + '</strong></td></tr>'
+      + '<tr><td style="padding:8px 12px;background:#F8F9FA;font-weight:700">Stage Advanced To</td><td style="padding:8px 12px">' + (newApStage || '(see CRM)') + '</td></tr>'
+      + '<tr><td style="padding:8px 12px;font-weight:700">Payment via</td><td style="padding:8px 12px">Square (TerPro LLC)</td></tr>'
+      + '<tr><td style="padding:8px 12px;background:#F8F9FA;font-weight:700">Square Payment ID</td><td style="padding:8px 12px">' + squarePaymentId + '</td></tr>'
+      + (newPaymentStage === 'paid_in_full' ? '<tr><td colspan="2" style="padding:10px 12px;background:#D1FAE5;color:#065F46;font-weight:700;text-align:center">🎉 PROJECT PAID IN FULL — ' + usd(grandTotal) + ' collected</td></tr>' : '')
+      + '</table>'
+      + '<p style="margin-top:16px">Reminders cancelled. No further action needed on payment for this milestone.</p>'
+      + '<p style="font-size:12px;color:#6B7280">AllPro Project Management System · TerPro LLC · tscholl@termac.com</p>'
+      + '</div>'
+  });
+
+  return new Response(JSON.stringify({ ok: true, matched: true, quote_id: quoteId, milestone, amount: amountDollars, new_stage: newApStage, payment_stage: newPaymentStage }), { status: 200 });
+}
+
+async function notifyTed(env, { subject, body }) {
+  // Send notification email to Ted via Graph
+  var tedEmail = 'tscholl@termac.com';
+  var tokenRow = await env.DB.prepare('SELECT * FROM staff_graph_tokens WHERE staff_email = ?').bind(tedEmail).first().catch(()=>null);
+  if (!tokenRow?.access_token) return;
+  // Refresh if needed
+  if (tokenRow.expires_at && tokenRow.expires_at < Date.now() + 60000) {
+    try {
+      var r = await fetch('https://login.microsoftonline.com/' + env.SSO_TENANT_ID + '/oauth2/v2.0/token', {
+        method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
+        body: new URLSearchParams({ grant_type:'refresh_token', client_id:env.SSO_CLIENT_ID, client_secret:env.SSO_CLIENT_SECRET, refresh_token:tokenRow.refresh_token, scope:'openid profile email Mail.Send offline_access' })
+      });
+      var rj = await r.json();
+      if (rj.access_token) { await env.DB.prepare('UPDATE staff_graph_tokens SET access_token=?,expires_at=?,updated_at=? WHERE staff_email=?').bind(rj.access_token, Date.now()+(rj.expires_in||3600)*1000, Date.now(), tedEmail).run(); tokenRow.access_token = rj.access_token; }
+    } catch(e) {}
+  }
+  await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
+    method:'POST',
+    headers:{'Authorization':'Bearer '+tokenRow.access_token,'Content-Type':'application/json'},
+    body: JSON.stringify({ message: { subject, body:{ contentType:'HTML', content:body }, toRecipients:[{ emailAddress:{ address:tedEmail } }] } })
+  }).catch(()=>{});
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CRON: PROCESS PAYMENT REMINDERS (runs hourly via scheduled trigger)
+// ─────────────────────────────────────────────────────────────────────────────
+async function processPaymentReminders(env) {
+  var now = Date.now();
+  // Find all due, unsent, uncancelled reminders
+  var due = await env.DB.prepare(
+    'SELECT r.*, q.customer_name, q.customer_email, q.grand_total, q.project_number, q.customer_address FROM allpro_payment_reminders r LEFT JOIN allpro_quotes q ON r.quote_id = q.id WHERE r.fire_at <= ? AND r.sent = 0 AND r.cancelled = 0 LIMIT 50'
+  ).bind(now).all().catch(()=>({ results: [] }));
+
+  var rows = due.results || [];
+  var processed = 0;
+
+  for (var row of rows) {
+    var total = parseFloat(row.grand_total || 0);
+    var pctMap = { deposit: 0.50, draw: 0.40, final: 0.10 };
+    var labelMap = { deposit: '50% Deposit', draw: '40% Pre-Construction Draw', final: '10% Final Balance' };
+    var blockMap = {
+      deposit: 'Your project cannot be scheduled until the deposit is received.',
+      draw: 'Fabrication cannot begin until this payment is received.',
+      final: 'AHJ inspection sign-off, warranty filing, and ongoing service setup are on hold pending final payment.'
+    };
+    var amount = total * (pctMap[row.milestone] || 0);
+    var milestoneLabel = labelMap[row.milestone] || row.milestone;
+    var blockMessage = row.reminder_num >= 2 ? blockMap[row.milestone] : '';
+
+    var htmlBody = allproPaymentEmailHtml({
+      customerName: row.customer_name || 'Valued Customer',
+      milestoneLabel,
+      milestonePct: Math.round((pctMap[row.milestone] || 0) * 100),
+      amount,
+      totalContract: total,
+      squareLink: null, // Ted will send Square link separately if needed
+      jobDescription: row.customer_address || '',
+      proposalNum: row.project_number || row.quote_id,
+      isReminder: true,
+      reminderNum: row.reminder_num,
+      blockMessage
+    });
+
+    var subjectPrefix = row.reminder_num === 1 ? 'REMINDER — ' : '⚠️ FINAL NOTICE — ';
+    var usd = new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(amount);
+    var subject = subjectPrefix + 'AllPro Payment Due: ' + milestoneLabel + ' (' + usd + ') — Project ' + (row.project_number || row.quote_id);
+
+    var sent = await sendAllProMilestoneEmail(env, {
+      customerEmail: row.customer_email,
+      customerName: row.customer_name || 'Valued Customer',
+      subject,
+      htmlBody,
+      senderEmail: 'tscholl@termac.com'
+    });
+
+    await env.DB.prepare(
+      'UPDATE allpro_payment_reminders SET sent=1, sent_at=? WHERE id=?'
+    ).bind(now, row.id).run().catch(()=>{});
+
+    // Notify Ted that a reminder went out
+    if (sent) {
+      await notifyTed(env, {
+        subject: '📧 AllPro Reminder Sent — ' + milestoneLabel + ' (' + usd + ') — ' + (row.customer_name || row.quote_id),
+        body: '<p>Reminder #' + row.reminder_num + ' was automatically sent to <strong>' + row.customer_email + '</strong> for the ' + milestoneLabel + ' payment of <strong>' + usd + '</strong> on project ' + (row.project_number || row.quote_id) + '.</p>' + (blockMessage ? '<p><strong>Message included:</strong> ' + blockMessage + '</p>' : '') + '<p>If payment has already been received via Square, log it in the AllPro system to cancel further reminders.</p>'
+      });
+    }
+
+    processed++;
+  }
+
+  console.log('Payment reminder cron: processed ' + processed + ' of ' + rows.length + ' due reminders');
 }
