@@ -1453,6 +1453,37 @@ function scoreInstallAssessment(a) {
   var score = 0;
   var flags = [];
   var coItems = []; // { label, low, high, trigger }
+  var solidFuelOverride = false;
+
+  // Solid fuel — AUTO L3 OVERRIDE
+  var sfType = a.solid_fuel_type;
+  if (sfType && sfType !== 'none' && sfType !== '') {
+    solidFuelOverride = true;
+    score = Math.max(score, 9);
+    flags.push('SOLID FUEL (' + sfType + '): Automatic L3 — dedicated duct run and NFPA 96 Ch.14 compliance required');
+    coItems.push({ label: 'Dedicated Secondary Duct Run (Solid Fuel — NFPA 96 Ch.14)', low: 3500, high: 8500, trigger: 'sf_duct' });
+    if (a.solid_fuel_spark_arrestors !== 'present') {
+      coItems.push({ label: 'Spark Arrestor Filter Set (UL-listed)', low: 400, high: 900, trigger: 'sf_spark' });
+      flags.push('Spark arrestor filters not confirmed — UL-listed set required');
+    }
+    if (a.solid_fuel_floor === 'combustible' || a.solid_fuel_floor === 'unknown') {
+      flags.push('COMBUSTIBLE FLOOR — non-combustible hearth pad (3ft clearance) required. GC/customer scope.');
+    }
+    if (a.solid_fuel_firebox_size === 'over5' && a.solid_fuel_water_line !== 'yes') {
+      coItems.push({ label: 'Plumbing / Water Line & Hose Reel (firebox >5 cu ft)', low: 1200, high: 2800, trigger: 'sf_plumbing' });
+      flags.push('Firebox over 5 cu ft — dedicated water line and hose reel required by code');
+    }
+    if (a.solid_fuel_mist_system === 'required' || a.solid_fuel_mist_system === 'recommended') {
+      coItems.push({ label: 'Water-Wash / Mist Suppression System', low: 2000, high: 5000, trigger: 'sf_mist' });
+    }
+    var doorCount = parseInt(a.solid_fuel_door_count) || 0;
+    if (a.solid_fuel_access_doors === 'none' || a.solid_fuel_access_doors === 'partial' || doorCount > 0) {
+      var dc = doorCount || 2;
+      coItems.push({ label: 'Creosote Cleanout Access Doors (' + dc + ' est.)', low: 300 * dc, high: 600 * dc, trigger: 'sf_doors' });
+    }
+    if (a.solid_fuel_creosote === 'heavy') { flags.push('HEAVY CREOSOTE — professional cleaning required before work begins'); }
+    if (a.solid_fuel_duct === 'shared') { flags.push('CODE VIOLATION: Shared duct with solid fuel — separate run mandatory'); }
+  }
 
   // Structural
   if (a.struct_drop_ceiling) { score += 2; flags.push('Drop ceiling present — unistrut framing required'); coItems.push({ label: 'Structural Unistrut / Trapeze Framing', low: 800, high: 2500, trigger: 'drop_ceiling' }); }
@@ -1482,11 +1513,11 @@ function scoreInstallAssessment(a) {
 
   // Determine tier and allowance
   var tier, allowance;
-  if (score <= 3) { tier = 'L1'; allowance = 0; }
-  else if (score <= 8) { tier = 'L2'; allowance = 1500; }
-  else { tier = 'L3'; allowance = 3000; }
+  if (solidFuelOverride || score > 8) { tier = 'L3'; allowance = 3000; }
+  else if (score <= 3) { tier = 'L1'; allowance = 0; }
+  else { tier = 'L2'; allowance = 1500; }
 
-  return { score, tier, allowance, flags, coItems };
+  return { score, tier, allowance, flags, coItems, solidFuelOverride };
 }
 
 async function handleAssessmentSave(request, env) {
