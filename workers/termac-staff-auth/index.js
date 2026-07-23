@@ -809,6 +809,166 @@ async function handleAllProSurveySubmit(request, env) {
   });
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// AllPro Proposal Send
+// Pre-populates the JotForm customer proposal with quote data and sends
+// a pre-filled link to the customer via Graph email.
+//
+// POST body: { quote_id, sender_email (from session) }
+// Returns: { ok, prefill_url, sent_to }
+// ─────────────────────────────────────────────────────────────────────────────
+const ALLPRO_PROPOSAL_FORM_ID = '262035509253049';
+const JOTFORM_PREPOPULATE_BASE = 'https://form.jotform.com/' + ALLPRO_PROPOSAL_FORM_ID;
+
+async function handleAllProProposalSend(request, env) {
+  let body;
+  try { body = await request.json(); } catch(e) { return jsonResponse({ ok: false, error: 'Invalid JSON' }, 400); }
+
+  const quoteId   = body.quote_id;
+  const senderEmail = body.sender_email || 'tscholl@termac.com';
+  if (!quoteId) return jsonResponse({ ok: false, error: 'quote_id required' }, 400);
+
+  // Fetch quote from D1
+  const q = await env.DB.prepare('SELECT * FROM allpro_quotes WHERE id = ?').bind(quoteId).first();
+  if (!q) return jsonResponse({ ok: false, error: 'Quote not found' }, 404);
+
+  // Fetch line items
+  const lines = await env.DB.prepare(
+    'SELECT * FROM allpro_quote_lines WHERE quote_id = ? ORDER BY sort_order, line_number'
+  ).bind(quoteId).all();
+
+  const lineRows = lines.results || [];
+
+  // Build scope text from line items
+  const scopeLines = lineRows.map(function(l, i) {
+    var dimStr = '';
+    if (l.dim_length) dimStr += l.dim_length + '"L';
+    if (l.dim_width)  dimStr += ' x ' + l.dim_width + '"W';
+    if (l.dim_height) dimStr += ' x ' + l.dim_height + '"H';
+    var price = (l.line_total || 0).toLocaleString('en-US', { style:'currency', currency:'USD' });
+    return (i+1) + '. ' + (l.description || l.item_type) + (dimStr ? ' (' + dimStr + ')' : '') + ' -- ' + price;
+  }).join('\n');
+
+  // Complexity label
+  const cxMap = { L1: 'Level 1 Standard', L2: 'Level 2 Complex', L3: 'Level 3 Extreme' };
+  const cxLabel = [
+    q.complexity_duct !== 'L1' ? 'Duct: ' + cxMap[q.complexity_duct] : '',
+    q.complexity_wall !== 'L1' ? 'Wall: ' + cxMap[q.complexity_wall] : '',
+    q.complexity_deck !== 'L1' ? 'Deck: ' + cxMap[q.complexity_deck] : ''
+  ].filter(Boolean).join(', ') || 'Level 1 Standard (no complexity adjustment)';
+
+  // Format currency
+  function usd(n) { return '$' + (n || 0).toLocaleString('en-US', { minimumFractionDigits:2, maximumFractionDigits:2 }); }
+
+  // Build JotForm pre-fill URL using field name parameters
+  // JotForm pre-population uses: ?fieldName[]=value or ?q{id}_fieldName=value
+  // We use the readable field name format since we built the form with descriptive names
+  var today = new Date().toLocaleDateString('en-US', { month:'2-digit', day:'2-digit', year:'numeric' });
+  var params = new URLSearchParams({
+    'customerBusinessName':     q.customer_name || '',
+    'contactName':              q.customer_contact || '',
+    'siteAddress':              q.customer_address || '',
+    'phone':                    q.customer_phone || '',
+    'email':                    q.customer_email || '',
+    'proposalNumber':           q.project_number || quoteId,
+    'proposalDate':             today,
+    'projectDescriptionAndScope': scopeLines,
+    'suppressionSystemScope':   q.suppression_system_notes || 'To be determined based on AHJ requirements',
+    'complexityLevel':          cxLabel,
+    'fabricationAndMaterials':  usd(q.subtotal),
+    'complexityAdjustment':     usd(q.complexity_add),
+    'taxPercent':               ((q.tax_rate || 0.06) * 100).toFixed(0) + '%',
+    'taxAmount':                usd(q.tax_amount),
+    'totalInvestment':          usd(q.grand_total),
+    'authorizedAllProRepresentative': q.created_by || 'Ted Scholl',
+  });
+
+  var prefillUrl = JOTFORM_PREPOPULATE_BASE + '?' + params.toString();
+
+  // Update quote status to 'sent'
+  await env.DB.prepare(
+    'UPDATE allpro_quotes SET status=?, sent_at=?, updated_at=? WHERE id=?'
+  ).bind('sent', Date.now(), Date.now(), quoteId).run();
+
+  // Send email via Graph if sender token available
+  var customerEmail = q.customer_email;
+  var emailSent = false;
+
+  if (customerEmail) {
+    var tokenRow = await env.DB.prepare(
+      'SELECT * FROM staff_graph_tokens WHERE staff_email = ?'
+    ).bind(senderEmail).first();
+
+    if (tokenRow && tokenRow.access_token) {
+      var customerName = q.customer_name || 'Valued Customer';
+      var proposalNum  = q.project_number || quoteId;
+      var emailHtml = '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">'
+        + '<img src="https://sales.mytermac.com/allpro-letterhead.png" alt="AllPro Stainless Steel" style="width:260px;height:auto;margin-bottom:16px"><br>'
+        + '<p>Dear ' + customerName + ',</p>'
+        + '<p>Thank you for the opportunity to provide this proposal for your custom fabrication project.</p>'
+        + '<p>Please review your proposal and sign electronically by clicking the button below. Once signed, you will receive a copy for your records and our team will contact you within 24 hours to confirm your project schedule.</p>'
+        + '<div style="text-align:center;margin:28px 0">'
+        + '<a href="' + prefillUrl + '" style="background:#F2B705;color:#1A1D21;text-decoration:none;padding:14px 32px;border-radius:8px;font-family:Arial,sans-serif;font-weight:700;font-size:16px;display:inline-block">Review and Sign Proposal</a>'
+        + '</div>'
+        + '<p><strong>Proposal Number:</strong> ' + proposalNum + '<br>'
+        + '<strong>Proposal Total:</strong> ' + usd(q.grand_total) + '<br>'
+        + '<strong>Valid Until:</strong> ' + new Date(Date.now() + 30*24*60*60*1000).toLocaleDateString('en-US', {month:'long',day:'numeric',year:'numeric'}) + '</p>'
+        + '<p>If you have any questions, please call us at <strong>215-928-9191</strong> or reply to this email.</p>'
+        + '<p>Thank you for choosing AllPro Stainless Steel and Metal Fabrication.</p>'
+        + '<hr style="margin:24px 0;border:none;border-top:1px solid #E5E7EB">'
+        + '<p style="font-size:12px;color:#6B7280">AllPro Stainless Steel and Metal Fabrication | 7330 Tulip Street, Philadelphia PA 19136<br>'
+        + 'Phone: 215-928-9191 | Fax: 215-333-9133 | Toll-Free: 1-800-601-4663</p>'
+        + '</div>';
+
+      // Refresh token if needed
+      if (tokenRow.expires_at && tokenRow.expires_at < Date.now() + 60000) {
+        try {
+          var refreshRes = await fetch('https://login.microsoftonline.com/' + env.SSO_TENANT_ID + '/oauth2/v2.0/token', {
+            method:'POST',
+            headers:{'Content-Type':'application/x-www-form-urlencoded'},
+            body: new URLSearchParams({
+              grant_type:'refresh_token', client_id: env.SSO_CLIENT_ID,
+              client_secret: env.SSO_CLIENT_SECRET, refresh_token: tokenRow.refresh_token,
+              scope:'openid profile email Mail.Send offline_access'
+            })
+          });
+          var refreshJson = await refreshRes.json();
+          if (refreshJson.access_token) {
+            await env.DB.prepare('UPDATE staff_graph_tokens SET access_token=?,expires_at=?,updated_at=? WHERE staff_email=?')
+              .bind(refreshJson.access_token, Date.now()+(refreshJson.expires_in||3600)*1000, Date.now(), senderEmail).run();
+            tokenRow.access_token = refreshJson.access_token;
+          }
+        } catch(e) {}
+      }
+
+      var graphRes = await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
+        method:'POST',
+        headers:{ 'Authorization':'Bearer '+tokenRow.access_token, 'Content-Type':'application/json' },
+        body: JSON.stringify({
+          message: {
+            subject: 'AllPro Proposal #' + proposalNum + ' — ' + customerName,
+            body: { contentType:'HTML', content: emailHtml },
+            toRecipients: [{ emailAddress:{ address: customerEmail } }]
+          }
+        })
+      });
+      emailSent = graphRes.status === 202;
+    }
+  }
+
+  return jsonResponse({
+    ok: true,
+    prefill_url: prefillUrl,
+    sent_to: customerEmail || null,
+    email_sent: emailSent,
+    quote_id: quoteId,
+    status: 'sent',
+    message: emailSent
+      ? 'Proposal emailed to ' + customerEmail + ' with pre-filled signing link.'
+      : 'Proposal URL ready. Email not sent -- check Graph token or send manually.',
+  });
+}
+
 export default {
   async fetch(request, env) {
     if (request.method === 'OPTIONS') {
@@ -840,6 +1000,7 @@ export default {
         case '/calendar-push': return await handleCalendarPush(request, env);
         case '/calendar-pull': return await handleCalendarPull(request, env);
         case '/allpro-survey-submit': return await handleAllProSurveySubmit(request, env);
+        case '/allpro-proposal-send': return await handleAllProProposalSend(request, env);
         default: return jsonResponse({ ok: false, error: 'Unknown endpoint.' }, 404);
       }
     } catch (e) {

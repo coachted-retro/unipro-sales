@@ -1760,32 +1760,45 @@ function qbCallPdfWorker() {
 // ============================================================
 function qbSendQuote() {
   var email = document.getElementById('fCustEmail').value;
-  var name = document.getElementById('fCustName').value;
+  var name  = document.getElementById('fCustName').value;
   if (!email) { qbToast('Enter customer email first'); return; }
+  if (!_quoteId) { qbToast('Save the quote first before sending'); return; }
+  var btn = document.getElementById('qbSendBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Sending...';
+  var sess = null;
+  try { sess = JSON.parse(localStorage.getItem('termac_staff_session') || 'null'); } catch(e) {}
   qbSaveDraft(true).then(function() {
-    var pdfUrl = document.getElementById('pdfLinkA').href;
-    var subj = 'AllPro Custom Fabrication Proposal — ' + (name || 'Your Project');
-    var body = 'Please find your custom fabrication proposal attached.' + (pdfUrl && pdfUrl !== '#' ? ' You can also view it online: ' + pdfUrl : '');
-    var sess = null;
-    try { sess = JSON.parse(localStorage.getItem('termac_staff_session') || 'null'); } catch(e) {}
-    if (!sess || !sess.email) {
-      qbToast('No session email found — try re-logging in');
-      return;
-    }
-    fetch('https://termac-staff-auth.termac-one.workers.dev/send-mail', {
+    return fetch('https://termac-staff-auth.termac-one.workers.dev/allpro-proposal-send', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (sess.access_token || '') },
-      body: JSON.stringify({ to: email, subject: subj, html: '<p>' + body + '</p>', sender: sess.email })
-    }).then(function(r) { return r.json(); }).then(function(res) {
-      if (res.ok) {
-        d1Put('allpro_quotes', _quoteId, { status: 'sent', sent_at: Date.now(), updated_at: Date.now() });
-        document.getElementById('qbStatusBadge').className = 'badge badge-sent';
-        document.getElementById('qbStatusBadge').textContent = 'Sent';
-        qbToast('Quote sent to ' + email);
-      } else {
-        qbToast('Send failed — check email and try again');
-      }
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        quote_id: _quoteId,
+        sender_email: sess ? sess.email : 'tscholl@termac.com'
+      })
     });
+  }).then(function(r) { return r.json(); }).then(function(res) {
+    btn.disabled = false;
+    btn.textContent = 'Send to Customer';
+    if (res.ok) {
+      document.getElementById('qbStatusBadge').className = 'badge badge-sent';
+      document.getElementById('qbStatusBadge').textContent = 'Sent';
+      if (res.email_sent) {
+        qbToast('Proposal emailed to ' + email + ' for e-signature');
+      } else {
+        // Show the pre-fill URL so Ted can copy it manually
+        document.getElementById('pdfLink').style.display = 'block';
+        document.getElementById('pdfLinkA').href = res.prefill_url;
+        document.getElementById('pdfLinkA').textContent = 'Open Proposal Signing Link';
+        qbToast('Proposal ready -- copy link to send manually');
+      }
+    } else {
+      qbToast('Send failed: ' + (res.error || 'unknown error'));
+    }
+  }).catch(function() {
+    btn.disabled = false;
+    btn.textContent = 'Send to Customer';
+    qbToast('Network error -- try again');
   });
 }
 
