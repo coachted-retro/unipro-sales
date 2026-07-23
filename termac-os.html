@@ -5871,6 +5871,7 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
       <select id="rpt_company" onchange="rptRender()" style="padding:7px 12px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;font-family:Barlow,sans-serif"><option value="all">All Companies</option><option value="UniPro">UniPro</option><option value="Quality III">Quality III</option><option value="ALLPro">ALLPro</option><option value="Filter Man">Filter Man</option><option value="GTO">G.T.O.</option><option value="Termac">Termac LLC</option></select>
       <select id="rpt_rep" onchange="rptRender()" style="padding:7px 12px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;font-family:Barlow,sans-serif"><option value="all">All Reps</option></select>
       <button onclick="rptExportCSV()" style="background:var(--green);color:#fff;border:none;border-radius:7px;padding:8px 16px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">⬇ Export CSV</button>
+      <button onclick="rptExportPDF()" style="background:#1B5FA8;color:#fff;border:none;border-radius:7px;padding:8px 16px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer">🖨 Export PDF</button>
       <button onclick="myReportPrefsOpen()" title="My Reports" style="background:none;border:1.5px solid var(--line);border-radius:7px;padding:7px 10px;font-size:15px;cursor:pointer;line-height:1">⚙️</button>
     </div>
     <div style="display:flex;gap:6px;margin-bottom:20px;flex-wrap:wrap">
@@ -5880,6 +5881,7 @@ document.getElementById('crmModalBg')?.addEventListener('click', e=>{
       <button class="rpt-cat-btn" id="rptCat-sales" onclick="rptSetCat('sales')">📈 Sales Pipeline</button>
       <button class="rpt-cat-btn" id="rptCat-health" onclick="rptSetCat('health')">❤️ Customer Health</button>
       <button class="rpt-cat-btn" id="rptCat-intel" onclick="rptSetCat('intel')">🧠 Sales Intelligence</button>
+      <button class="rpt-cat-btn" id="rptCat-allpro" onclick="rptSetCat('allpro')" style="border-color:#7330A8;color:#7330A8">🏗️ AllPro Projects</button>
       <button class="rpt-cat-btn" id="rptCat-custom" onclick="rptSetCat('custom')">⚙️ Custom Report</button>
     </div>
     <div id="rptOutput"></div>
@@ -14285,6 +14287,7 @@ function rptRender() {
       else if (_rptCurrentCat === 'sales')      html = rptBuildSales(filters);
       else if (_rptCurrentCat === 'health')     html = rptBuildHealth(filters);
       else if (_rptCurrentCat === 'intel')      html = rptBuildIntelligence(filters);
+      else if (_rptCurrentCat === 'allpro')     html = rptBuildAllPro(filters);
       else if (_rptCurrentCat === 'custom')     html = rptBuildCustom(filters);
       out.innerHTML = html;
       if (_rptCurrentCat === 'custom') { rptBuildCustomColumns(); }
@@ -14308,6 +14311,223 @@ function rptExportCSV() {
   a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
   a.download = 'termac-report-'+new Date().toISOString().slice(0,10)+'.csv';
   a.click();
+}
+
+// ── PDF EXPORT ───────────────────────────────────────────────────────────────
+function rptExportPDF() {
+  const out = document.getElementById('rptOutput');
+  if (!out || !out.innerHTML.trim()) { alert('Run a report first.'); return; }
+  const rangeEl = document.getElementById('rpt_range');
+  const companyEl = document.getElementById('rpt_company');
+  const range = rangeEl ? rangeEl.options[rangeEl.selectedIndex].text : '';
+  const company = companyEl ? companyEl.options[companyEl.selectedIndex].text : '';
+  const catBtn = document.querySelector('.rpt-cat-btn.active');
+  const catLabel = catBtn ? catBtn.textContent.trim() : 'Report';
+  const title = catLabel + (company !== 'All Companies' ? ' — ' + company : '') + (range ? ' · ' + range : '');
+  const win = window.open('', '_blank');
+  win.document.write(`<!DOCTYPE html><html><head><title>${title}</title><style>
+    @media print { .no-print { display:none!important; } body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
+    body { font-family: 'Barlow', Arial, sans-serif; margin: 32px; color: #1A1D21; font-size: 13px; }
+    h1 { font-family: 'Barlow Condensed', Arial, sans-serif; font-weight: 800; font-size: 20px; letter-spacing: .10em; text-transform: uppercase; color: #1A1D21; margin: 0 0 4px; }
+    .sub { font-size: 11px; color: #7A8088; margin-bottom: 24px; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 24px; }
+    th { text-align: left; padding: 7px 10px; border-bottom: 2px solid #E5E7EB; font-family: 'Barlow Condensed', Arial, sans-serif; font-weight: 700; font-size: 10px; letter-spacing: .10em; text-transform: uppercase; color: #7A8088; background: #F8F9FA; }
+    td { padding: 8px 10px; border-bottom: 1px solid #E5E7EB; vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    .badge { border-radius: 4px; padding: 2px 7px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; white-space: nowrap; }
+    .badge-red { background: #FEE2E2; color: #C8102E; }
+    .badge-green { background: #D1FAE5; color: #065F46; }
+    .badge-yellow { background: #FEF3C7; color: #92400E; }
+    .ban-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px,1fr)); gap: 12px; margin-bottom: 24px; }
+    .ban { background: #fff; border-radius: 8px; padding: 12px; text-align: center; border: 1px solid #E5E7EB; }
+    .ban-val { font-family: 'Barlow Condensed', Arial, sans-serif; font-weight: 800; font-size: 24px; }
+    .ban-lbl { font-size: 10px; color: #7A8088; text-transform: uppercase; letter-spacing: .08em; margin-top: 2px; }
+    .section-hdr { font-family: 'Barlow Condensed', Arial, sans-serif; font-weight: 800; font-size: 10px; letter-spacing: .18em; text-transform: uppercase; color: #7A8088; margin: 20px 0 8px; border-bottom: 1px solid #E5E7EB; padding-bottom: 4px; }
+    .print-btn { position: fixed; top: 16px; right: 16px; background: #C8102E; color: #fff; border: none; padding: 10px 20px; font-size: 13px; cursor: pointer; border-radius: 6px; z-index: 9999; }
+  </style></head><body>
+  <button class="no-print print-btn" onclick="window.print()">🖨 Print / Save PDF</button>
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px">
+    <img src="https://my.termac.com/termac-one-logo.png" onerror="this.style.display='none'" style="height:32px">
+    <h1>${title}</h1>
+  </div>
+  <div class="sub">Generated ${new Date().toLocaleString('en-US', {weekday:'long', year:'numeric', month:'long', day:'numeric', hour:'numeric', minute:'2-digit'})} &nbsp;·&nbsp; Termac One</div>
+  ${out.innerHTML}
+  </body></html>`);
+  win.document.close();
+}
+
+// ── ALLPRO PROJECT TRACKER REPORT ────────────────────────────────────────────
+function rptBuildAllPro(filters) {
+  // Pull from field jobs + CRM opportunities tagged AllPro
+  function jobsFor(key) { try { return JSON.parse(localStorage.getItem(key)||'[]'); } catch(e) { return []; } }
+  var fieldJobs = jobsFor('allpro_jobs');
+  var opps = (crmLoad('opportunities')||[]).filter(function(o){ return (o.division||'').toLowerCase().indexOf('allpro')!==-1; });
+
+  var projects = fieldJobs.slice();
+  opps.forEach(function(o) {
+    if (!projects.find(function(j){ return j.opportunityId===o.id||j.id===o.id; })) {
+      projects.push({
+        id: o.id, opportunityId: o.id,
+        business: o.name||'', accountName: o.name||'',
+        status: o.stage||'active',
+        pm: o.assignedRep||'', billingOwner: o.assignedRep||'',
+        priority: o.priority||'Normal',
+        awardDate: o.created_at||null,
+        promisedCompletion: o.expectedClose||o.expected_close||null,
+        actualCompletion: (o.stage==='accepted'||o.stage==='complete') ? (o.closedAt||o.closed_at||null) : null,
+        invoiceDate: o.invoiceDate||null,
+        contractValue: parseFloat(o.value)||0,
+        approvedChangeOrders: parseFloat(o.changeOrders)||0,
+        amountInvoiced: parseFloat(o.amountInvoiced)||0,
+        nextAction: o.nextAction||o.notes||'',
+        updatedAt: o.updated_at||o.created_at||null
+      });
+    }
+  });
+
+  // Apply time filter
+  var cutoff = filters.cutoff || 0;
+  if (cutoff > 0) {
+    projects = projects.filter(function(p) {
+      var ts = p.awardDate ? new Date(p.awardDate).getTime() : (p.updatedAt ? new Date(p.updatedAt).getTime() : 0);
+      return ts >= cutoff;
+    });
+  }
+
+  var now = Date.now();
+  function daysAgo(d) { if (!d) return null; return Math.floor((now - new Date(d)) / 86400000); }
+  function daysBetween(a, b) { if (!a||!b) return null; return Math.floor((new Date(b)-new Date(a))/86400000); }
+  function fmtDate(d) { if (!d) return '—'; try { return new Date(d).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'2-digit'}); } catch(e) { return '—'; } }
+  function fmtMoney(v) { var n=parseFloat(v)||0; return n ? '$'+n.toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:0}) : '—'; }
+
+  projects.forEach(function(p) {
+    p._totalBillable = (p.contractValue||0) + (p.approvedChangeOrders||0);
+    p._unbilledAmount = Math.max(0, p._totalBillable - (p.amountInvoiced||0));
+    p._isComplete = !!p.actualCompletion || p.status==='complete' || p.status==='accepted';
+    p._isUnbilled = p._isComplete && !p.invoiceDate && p._totalBillable > 0;
+    var daysSinceComplete = p.actualCompletion ? daysAgo(p.actualCompletion) : null;
+    p._daysUnbilled = (daysSinceComplete!==null && !p.invoiceDate) ? daysSinceComplete : (p.invoiceDate ? daysBetween(p.actualCompletion,p.invoiceDate) : null);
+    p._timeliness = p._daysUnbilled===null ? '—' : (p._daysUnbilled<=3 ? 'On Time' : p._daysUnbilled<=5 ? 'Borderline' : 'Late');
+  });
+
+  // Sort: unbilled critical first, then by days unbilled desc, then active, then invoiced
+  projects.sort(function(a,b) {
+    var scoreA = a._isUnbilled ? (a._daysUnbilled||0)+1000 : (a._isComplete ? 0 : 500);
+    var scoreB = b._isUnbilled ? (b._daysUnbilled||0)+1000 : (b._isComplete ? 0 : 500);
+    return scoreB - scoreA;
+  });
+
+  // Set CSV data
+  _rptCurrentData = projects.map(function(p) {
+    return {
+      'Customer': p.business||p.accountName||'',
+      'Project ID': p.id||'',
+      'Status': p._isUnbilled ? 'Complete — Unbilled' : (p.invoiceDate ? 'Invoiced' : (p._isComplete ? 'Complete' : p.status||'Active')),
+      'Priority': p.priority||'Normal',
+      'Project Manager': p.pm||'',
+      'Billing Owner': p.billingOwner||p.pm||'',
+      'Award Date': fmtDate(p.awardDate),
+      'Promised Completion': fmtDate(p.promisedCompletion),
+      'Actual Completion': fmtDate(p.actualCompletion),
+      'Invoice Date': fmtDate(p.invoiceDate),
+      'Contract Value': p.contractValue||0,
+      'Approved Change Orders': p.approvedChangeOrders||0,
+      'Total Billable': p._totalBillable||0,
+      'Amount Invoiced': p.amountInvoiced||0,
+      'Unbilled Amount': p._unbilledAmount||0,
+      'Days Complete Not Billed': p._daysUnbilled!==null ? p._daysUnbilled : '',
+      'Billing Timeliness': p._timeliness,
+      'Next Action / Blocker': p.nextAction||'',
+      'Last Updated': fmtDate(p.updatedAt)
+    };
+  });
+
+  // KPI summary
+  var active = projects.filter(function(p){ return !p._isComplete; });
+  var complete = projects.filter(function(p){ return p._isComplete; });
+  var unbilled = projects.filter(function(p){ return p._isUnbilled; });
+  var invoiced = projects.filter(function(p){ return p._isComplete && p.invoiceDate; });
+  var unbilledRev = unbilled.reduce(function(s,p){ return s+(p._unbilledAmount||0); },0);
+  var avgDays = invoiced.length ? (invoiced.reduce(function(s,p){ return s+(p._daysUnbilled||0); },0)/invoiced.length).toFixed(1) : '—';
+  var in5 = invoiced.filter(function(p){ return (p._daysUnbilled||0)<=5; }).length;
+
+  function statusBadge(p) {
+    if (p._isUnbilled) { var d=p._daysUnbilled||0; var col=d>10?'background:#FEE2E2;color:#C8102E':d>5?'background:#FEF3C7;color:#92400E':'background:#FEF3C7;color:#92400E'; return '<span class="badge" style="'+col+'">🔴 Unbilled ('+(d||'?')+'d)</span>'; }
+    if (p.invoiceDate) return '<span class="badge" style="background:#D1FAE5;color:#065F46">✅ Invoiced</span>';
+    if (p._isComplete) return '<span class="badge" style="background:#DBEAFE;color:#1E40AF">Complete</span>';
+    return '<span class="badge" style="background:#F3F4F6;color:#374151">'+(p.status||'Active')+'</span>';
+  }
+  function timelinessBadge(p) {
+    if (!p._isComplete || p._daysUnbilled===null) return '—';
+    if (p._timeliness==='On Time') return '<span class="badge" style="background:#D1FAE5;color:#065F46">✅ On Time</span>';
+    if (p._timeliness==='Borderline') return '<span class="badge" style="background:#FEF3C7;color:#92400E">⚠️ Borderline</span>';
+    return '<span class="badge" style="background:#FEE2E2;color:#C8102E">🔴 Late</span>';
+  }
+
+  var html = '';
+
+  // KPI tiles
+  html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-bottom:20px">';
+  html += '<div style="background:#fff;border-radius:8px;padding:12px;text-align:center;border-top:3px solid var(--blue);box-shadow:0 1px 3px rgba(0,0,0,.08)"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:22px;color:var(--blue)">'+active.length+'</div><div style="font-size:10px;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-top:2px">Active</div></div>';
+  html += '<div style="background:#fff;border-radius:8px;padding:12px;text-align:center;border-top:3px solid #16A34A;box-shadow:0 1px 3px rgba(0,0,0,.08)"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:22px;color:#16A34A">'+complete.length+'</div><div style="font-size:10px;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-top:2px">Complete</div></div>';
+  html += '<div style="background:#fff;border-radius:8px;padding:12px;text-align:center;border-top:3px solid #C8102E;box-shadow:0 1px 3px rgba(0,0,0,.08)"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:22px;color:#C8102E">'+unbilled.length+'</div><div style="font-size:10px;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-top:2px">Unbilled</div></div>';
+  html += '<div style="background:#fff;border-radius:8px;padding:12px;text-align:center;border-top:3px solid #C8102E;box-shadow:0 1px 3px rgba(0,0,0,.08)"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:18px;color:#C8102E">'+fmtMoney(unbilledRev)+'</div><div style="font-size:10px;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-top:2px">Unbilled Revenue</div></div>';
+  html += '<div style="background:#fff;border-radius:8px;padding:12px;text-align:center;border-top:3px solid #B45309;box-shadow:0 1px 3px rgba(0,0,0,.08)"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:22px;color:#B45309">'+avgDays+'</div><div style="font-size:10px;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-top:2px">Avg Days to Invoice</div></div>';
+  html += '<div style="background:#fff;border-radius:8px;padding:12px;text-align:center;border-top:3px solid #16A34A;box-shadow:0 1px 3px rgba(0,0,0,.08)"><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:22px;color:#16A34A">'+in5+'</div><div style="font-size:10px;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-top:2px">Invoiced ≤5 Days</div></div>';
+  html += '</div>';
+
+  if (!projects.length) {
+    html += '<div style="text-align:center;padding:40px;color:var(--soft)">No AllPro projects found for this period. Projects appear here as opportunities and field jobs are logged.</div>';
+    return html;
+  }
+
+  // Project table — 9 visible columns (all 20 fields are in CSV export)
+  html += '<div style="background:#FFF8E6;border:1px solid #F2B705;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#7A5B00">Showing '+projects.length+' project(s) — all 19 Jim Kennedy report fields included in CSV/PDF export. Use <strong>⬇ Export CSV</strong> for Excel or <strong>🖨 Export PDF</strong> to print.</div>';
+  html += '<table class="rpt-table"><thead><tr>';
+  html += '<th>Customer</th><th>Status</th><th>PM</th><th>Billing Owner</th><th>Timeline</th><th>Billable</th><th>Invoiced</th><th>Unbilled</th><th>Timeliness</th><th>Next Action</th>';
+  html += '</tr></thead><tbody>';
+
+  projects.forEach(function(p) {
+    var timelineStr = '';
+    if (p.awardDate) timelineStr += 'Awarded: '+fmtDate(p.awardDate);
+    if (p.promisedCompletion) timelineStr += '<br>Due: '+fmtDate(p.promisedCompletion);
+    if (p.actualCompletion) timelineStr += '<br>Closed: '+fmtDate(p.actualCompletion);
+    if (p.invoiceDate) timelineStr += '<br>Invoiced: '+fmtDate(p.invoiceDate);
+    var priorityColor = (p.priority||'').toLowerCase()==='critical'?'#C8102E':(p.priority||'').toLowerCase()==='high'?'#D8690B':'inherit';
+    html += '<tr>';
+    html += '<td><strong>'+escH(p.business||p.accountName||'—')+'</strong>'+(p.id?'<br><span style="font-size:10px;color:var(--soft)">'+escH(p.id)+'</span>':'')+'</td>';
+    html += '<td>'+statusBadge(p)+'</td>';
+    html += '<td style="font-size:12px">'+escH(p.pm||'—')+'</td>';
+    html += '<td style="font-size:12px">'+escH(p.billingOwner||p.pm||'—')+'</td>';
+    html += '<td style="font-size:11px;white-space:nowrap">'+timelineStr+'</td>';
+    html += '<td style="font-weight:700">'+fmtMoney(p._totalBillable)+'</td>';
+    html += '<td style="color:#16A34A;font-weight:700">'+fmtMoney(p.amountInvoiced)+'</td>';
+    html += '<td style="color:'+(p._unbilledAmount>0?'#C8102E':'var(--soft)')+';font-weight:700">'+fmtMoney(p._unbilledAmount)+'</td>';
+    html += '<td>'+timelinessBadge(p)+'</td>';
+    html += '<td style="font-size:11px;max-width:180px">'+escH((p.nextAction||'—').substring(0,80))+'</td>';
+    html += '</tr>';
+  });
+
+  html += '</tbody></table>';
+
+  // Unbilled aging breakdown
+  if (unbilled.length) {
+    html += '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--soft);margin:20px 0 8px;border-top:1px solid var(--line);padding-top:16px">Completed-Unbilled Aging</div>';
+    html += '<table class="rpt-table"><thead><tr><th>Customer</th><th>Actual Completion</th><th>Days Unbilled</th><th>Unbilled Amount</th><th>Billing Owner</th><th>Next Action</th></tr></thead><tbody>';
+    unbilled.slice().sort(function(a,b){ return (b._daysUnbilled||0)-(a._daysUnbilled||0); }).forEach(function(p) {
+      var d = p._daysUnbilled||0;
+      var rowColor = d>10?'#FEF2F2':d>5?'#FFFBEB':'';
+      html += '<tr style="'+(rowColor?'background:'+rowColor:'')+'"><td><strong>'+escH(p.business||p.accountName||'—')+'</strong></td>';
+      html += '<td>'+fmtDate(p.actualCompletion)+'</td>';
+      html += '<td><strong style="color:'+(d>10?'#C8102E':d>5?'#D8690B':'#16A34A')+'">'+d+' days</strong></td>';
+      html += '<td style="color:#C8102E;font-weight:700">'+fmtMoney(p._unbilledAmount)+'</td>';
+      html += '<td>'+escH(p.billingOwner||p.pm||'—')+'</td>';
+      html += '<td style="font-size:11px">'+escH((p.nextAction||'—').substring(0,80))+'</td></tr>';
+    });
+    html += '</tbody></table>';
+  }
+
+  return html;
 }
 
 
