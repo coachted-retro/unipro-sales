@@ -325,6 +325,16 @@ function kdPaletteDragStart(ev, eid) {
   if (!def) return;
   dragState = { type:'new', def:def };
   ev.dataTransfer.effectAllowed = 'copy';
+  ev.dataTransfer.setData('text/plain', eid);
+  // Custom drag ghost so you can see what you're dragging
+  try {
+    var ghost = document.createElement('div');
+    ghost.style.cssText = 'position:fixed;top:-200px;left:-200px;background:#1B5FA8;color:#fff;padding:8px 14px;border-radius:8px;font-size:13px;font-weight:700;font-family:Barlow,sans-serif;white-space:nowrap;z-index:99999';
+    ghost.textContent = def.icon + '  ' + def.label + '  (' + def.w + "' x " + def.d + "')";
+    document.body.appendChild(ghost);
+    ev.dataTransfer.setDragImage(ghost, 60, 20);
+    setTimeout(function(){ document.body.removeChild(ghost); }, 0);
+  } catch(e){}
 }
 
 // ════════════════════════════════════════════════════════
@@ -542,11 +552,17 @@ document.getElementById('canvasWrap').addEventListener('drop', function(ev) {
   ev.preventDefault();
   if (!dragState || dragState.type!=='new') return;
   var def = dragState.def;
-  var cxy = { x: ev.clientX, y: ev.clientY };
+  var cxy = canvasXY(ev);  // convert client coords to canvas-local coords
   var rp = roomPt(cxy);
   kdPushHistory();
+  // Clamp within room bounds -- center the item on the drop point, clamp to edges
+  var ix = Math.min(Math.max(0, rp.x - def.w/2), ROOM_W - def.w);
+  var iy = Math.min(Math.max(0, rp.y - def.d/2), ROOM_D - def.d);
+  // If item is bigger than the room, just place at origin
+  if (ix < 0) ix = 0;
+  if (iy < 0) iy = 0;
   items.push({ id:'item_'+(_itemIdSeq++), defId:def.id, label:def.label, icon:def.icon,
-    x:Math.max(0,rp.x-def.w/2), y:Math.max(0,rp.y-def.d/2), w:def.w, d:def.d,
+    x:ix, y:iy, w:def.w, d:def.d,
     color:def.color, stroke:def.stroke, cfm_factor:def.cfm_factor, rotated:false });
   dragState = null; kdRender(); updateStats();
 });
