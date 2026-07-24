@@ -576,7 +576,18 @@ function rcpRenderCallLog(el){
           <select id="rcpRouteTo">
             <option value="">Select…</option>
             <option>Paul Brahan</option>
-            <option>Ted Scholl</option>
+            <optgroup label="Sales Reps">
+              <option>Brad Fickes</option>
+              <option>Chris Carzo</option>
+              <option>Dan Rini</option>
+              <option>Joe McDonnell</option>
+              <option>Matt Belz</option>
+              <option>TJ O'Reilly</option>
+              <option>Ted Scholl</option>
+              <option>Todd Grill</option>
+              <option>Tom Jordan</option>
+              <option>Tom Pittakas</option>
+            </optgroup>
             <option>Sales Rep (Territory)</option>
             <option>Scheduling</option>
             <option>Dispatch</option>
@@ -841,28 +852,58 @@ function rcpLogAndCreateLead(){
   const type    = document.getElementById('rcpCallType').value;
   const address = document.getElementById('rcpCallerAddress')?.value.trim() || '';
   const zip     = document.getElementById('rcpCallerZip')?.value.trim() || '';
-  const territoryRep = rcpTerritoryRep(zip);
+  const routeEl = document.getElementById('rcpRouteTo');
+  const manualRoute = routeEl ? routeEl.value : '';
+
+  // Resolve territory -- may return multiple reps for shared zip zones.
+  const territoryReps = rcpTerritoryReps(zip);
+  const primaryRep = territoryReps.length ? territoryReps[0].rep : null;
+
+  // If reception manually selected a named rep, honour that over territory.
+  // If they left it on 'Sales Rep (Territory)' or blank, use primary territory rep.
+  const allSalesReps = RCP_TERRITORY_MAP.map(function(t){ return t.rep; })
+    .filter(function(r,i,a){ return a.indexOf(r)===i; });
+  const assignedRep = (manualRoute && manualRoute !== 'Sales Rep (Territory)' && allSalesReps.indexOf(manualRoute) !== -1)
+    ? manualRoute
+    : (primaryRep || 'Unassigned');
+
+  // Build a note about all reps in the zone when there are multiples.
+  var territoryNote = '';
+  if (territoryReps.length > 1) {
+    territoryNote = 'Territory covers: ' + territoryReps.map(function(r){ return r.rep; }).join(', ') + '.';
+  }
+  const fullNotes = [notes, territoryNote].filter(Boolean).join('\n');
+
   if(!company&&!name){rcpToast('Enter at least a name or company to create a lead');return;}
   rcpLogCall();
   const lead = {
-    id:'RCP'+String(Date.now()).slice(-6),
-    name:name||company, business:company||name,
-    phone, address, zip, notes, source:'Reception Call',
-    lifecycleStage:'lead', status:'new',
-    createdBy:_rcpUser.name, ownedBy: territoryRep || 'Unassigned',
-    created:Date.now(), updated:Date.now(),
-    activityLog:[{ts:Date.now(),icon:'📞',type:'call',title:'Reception Call',note:type||'Inbound call',who:_rcpUser.name}]
+    id: 'RCP' + Date.now() + '_' + Math.random().toString(36).slice(2,5),
+    name: name || company, business: company || name,
+    phone, address, zip,
+    notes: fullNotes, source: 'Reception Call',
+    lifecycleStage: 'lead', status: 'new',
+    assignedRep: assignedRep,
+    ownedBy: assignedRep,
+    createdBy: _rcpUser.name,
+    created: Date.now(), updated: Date.now(),
+    activityLog: [{
+      ts: Date.now(), icon: '📞', type: 'call',
+      title: 'Reception Call — routed to ' + assignedRep,
+      note: (type || 'Inbound call') + (fullNotes ? '\n' + fullNotes : ''),
+      who: _rcpUser.name
+    }]
   };
   const leads = crmLoad('leads');
   leads.unshift(lead);
   crmSave('leads', leads);
   if (typeof TermacD1Sync !== 'undefined') {
     TermacD1Sync.logTouchpoint('leads', lead.id, {
-      type: 'call', icon: '📞', title: 'Reception Call — ' + (type || 'Inbound'),
-      note: notes, who: (_rcpUser && _rcpUser.name) || 'Reception',
+      type: 'call', icon: '📞',
+      title: 'Reception Call — ' + (type || 'Inbound') + ' — routed to ' + assignedRep,
+      note: fullNotes, who: (_rcpUser && _rcpUser.name) || 'Reception',
     });
   }
-  rcpToast('Lead created and call logged');
+  rcpToast('Lead created \u2192 ' + assignedRep);
   rcpNav('leads');
 }
 
@@ -1152,40 +1193,120 @@ function rcpNextService(acct){
 }
 
 // ═══════════════ TERRITORY ROUTING ═══════════════
-// ZIP prefix -> territory rep. Longest prefix wins. Seeded with the known
-// UniPro territory (Eastern PA 17/18/19, all NJ 07/08, all DE 197-199).
-// Add the other reps' ZIP prefixes here as the org chart provides them.
+// ZIP prefix -> territory reps. Built from live D1 account data (July 2026).
+// Each entry has a prefix (longest match wins per rep), rep name, and
+// priority (lower = primary when multiple reps share a zip).
+// Multiple reps CAN share a zip -- all matches are returned.
 var RCP_TERRITORY_MAP = [
-  { prefix: '197', rep: 'Ted Scholl' },
-  { prefix: '198', rep: 'Ted Scholl' },
-  { prefix: '199', rep: 'Ted Scholl' },
-  { prefix: '17',  rep: 'Ted Scholl' },
-  { prefix: '18',  rep: 'Ted Scholl' },
-  { prefix: '19',  rep: 'Ted Scholl' },
-  { prefix: '07',  rep: 'Ted Scholl' },
-  { prefix: '08',  rep: 'Ted Scholl' },
+  // Brad Fickes -- S2 (Lehigh Valley / Allentown / Bethlehem / Poconos)
+  { prefix: '180', rep: "Brad Fickes",   priority: 1 },
+  { prefix: '181', rep: "Brad Fickes",   priority: 1 },
+  { prefix: '182', rep: "Brad Fickes",   priority: 1 },
+  { prefix: '183', rep: "Brad Fickes",   priority: 1 },
+  { prefix: '184', rep: "Brad Fickes",   priority: 1 },
+  { prefix: '185', rep: "Brad Fickes",   priority: 1 },
+  { prefix: '186', rep: "Brad Fickes",   priority: 1 },
+  { prefix: '187', rep: "Brad Fickes",   priority: 1 },
+  { prefix: '179', rep: "Brad Fickes",   priority: 2 },
+
+  // Chris Carzo -- D1 / P4 (Philadelphia / Delaware County / Delaware)
+  { prefix: '190', rep: "Chris Carzo",   priority: 1 },
+  { prefix: '193', rep: "Chris Carzo",   priority: 1 },
+  { prefix: '197', rep: "Chris Carzo",   priority: 1 },
+  { prefix: '198', rep: "Chris Carzo",   priority: 1 },
+  { prefix: '199', rep: "Chris Carzo",   priority: 1 },
+  { prefix: '194', rep: "Chris Carzo",   priority: 2 },
+
+  // Dan Rini -- NJ1 / NJ2 (North & Central NJ)
+  { prefix: '070', rep: "Dan Rini",      priority: 1 },
+  { prefix: '071', rep: "Dan Rini",      priority: 1 },
+  { prefix: '072', rep: "Dan Rini",      priority: 1 },
+  { prefix: '073', rep: "Dan Rini",      priority: 1 },
+  { prefix: '074', rep: "Dan Rini",      priority: 1 },
+  { prefix: '075', rep: "Dan Rini",      priority: 1 },
+  { prefix: '076', rep: "Dan Rini",      priority: 1 },
+  { prefix: '077', rep: "Dan Rini",      priority: 1 },
+  { prefix: '078', rep: "Dan Rini",      priority: 1 },
+  { prefix: '079', rep: "Dan Rini",      priority: 1 },
+  { prefix: '087', rep: "Dan Rini",      priority: 2 },
+  { prefix: '088', rep: "Dan Rini",      priority: 2 },
+  { prefix: '089', rep: "Dan Rini",      priority: 2 },
+
+  // Joe McDonnell -- N1 / N2 / N9 (South & Central NJ)
+  { prefix: '080', rep: "Joe McDonnell", priority: 1 },
+  { prefix: '081', rep: "Joe McDonnell", priority: 1 },
+  { prefix: '082', rep: "Joe McDonnell", priority: 1 },
+  { prefix: '083', rep: "Joe McDonnell", priority: 1 },
+  { prefix: '084', rep: "Joe McDonnell", priority: 1 },
+  { prefix: '085', rep: "Joe McDonnell", priority: 1 },
+  { prefix: '086', rep: "Joe McDonnell", priority: 1 },
+  { prefix: '087', rep: "Joe McDonnell", priority: 2 },
+  { prefix: '088', rep: "Joe McDonnell", priority: 2 },
+  { prefix: '089', rep: "Joe McDonnell", priority: 2 },
+
+  // Matt Belz -- P3 (Montgomery County / Main Line)
+  { prefix: '189', rep: "Matt Belz",     priority: 1 },
+  { prefix: '191', rep: "Matt Belz",     priority: 2 },
+  { prefix: '194', rep: "Matt Belz",     priority: 2 },
+
+  // TJ O'Reilly -- P2 (Philadelphia city / near suburbs)
+  { prefix: '191', rep: "TJ O'Reilly",   priority: 1 },
+
+  // Todd Grill -- S4 (Chester / Lancaster / Reading)
+  { prefix: '194', rep: "Todd Grill",    priority: 1 },
+  { prefix: '195', rep: "Todd Grill",    priority: 1 },
+  { prefix: '196', rep: "Todd Grill",    priority: 1 },
+  { prefix: '175', rep: "Todd Grill",    priority: 2 },
+  { prefix: '176', rep: "Todd Grill",    priority: 2 },
+  { prefix: '193', rep: "Todd Grill",    priority: 2 },
+
+  // Tom Jordan -- P1 (Philadelphia, Termac division only)
+  { prefix: '191', rep: "Tom Jordan",    priority: 3 },
+
+  // Tom Pittakas -- S1 (Southern Lehigh / Bucks / border NJ)
+  { prefix: '189', rep: "Tom Pittakas",  priority: 2 },
+  { prefix: '180', rep: "Tom Pittakas",  priority: 2 },
+  { prefix: '183', rep: "Tom Pittakas",  priority: 3 },
+  { prefix: '085', rep: "Tom Pittakas",  priority: 3 },
+  { prefix: '088', rep: "Tom Pittakas",  priority: 3 },
+  { prefix: '078', rep: "Tom Pittakas",  priority: 3 },
 ];
 
-function rcpTerritoryRep(zip){
+// Returns array of { rep, priority } for a given zip, sorted by priority asc.
+// Multiple reps returned when a zip falls in a shared zone.
+function rcpTerritoryReps(zip) {
   zip = String(zip||'').replace(/\D/g,'');
-  if (zip.length < 2) return null;
-  var best = null;
+  if (zip.length < 3) return [];
+  var bestByRep = {};
   RCP_TERRITORY_MAP.forEach(function(t){
-    if (zip.indexOf(t.prefix) === 0 && (!best || t.prefix.length > best.prefix.length)) best = t;
+    if (zip.indexOf(t.prefix) === 0) {
+      var existing = bestByRep[t.rep];
+      // Longer prefix = more specific = wins for this rep
+      if (!existing || t.prefix.length > existing.prefix.length) {
+        bestByRep[t.rep] = t;
+      }
+    }
   });
-  return best ? best.rep : null;
+  return Object.values(bestByRep).sort(function(a,b){ return a.priority - b.priority; });
 }
 
-function rcpResolveTerritory(zip){
-  var hint = document.getElementById('rcpTerritoryHint');
+// Backward compat -- returns the single highest-priority rep name or null.
+function rcpTerritoryRep(zip) {
+  var reps = rcpTerritoryReps(zip);
+  return reps.length ? reps[0].rep : null;
+}
+
+function rcpResolveTerritory(zip) {
+  var hint  = document.getElementById('rcpTerritoryHint');
   var route = document.getElementById('rcpRouteTo');
-  var rep = rcpTerritoryRep(zip);
-  if (rep) {
-    if (hint) hint.textContent = '\u2192 ' + rep + ' territory';
-    // Auto-select the rep if reception hasn't already picked a person,
-    // or if the generic placeholder is selected. Manual picks stay.
+  var reps  = rcpTerritoryReps(zip);
+  if (reps.length) {
+    var names = reps.map(function(r){ return r.rep; });
+    if (hint) hint.textContent = '\u2192 ' + names.join(' / ');
+    // Auto-select primary rep if reception hasn't manually picked someone yet.
     if (route && (route.value === '' || route.value === 'Sales Rep (Territory)')) {
-      var opt = Array.from(route.options).find(function(o){ return o.value === rep || o.text === rep; });
+      var primary = names[0];
+      var opt = Array.from(route.options).find(function(o){ return o.value === primary || o.text === primary; });
       if (opt) route.value = opt.value || opt.text;
     }
   } else {
