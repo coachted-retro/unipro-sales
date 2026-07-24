@@ -6795,6 +6795,105 @@ function spOpenAllProForm(r) {
   setTimeout(() => attachAddressAutocomplete('spf_address'), 0);
 }
 
+function spBuildForm(tab, rec) {
+  var r = rec || {};
+  var divOptions = ['UniPro','Quality III','AllPro','Filter Man','GTO','Termac']
+    .map(function(d){ return '<option value="'+d+'"'+(r.division===d?' selected':'')+'>'+d+'</option>'; }).join('');
+  var repOptions = Object.keys(SP_REPS)
+    .map(function(n){ var sel = (r.assignedRep||(_spRep&&_spRep.name)||'')=== n?' selected':''; return '<option value="'+n+'"'+sel+'>'+n+'</option>'; }).join('');
+  var fieldStyle = 'width:100%;box-sizing:border-box;padding:9px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;font-family:inherit;background:var(--bg);color:var(--ink);margin-bottom:10px';
+  var labelStyle = 'display:block;font-size:10px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px';
+  return [
+    '<label style="'+labelStyle+'">Business Name</label>',
+    '<input id="spf_business" style="'+fieldStyle+'" placeholder="Business name" value="'+escH(r.business||r.name||'')+'" oninput="spDupeCheck(this.value,\'business\')">',
+    '<div id="spf_dupe_biz" style="display:none;margin:-6px 0 10px"></div>',
+    '<label style="'+labelStyle+'">Contact Name</label>',
+    '<input id="spf_contact" style="'+fieldStyle+'" placeholder="Contact name" value="'+escH(r.contact||'')+'">',
+    '<label style="'+labelStyle+'">Phone</label>',
+    '<input id="spf_phone" style="'+fieldStyle+'" placeholder="Phone" value="'+escH(r.phone||'')+'" oninput="spDupeCheck(this.value,\'phone\')">',
+    '<div id="spf_dupe_phone" style="display:none;margin:-6px 0 10px"></div>',
+    '<label style="'+labelStyle+'">Email</label>',
+    '<input id="spf_email" style="'+fieldStyle+'" placeholder="Email" value="'+escH(r.email||'')+'">',
+    '<label style="'+labelStyle+'">Address</label>',
+    '<input id="spf_address" style="'+fieldStyle+'" placeholder="Street address" value="'+escH(r.address||'')+'" oninput="spDupeCheck(this.value,\'address\')">',
+    '<div id="spf_dupe_addr" style="display:none;margin:-6px 0 10px"></div>',
+    '<div style="display:grid;grid-template-columns:1fr 80px 90px;gap:8px">',
+    '  <div><label style="'+labelStyle+'">City</label><input id="spf_city" style="'+fieldStyle+'" placeholder="City" value="'+escH(r.city||'')+'"></div>',
+    '  <div><label style="'+labelStyle+'">State</label><input id="spf_state" style="'+fieldStyle+'" placeholder="PA" maxlength="2" value="'+escH(r.state||'')+'"></div>',
+    '  <div><label style="'+labelStyle+'">Zip</label><input id="spf_zip" style="'+fieldStyle+'" placeholder="Zip" value="'+escH(r.zip||'')+'"></div>',
+    '</div>',
+    '<label style="'+labelStyle+'">Division</label>',
+    '<select id="spf_division" style="'+fieldStyle+'"><option value="">-- Select --</option>'+divOptions+'</select>',
+    '<label style="'+labelStyle+'">Source</label>',
+    '<select id="spf_source" style="'+fieldStyle+'">',
+    ['Cold Call','Walk-in','Referral','Web / Online','Chamber of Commerce','Trade Show','Existing Customer','Other']
+      .map(function(s){ return '<option value="'+s+'"'+(r.source===s?' selected':'')+'>'+s+'</option>'; }).join(''),
+    '</select>',
+    '<label style="'+labelStyle+'">Assigned Rep</label>',
+    '<select id="spf_assignedRep" style="'+fieldStyle+'"><option value="">-- Unassigned --</option>'+repOptions+'</select>',
+    '<label style="'+labelStyle+'">Notes</label>',
+    '<textarea id="spf_notes" style="'+fieldStyle+'height:70px;resize:vertical" placeholder="Notes">'+escH(r.notes||r.siteNotes||'')+'</textarea>',
+  ].join('\n');
+}
+
+function spSaveRecord() {
+  var biz   = (document.getElementById('spf_business')    ||{}).value||'';
+  var contact = (document.getElementById('spf_contact')   ||{}).value||'';
+  var phone = (document.getElementById('spf_phone')       ||{}).value||'';
+  var email = (document.getElementById('spf_email')       ||{}).value||'';
+  var addr  = (document.getElementById('spf_address')     ||{}).value||'';
+  var city  = (document.getElementById('spf_city')        ||{}).value||'';
+  var state = (document.getElementById('spf_state')       ||{}).value||'';
+  var zip   = (document.getElementById('spf_zip')         ||{}).value||'';
+  var div   = (document.getElementById('spf_division')    ||{}).value||'';
+  var src   = (document.getElementById('spf_source')      ||{}).value||'';
+  var rep   = (document.getElementById('spf_assignedRep') ||{}).value||(_spRep&&_spRep.name)||'';
+  var notes = (document.getElementById('spf_notes')       ||{}).value||'';
+
+  if (!biz && !phone && !addr) {
+    spToast('Fill in at least a business name, phone, or address.');
+    return;
+  }
+
+  var fullAddr = [addr, city, state, zip].filter(Boolean).join(', ');
+
+  var leads = crmLoad('leads') || [];
+  var id = 'lead_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
+  var newLead = {
+    id: id,
+    name: biz || contact || fullAddr || 'New Lead',
+    business: biz,
+    contact: contact,
+    phone: phone,
+    email: email,
+    address: fullAddr || addr,
+    city: city, state: state, zip: zip,
+    division: div,
+    source: src || 'Manual Entry',
+    assignedRep: rep,
+    notes: notes,
+    siteNotes: notes,
+    lifecycleStage: 'lead',
+    score: 5,
+    status: '',
+    activityLog: [{
+      ts: Date.now(), type: 'note', icon: '📋',
+      title: 'Lead created manually',
+      note: notes || 'Added via Add Lead form.',
+      who: (_spRep && _spRep.name) || rep || 'Rep',
+    }],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+
+  leads.unshift(newLead);
+  crmSave('leads', leads);
+  spCloseModal();
+  spToast('Lead added.');
+  if (_spTab === 'leads') spRenderCRM('leads');
+}
+
+
 function spOpenAdd(tab) {
   _spEditId = null;
   const tabName = tab === 'opportunity' ? 'Opportunity' : tab.charAt(0).toUpperCase() + tab.slice(1,-1);
