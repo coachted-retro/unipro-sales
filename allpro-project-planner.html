@@ -1000,6 +1000,33 @@ var typeFilter = 'all';
 
 function loadProjects() { return crmLoad('allpro_projects'); }
 
+function apHydrateFromD1() {
+  if (typeof d1Query !== 'function') return;
+  d1Query('SELECT * FROM allpro_projects ORDER BY created_at DESC', []).then(function(res) {
+    if (!res.ok || !res.results || !res.results.length) return;
+    var projects = res.results;
+    // Merge into localStorage so loadProjects() picks them up
+    var existing = crmLoad('allpro_projects') || [];
+    var existingIds = {};
+    existing.forEach(function(p) { existingIds[p.id] = true; });
+    var merged = existing.slice();
+    projects.forEach(function(p) {
+      if (!existingIds[p.id]) merged.push(p);
+      else {
+        // Update existing with D1 data
+        for (var i = 0; i < merged.length; i++) {
+          if (merged[i].id === p.id) { merged[i] = p; break; }
+        }
+      }
+    });
+    if (typeof localStorage !== 'undefined') {
+      try { localStorage.setItem('termac_allpro_projects', JSON.stringify(merged)); } catch(e) {}
+    }
+    // Re-render with fresh data
+    renderKanban(merged);
+  });
+}
+
 // Added per Ted, 2026-07-16: proposals/backdated quotes get entered as a
 // project tied to an Opportunity before any Account exists. Anywhere the
 // board used to show the Account name, fall back to the linked
@@ -3642,6 +3669,8 @@ function togglePunch(i, checked) {
 
 // ── INIT ──
 document.addEventListener('DOMContentLoaded', function() {
+  // Hydrate allpro_projects from D1 on every load so new proposals appear immediately
+  setTimeout(apHydrateFromD1, 800);
   // 2026-07-20 FIX: d1HydrateAll is additive-only -- it skips records
   // already in localStorage by ID, so stale stage values (e.g. a proposal
   // that existed locally before its stage was set in D1) never get updated.
