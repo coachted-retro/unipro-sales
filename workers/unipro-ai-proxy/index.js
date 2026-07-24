@@ -152,6 +152,18 @@ const ALLOWED_TABLES = new Set([
   // Stores one row per dish machine quote built by Tom Pittakas or any rep.
   // Full site survey, equipment selection, chemical program, payment terms.
   'termac_dish_quotes',
+  // localStorage-to-D1 migration, added 2026-07-24 per full platform audit --
+  // all of these were 100% localStorage-only across every device. Any data
+  // entered on one device was invisible everywhere else.
+  'unipro_jobs',        // job log across all UniPro divisions
+  'route_debriefs',     // rep end-of-day route debrief submissions
+  'office_queue',       // cross-device office notification/action queue
+  'callback_queue',     // reception callback queue
+  'reception_calls',    // full reception call log (supplements rcp_calls)
+  'tech_referrals',     // tech-to-sales lead referrals
+  'hot_lead_notifs',    // hot lead alert log
+  'payables',           // accounts payable (supplements accounts_payable)
+  'hr_announcements',   // HR announcements board
 ]);
 
 const TABLE_PREFIX = {
