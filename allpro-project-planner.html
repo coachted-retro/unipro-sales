@@ -138,6 +138,19 @@ body{font-family:'Barlow',-apple-system,sans-serif;background:var(--bg);color:va
 .tag{display:inline-block;border-radius:5px;padding:2px 8px;font-size:10px;font-weight:700;color:#fff;margin:1px 3px 1px 0;white-space:nowrap}
 .status-badge{display:inline-block;border-radius:5px;padding:2px 9px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}
 .partner-row{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+
+/* == PAYMENT GATE SYSTEM == */
+.pj-card.gate-locked{border:2px solid #C8102E!important;cursor:not-allowed;position:relative}
+.gate-lock-badge{position:absolute;top:8px;right:8px;background:#C8102E;color:#fff;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:13px;pointer-events:none}
+.gate-banner{background:#FFF5F5;border:1.5px solid #C8102E;border-radius:10px;padding:14px 16px;margin-bottom:10px}
+.gate-banner-title{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:14px;letter-spacing:.06em;text-transform:uppercase;color:#C8102E;margin-bottom:4px;display:flex;align-items:center;gap:8px}
+.gate-banner-sub{font-size:12px;color:#374151;margin-bottom:10px;line-height:1.5}
+.gate-banner-amount{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:24px;color:#C8102E;margin-bottom:12px}
+.gate-btn{padding:9px 16px;border:none;border-radius:8px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer;margin-right:8px;margin-bottom:6px}
+.gate-btn-pay{background:#16A34A;color:#fff}
+.gate-btn-override{background:#1A1D21;color:#F2B705}
+.gate-override-note{font-size:10px;color:#6B7280;margin-top:8px;font-style:italic}
+
 </style>
 </head>
 <body>
@@ -2890,12 +2903,18 @@ function renderKanban(projects) {
   kanban.innerHTML = STAGE_ORDER.map(function(stage) {
     var stageProjects = filtered.filter(function(p){ return p.stage === stage; });
     var cards = stageProjects.map(function(p) {
+      var _nxtIdx = STAGE_ORDER.indexOf(p.stage) + 1;
+      var _nxtStage = _nxtIdx < STAGE_ORDER.length ? STAGE_ORDER[_nxtIdx] : null;
+      var _gated = !!(_nxtStage && apIsGated(p, _nxtStage));
+      var _gateClass = _gated ? ' gate-locked' : '';
+      var _gateAttr  = _gated ? 'draggable="false"' : 'draggable="true" ondragstart="handleCardDragStart(event,&apos;'+p.id+'&apos;)"';
+      var _gateBadge = _gated ? '<div class="gate-lock-badge" title="Payment required to advance">&#x1F512;</div>' : '';
       var typeColor = TYPE_COLORS[p.project_type] || 'var(--soft)';
       var days = p.stage_updated_at ? Math.floor((Date.now() - p.stage_updated_at) / 86400000) : 0;
       var overdueFlag = days > 14
         ? '<div class="ap-list-overdue" style="margin-top:6px;font-size:10px;font-weight:700">⚠️ ' + days + 'd in this stage</div>'
         : '<div style="margin-top:6px;font-size:10px;color:var(--soft)">' + days + 'd in stage</div>';
-      return '<div class="pj-card" draggable="true" ondragstart="handleCardDragStart(event,\''+p.id+'\')" onclick="openDetail(\''+p.id+'\')">' +
+            return '<div class="pj-card'+_gateClass+'" data-pid="'+p.id+'" ' +_gateAttr+ ' onclick="openDetail(this.dataset.pid)">' + _gateBadge +
         '<div class="pj-card-name">'+p.project_name+'</div>' +
         (p.account_id
           ? '<div class="pj-card-acc" onclick="event.stopPropagation();window.open(\'termac-os.html?open=accounts&id=\'+encodeURIComponent(\''+p.account_id+'\'),\'_blank\')" style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted" title="Open this account\'s live record">'+projDisplayName(p)+' ↗</div>'
@@ -2962,6 +2981,7 @@ function openDetail(id) {
   if (!p) return;
 
   document.getElementById('detailTitle').value = p.project_name;
+  setTimeout(function(){ apRenderGateBanner(p); }, 60);
 
   var hideStages = p.project_type === 'custom_fabrication';
   var visibleTabs = TAB_DEFS.filter(function(t){
@@ -3195,6 +3215,137 @@ function updateProjectStage() {
   openDetail(currentProjectId);
 }
 
+
+// ════ PAYMENT GATE SYSTEM ════════════════════════════════════════
+var PAYMENT_GATES = {
+  'design_drawings': { pct:50, label:'50% Deposit Required',
+    desc:'The 50% fabrication deposit must be received before design and drawings begin.',
+    field:'deposit_paid', amount_field:'deposit_amount' },
+  'fabrication':     { pct:40, label:'40% Progress Draw Required',
+    desc:'The 40% progress draw must be received before fabrication can begin.',
+    field:'draw_paid', amount_field:'draw_amount' },
+  'closeout':        { pct:10, label:'10% Final Payment Required',
+    desc:'The 10% final payment must be received before closeout and system certification.',
+    field:'final_paid', amount_field:'final_amount' },
+};
+var GATE_OVERRIDE_USERS = ["Sean O'Reilly","Terence O'Reilly"];
+
+function apIsGated(p, targetStage) {
+  var gate = PAYMENT_GATES[targetStage];
+  if (!gate) return false;
+  if (p[gate.field]) return false;
+  return STAGE_ORDER.indexOf(targetStage) > STAGE_ORDER.indexOf(p.stage);
+}
+
+function apGateAmount(p, gate) {
+  if (p[gate.amount_field]) return parseFloat(p[gate.amount_field])||0;
+  var total = parseFloat(p.sale_price||p.estimated_value||p.total_quoted_value||0)||0;
+  return Math.round(total * gate.pct / 100 * 100) / 100;
+}
+
+function apRecordPayment(pid, gateField, amountField) {
+  var method = prompt('Payment method (check, ACH, Square, credit card, other):', 'check');
+  if (!method) return;
+  var ref = prompt('Reference / check number:', '');
+  var all = loadProjects();
+  var p = all.filter(function(x){return x.id===pid;})[0];
+  if (!p) return;
+  var gateDef = Object.values(PAYMENT_GATES).find(function(g){return g.field===gateField;});
+  var amount = apGateAmount(p, gateDef);
+  p[gateField] = true;
+  p[amountField] = amount;
+  p['pay_method_'+gateField] = method;
+  p['pay_ref_'+gateField] = ref;
+  p['pay_date_'+gateField] = new Date().toISOString().slice(0,10);
+  p.updated_at = Date.now();
+  saveProjects(all);
+  var banner = document.getElementById('apGateBanner');
+  if (banner) banner.remove();
+  renderAll();
+  if (typeof openDetail === 'function') openDetail(pid);
+  apToast('Payment recorded \u2713 -- you can now advance this project');
+}
+
+function apGateOverride(pid, targetStage, gateField, amountField) {
+  var user = (typeof _currentUser!=='undefined'&&_currentUser)?_currentUser.name:'';
+  if (GATE_OVERRIDE_USERS.indexOf(user)===-1) { alert('Override is only available to Sean or Terence O\'Reilly.'); return; }
+  var reason = prompt('Override reason -- this will be emailed to Jim, Ted, Tom P, and Catherine:','');
+  if (reason===null) return;
+  var all = loadProjects();
+  var p = all.filter(function(x){return x.id===pid;})[0];
+  if (!p) return;
+  var gate = PAYMENT_GATES[targetStage];
+  var amount = apGateAmount(p, gate);
+  p['override_'+gateField] = true;
+  p['override_'+gateField+'_by'] = user;
+  p['override_'+gateField+'_date'] = new Date().toISOString().slice(0,10);
+  p['override_'+gateField+'_reason'] = reason||'No reason given';
+  p[gateField] = true;
+  p.updated_at = Date.now();
+  saveProjects(all);
+  if (typeof sendOrMailto==='function') {
+    var subj = '\u26A0 Payment Override \u2014 '+(p.project_name||'AllPro Job');
+    var body = user+' authorized a payment gate override.\n\nProject: '+(p.project_name||'')
+      +'\nMoving to: '+(STAGE_LABELS[targetStage]||targetStage)
+      +'\nAmount outstanding: $'+amount.toLocaleString()
+      +'\nGate: '+gate.label
+      +'\nReason: '+(reason||'None')
+      +'\nDate: '+new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})
+      +'\n\nThe outstanding $'+amount.toLocaleString()+' is '+user+"'s responsibility per company policy."
+      +'\n\nhttps://sales.mytermac.com/allpro-project-planner.html';
+    sendOrMailto(['jkennedy@termac.com','tscholl@termac.com','tpittakas@termac.com','csullivan@termac.com'], subj, body);
+  }
+  apSetStageNoGate(pid, targetStage);
+  apToast('Override applied \u2014 accountability email sent');
+}
+
+function apSetStageNoGate(id, newStage) {
+  var all = loadProjects();
+  var p = all.filter(function(x){return x.id===id;})[0];
+  if (!p) return false;
+  p.stage=newStage; p.stage_updated_at=Date.now(); p.updated_at=Date.now();
+  if (newStage==='closeout'&&!p.cross_sell_triggered&&p.project_type!=='custom_fabrication') {
+    p.cross_sell_triggered=1;
+    var leads=crmLoad('leads');
+    leads.push({id:genId('LED'),account_id:p.account_id,source:'AllPro Closeout Cross-Sell',
+      note:'New '+(TYPE_LABELS[p.project_type]||'AllPro')+' install closed.',status:'new',created_at:Date.now(),updated_at:Date.now()});
+    crmSave('leads',leads);
+  }
+  saveProjects(all); renderAll(); return true;
+}
+
+function apRenderGateBanner(p) {
+  var existing = document.getElementById('apGateBanner');
+  if (existing) existing.remove();
+  var currentRank = STAGE_ORDER.indexOf(p.stage);
+  var nextGated=null, gateDef=null;
+  for (var i=currentRank+1;i<STAGE_ORDER.length;i++) {
+    var s=STAGE_ORDER[i];
+    if (PAYMENT_GATES[s]&&!p[PAYMENT_GATES[s].field]) { nextGated=s; gateDef=PAYMENT_GATES[s]; break; }
+  }
+  if (!nextGated) return;
+  var amount=apGateAmount(p,gateDef);
+  var banner=document.createElement('div');
+  banner.id='apGateBanner'; banner.className='gate-banner';
+  var user=(typeof _currentUser!=='undefined'&&_currentUser)?_currentUser.name:'';
+  var canOvr=GATE_OVERRIDE_USERS.indexOf(user)!==-1;
+  banner.innerHTML='<div class="gate-banner-title">\uD83D\uDD12 Next Gate: '+gateDef.label+'</div>'
+    +'<div class="gate-banner-sub">'+gateDef.desc+' Job locks at <strong>'+(STAGE_LABELS[nextGated]||nextGated)+'</strong> until payment is confirmed.</div>'
+    +(amount>0?'<div class="gate-banner-amount">$'+amount.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+' due</div>':'')
+    +'<button class="gate-btn gate-btn-pay" onclick="apRecordPayment(\''+p.id+'\',\''+gateDef.field+'\',\''+gateDef.amount_field+'\')">&#x1F4B0; Record Payment Received</button>'
+    +(canOvr?'<button class="gate-btn gate-btn-override" onclick="apGateOverride(\''+p.id+'\',\''+nextGated+'\',\''+gateDef.field+'\',\''+gateDef.amount_field+'\')">&#x26A1; Override (Sean / Terence)</button>':'')
+    +'<div class="gate-override-note">Override authority: Sean O\'Reilly &amp; Terence O\'Reilly only. Every override emails Jim, Ted, Tom P &amp; Catherine automatically.</div>';
+  var panel=document.getElementById('panel-overview');
+  if (panel) panel.insertBefore(banner,panel.firstChild);
+}
+
+function apToast(msg) {
+  var t=document.createElement('div');
+  t.style.cssText='position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#1A1D21;color:#fff;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:700;z-index:9999;font-family:Barlow,sans-serif;white-space:nowrap';
+  t.textContent=msg;document.body.appendChild(t);setTimeout(function(){t.remove();},3000);
+}
+// ════════════════════════════════════════════════════════
+
 // Shared by the dropdown (above) and Kanban drag-and-drop (below) so stage
 // changes always go through one path — same cross-sell trigger, same D1 sync,
 // no matter how the change was made.
@@ -3204,6 +3355,13 @@ function setProjectStage(id, newStage) {
   if (!p) return false;
   if (stagesForType(p.project_type).indexOf(newStage) === -1) {
     alert((TYPE_LABELS[p.project_type]||'This project type') + ' projects don\'t use the "' + (STAGE_LABELS[newStage]||newStage) + '" stage.');
+    return false;
+  }
+  // PAYMENT GATE CHECK
+  if (apIsGated(p, newStage)) {
+    var _gate = PAYMENT_GATES[newStage];
+    var _amt  = apGateAmount(p, _gate);
+    alert('\uD83D\uDD12 ' + _gate.label + '\n\n' + _gate.desc + (_amt>0 ? '\n\nAmount due: $'+_amt.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}) : '') + '\n\nOpen the project to record payment or request an override.');
     return false;
   }
   p.stage = newStage;
