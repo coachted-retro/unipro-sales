@@ -1350,10 +1350,14 @@ function spRenderCRM(tab) {
   } else if (activeView === 'territory' && tab === 'leads') {
     data = territoryFilter ? data.filter(r => (r.territory||'') === territoryFilter) : [];
   } else {
-    // Filter to this rep's records only (the default "mine" view)
+    // Filter to this rep's records only (the default "mine" view).
+    // Unowned / Unassigned leads do NOT appear in "My Leads" -- they
+    // belong in the Lead Pool tab, not in a rep's personal queue.
+    // This prevents bulk-imported cold leads from burying the rep's
+    // actual assigned pipeline.
     data = data.filter(r => {
-      const owner = r.ownedBy || r.assignedRep || r.createdBy || '';
-      return !owner || owner === _spRep.name || owner === 'Unassigned' || owner === '';
+      const owner = r.ownedBy || r.assignedRep || '';
+      return owner === _spRep.name;
     });
   }
 
@@ -10676,7 +10680,7 @@ function spRenderGoals() {
     ? d1Query('SELECT * FROM opportunities WHERE assigned_rep = ?', [repName])
     : Promise.resolve({ok:false});
   var d1ProjP = (typeof d1Query === 'function')
-    ? d1Query('SELECT * FROM allpro_projects WHERE assigned_rep = ? OR location_id IN (SELECT id FROM locations WHERE assigned_rep = ?)', [repName, repName])
+    ? d1Query('SELECT * FROM allpro_projects WHERE (assigned_rep = ? OR location_id IN (SELECT id FROM locations WHERE assigned_rep = ?)) AND (lead_generation_type IS NULL OR lead_generation_type != \'quickbase_import\')', [repName, repName])
     : Promise.resolve({ok:false});
   var d1LocsP = (typeof d1Query === 'function')
     ? d1Query('SELECT COUNT(*) as cnt FROM locations WHERE assigned_rep = ?', [repName])
@@ -10691,7 +10695,7 @@ function spRenderGoals() {
     var allproOpps = d1Opps.filter(function(o){ return (o.division||'').toLowerCase().includes('allpro'); });
     var proposalsQTD = allproOpps.filter(function(o){ return (o.created_at||0) >= qStart; });
     var proposalsYTD = allproOpps.filter(function(o){ return (o.created_at||0) >= yStart; });
-    var proposalsWon = allproOpps.filter(function(o){ return o.resolution_status === 'won'; });
+    var proposalsWon = allproOpps.filter(function(o){ return o.resolution_status === 'won' || o.stage === 'won' || o.stage === 'accepted' || o.accepted_at; });
     var proposalsPending = allproOpps.filter(function(o){ return o.resolution_status === 'open'; });
     var proposalPipelineValue = proposalsPending.reduce(function(s,o){ return s+(Number(o.value)||0); }, 0);
     var proposalsWonValue = proposalsWon.reduce(function(s,o){ return s+(Number(o.value)||0); }, 0);
@@ -10700,8 +10704,8 @@ function spRenderGoals() {
     var bidsSubmittedQTD = d1Projs.filter(function(p){ return (p.created_at||0) >= qStart; }).length;
     var bidsWon = d1Projs.filter(function(p){ return p.stage === 'closeout'; });
     var bidsInProgress = d1Projs.filter(function(p){ return p.stage !== 'closeout'; });
-    var allproPipelineValue = bidsInProgress.reduce(function(s,p){ return s+(Number(p.estimated_value)||Number(p.sale_price)||0); }, 0);
-    var allproClosedValue = bidsWon.reduce(function(s,p){ return s+(Number(p.sale_price)||Number(p.estimated_value)||0); }, 0);
+    var allproPipelineValue = bidsInProgress.reduce(function(s,p){ return s+(Number(p.sale_price)||Number(p.estimated_value)||Number(p.total_quoted_value)||0); }, 0);
+    var allproClosedValue = bidsWon.reduce(function(s,p){ return s+(Number(p.sale_price)||Number(p.estimated_value)||Number(p.total_quoted_value)||0); }, 0);
 
     // ── UNIPRO / GENERAL OPPS ──
     var uniOpps = d1Opps.filter(function(o){ return !(o.division||'').toLowerCase().includes('allpro'); });
@@ -10742,7 +10746,7 @@ function spRenderGoals() {
     html += '<div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.1em;color:var(--orange);margin:16px 0 8px">🏗️ Bid Pipeline</div>';
     html += '<div class="sp-goals-grid">'
       + kpi(bidsSubmittedQTD, 'Bids Submitted QTD', 'Submitted this quarter', 'var(--orange)')
-      + kpi(d1Projs.length, 'Total Bids in System', 'All time in pipeline', 'var(--ink)')
+      + kpi(d1Projs.length, 'Live Projects', 'Excluding historical archive', 'var(--ink)')
       + kpi(bidsInProgress.length, 'Active Bids', 'In progress', 'var(--blue)')
       + kpi(bidsWon.length, 'Bids Won', 'Closed / commissioning', 'var(--green)')
       + kpi(fmt$(allproPipelineValue), 'Active Pipeline Value', 'Open bids', 'var(--orange)')
@@ -10782,7 +10786,7 @@ function spRenderGoals() {
     html += '<div class="sp-goals-grid">'
       + kpi(proposalsQTD.filter(function(o){ return (o.name||'').toLowerCase().includes('hood')||(o.name||'').toLowerCase().includes('exhaust')||(o.name||'').toLowerCase().includes('suppression'); }).length, 'Hood/Suppression Proposals QTD', 'This quarter', 'var(--orange)')
       + kpi(locCount, 'AllPro Locations', 'Sites in system', 'var(--blue)')
-      + kpi(d1Projs.length, 'AllPro Projects Total', 'All time', 'var(--purple)')
+      + kpi(d1Projs.length, 'Live AllPro Projects', 'Active and recently completed', 'var(--purple)')
       + kpi(fmt$(proposalPipelineValue + allproPipelineValue), 'Total AllPro Pipeline', 'Proposals + bids combined', 'var(--orange)')
       + '</div>';
 
