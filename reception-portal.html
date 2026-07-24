@@ -1048,7 +1048,7 @@ function rcpCBLoad(){ try { return JSON.parse(localStorage.getItem('termac_callb
 function rcpCBSave(q){ try { localStorage.setItem('termac_callback_queue', JSON.stringify(q.slice(0,200))); } catch(e){} }
 
 function rcpUpdateCBBadge(){
-  var waiting = rcpCBLoad().filter(function(c){ return c.status==='waiting'; }).length;
+  var waiting = rcpCBLoad().filter(function(c){ return c.status==='waiting'||c.status==='followup'; }).length;
   var b = document.getElementById('rcpCBBadge');
   if(b){ b.textContent = waiting; b.style.display = waiting ? '' : 'none'; }
 }
@@ -1056,58 +1056,252 @@ function rcpUpdateCBBadge(){
 function rcpCBAgeInfo(ts){
   var mins = Math.floor((Date.now()-ts)/60000);
   var label = mins < 60 ? mins+'m' : Math.floor(mins/60)+'h '+(mins%60)+'m';
-  var color = mins < 120 ? '#16A34A' : mins < 240 ? '#D97706' : '#DC2626';
+  var color = mins < 60 ? '#16A34A' : mins < 240 ? '#D97706' : '#DC2626';
   return { mins: mins, label: label, color: color };
 }
 
+// ── Outcome modal ──────────────────────────────────────────────────────────
+// Shown when a rep taps "Log Outcome" on a call record in their sales portal,
+// or when reception uses the action menu on the callback queue.
+function rcpOpenOutcomeModal(id){
+  var old = document.getElementById('rcpOutcomeModal');
+  if(old) old.remove();
+  var c = rcpCBLoad().find(function(x){ return x.id===id; });
+  if(!c) return;
+  var wrap = document.createElement('div');
+  wrap.id = 'rcpOutcomeModal';
+  wrap.setAttribute('style','position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px');
+  var inp = 'width:100%;box-sizing:border-box;padding:9px 11px;border:1.5px solid #D1D5DB;border-radius:8px;font-size:13px;font-family:inherit;margin-bottom:12px';
+  wrap.innerHTML =
+    '<div style="background:#fff;border-radius:14px;max-width:460px;width:100%;padding:24px;box-shadow:0 8px 32px rgba(0,0,0,.18)">'
+    + '<div style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:16px;letter-spacing:.06em;margin-bottom:4px">Log Call Outcome</div>'
+    + '<div style="font-size:12px;color:#6B7280;margin-bottom:16px">'+escH(c.caller||c.company||'Unknown')+' &mdash; routed to '+escH(c.routedTo||'')+'</div>'
+    + '<div style="font-size:11px;font-weight:700;color:#374151;margin-bottom:8px;text-transform:uppercase;letter-spacing:.07em">What happened?</div>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:16px">'
+    + ['spoke','voicemail','no-answer'].map(function(v,i){
+        var labels = ['Spoke with Someone','Left Voicemail','No Answer'];
+        var icons  = ['\uD83D\uDCAC','\uD83D\uDCF2','\uD83D\uDD07'];
+        var colors = ['#16A34A','#2563EB','#D97706'];
+        return '<label style="cursor:pointer;border:2px solid #E5E7EB;border-radius:10px;padding:12px 8px;text-align:center;transition:border .15s" onclick="rcpOutcomeSelect(this,\''+v+'\')">'
+          + '<input type="radio" name="rcpOutcomeType" value="'+v+'" style="display:none">'
+          + '<div style="font-size:22px;margin-bottom:4px">'+icons[i]+'</div>'
+          + '<div style="font-size:11px;font-weight:700;color:'+colors[i]+'">'+labels[i]+'</div>'
+          + '</label>';
+      }).join('')
+    + '</div>'
+    + '<textarea id="rcpOutcomeNotes" placeholder="Notes on what was discussed, next steps, etc." style="'+inp+'height:80px;resize:vertical"></textarea>'
+    + '<div id="rcpOutcomeFollowupRow" style="display:none;margin-bottom:12px">'
+    + '<div style="font-size:11px;font-weight:700;color:#374151;margin-bottom:6px;text-transform:uppercase;letter-spacing:.07em">Follow-up reminder</div>'
+    + '<input type="datetime-local" id="rcpOutcomeFollowupAt" style="'+inp+'">'
+    + '</div>'
+    + '<div style="display:flex;gap:10px">'
+    + '<button onclick="rcpSubmitOutcome(\''+id+'\')" style="flex:1;background:#1B5FA8;color:#fff;border:none;border-radius:8px;padding:11px;font-size:13px;font-weight:700;cursor:pointer">Save Outcome</button>'
+    + '<button onclick="document.getElementById(\'rcpOutcomeModal\').remove()" style="background:#F3F4F6;color:#374151;border:none;border-radius:8px;padding:11px 18px;font-size:13px;font-weight:700;cursor:pointer">Cancel</button>'
+    + '</div></div>';
+  document.body.appendChild(wrap);
+  // Pre-set follow-up times when outcome type changes
+  rcpOutcomePresetFollowup();
+}
+
+function rcpOutcomeSelect(label, val){
+  document.querySelectorAll('#rcpOutcomeModal label').forEach(function(l){
+    l.style.borderColor = '#E5E7EB'; l.style.background = '#fff';
+  });
+  label.style.borderColor = '#1B5FA8'; label.style.background = '#EFF6FF';
+  var radio = label.querySelector('input[type=radio]');
+  if(radio) radio.checked = true;
+  rcpOutcomePresetFollowup(val);
+}
+
+function rcpOutcomePresetFollowup(val){
+  val = val || (function(){ var r = document.querySelector('#rcpOutcomeModal input[name=rcpOutcomeType]:checked'); return r ? r.value : ''; })();
+  var row = document.getElementById('rcpOutcomeFollowupRow');
+  var inp = document.getElementById('rcpOutcomeFollowupAt');
+  if(!row||!inp) return;
+  if(val==='spoke'){ row.style.display='none'; return; }
+  row.style.display='';
+  var base = new Date();
+  if(val==='voicemail'){
+    // 24h from now, clamped to 9am-5pm next business day
+    base.setDate(base.getDate()+1);
+    var h = base.getHours();
+    if(h < 9) base.setHours(9,0,0,0);
+    else if(h >= 17) { base.setDate(base.getDate()+1); base.setHours(9,0,0,0); }
+  } else {
+    // No answer: 2h from now, clamped to 9am-5pm
+    base.setTime(base.getTime() + 2*60*60*1000);
+    var h2 = base.getHours();
+    if(h2 < 9) base.setHours(9,0,0,0);
+    else if(h2 >= 17) { base.setDate(base.getDate()+1); base.setHours(9,0,0,0); }
+  }
+  // datetime-local format: YYYY-MM-DDTHH:MM
+  inp.value = base.getFullYear()+'-'
+    + String(base.getMonth()+1).padStart(2,'0')+'-'
+    + String(base.getDate()).padStart(2,'0')+'T'
+    + String(base.getHours()).padStart(2,'0')+':'
+    + String(base.getMinutes()).padStart(2,'0');
+}
+
+function rcpSubmitOutcome(id){
+  var outcomeEl = document.querySelector('#rcpOutcomeModal input[name=rcpOutcomeType]:checked');
+  if(!outcomeEl){ rcpToast('Select an outcome first'); return; }
+  var outcome = outcomeEl.value;
+  var notes   = (document.getElementById('rcpOutcomeNotes')||{}).value||'';
+  var fuAt    = (document.getElementById('rcpOutcomeFollowupAt')||{}).value||'';
+
+  var q = rcpCBLoad();
+  var c = q.find(function(x){ return x.id===id; });
+  if(!c){ rcpToast('Record not found'); return; }
+
+  var outcomeLabels = { 'spoke':'Spoke with someone', 'voicemail':'Left voicemail', 'no-answer':'No answer' };
+  var logEntry = {
+    ts: Date.now(),
+    outcome: outcome,
+    outcomeLabel: outcomeLabels[outcome]||outcome,
+    notes: notes,
+    by: (_rcpUser&&_rcpUser.name)||'Rep',
+    followupAt: fuAt ? new Date(fuAt).getTime() : null,
+  };
+
+  c.outcomeLog = c.outcomeLog || [];
+  c.outcomeLog.push(logEntry);
+  c.lastOutcome = logEntry;
+
+  if(outcome==='spoke'){
+    // Timer stops permanently. No escalation. Done.
+    c.status = 'resolved';
+    c.resolvedAt = Date.now();
+    c.resolvedBy = logEntry.by;
+    c.resolvedOutcome = 'spoke';
+  } else {
+    // VM or no-answer: stop current timer, set follow-up status.
+    c.status = 'followup';
+    c.followupAt = logEntry.followupAt || (Date.now() + (outcome==='voicemail' ? 86400000 : 7200000));
+    c.followupOutcome = outcome;
+    // Reset escalation flags so the follow-up window gets its own fresh 1h clock.
+    c.escalated = false;
+    c.escalated2 = false;
+    // The follow-up re-arms the timer at followupAt -- see rcpCheckCallbackEscalations.
+  }
+
+  rcpCBSave(q);
+
+  // Notify the rep of their follow-up via cross-device notification.
+  if(outcome !== 'spoke' && c.followupAt && typeof notifySendCrossDevice === 'function'){
+    var fuLabel = outcome==='voicemail' ? 'Follow up -- left VM yesterday' : 'Follow up -- no answer earlier';
+    setTimeout(function(){
+      notifySendCrossDevice({
+        id:'FU'+Date.now(), recipientName: c.routedTo, ts: Date.now(),
+        caller: c.caller, company: c.company, phone: c.phone,
+        notes: fuLabel + (notes ? '\nPrev notes: '+notes : ''),
+        source: 'Follow-up Reminder', loggedBy: 'Termac One'
+      });
+    }, Math.max(0, c.followupAt - Date.now()));
+  }
+
+  // Write outcome back to the lead/call activity log in D1 via the shared sync module.
+  if(typeof TermacD1Sync !== 'undefined' && c.leadId){
+    TermacD1Sync.logTouchpoint('leads', c.leadId, {
+      type: 'call', icon: outcome==='spoke' ? '\uD83D\uDCAC' : outcome==='voicemail' ? '\uD83D\uDCF2' : '\uD83D\uDD07',
+      title: outcomeLabels[outcome]||outcome,
+      note: notes, who: logEntry.by,
+    });
+  }
+
+  document.getElementById('rcpOutcomeModal').remove();
+  rcpRenderCallbacks();
+  rcpToast(outcomeLabels[outcome]+' logged \u2713');
+}
+
+// ── Render ─────────────────────────────────────────────────────────────────
 function rcpRenderCallbacks(){
   rcpCheckCallbackEscalations();
   var panel = document.getElementById('rcpPanel-callbacks');
   if(!panel) return;
   var q = rcpCBLoad();
-  var waiting = q.filter(function(c){ return c.status==='waiting'; });
-  var resolved = q.filter(function(c){ return c.status!=='waiting'; }).slice(0,10);
+  var active   = q.filter(function(c){ return c.status==='waiting'||c.status==='followup'; });
+  var resolved = q.filter(function(c){ return c.status==='resolved'; }).slice(0,20);
 
-  function row(c){
-    var age = rcpCBAgeInfo(c.ts);
-    var esc = c.escalated2 ? ' \u00b7 escalated \u00d72' : c.escalated ? ' \u00b7 escalated to mgmt' : '';
-    return '<tr>'
-      + '<td style="padding:10px 12px"><div style="font-weight:700;font-size:13px">'+escH(c.caller||c.company||'\u2014')+'</div>'
-      + '<div style="font-size:11px;color:var(--soft)">'+escH(c.company||'')+'</div></td>'
+  var STATUS_META = {
+    'waiting':  { dot:'#DC2626', label:'Waiting',           desc:'Rep not yet responded' },
+    'followup': { dot:'#2563EB', label:'Follow-up Pending', desc:'Outcome logged, follow-up scheduled' },
+  };
+
+  function outcomeIcon(c){
+    if(!c.lastOutcome) return '';
+    var icons = { spoke:'\uD83D\uDCAC', voicemail:'\uD83D\uDCF2', 'no-answer':'\uD83D\uDD07' };
+    return icons[c.lastOutcome.outcome]||'';
+  }
+
+  function activeRow(c){
+    var age = rcpCBAgeInfo(c.status==='followup' ? c.followupAt : c.ts);
+    var esc = c.escalated2 ? ' \u00b7 \uD83D\uDEA8 escalated \u00d72' : c.escalated ? ' \u00b7 \u26A0 escalated' : '';
+    var sm  = STATUS_META[c.status]||STATUS_META['waiting'];
+    var fuStr = c.followupAt ? ' \u00b7 follow-up '+new Date(c.followupAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '';
+    var lastNote = c.lastOutcome && c.lastOutcome.notes ? '<div style="font-size:10px;color:#6B7280;margin-top:2px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escH(c.lastOutcome.notes)+'</div>' : '';
+    return '<tr style="border-bottom:1px solid #F3F4F6">'
+      + '<td style="padding:10px 12px"><div style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:'+sm.dot+';display:inline-block;flex-shrink:0"></span><div>'
+      + '<div style="font-weight:700;font-size:13px">'+escH(c.caller||c.company||'\u2014')+'</div>'
+      + '<div style="font-size:11px;color:#6B7280">'+escH(c.company||'')+'</div>'
+      + lastNote+'</div></div></td>'
       + '<td style="padding:10px 12px;font-size:12px"><a href="tel:'+escH(c.phone||'')+'" style="color:#1B5FA8">'+escH(c.phone||'\u2014')+'</a></td>'
       + '<td style="padding:10px 12px;font-size:12px">'+escH(c.routedTo||'\u2014')+'</td>'
-      + '<td style="padding:10px 12px"><span style="font-weight:800;font-size:12px;color:'+age.color+'">'+age.label+' waiting</span>'
-      + '<span style="font-size:10px;color:var(--soft)">'+esc+'</span></td>'
+      + '<td style="padding:10px 12px"><div style="font-size:11px;font-weight:700;color:'+sm.dot+'">'+outcomeIcon(c)+' '+sm.label+'</div>'
+      + '<div style="font-size:10px;color:#6B7280">'+(c.status==='waiting'?age.label+' elapsed'+esc:fuStr+esc)+'</div></td>'
       + '<td style="padding:10px 12px;white-space:nowrap">'
-      + '<button onclick="rcpMarkReached(\''+c.id+'\')" style="background:#16A34A;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer;margin-right:6px">\u2713 Reached</button>'
-      + '<button onclick="rcpRenotifyRep(\''+c.id+'\')" style="background:#fff;color:#1B5FA8;border:1.5px solid #1B5FA8;border-radius:6px;padding:5px 10px;font-size:11px;font-weight:700;cursor:pointer">\u21bb Re-notify</button>'
+      + '<button onclick="rcpOpenOutcomeModal(\''+c.id+'\')" style="background:#1B5FA8;color:#fff;border:none;border-radius:6px;padding:6px 11px;font-size:11px;font-weight:700;cursor:pointer;margin-right:5px">\uD83D\uDCAC Log Outcome</button>'
+      + '<button onclick="rcpRenotifyRep(\''+c.id+'\')" style="background:#fff;color:#6B7280;border:1.5px solid #E5E7EB;border-radius:6px;padding:5px 9px;font-size:11px;font-weight:700;cursor:pointer">\u21BB Re-ping</button>'
       + '</td></tr>';
   }
 
+  // Manager summary legend
+  var counts = { waiting:0, followup:0 };
+  active.forEach(function(c){ if(counts[c.status]!==undefined) counts[c.status]++; });
+  var legend = Object.keys(counts).filter(function(k){ return counts[k]>0; }).map(function(k){
+    var sm = STATUS_META[k];
+    return '<span style="display:inline-flex;align-items:center;gap:5px;margin-right:12px;font-size:11px;color:#374151">'
+      + '<span style="width:8px;height:8px;border-radius:50%;background:'+sm.dot+';display:inline-block"></span>'
+      + counts[k]+' '+sm.label+'</span>';
+  }).join('');
+
   panel.innerHTML =
+    // Active queue
     '<div class="rcp-card" style="padding:0;overflow:hidden;margin-bottom:14px">'
-    + '<div style="padding:12px 16px;border-bottom:1px solid var(--line);background:#F8F9FA;display:flex;align-items:center;justify-content:space-between">'
-    + '<span style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--soft)">Waiting on Callback \u2014 '+waiting.length+'</span>'
-    + '<span style="font-size:11px;color:var(--soft)">Emails rep immediately \u2014 escalates to management at 1h and 4h</span></div>'
-    + (waiting.length
+    + '<div style="padding:12px 16px;border-bottom:1px solid #E5E7EB;background:#F8F9FA;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">'
+    + '<span style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#6B7280">Active Calls &mdash; '+active.length+'</span>'
+    + '<div>'+legend+'</div>'
+    + '<span style="font-size:11px;color:#6B7280">Rep emails immediately &mdash; escalates at 1h &amp; 4h if no outcome logged</span></div>'
+    + (active.length
       ? '<table style="width:100%;border-collapse:collapse"><thead><tr style="background:#F8F9FA">'
-        + ['Caller','Phone','Routed To','Waiting','Actions'].map(function(h){return '<th style="padding:7px 12px;font-size:10px;font-weight:700;color:var(--soft);text-align:left;border-bottom:1px solid var(--line)">'+h+'</th>';}).join('')
-        + '</tr></thead><tbody>'+waiting.map(row).join('')+'</tbody></table>'
-      : '<div style="padding:24px;text-align:center;color:var(--soft);font-size:13px">No callbacks waiting \u2014 every customer has been reached \ud83c\udf89</div>')
+        + ['Caller','Phone','Rep','Status','Action'].map(function(h){return '<th style="padding:7px 12px;font-size:10px;font-weight:700;color:#6B7280;text-align:left;border-bottom:1px solid #E5E7EB">'+h+'</th>';}).join('')
+        + '</tr></thead><tbody>'+active.map(activeRow).join('')+'</tbody></table>'
+      : '<div style="padding:24px;text-align:center;color:#6B7280;font-size:13px">All clear \u2014 no active calls waiting \uD83C\uDF89</div>')
     + '</div>'
+    // Manager resolved view
     + (resolved.length
-      ? '<div class="rcp-card" style="padding:12px 16px"><div style="font-size:11px;font-weight:700;color:var(--soft);letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px">Recently Resolved</div>'
-        + resolved.map(function(c){ return '<div style="font-size:12px;padding:4px 0;color:var(--soft)">\u2713 '+escH(c.caller||c.company||'')+' \u2014 reached '+new Date(c.resolvedAt||c.ts).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})+' (was routed to '+escH(c.routedTo||'')+')</div>'; }).join('')
-        + '</div>'
+      ? '<div class="rcp-card" style="padding:0;overflow:hidden">'
+        + '<div style="padding:10px 16px;border-bottom:1px solid #E5E7EB;background:#F8F9FA">'
+        + '<span style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#6B7280">Recently Resolved</span></div>'
+        + '<table style="width:100%;border-collapse:collapse"><tbody>'
+        + resolved.map(function(c){
+            var lo = c.lastOutcome||{};
+            var outcomeLabels = { spoke:'Spoke with someone', voicemail:'Left voicemail', 'no-answer':'No answer' };
+            var icons = { spoke:'\uD83D\uDCAC', voicemail:'\uD83D\uDCF2', 'no-answer':'\uD83D\uDD07' };
+            var icon = icons[lo.outcome]||'\u2713';
+            var label = outcomeLabels[lo.outcome]||'Resolved';
+            var resolvedTime = new Date(c.resolvedAt||c.ts).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+            return '<tr style="border-bottom:1px solid #F9FAFB">'
+              + '<td style="padding:8px 12px"><div style="font-size:13px;font-weight:600">'+icon+' '+escH(c.caller||c.company||'\u2014')+'</div>'
+              + '<div style="font-size:11px;color:#6B7280">'+escH(lo.notes||'')+'</div></td>'
+              + '<td style="padding:8px 12px;font-size:12px;color:#374151">'+escH(c.routedTo||'\u2014')+'</td>'
+              + '<td style="padding:8px 12px;font-size:11px;color:#16A34A;font-weight:700">'+label+'</td>'
+              + '<td style="padding:8px 12px;font-size:11px;color:#6B7280">'+resolvedTime+'</td>'
+              + '<td style="padding:8px 12px;font-size:11px;color:#6B7280">by '+escH(lo.by||c.resolvedBy||'\u2014')+'</td>'
+              + '</tr>';
+          }).join('')
+        + '</tbody></table></div>'
       : '');
   rcpUpdateCBBadge();
-}
-
-function rcpMarkReached(id){
-  var q = rcpCBLoad();
-  var c = q.find(function(x){ return x.id===id; });
-  if(c){ c.status='resolved'; c.resolvedAt=Date.now(); c.resolvedBy=(_rcpUser&&_rcpUser.name)||'Reception'; }
-  rcpCBSave(q); rcpRenderCallbacks(); rcpToast('Marked as reached \u2713');
 }
 
 function rcpRenotifyRep(id){
@@ -1116,7 +1310,7 @@ function rcpRenotifyRep(id){
   if (typeof notifySendCrossDevice === 'function') notifySendCrossDevice({
     id: 'CBR'+Date.now(), recipientName: c.routedTo, ts: Date.now(),
     caller: c.caller, company: c.company, phone: c.phone,
-    notes: 'REMINDER: customer still waiting on callback ('+rcpCBAgeInfo(c.ts).label+'). '+(c.notes||''),
+    notes: 'REMINDER: please log an outcome for this call ('+rcpCBAgeInfo(c.ts).label+' elapsed). '+(c.notes||''),
     source: 'Callback Queue', loggedBy: (_rcpUser&&_rcpUser.name)||'Reception'
   });
   rcpToast('Reminder sent to '+c.routedTo);
@@ -1125,29 +1319,34 @@ function rcpRenotifyRep(id){
 function rcpCheckCallbackEscalations(){
   var q = rcpCBLoad(); var changed = false;
   q.forEach(function(c){
-    if(c.status!=='waiting') return;
-    var mins = Math.floor((Date.now()-c.ts)/60000);
+    // Only escalate 'waiting' records and 'followup' records whose follow-up time has passed.
+    var isActive = c.status==='waiting'
+      || (c.status==='followup' && c.followupAt && Date.now() > c.followupAt + 3600000);
+    if(!isActive) return;
+    // For followup records, measure from the followupAt time, not the original call time.
+    var clockStart = (c.status==='followup' && c.followupAt) ? c.followupAt : c.ts;
+    var mins = Math.floor((Date.now()-clockStart)/60000);
+
     if(mins >= 60 && !c.escalated){
       c.escalated = true; changed = true;
-      // In-app alert to management
       if (typeof notifySendCrossDevice === 'function') ['Manager','Jim Kennedy'].forEach(function(who){
         notifySendCrossDevice({ id:'CBE'+Date.now()+who.slice(0,2), recipientName: who, ts: Date.now(),
           caller: c.caller, company: c.company, phone: c.phone,
-          notes: '\u26a0 Callback overdue 1h+: routed to '+c.routedTo+', customer not yet reached.',
+          notes: '\u26A0 No outcome logged after 1h. Routed to: '+c.routedTo+(c.followupAt?' (follow-up window)':'')+'. Customer not yet reached.',
           source: 'Callback Escalation', loggedBy: 'Reception' });
       });
-      // Email escalation to Jim + Tom P
       if (typeof sendOrMailto === 'function') {
-        var esc1Subject = '\u26a0 Unresponded Call \u2014 1 Hour \u2014 ' + (c.caller || c.company || 'Unknown');
-        var esc1Body = 'A routed call has not been responded to after 1 hour.\n\n'
-          + 'Caller: ' + (c.caller || '\u2014') + '\n'
-          + 'Company: ' + (c.company || '\u2014') + '\n'
-          + 'Phone: ' + (c.phone || '\u2014') + '\n'
-          + 'Routed to: ' + (c.routedTo || '\u2014') + '\n'
-          + 'Call logged: ' + new Date(c.ts).toLocaleString('en-US', {weekday:'short',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) + '\n'
-          + 'Now waiting: ' + mins + ' minutes\n\n'
-          + 'Notes:\n' + (c.notes || '(none)') + '\n\n'
-          + 'Log in to Termac One to view the callback queue: https://sales.mytermac.com/reception-portal';
+        var isFollowup = c.status==='followup';
+        var esc1Subject = '\u26A0 ' + (isFollowup?'Follow-up':'Call') + ' Not Responded \u2014 1 Hour \u2014 '+(c.caller||c.company||'Unknown');
+        var esc1Body = (isFollowup?'A scheduled follow-up call':'A routed call')+' has not had an outcome logged after 1 hour.\n\n'
+          + 'Caller: '+(c.caller||'\u2014')+'\n'
+          + 'Company: '+(c.company||'\u2014')+'\n'
+          + 'Phone: '+(c.phone||'\u2014')+'\n'
+          + 'Assigned rep: '+(c.routedTo||'\u2014')+'\n'
+          + (isFollowup?'Follow-up due: ':'Call logged: ')+new Date(clockStart).toLocaleString('en-US',{weekday:'short',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})+'\n'
+          + 'Elapsed: '+mins+' minutes\n\n'
+          + 'Last outcome: '+(c.lastOutcome?c.lastOutcome.outcomeLabel+' \u2014 '+c.lastOutcome.notes:'None logged')+'\n\n'
+          + 'View in Termac One: https://sales.mytermac.com/reception-portal';
         sendOrMailto(RCP_ESCALATION_EMAILS, esc1Subject, esc1Body);
       }
     }
@@ -1156,20 +1355,19 @@ function rcpCheckCallbackEscalations(){
       if (typeof notifySendCrossDevice === 'function') ['Manager','Jim Kennedy'].forEach(function(who){
         notifySendCrossDevice({ id:'CBF'+Date.now()+who.slice(0,2), recipientName: who, ts: Date.now(),
           caller: c.caller, company: c.company, phone: c.phone,
-          notes: '\ud83d\udea8 Callback overdue 4h+: routed to '+c.routedTo+'. Customer still waiting \u2014 needs immediate attention.',
+          notes: '\uD83D\uDEA8 Still no outcome after 4h. Rep: '+c.routedTo+'. Needs immediate attention.',
           source: 'Callback Escalation', loggedBy: 'Reception' });
       });
       if (typeof sendOrMailto === 'function') {
-        var esc2Subject = '\uD83D\uDEA8 URGENT: Unresponded Call \u2014 4 Hours \u2014 ' + (c.caller || c.company || 'Unknown');
-        var esc2Body = 'URGENT: A routed call has still not been responded to after 4 hours.\n\n'
-          + 'Caller: ' + (c.caller || '\u2014') + '\n'
-          + 'Company: ' + (c.company || '\u2014') + '\n'
-          + 'Phone: ' + (c.phone || '\u2014') + '\n'
-          + 'Routed to: ' + (c.routedTo || '\u2014') + '\n'
-          + 'Call logged: ' + new Date(c.ts).toLocaleString('en-US', {weekday:'short',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) + '\n'
-          + 'Now waiting: ' + mins + ' minutes\n\n'
-          + 'Notes:\n' + (c.notes || '(none)') + '\n\n'
-          + 'Immediate attention required. View the callback queue: https://sales.mytermac.com/reception-portal';
+        var esc2Subject = '\uD83D\uDEA8 URGENT: No Outcome After 4 Hours \u2014 '+(c.caller||c.company||'Unknown');
+        var esc2Body = 'URGENT: No outcome has been logged after 4 hours.\n\n'
+          + 'Caller: '+(c.caller||'\u2014')+'\n'
+          + 'Company: '+(c.company||'\u2014')+'\n'
+          + 'Phone: '+(c.phone||'\u2014')+'\n'
+          + 'Assigned rep: '+(c.routedTo||'\u2014')+'\n'
+          + 'Elapsed: '+mins+' minutes\n\n'
+          + 'Last outcome: '+(c.lastOutcome?c.lastOutcome.outcomeLabel+' \u2014 '+c.lastOutcome.notes:'None logged')+'\n\n'
+          + 'Immediate action required: https://sales.mytermac.com/reception-portal';
         sendOrMailto(RCP_ESCALATION_EMAILS, esc2Subject, esc2Body);
       }
     }
