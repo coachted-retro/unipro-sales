@@ -10445,9 +10445,6 @@ function spRenderGoals() {
   const el = document.getElementById('spContent');
   const repName = _spRep.name;
 
-  // Mirrors STAGE_LABELS/STAGE_COLORS in allpro-project-planner.html --
-  // kept in sync manually since these are two separate files; if the
-  // AllPro lifecycle stages ever change, update both places.
   const STAGE_LABELS_MAP = {
     intake:'Intake', survey_plan_review:'Survey / Plan Review', design_drawings:'Design / Drawings',
     costing:'Costing', permitting:'Permitting / AHJ', fabrication:'Fabrication',
@@ -10459,190 +10456,180 @@ function spRenderGoals() {
     delivery_install:'#0A1628', commissioning:'#B45309', closeout:'#166534',
   };
 
-  // Pull rep's own records
-  const myLeadsAll = crmLoad('leads').filter(r => (r.ownedBy||r.assignedRep||r.createdBy||'') === repName);
-  // 2026-07-10: per Ted, AllPro numbers need to stay visibly separate from
-  // everything else even though a single account often combines AllPro
-  // with UniPro/other divisions on one hood+suppression job -- so the
-  // split here is by service tag on the record, not by account. A record
-  // with both 'unipro' and 'allpro' counts toward both sections; that's
-  // intentional, since it genuinely is both kinds of work on one job.
-  const myLeads     = myLeadsAll.filter(r => !(r.services||[]).includes('allpro'));
-  const myAllProLeads = myLeadsAll.filter(r => (r.services||[]).includes('allpro'));
-  const myAccts = myLeads.filter(r => ['active','close','onboarding','first_service','renewal'].includes(r.lifecycleStage||''));
-  const myOppty = myLeads.filter(r => ['opportunity','site_visit'].includes(r.lifecycleStage||''));
-  const myContacts = myLeads.filter(r => (r.lifecycleStage||'lead') === 'contact');
-  const myRawLeads = myLeads.filter(r => (r.lifecycleStage||'lead') === 'lead');
-
-  // Goals from storage (set by manager or self)
-  const GOALS_QUOTA = 'termac_goals_quotas';
   const now = new Date();
-  const qKey = repName + '_q' + Math.ceil((now.getMonth()+1)/3);
+  const qNum = Math.ceil((now.getMonth()+1)/3);
+  const qLabel = 'Q'+qNum+' '+now.getFullYear();
+  const qStart = new Date(now.getFullYear(), (qNum-1)*3, 1).getTime();
+  const yStart = new Date(now.getFullYear(), 0, 1).getTime();
+
+  const GOALS_QUOTA = 'termac_goals_quotas';
+  const qKey = repName + '_q' + qNum;
   let quota = { revQuota:50000, acctTarget:12, callTarget:50, visitTarget:10, commRate:8 };
   try { const all = JSON.parse(localStorage.getItem(GOALS_QUOTA)||'{}'); quota = { ...quota, ...(all[qKey]||{}) }; } catch(e){}
 
-  // 2026-07-15 per Ted's lifecycle deep-dive: revClosed used to sum
-  // estimatedValue across active/closed accounts, but nothing in this file
-  // (or the whole app) ever WRITES estimatedValue -- it's read in exactly
-  // two places (here and the Team Leaderboard) and set nowhere, so this
-  // was always $0 for every rep regardless of real deals closed. The real
-  // dollar figure lives on the opportunities table (o.value, or
-  // monthlyValue*termMonths for leases), set at creation and confirmed at
-  // Won. Now sums directly from opportunities this rep closed Won, same
-  // source the Won badge on a contact/account page already shows.
-  const myWonOpps = (crmLoad('opportunities') || []).filter(function(o) {
-    return o.resolutionStatus === 'won' && (o.assignedRep || '') === repName;
+  const kpi = (val, label, sub, color, pct) => '<div class="sp-goal-kpi">'
+    + '<div class="sp-goal-val" style="color:'+(color||'var(--ink)')+'">'+val+'</div>'
+    + '<div class="sp-goal-lbl">'+label+'</div>'
+    + (sub ? '<div class="sp-goal-sub">'+sub+'</div>' : '')
+    + (pct != null ? '<div class="sp-progress-bar"><div class="sp-progress-fill" style="width:'+Math.min(100,pct)+'%;background:'+(pct>=100?'var(--green)':pct>=75?'var(--orange)':'var(--red)')+'"></div></div>' : '')
+    + '</div>';
+
+  const card = (title, body, borderColor) => '<div class="sp-card"'+(borderColor?'style="border-left:4px solid '+borderColor+'"':'')+'>'+
+    '<div class="sp-card-title">'+title+'</div>'+body+'</div>';
+
+  const fmt$ = v => '$'+(v||0).toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:0});
+
+  // Show loading state immediately
+  el.innerHTML = '<div style="text-align:center;padding:40px;color:var(--soft)">Loading your stats...</div>';
+
+  // Hydrate from D1 then render
+  var d1OppsP = (typeof d1Query === 'function')
+    ? d1Query('SELECT * FROM opportunities WHERE assigned_rep = ?', [repName])
+    : Promise.resolve({ok:false});
+  var d1ProjP = (typeof d1Query === 'function')
+    ? d1Query('SELECT * FROM allpro_projects WHERE assigned_rep = ? OR location_id IN (SELECT id FROM locations WHERE assigned_rep = ?)', [repName, repName])
+    : Promise.resolve({ok:false});
+  var d1LocsP = (typeof d1Query === 'function')
+    ? d1Query('SELECT COUNT(*) as cnt FROM locations WHERE assigned_rep = ?', [repName])
+    : Promise.resolve({ok:false});
+
+  Promise.all([d1OppsP, d1ProjP, d1LocsP]).then(function(results) {
+    var d1Opps = (results[0].ok && results[0].results) ? results[0].results : [];
+    var d1Projs = (results[1].ok && results[1].results) ? results[1].results : [];
+    var locCount = (results[2].ok && results[2].results && results[2].results[0]) ? (results[2].results[0].cnt||0) : 0;
+
+    // ── PROPOSALS (from opportunities table, AllPro division) ──
+    var allproOpps = d1Opps.filter(function(o){ return (o.division||'').toLowerCase().includes('allpro'); });
+    var proposalsQTD = allproOpps.filter(function(o){ return (o.created_at||0) >= qStart; });
+    var proposalsYTD = allproOpps.filter(function(o){ return (o.created_at||0) >= yStart; });
+    var proposalsWon = allproOpps.filter(function(o){ return o.resolution_status === 'won'; });
+    var proposalsPending = allproOpps.filter(function(o){ return o.resolution_status === 'open'; });
+    var proposalPipelineValue = proposalsPending.reduce(function(s,o){ return s+(Number(o.value)||0); }, 0);
+    var proposalsWonValue = proposalsWon.reduce(function(s,o){ return s+(Number(o.value)||0); }, 0);
+
+    // ── BIDS (from allpro_projects — bid_pipeline sourced) ──
+    var bidsSubmittedQTD = d1Projs.filter(function(p){ return (p.created_at||0) >= qStart; }).length;
+    var bidsWon = d1Projs.filter(function(p){ return p.stage === 'closeout'; });
+    var bidsInProgress = d1Projs.filter(function(p){ return p.stage !== 'closeout'; });
+    var allproPipelineValue = bidsInProgress.reduce(function(s,p){ return s+(Number(p.estimated_value)||Number(p.sale_price)||0); }, 0);
+    var allproClosedValue = bidsWon.reduce(function(s,p){ return s+(Number(p.sale_price)||Number(p.estimated_value)||0); }, 0);
+
+    // ── UNIPRO / GENERAL OPPS ──
+    var uniOpps = d1Opps.filter(function(o){ return !(o.division||'').toLowerCase().includes('allpro'); });
+    var uniWon = uniOpps.filter(function(o){ return o.resolution_status === 'won'; });
+    var uniWonValue = uniWon.reduce(function(s,o){ return s+(Number(o.value)||0); }, 0);
+    var totalWonValue = proposalsWonValue + uniWonValue + allproClosedValue;
+    var commission = Math.round(totalWonValue * (quota.commRate / 100));
+
+    // ── WIN RATES ──
+    var totalProposals = allproOpps.length;
+    var proposalWinRate = totalProposals > 0 ? Math.round(proposalsWon.length / totalProposals * 100) : 0;
+
+    // ── ACTIVITY ──
+    var weekStart = new Date(); weekStart.setDate(weekStart.getDate() - weekStart.getDay()); weekStart.setHours(0,0,0,0);
+    var weekTs = weekStart.getTime();
+
+    var html = '';
+
+    // Header
+    html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">'
+      + '<div><div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:20px">'+repName+' — '+qLabel+' Performance Dashboard</div>'
+      + '<div style="font-size:12px;color:var(--soft)">Fire Protection Specialist · Bid Manager · UniPro + AllPro Ops · Hood Design + Installation</div></div>'
+      + '<button class="sp-btn sp-btn-ghost" onclick="spEditGoals()" style="font-size:11px">⚙️ Set My Targets</button></div>';
+
+    // ── SECTION 1: PROPOSALS ──
+    html += '<div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.1em;color:var(--blue);margin:16px 0 8px">📋 Proposals Submitted</div>';
+    html += '<div class="sp-goals-grid">'
+      + kpi(proposalsQTD.length, 'Proposals QTD', 'Submitted this quarter', 'var(--blue)')
+      + kpi(proposalsYTD.length, 'Proposals YTD', 'Calendar year to date', 'var(--ink)')
+      + kpi(proposalsWon.length, 'Proposals Won', 'Accepted by customer', 'var(--green)')
+      + kpi(proposalsPending.length, 'Awaiting Decision', 'Open / pending customer', 'var(--orange)')
+      + kpi(fmt$(proposalPipelineValue), 'Proposal Pipeline', 'Active open proposals', 'var(--purple)')
+      + kpi(fmt$(proposalsWonValue), 'Proposals Won $', 'Revenue from accepted proposals', 'var(--green)')
+      + kpi(proposalWinRate+'%', 'Proposal Win Rate', 'Won / total submitted', proposalWinRate>=50?'var(--green)':'var(--orange)')
+      + '</div>';
+
+    // ── SECTION 2: BIDS ──
+    html += '<div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.1em;color:var(--orange);margin:16px 0 8px">🏗️ Bid Pipeline</div>';
+    html += '<div class="sp-goals-grid">'
+      + kpi(bidsSubmittedQTD, 'Bids Submitted QTD', 'Submitted this quarter', 'var(--orange)')
+      + kpi(d1Projs.length, 'Total Bids in System', 'All time in pipeline', 'var(--ink)')
+      + kpi(bidsInProgress.length, 'Active Bids', 'In progress', 'var(--blue)')
+      + kpi(bidsWon.length, 'Bids Won', 'Closed / commissioning', 'var(--green)')
+      + kpi(fmt$(allproPipelineValue), 'Active Pipeline Value', 'Open bids', 'var(--orange)')
+      + kpi(fmt$(allproClosedValue), 'Bids Won $', 'Closed revenue', 'var(--green)')
+      + '</div>';
+
+    // ── SECTION 3: ALLPRO PROJECTS BY STAGE ──
+    if (d1Projs.length > 0) {
+      var stageGroups = {};
+      d1Projs.forEach(function(p){ var s = p.stage||'intake'; stageGroups[s] = (stageGroups[s]||0)+1; });
+      html += '<div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.1em;color:var(--purple);margin:16px 0 8px">🗂️ AllPro Projects by Stage</div>';
+      html += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">';
+      Object.keys(STAGE_LABELS_MAP).forEach(function(s){
+        if (!stageGroups[s]) return;
+        var c = STAGE_COLORS_MAP[s]||'#6B7280';
+        html += '<div style="background:'+c+'22;color:'+c+';border-radius:8px;padding:8px 14px;text-align:center">'
+          + '<div style="font-weight:800;font-size:20px;font-family:Barlow Condensed,sans-serif">'+stageGroups[s]+'</div>'
+          + '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-top:2px">'+STAGE_LABELS_MAP[s]+'</div>'
+          + '</div>';
+      });
+      html += '</div>';
+    }
+
+    // ── SECTION 4: REVENUE SUMMARY ──
+    html += '<div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.1em;color:var(--green);margin:16px 0 8px">💰 Revenue Summary — '+qLabel+'</div>';
+    html += '<div class="sp-goals-grid">'
+      + kpi(fmt$(totalWonValue), 'Won '+qLabel, 'All divisions combined', 'var(--green)', Math.round(totalWonValue/quota.revQuota*100))
+      + kpi(fmt$(proposalsWonValue), 'AllPro Proposals Won', 'Accepted proposals', 'var(--green)')
+      + kpi(fmt$(allproClosedValue), 'AllPro Bids Won', 'Closed bid projects', 'var(--green)')
+      + kpi(fmt$(uniWonValue), 'UniPro / Other Won', 'Non-AllPro revenue', 'var(--blue)')
+      + kpi(fmt$(commission), 'Est. Commission', quota.commRate+'% rate on won revenue', 'var(--ink)')
+      + kpi(fmt$(quota.revQuota), 'Quarterly Target', 'Set by Jim', 'var(--soft)', Math.round(totalWonValue/quota.revQuota*100))
+      + '</div>';
+
+    // ── SECTION 5: ALLPRO HOOD DESIGN & INSTALLATION ──
+    html += '<div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.1em;color:var(--orange);margin:16px 0 8px">🔥 AllPro / Hood Design & Installation</div>';
+    html += '<div class="sp-goals-grid">'
+      + kpi(proposalsQTD.filter(function(o){ return (o.name||'').toLowerCase().includes('hood')||(o.name||'').toLowerCase().includes('exhaust')||(o.name||'').toLowerCase().includes('suppression'); }).length, 'Hood/Suppression Proposals QTD', 'This quarter', 'var(--orange)')
+      + kpi(locCount, 'AllPro Locations', 'Sites in system', 'var(--blue)')
+      + kpi(d1Projs.length, 'AllPro Projects Total', 'All time', 'var(--purple)')
+      + kpi(fmt$(proposalPipelineValue + allproPipelineValue), 'Total AllPro Pipeline', 'Proposals + bids combined', 'var(--orange)')
+      + '</div>';
+
+    // ── SECTION 6: ACTIVITY ──
+    html += '<div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.1em;color:var(--ink);margin:16px 0 8px">📊 Activity This Quarter</div>';
+    html += '<div class="sp-goals-grid">'
+      + kpi(bidsSubmittedQTD, 'Bid Submissions QTD', 'Submitted this quarter', 'var(--orange)')
+      + kpi(proposalsQTD.length, 'Proposals Submitted QTD', 'AllPro proposals this quarter', 'var(--blue)')
+      + kpi(proposalsWon.length+bidsWon.length, 'Total Won QTD', 'Proposals + bids combined', 'var(--green)')
+      + kpi(proposalsPending.length+bidsInProgress.length, 'Total Open / Active', 'Awaiting decision or in progress', 'var(--orange)')
+      + '</div>';
+
+    // ── SECTION 7: REVENUE FORECAST ──
+    var forecastLow = Math.round((proposalPipelineValue + allproPipelineValue) * 0.35);
+    var forecastHigh = Math.round((proposalPipelineValue + allproPipelineValue) * 0.65);
+    html += '<div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.1em;color:var(--blue);margin:16px 0 8px">📈 Revenue Forecast — Stage 1 (Pipeline-Based)</div>';
+    html += '<div class="sp-goals-grid">'
+      + kpi(proposalsPending.length+bidsInProgress.length, 'Pipeline Leads', 'Open proposals + active bids', 'var(--blue)')
+      + kpi(fmt$(Math.round((proposalPipelineValue+allproPipelineValue)*12/12)), 'Est. 1-Yr Value', 'If current pipeline closes at 35-65%', 'var(--purple)')
+      + kpi(fmt$(Math.round((proposalPipelineValue+allproPipelineValue)*3)), 'Est. 3-Yr Value', 'Including recurring service agreements', 'var(--blue)')
+      + kpi('$'+forecastLow.toLocaleString()+'–$'+forecastHigh.toLocaleString(), 'Single Kitchen Win Range', '35–65% close rate on open pipeline', 'var(--orange)')
+      + '</div>';
+
+    el.innerHTML = html;
+
+    // Append upsell leaderboard
+    if (typeof spRenderUpsellLeaderboard === 'function') {
+      el.innerHTML += '<div class="sp-card" style="margin-top:18px">' + spRenderUpsellLeaderboard() + '</div>';
+    }
+  }).catch(function(err) {
+    console.error('Goals D1 load error:', err);
+    el.innerHTML = '<div style="text-align:center;padding:40px;color:var(--red)">Error loading stats from database. Please refresh.</div>';
   });
-  const revClosed = myWonOpps.reduce(function(s, o) {
-    return s + (o.serviceType === 'lease' ? (o.monthlyValue||0) * (o.termMonths||1) : (o.value||0));
-  }, 0);
-  const commission = Math.round(revClosed * (quota.commRate / 100));
-  const mySpiffs = (typeof crmLoad === 'function' ? crmLoad('allpro_spiffs') : []).filter(s => s.repName === repName);
-  const spiffsPending = mySpiffs.filter(s => s.status === 'pending');
-  const spiffsPaid = mySpiffs.filter(s => s.status === 'paid');
-  const spiffTotal = mySpiffs.reduce((s, x) => s + (Number(x.amount) || 0), 0);
-  const commissionPlusSpiffs = commission + spiffTotal;
-
-  // 2026-07-10: AllPro-specific performance, kept fully separate from the
-  // commission number above. Pulls real project economics (sale_price,
-  // stage) from allpro_projects rather than the generic lead-value
-  // estimate, since AllPro tracks its own project lifecycle with real
-  // numbers once a project is underway.
-  const myAllProAcctIds = {};
-  myAllProLeads.forEach(l => { if (l.id) myAllProAcctIds[l.id] = true; if (l.accountId) myAllProAcctIds[l.accountId] = true; });
-  const allProProjects = (typeof crmLoad === 'function' ? crmLoad('allpro_projects') : [])
-    .filter(p => myAllProAcctIds[p.account_id]);
-  const allProClosed = allProProjects.filter(p => p.stage === 'closeout');
-  const allProInProgress = allProProjects.filter(p => p.stage !== 'closeout');
-  const allProRevClosed = allProClosed.reduce((s, p) => s + (Number(p.sale_price) || Number(p.estimated_value) || 0), 0);
-  const allProPipelineValue = allProInProgress.reduce((s, p) => s + (Number(p.estimated_value) || Number(p.sale_price) || 0), 0);
-
-  // Activity this week
-  const weekStart = new Date(); weekStart.setDate(weekStart.getDate() - weekStart.getDay()); weekStart.setHours(0,0,0,0);
-  const weekTs = weekStart.getTime();
-  let callsThisWeek = 0, visitsThisWeek = 0;
-  myLeads.forEach(r => {
-    (r.activityLog||[]).forEach(a => {
-      if (a.ts >= weekTs) {
-        if (a.type === 'call' || (a.title||'').toLowerCase().includes('call')) callsThisWeek++;
-        if (a.type === 'visit' || (a.title||'').toLowerCase().includes('visit')) visitsThisWeek++;
-      }
-    });
-  });
-
-  // Pipeline value estimate (rough: opportunities × avg deal size)
-  const pipelineValue = myOppty.length * 4800; // avg deal estimate
-
-  // Quarter label
-  const qNum = Math.ceil((now.getMonth()+1)/3);
-  const qLabel = `Q${qNum} ${now.getFullYear()}`;
-
-  const kpi = (val, label, sub, color='var(--ink)', pct=null) => `<div class="sp-goal-kpi">
-    <div class="sp-goal-val" style="color:${color}">${val}</div>
-    <div class="sp-goal-lbl">${label}</div>
-    ${sub ? `<div class="sp-goal-sub">${sub}</div>` : ''}
-    ${pct !== null ? `<div class="sp-progress-bar"><div class="sp-progress-fill" style="width:${Math.min(100,pct)}%;background:${pct>=100?'var(--green)':pct>=75?'var(--yellow)':'var(--red)'}"></div></div>` : ''}
-  </div>`;
-
-  el.innerHTML = `
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-    <div>
-      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:20px">${repName} — ${qLabel} Performance</div>
-      <div style="font-size:13px;color:var(--soft)">Your personal pipeline and activity stats. No one else's numbers here.</div>
-    </div>
-    <button class="sp-btn sp-btn-ghost" onclick="spEditGoals()" style="font-size:11px">⚙️ Set My Targets</button>
-  </div>
-
-  <div class="sp-goals-grid">
-    ${kpi(myRawLeads.length, 'Active Leads', 'In your territory pipeline', 'var(--blue)')}
-    ${kpi(myOppty.length, 'Opportunities', 'Site visits & proposals open', 'var(--orange)')}
-    ${kpi(myAccts.length, 'Active Accounts', 'vs target: '+quota.acctTarget, 'var(--green)', Math.round(myAccts.length/quota.acctTarget*100))}
-    ${kpi('$'+pipelineValue.toLocaleString(), 'Pipeline Value', 'Est. from open opportunities', 'var(--ink)')}
-    ${kpi(callsThisWeek, 'Calls This Week', 'Target: '+quota.callTarget+'/wk', callsThisWeek>=quota.callTarget?'var(--green)':'var(--red)', Math.round(callsThisWeek/quota.callTarget*100))}
-    ${kpi(visitsThisWeek, 'Visits This Week', 'Target: '+quota.visitTarget+'/wk', visitsThisWeek>=quota.visitTarget?'var(--green)':'var(--orange)', Math.round(visitsThisWeek/quota.visitTarget*100))}
-  </div>
-
-  <!-- Commission & Spiffs -->
-  <div class="sp-card">
-    <div class="sp-card-title">My Commission &amp; Spiffs — ${qLabel}</div>
-    <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:${mySpiffs.length ? '14px' : '0'}">
-      <div style="flex:1;min-width:160px;text-align:center;padding:14px;background:var(--bg);border-radius:8px">
-        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:26px;color:var(--ink)">$${commissionPlusSpiffs.toLocaleString()}</div>
-        <div style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-top:2px">Total Expected</div>
-        <div style="font-size:10px;color:var(--soft);margin-top:4px">${quota.commRate}% commission on $${revClosed.toLocaleString()} won</div>
-      </div>
-      ${mySpiffs.length ? `<div style="flex:1;min-width:160px;text-align:center;padding:14px;background:#FFFBEA;border-radius:8px">
-        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:26px;color:var(--orange)">$${spiffTotal.toLocaleString()}</div>
-        <div style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-top:2px">AllPro Referral Spiffs</div>
-        <div style="font-size:10px;color:var(--soft);margin-top:4px">${mySpiffs.length} referral${mySpiffs.length===1?'':'s'} · ${spiffsPaid.length} paid, ${spiffsPending.length} pending</div>
-      </div>` : ''}
-    </div>
-    ${mySpiffs.length ? `<div style="border-top:1px solid var(--line);padding-top:10px">
-      ${mySpiffs.map(s => `<div style="display:flex;justify-content:space-between;padding:5px 0;font-size:12px">
-        <span>${(s.business||'Unknown').replace(/</g,'&lt;')} — ${new Date(s.createdAt||Date.now()).toLocaleDateString('en-US')}</span>
-        <span style="font-weight:700;color:${s.status==='paid'?'var(--green)':'var(--orange)'}">$${s.amount} ${s.status}</span>
-      </div>`).join('')}
-    </div>` : `<div style="font-size:12px;color:var(--soft);text-align:center;padding-top:6px">No AllPro referral spiffs yet — forward a lead to Dan and it shows up here.</div>`}
-  </div>
-
-  ${myAllProLeads.length ? `
-  <!-- My AllPro Performance -->
-  <div class="sp-card" style="border-left:4px solid var(--purple)">
-    <div class="sp-card-title">My AllPro Performance <span style="font-size:10px;font-weight:400;color:var(--soft);text-transform:none;letter-spacing:0">— kept separate from everything above, even on combined UniPro+AllPro jobs</span></div>
-    <div style="display:flex;gap:16px;flex-wrap:wrap">
-      <div style="flex:1;min-width:140px;text-align:center;padding:14px;background:var(--bg);border-radius:8px">
-        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:24px;color:var(--purple)">${myAllProLeads.length}</div>
-        <div style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-top:2px">AllPro Leads/Accounts</div>
-      </div>
-      <div style="flex:1;min-width:140px;text-align:center;padding:14px;background:var(--bg);border-radius:8px">
-        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:24px;color:var(--orange)">$${allProPipelineValue.toLocaleString()}</div>
-        <div style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-top:2px">In Progress (${allProInProgress.length})</div>
-      </div>
-      <div style="flex:1;min-width:140px;text-align:center;padding:14px;background:var(--bg);border-radius:8px">
-        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:24px;color:var(--green)">$${allProRevClosed.toLocaleString()}</div>
-        <div style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-top:2px">Closed (${allProClosed.length})</div>
-      </div>
-    </div>
-    ${allProProjects.length ? `<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line);display:flex;flex-wrap:wrap;gap:6px">
-      ${allProProjects.map(p => `<span style="background:${(STAGE_COLORS_MAP[p.stage]||'#6B7280')}22;color:${(STAGE_COLORS_MAP[p.stage]||'#6B7280')};border-radius:5px;padding:3px 10px;font-size:11px;font-weight:700">${(p.project_name||'Project')} · ${(STAGE_LABELS_MAP[p.stage]||p.stage)}</span>`).join('')}
-    </div>` : `<div style="font-size:12px;color:var(--soft);margin-top:10px">These leads haven't been picked up as AllPro projects yet${repName === 'Ted Scholl' ? ' — check the AllPro Dashboard' : ''}.</div>`}
-    ${repName === 'Ted Scholl' ? `<a href="#" onclick="spOpenEmbed('allpro-project-planner.html','AllPro Dashboard');return false;" style="display:inline-block;margin-top:12px;font-size:12px;color:var(--purple);font-weight:700">Open AllPro Dashboard →</a>` : ''}
-  </div>` : ''}
-
-  <!-- Pipeline Breakdown -->
-  <div class="sp-card">
-    <div class="sp-card-title">My Pipeline Breakdown</div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px">
-      ${[
-        {label:'Leads', count:myRawLeads.length, color:'var(--gray)'},
-        {label:'Contacts', count:myContacts.length, color:'var(--blue)'},
-        {label:'Opportunities', count:myOppty.length, color:'var(--orange)'},
-        {label:'Active Accounts', count:myAccts.length, color:'var(--green)'},
-      ].map(s => `<div style="text-align:center;padding:12px;background:var(--bg);border-radius:8px">
-        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:28px;color:${s.color}">${s.count}</div>
-        <div style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-top:3px">${s.label}</div>
-      </div>`).join('')}
-    </div>
-  </div>
-
-  <!-- Services breakdown -->
-  <div class="sp-card">
-    <div class="sp-card-title">My Accounts by Division</div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
-    ${['unipro','quality3','allpro','filterman','gto','termac'].map(s => {
-      const count = myLeads.filter(r => (r.services||[]).includes(s)).length;
-      const c = spSvcColor(s);
-      return `<div style="background:${c.bg};color:${c.color};border-radius:8px;padding:10px 16px;text-align:center;min-width:90px">
-        <div style="font-weight:800;font-size:22px;font-family:'Barlow Condensed',sans-serif">${count}</div>
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-top:2px">${spSvcLabel(s)}</div>
-      </div>`;
-    }).join('')}
-    </div>
-  </div>`;
-
-  // Upsell leaderboard — appended after main goals template
-  el.innerHTML += '<div class="sp-card" style="margin-top:18px">' + spRenderUpsellLeaderboard() + '</div>';
 }
+
+
 
 // ══════════════════════════════════════════════════════
 //  TEAM LEADERBOARD — 2026-07-15 per Ted, modeled on the running-totals
@@ -14136,7 +14123,7 @@ function svRenderAreaRecs() {
   if (!el) return;
   const recs = svGetAreaRecommendations(_svAcctId, 4);
   if (!recs.length) { el.innerHTML = ''; return; }
-  el.innerHTML = '<div style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#5A616B;margin-bottom:6px">💡 Other Accounts Near You Also Order</div>'
+  el.innerHTML = '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#5A616B;margin-bottom:6px">💡 Other Accounts Near You Also Order</div>'
     + '<div style="display:flex;flex-wrap:wrap;gap:6px">'
     + recs.map(r => `<button onclick="svAddRecommendedProduct('${r.productId}')" style="background:#EFF6FF;border:1px solid #BFDBFE;color:#1E40AF;border-radius:20px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer">+ ${svEscH(r.name||'Product')}</button>`).join('')
     + '</div>';
