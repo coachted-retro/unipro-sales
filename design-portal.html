@@ -93,12 +93,26 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);height:100dvh
 <div class="topbar">
   <button class="tb-back" onclick="kdGoBack()">&larr; Back</button>
   <span class="tb-title">Kitchen Designer</span>
+  <div style="display:flex;align-items:center;gap:6px;margin-right:8px;background:rgba(255,255,255,.08);border-radius:6px;padding:3px">
+    <button id="btnInterior" onclick="setViewMode('interior')" style="background:var(--gold);border:none;color:var(--ink);border-radius:4px;padding:4px 10px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">🍳 Interior</button>
+    <button id="btnRooftop" onclick="setViewMode('rooftop')" style="background:none;border:none;color:rgba(255,255,255,.7);border-radius:4px;padding:4px 10px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">🏗️ Rooftop</button>
+  </div>
   <div class="tb-actions">
     <button class="tb-btn" onclick="kdUndo()">↩ Undo</button>
     <button class="tb-btn" onclick="kdClear()" style="color:#f87171">Clear</button>
     <button class="tb-btn gold" onclick="kdExportPDF()">Export PDF</button>
     <button class="tb-btn red" onclick="kdSave()">Save</button>
   </div>
+</div>
+
+<!-- ROOFTOP ADDRESS BAR (hidden until rooftop mode) -->
+<div class="setup-bar" id="rooftopBar" style="display:none;background:#111928">
+  <label style="color:rgba(255,255,255,.6);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em">Job Address</label>
+  <input class="setup-inp" id="roofAddrInp" type="text" placeholder="e.g. 3904 Frankford Ave, Philadelphia PA" style="width:320px"
+    onkeydown="if(event.key==='Enter') loadSatellite()">
+  <button onclick="loadSatellite()" style="background:var(--gold);border:none;color:var(--ink);border-radius:6px;padding:5px 14px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">Load Satellite</button>
+  <span id="mapStatus" style="font-size:11px;color:rgba(255,255,255,.4);margin-left:8px"></span>
+  <div style="margin-left:auto;font-size:11px;color:rgba(255,255,255,.4)">Draw overlay on top of satellite view • same tools apply</div>
 </div>
 
 <!-- ROOM SETUP -->
@@ -131,8 +145,11 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);height:100dvh
   </div>
 
   <!-- CENTER: Canvas -->
-  <div class="canvas-wrap" id="canvasWrap">
-    <canvas id="designCanvas"></canvas>
+  <div class="canvas-wrap" id="canvasWrap" style="position:relative">
+    <!-- Google Maps satellite layer (rooftop mode) -->
+    <div id="mapLayer" style="display:none;position:absolute;inset:0;z-index:0"></div>
+    <!-- Drawing canvas sits on top of the map -->
+    <canvas id="designCanvas" style="position:relative;z-index:1"></canvas>
   </div>
 
   <!-- RIGHT: Properties + CFM -->
@@ -191,7 +208,38 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);height:100dvh
 </div>
 
 <script src="termac-d1-sync.js"></script>
+<script id="gmapsScript"></script>
 <script>
+// ════════════════════════════════════════════════════════
+//  CONFIG -- drop your Google Maps API key here
+// ════════════════════════════════════════════════════════
+var GOOGLE_MAPS_KEY = ''; // paste AIzaSy... key here
+
+// ════════════════════════════════════════════════════════
+//  VIEW MODE -- interior or rooftop
+// ════════════════════════════════════════════════════════
+var viewMode = 'interior'; // 'interior' | 'rooftop'
+var mapInstance = null;    // Google Maps instance
+var mapLoaded  = false;
+var roofItems  = [];       // equipment placed on rooftop view
+var roofAddress = '';
+
+// Rooftop equipment palette
+var ROOF_EQUIPMENT = [
+  { cat:'Ventilation', id:'exhaust_fan_roof',  label:'Exhaust Fan',       icon:'🌀', w:2.0, d:2.0, color:'#EDE9FE', stroke:'#6D28D9' },
+  { cat:'Ventilation', id:'mua_roof',          label:'Makeup Air Unit',   icon:'💨', w:3.0, d:2.5, color:'#EDE9FE', stroke:'#6D28D9' },
+  { cat:'Ventilation', id:'roof_curb',         label:'Roof Curb',         icon:'⬜', w:2.0, d:2.0, color:'#F3F4F6', stroke:'#374151' },
+  { cat:'Ventilation', id:'duct_penetration',  label:'Duct Penetration',  icon:'⬆️', w:1.0, d:1.0, color:'#FEE2E2', stroke:'#C8102E' },
+  { cat:'Ventilation', id:'duct_run_roof',     label:'Duct Run (roof)',   icon:'➡️', w:4.0, d:0.5, color:'#DBEAFE', stroke:'#1B5FA8' },
+  { cat:'Existing',    id:'hvac_unit',         label:'Existing HVAC',     icon:'❄️', w:3.0, d:3.0, color:'#DBEAFE', stroke:'#0369A1' },
+  { cat:'Existing',    id:'parapet_wall',      label:'Parapet Wall',      icon:'🧱', w:8.0, d:0.5, color:'#D1D5DB', stroke:'#374151' },
+  { cat:'Existing',    id:'skylight',          label:'Skylight',          icon:'🔲', w:2.0, d:2.0, color:'#BAE6FD', stroke:'#0284C7' },
+  { cat:'Existing',    id:'drain_roof',        label:'Roof Drain',        icon:'🕳️', w:0.5, d:0.5, color:'#F3F4F6', stroke:'#6B7280' },
+  { cat:'Existing',    id:'gas_riser',         label:'Gas Riser',         icon:'🔴', w:0.5, d:0.5, color:'#FEE2E2', stroke:'#C8102E' },
+  { cat:'Structure',   id:'roof_column',       label:'Column / Support',  icon:'🏛️', w:1.0, d:1.0, color:'#D1D5DB', stroke:'#374151' },
+  { cat:'Structure',   id:'roof_edge',         label:'Roof Edge',         icon:'⬛', w:6.0, d:0.5, color:'#1A1D21', stroke:'#1A1D21' },
+];
+
 // ════════════════════════════════════════════════════════
 //  EQUIPMENT LIBRARY
 // ════════════════════════════════════════════════════════
@@ -256,6 +304,145 @@ var _itemIdSeq = 0;
 // ════════════════════════════════════════════════════════
 //  INIT
 // ════════════════════════════════════════════════════════
+
+// ════════════════════════════════════════════════════════
+//  VIEW MODE SWITCHING
+// ════════════════════════════════════════════════════════
+function setViewMode(mode) {
+  viewMode = mode;
+  var isRoof = mode === 'rooftop';
+
+  // Toggle button styles
+  document.getElementById('btnInterior').style.background = isRoof ? 'none' : 'var(--gold)';
+  document.getElementById('btnInterior').style.color      = isRoof ? 'rgba(255,255,255,.7)' : 'var(--ink)';
+  document.getElementById('btnRooftop').style.background  = isRoof ? 'var(--gold)' : 'none';
+  document.getElementById('btnRooftop').style.color       = isRoof ? 'var(--ink)' : 'rgba(255,255,255,.7)';
+
+  // Toggle address bar and room setup bar
+  document.getElementById('rooftopBar').style.display = isRoof ? 'flex' : 'none';
+  document.querySelector('.setup-bar:not(#rooftopBar)').style.display = isRoof ? 'none' : 'flex';
+
+  // Toggle map layer
+  document.getElementById('mapLayer').style.display = isRoof ? 'block' : 'none';
+
+  // Canvas transparency -- show map underneath in rooftop mode
+  document.getElementById('designCanvas').style.background = isRoof ? 'transparent' : '';
+
+  // Rebuild the palette for the current mode
+  buildPalette();
+  kdRender();
+  document.getElementById('sbMode').textContent = isRoof ? 'Rooftop — Select' : 'Select';
+}
+
+// ── GOOGLE MAPS SATELLITE LOAD ─────────────────────────
+function loadSatellite() {
+  var addr = document.getElementById('roofAddrInp').value.trim();
+  if (!addr) { alert('Enter the job address first.'); return; }
+  roofAddress = addr;
+  document.getElementById('mapStatus').textContent = 'Loading...';
+
+  if (!GOOGLE_MAPS_KEY) {
+    document.getElementById('mapStatus').textContent = 'No API key -- satellite unavailable. Draw on blank grid.';
+    initBlankRoofGrid();
+    return;
+  }
+
+  if (mapLoaded && mapInstance) {
+    // Already loaded -- just geocode the new address
+    geocodeAndCenter(addr);
+    return;
+  }
+
+  // Load the Maps JS API dynamically
+  var s = document.getElementById('gmapsScript');
+  s.src = 'https://maps.googleapis.com/maps/api/js?key='+GOOGLE_MAPS_KEY+'&callback=initMap';
+  mapLoaded = true;
+  window._pendingAddr = addr;
+}
+
+window.initMap = function() {
+  var mapDiv = document.getElementById('mapLayer');
+  mapInstance = new google.maps.Map(mapDiv, {
+    zoom: 20,
+    mapTypeId: 'satellite',
+    tilt: 0,                    // flat top-down view
+    disableDefaultUI: false,
+    zoomControl: true,
+    mapTypeControl: false,
+    streetViewControl: false,
+    rotateControl: true,
+    fullscreenControl: false,
+    gestureHandling: 'cooperative',
+  });
+  geocodeAndCenter(window._pendingAddr || roofAddress);
+};
+
+function geocodeAndCenter(addr) {
+  if (!window.google || !mapInstance) return;
+  var geocoder = new google.maps.Geocoder();
+  geocoder.geocode({ address: addr }, function(results, status) {
+    if (status === 'OK' && results[0]) {
+      mapInstance.setCenter(results[0].geometry.location);
+      mapInstance.setZoom(20);
+      document.getElementById('mapStatus').textContent = '✓ Satellite loaded — draw your overlay';
+    } else {
+      document.getElementById('mapStatus').textContent = 'Address not found. Try a more specific address.';
+    }
+  });
+}
+
+function initBlankRoofGrid() {
+  // No API key -- just use a blank canvas with rooftop palette
+  document.getElementById('mapStatus').textContent = 'Grid mode (no satellite) — enter key for satellite view';
+}
+
+// ── OVERRIDE buildPalette TO SHOW ROOFTOP PALETTE IN ROOFTOP MODE ──
+var _origBuildPalette = null;
+function buildPalette() {
+  var pal = document.getElementById('equipPalette');
+  if (!pal) return;
+  var lib = viewMode === 'rooftop' ? ROOF_EQUIPMENT : EQUIP_LIBRARY;
+  var cats = {};
+  lib.forEach(function(e){ if(!cats[e.cat]) cats[e.cat]=[]; cats[e.cat].push(e); });
+  var html = '';
+  Object.keys(cats).forEach(function(cat) {
+    html += '<div class="equip-cat">'+cat+'</div>';
+    cats[cat].forEach(function(e) {
+      html += '<div class="equip-item" draggable="true" '
+        + 'data-eid="'+e.id+'" '
+        + 'ondragstart="kdPaletteDragStart(event,\''+e.id+'\')">' +
+        + '<div class="ei-icon">'+e.icon+'</div>'
+        + '<div class="ei-label">'+e.label+'</div>'
+        + '<div class="ei-dims">'+e.w+' x '+e.d+'</div>'
+        + '</div>';
+    });
+  });
+  pal.innerHTML = html;
+}
+
+// ── OVERRIDE kdPaletteDragStart TO USE CORRECT LIBRARY ──
+function kdPaletteDragStart(ev, eid) {
+  var lib = viewMode === 'rooftop' ? ROOF_EQUIPMENT : EQUIP_LIBRARY;
+  var def = lib.find(function(e){ return e.id===eid; });
+  if (!def) return;
+  dragState = { type:'new', def:def };
+  ev.dataTransfer.effectAllowed = 'copy';
+  ev.dataTransfer.setData('text/plain', eid);
+  try {
+    var ghost = document.createElement('div');
+    ghost.style.cssText = 'position:fixed;top:-200px;left:-200px;background:#1B5FA8;color:#fff;padding:8px 14px;border-radius:8px;font-size:13px;font-weight:700;font-family:Barlow,sans-serif;white-space:nowrap;z-index:99999';
+    ghost.textContent = def.icon + '  ' + def.label;
+    document.body.appendChild(ghost);
+    ev.dataTransfer.setDragImage(ghost, 60, 20);
+    setTimeout(function(){ document.body.removeChild(ghost); }, 0);
+  } catch(e){}
+}
+
+// Make the canvas transparent when map is showing so satellite shows through
+// Only paint the background in interior mode
+var _origRender = null;
+
+
 window.addEventListener('load', function() {
   canvas = document.getElementById('designCanvas');
   ctx = canvas.getContext('2d');
