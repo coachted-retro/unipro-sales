@@ -145,6 +145,9 @@ function injectCSS() {
 /* ── Chat FAB ── */
 #tcFab{position:fixed;bottom:20px;right:20px;width:52px;height:52px;background:#C8102E;border-radius:50%;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:22px;box-shadow:0 4px 16px rgba(200,16,46,.4);z-index:8000;transition:transform .15s}
 #tcFab:hover{transform:scale(1.08)}
+#tcFabCompact:hover{opacity:.8}
+.tc-compact-mode #tcFab{display:none!important}
+.tc-compact-mode #tcFabCompact{display:flex!important}
 #tcBadge{position:absolute;top:-4px;right:-4px;background:#F2B705;color:#1A1D21;border-radius:99px;padding:1px 6px;font-size:10px;font-weight:900;font-family:'Barlow Condensed',sans-serif;display:none;min-width:18px;text-align:center}
 
 /* ── Chat Panel ── */
@@ -195,11 +198,27 @@ function injectCSS() {
 // ── HTML ─────────────────────────────────────────────────────
 function injectHTML() {
   if (document.getElementById('tcPanel')) return;
+  // Compact mode: FAB hidden, small button injected into top nav bar
+  if (window.TC_COMPACT_MODE) {
+    document.body.classList.add('tc-compact-mode');
+    // Try to inject into the existing top nav
+    setTimeout(function() {
+      var nav = document.querySelector('.topbar .tb-actions, .trn-inner, .nav, .topbar, header');
+      var compactBtn = document.getElementById('tcFabCompact');
+      if (nav && compactBtn) {
+        nav.appendChild(compactBtn);
+        compactBtn.style.display = 'flex';
+      }
+    }, 300);
+  }
 
   const html = `
 <button id="tcFab" onclick="tcToggle()" title="Team Messages">
   💬
   <span id="tcBadge"></span>
+</button>
+<button id="tcFabCompact" onclick="tcToggle()" title="Team Messages" style="display:none;background:none;border:none;cursor:pointer;font-size:18px;position:relative;padding:4px 8px;color:#fff;flex-shrink:0">
+  💬<span id="tcBadgeCompact" style="position:absolute;top:0;right:0;background:#C8102E;color:#fff;border-radius:50%;width:16px;height:16px;font-size:9px;font-weight:700;display:none;align-items:center;justify-content:center"></span>
 </button>
 
 <div id="tcPanel">

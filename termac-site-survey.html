@@ -645,25 +645,34 @@ function tsUpdateProgress() {
 // ════════════════════════════════════════════════════════
 //  AUTOFILL FROM CRM
 // ════════════════════════════════════════════════════════
+// Store autofill matches so onclick can look up by index instead of embedding JSON
+var _tsAutofillMatches = [];
+
 function tsAutofill(val) {
   var dd = document.getElementById('tsAutofillDrop');
-  if (!val || val.length < 2) { dd.style.display='none'; return; }
+  if (!val || val.length < 2) { dd.style.display='none'; _tsAutofillMatches=[]; return; }
   var q = val.toLowerCase();
-  var matches = [];
+  _tsAutofillMatches = [];
   ['leads','contacts','accounts','locations'].forEach(function(pool) {
     (crmLoad(pool)||[]).forEach(function(r) {
       var name = (r.business||r.name||'').toLowerCase();
-      if (name.includes(q)) matches.push({ r:r, pool:pool });
+      if (name.includes(q)) _tsAutofillMatches.push({ r:r, pool:pool });
     });
   });
-  if (!matches.length) { dd.style.display='none'; return; }
+  if (!_tsAutofillMatches.length) { dd.style.display='none'; return; }
   dd.style.display = '';
-  dd.innerHTML = matches.slice(0,6).map(function(m) {
+  dd.innerHTML = _tsAutofillMatches.slice(0,6).map(function(m, idx) {
     var r = m.r;
-    return '<div onclick="tsFillFromRecord('+JSON.stringify(r).replace(/</g,'&lt;').replace(/>/g,'&gt;')+',\''+m.pool+'\')" style="padding:10px 12px;border-bottom:1px solid var(--line);cursor:pointer;font-size:13px">'
+    return '<div onclick="tsPickAutofill('+idx+')" style="padding:10px 12px;border-bottom:1px solid var(--line);cursor:pointer;font-size:13px;-webkit-tap-highlight-color:rgba(0,0,0,.1)">'
       + '<strong>'+escH(r.business||r.name||'')+'</strong>'
       + '<div style="font-size:11px;color:var(--soft)">'+escH(r.phone||'')+' '+escH(r.address||r.city||'')+'</div></div>';
   }).join('');
+}
+
+function tsPickAutofill(idx) {
+  var m = _tsAutofillMatches[idx];
+  if (!m) return;
+  tsFillFromRecord(m.r, m.pool);
 }
 
 function tsFillFromRecord(r, pool) {
