@@ -557,6 +557,7 @@ function rcpRenderCallLog(el){
               <option>AllPro — New Build / Construction</option>
               <option>UniPro — Fire Suppression Inquiry</option>
               <option>UniPro — Existing System Question</option>
+              <option>Fire Extinguisher — Sales / Inspection</option>
             </optgroup>
             <optgroup label="General">
               <option>New Service Inquiry</option>
@@ -665,17 +666,19 @@ function rcpCallTypeChange(){
   const alert = document.getElementById('rcpComplaintAlert');
   const routeTo = document.getElementById('rcpRouteTo');
   const urgency = document.getElementById('rcpUrgency');
-  const AP_UP_TYPES = [
-    'AllPro — Hood / Fabrication Inquiry',
-    'AllPro — New Build / Construction',
-    'UniPro — Fire Suppression Inquiry',
-    'UniPro — Existing System Question',
-  ];
-  if(AP_UP_TYPES.indexOf(type) !== -1){
-    alert.style.display='none';
-    routeTo.value='Ted Scholl';
+  const ALLPRO_TYPES = ['AllPro — Hood / Fabrication Inquiry','AllPro — New Build / Construction'];
+  const PAUL_TYPES   = ['UniPro — Fire Suppression Inquiry','UniPro — Existing System Question'];
+  const TED_TYPES    = [...ALLPRO_TYPES, 'Fire Extinguisher — Sales / Inspection'];
+  if(TED_TYPES.indexOf(type) !== -1){
+    alert.style.display='none'; routeTo.value='Ted Scholl';
     var hint = document.getElementById('rcpTerritoryHint');
-    if(hint) hint.textContent = '→ AllPro / UniPro — Ted Scholl';
+    if(hint) hint.textContent = '→ AllPro / UniPro Sales — Ted Scholl';
+    return;
+  }
+  if(PAUL_TYPES.indexOf(type) !== -1){
+    alert.style.display='none'; routeTo.value='Paul Brahan';
+    var hint2 = document.getElementById('rcpTerritoryHint');
+    if(hint2) hint2.textContent = '→ UniPro Service — Paul Brahan';
     return;
   }
   if(type==='Complaint'){
@@ -776,8 +779,12 @@ var RCP_REP_EMAILS = {
 
 // Call types that are sales leads -- Paul (UniPro GM) should NOT receive
 // email for these; only operations/service calls that auto-route to him.
-var RCP_SALES_CALL_TYPES = [
-  'New Service Inquiry', 'Quote / Pricing', 'Sales Rep (Territory)'
+// Call types Paul (UniPro GM) should NOT receive --
+// inspection/extinguisher sales go to Ted.
+var RCP_PAUL_BLOCK_TYPES = [
+  'New Service Inquiry', 'Quote / Pricing', 'Sales Rep (Territory)',
+  'AllPro — Hood / Fabrication Inquiry', 'AllPro — New Build / Construction',
+  'Fire Extinguisher — Sales / Inspection',
 ];
 var RCP_ESCALATION_EMAILS = ['jkennedy@termac.com', 'tpittakas@termac.com', 'soreilly@termac.com', 'toreilly@termac.com'];
 
@@ -787,10 +794,14 @@ function rcpEmailRepOnCall(call) {
   var repEmail = RCP_REP_EMAILS[call.routeTo];
   if (!repEmail || typeof sendOrMailto !== 'function') return;
   // Paul Brahan is UniPro GM -- only gets ops/service calls, not sales leads.
-  if (call.routeTo === 'Paul Brahan' && RCP_SALES_CALL_TYPES.indexOf(call.callType) !== -1) return;
+  if (call.routeTo === 'Paul Brahan' && RCP_PAUL_BLOCK_TYPES.indexOf(call.callType) !== -1) return;
+
+  // Management always CC'd immediately on every routed call
+  var mgmtCC = RCP_ESCALATION_EMAILS.filter(function(e){ return e !== repEmail; });
+  var allRecipients = [repEmail].concat(mgmtCC);
 
   var callerLine = [call.callerName, call.company].filter(Boolean).join(' / ');
-  var subject = '\uD83D\uDCDE Incoming Call Routed to You \u2014 ' + (callerLine || 'Unknown Caller');
+  var subject = '\uD83D\uDCDE Call Routed to ' + (call.routeTo||'Rep') + ' \u2014 ' + (callerLine || 'Unknown Caller');
   var body = 'A call has been routed to you from Reception.\n\n'
     + 'Caller: ' + (call.callerName || '\u2014') + '\n'
     + 'Company: ' + (call.company || '\u2014') + '\n'
@@ -803,7 +814,7 @@ function rcpEmailRepOnCall(call) {
     + 'Notes:\n' + (call.notes || '(none)') + '\n\n'
     + 'Log in to Termac One to view the full record: https://sales.mytermac.com';
 
-  sendOrMailto(repEmail, subject, body);
+  sendOrMailto(allRecipients, subject, body);
 }
 
 function rcpLogCall(){
