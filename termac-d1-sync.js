@@ -862,36 +862,95 @@
     for (var i = 0; i < records.length; i++) { await d1Push(table, records[i]); }
   }
 
+  // ── IN-MEMORY CACHE (replaces localStorage as the read source) ───────────
+  // Keys: table name → array of records fetched from D1.
+  // All reads go here first. D1 is the source of truth.
+  // localStorage is used ONLY as a fallback when D1 is unreachable.
+  var _crmCache = {};
+  var _crmCacheTs = {};    // timestamp of last D1 fetch per table
+  var _crmCacheTTL = 30000; // 30 seconds -- re-fetch from D1 if stale
+
+  // Synchronous read -- returns cache if warm, falls back to localStorage.
+  // Async callers should use crmLoadAsync() for a guaranteed-fresh D1 read.
   function crmLoad(key) {
-    try { return JSON.parse(localStorage.getItem('termac_crm_' + key) || '[]'); }
-    catch (e) { return []; }
+    if (_crmCache[key] !== undefined) return _crmCache[key];
+    // Fallback: localStorage (stale data, acceptable for immediate render)
+    try {
+      var ls = JSON.parse(localStorage.getItem('termac_crm_' + key) || '[]');
+      _crmCache[key] = ls;
+      // Kick off a background D1 refresh
+      crmLoadAsync(key).catch(function(){});
+      return ls;
+    } catch (e) { return []; }
   }
 
+  // Async read -- always fetches fresh from D1, updates cache + localStorage fallback.
+  async function crmLoadAsync(key) {
+    if (!D1_SYNC_TABLES.includes(key)) return crmLoad(key);
+    var now = Date.now();
+    if (_crmCache[key] !== undefined && (now - (_crmCacheTs[key]||0)) < _crmCacheTTL) {
+      return _crmCache[key]; // cache is fresh
+    }
+    try {
+      var PAGE_SIZE = 500, MAX_PAGES = 60, all = [], page = 0;
+      for (; page < MAX_PAGES; page++) {
+        var res = await d1Fetch('GET', '/api/' + key + '?limit=' + PAGE_SIZE + '&offset=' + (page * PAGE_SIZE));
+        if (!res.ok || !Array.isArray(res.results) || !res.results.length) break;
+        res.results.forEach(function(r) {
+          if (r && r.id && (r.status !== 'deleted')) all.push(d1ReverseMap(key, r));
+        });
+        if (res.results.length < PAGE_SIZE) break;
+      }
+      _crmCache[key] = all;
+      _crmCacheTs[key] = Date.now();
+      // Keep localStorage as fallback for offline scenarios
+      try { localStorage.setItem('termac_crm_' + key, JSON.stringify(all)); } catch(e) {}
+      return all;
+    } catch(e) {
+      // D1 unreachable -- return cache or localStorage fallback
+      if (_crmCache[key] !== undefined) return _crmCache[key];
+      try { return JSON.parse(localStorage.getItem('termac_crm_' + key) || '[]'); } catch(e2) { return []; }
+    }
+  }
+
+  // Write: push to D1 immediately, update cache, update localStorage fallback.
   function crmSave(key, val) {
+    // Update in-memory cache immediately so reads are consistent
+    _crmCache[key] = Array.isArray(val) ? val : [];
+    _crmCacheTs[key] = Date.now();
+    // Update localStorage as offline fallback
     try { localStorage.setItem('termac_crm_' + key, JSON.stringify(val)); } catch (e) {}
+    // Push to D1 (source of truth)
     if (D1_SYNC_TABLES.includes(key)) {
       d1PushBatch(key, val).catch(function () {});
     }
   }
 
-  // Remove a single record by id from local storage and mark it deleted in D1.
-  // Callers pass the table key (e.g. 'leads') and the record id to remove.
+  // Invalidate cache for a table -- forces next crmLoad to re-fetch from D1.
+  function crmInvalidate(key) {
+    delete _crmCache[key];
+    delete _crmCacheTs[key];
+  }
+
+  // Remove a single record by id -- deletes from D1 and removes from cache.
   function crmDelete(key, id) {
+    // Remove from cache immediately
+    if (_crmCache[key]) {
+      _crmCache[key] = _crmCache[key].filter(function(r) { return r && r.id !== id; });
+    }
+    // Remove from localStorage fallback
     try {
       var pool = JSON.parse(localStorage.getItem('termac_crm_' + key) || '[]');
       pool = pool.filter(function(r) { return r && r.id !== id; });
       localStorage.setItem('termac_crm_' + key, JSON.stringify(pool));
     } catch (e) {}
-    // Push deletion to D1 by setting status=deleted so the server record
-    // is marked and hydration skips it on next load
+    // Mark deleted in D1 (source of truth)
     if (D1_SYNC_TABLES.includes(key)) {
-      try {
-        fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/' + key + '/' + id, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
-          body: JSON.stringify({ status: 'deleted', updated_at: Date.now() })
-        }).catch(function() {});
-      } catch(e) {}
+      fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/' + key + '/' + id, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+        body: JSON.stringify({ status: 'deleted', updated_at: Date.now() })
+      }).catch(function() {});
     }
   }
 
@@ -927,6 +986,10 @@
         if (res.results.length < PAGE_SIZE) break;
       }
       if (added > 0) {
+        // Update in-memory cache (D1 is source of truth)
+        _crmCache[table] = local;
+        _crmCacheTs[table] = Date.now();
+        // Keep localStorage as offline fallback only
         try { localStorage.setItem('termac_crm_' + table, JSON.stringify(local)); } catch (e) {}
       }
       return { records: local, added: added, removed: removed };
@@ -1426,6 +1489,8 @@
     d1ReverseMap: d1ReverseMap,
     crmSave: crmSave,
     crmLoad: crmLoad,
+    crmLoadAsync: crmLoadAsync,
+    crmInvalidate: crmInvalidate,
     crmDelete: crmDelete,
     SYNC_TABLES: D1_SYNC_TABLES,
     JOB_DIVISION_KEYS: JOB_DIVISION_KEYS,
@@ -1445,6 +1510,8 @@
   // functions rather than through a namespace.
   if (typeof global.crmSave !== 'function') global.crmSave = crmSave;
   if (typeof global.crmLoad !== 'function') global.crmLoad = crmLoad;
+  if (typeof global.crmLoadAsync !== 'function') global.crmLoadAsync = crmLoadAsync;
+  if (typeof global.crmInvalidate !== 'function') global.crmInvalidate = crmInvalidate;
   if (typeof global.crmDelete !== 'function') global.crmDelete = crmDelete;
   if (typeof global.sendMailAsMe !== 'function') global.sendMailAsMe = sendMailAsMe;
   if (typeof global.pushApptToOutlook !== 'function') global.pushApptToOutlook = pushApptToOutlook;
