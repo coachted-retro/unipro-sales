@@ -12,6 +12,7 @@
 
 const PUBLIC_BASE = 'https://pub-d1578de45ac446e1b94b0d5956f367e2.r2.dev';
 const ALLOWED_ORIGINS = [
+  'https://sales.mytermac.com',
   'https://unipro-sales.pages.dev',
   'https://my.termac.com',
   'https://coachted-retro.github.io',
@@ -59,12 +60,10 @@ export default {
     }
 
     // Build R2 key: {accountId}/{key}
-    // e.g. "ACC-90001/UniPro_photo_0"
     const r2Key = `${accountId}/${key}`;
 
     let bytes;
     try {
-      // Strip data URL prefix if present (data:image/jpeg;base64,...)
       const raw = base64.includes(',') ? base64.split(',')[1] : base64;
       bytes = Uint8Array.from(atob(raw), c => c.charCodeAt(0));
     } catch {
