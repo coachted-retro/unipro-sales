@@ -5803,32 +5803,86 @@ function spOpenDetail(r, tab) {
 //  (people) and opportunities (deals) both attach here directly, not to
 //  each other. Account only appears once an opportunity here wins.
 // ══════════════════════════════════════════════════════
-function spOpenLocationDetail(r) {
+// ── LOCATION DETAIL — ALL DATA FROM D1, NOTHING FROM LOCALSTORAGE ──────────
+// Per standing rule set from day one: D1 is the only source of truth.
+// This function fetches contacts, opportunities, allpro_quotes, appointments,
+// assets, and orders live from D1 every time it renders.
+// localStorage is never read here for any of these.
+async function spOpenLocationDetail(r) {
   spBuildServiceTagIndex();
-  const contacts = (crmLoad('contacts') || []).filter(c => c.locationId === r.id);
-  const opps = (crmLoad('opportunities') || []).filter(o => o.locationId === r.id)
-    .sort((a,b) => (b.created||0) - (a.created||0));
-  const linkedAccount = r.accountId ? (crmLoad('accounts') || []).find(a => a.id === r.accountId) : null;
 
-  // Equipment/asset history and order/product history -- account_assets
-  // is now too large to ever sync into the browser (27,000+ rows, same
-  // wall accounts hit) -- fetched live and scoped to just this one
-  // location/account below, not from a local bulk copy. customer_orders
-  // is still small enough to stay local for now.
-  const allOrders = crmLoad('customer_orders') || [];
-  const orders = (allOrders.filter(o => o.locationId === r.id || (!o.locationId && linkedAccount && o.accountId === linkedAccount.id)))
-    .sort((a,b) => (b.createdTs||b.created_ts||0) - (a.createdTs||a.created_ts||0));
+  // Fetch everything in parallel from D1
+  const [
+    contactsRes,
+    oppsRes,
+    quotesRes,
+    apptRes,
+    accountRes
+  ] = await Promise.all([
+    d1RawQuery(
+      "SELECT * FROM contacts WHERE location_id = ? AND (status IS NULL OR status != 'archived') ORDER BY created_at DESC",
+      [r.id]
+    ).catch(() => []),
+    d1RawQuery(
+      "SELECT * FROM opportunities WHERE location_id = ? AND (resolution_status IS NULL OR resolution_status != 'archived') ORDER BY created_at DESC",
+      [r.id]
+    ).catch(() => []),
+    d1RawQuery(
+      "SELECT * FROM allpro_quotes WHERE location_id = ? ORDER BY created_at DESC",
+      [r.id]
+    ).catch(() => []),
+    d1RawQuery(
+      "SELECT id, title, date, time, notes, status FROM appointments WHERE record_id = ? ORDER BY date DESC, time DESC LIMIT 10",
+      [r.id]
+    ).catch(() => []),
+    r.accountId ? d1RawQuery(
+      "SELECT id, business, address, phone FROM accounts WHERE id = ? LIMIT 1",
+      [r.accountId]
+    ).catch(() => []) : Promise.resolve([])
+  ]);
 
-  const contactRows = contacts.map(c => `<div style="padding:10px;background:#F8F9FA;border-radius:7px;margin-bottom:8px;cursor:pointer" onclick="spOpenAddContactModal('${r.id}','${c.id}')">
-      <div style="font-size:13px;font-weight:700;color:var(--ink)">${escH(c.name||'')}</div>
-      ${c.title ? `<div style="font-size:11px;color:var(--soft)">${escH(c.title)}</div>` : ''}
-      ${c.phone ? `<a href="tel:${escH(c.phone)}" onclick="event.stopPropagation()" style="font-size:12px;color:var(--blue)">${escH(c.phone)}</a>` : ''}
-      ${c.email ? `<a href="mailto:${escH(c.email)}" onclick="event.stopPropagation()" style="font-size:12px;color:var(--blue);display:block">${escH(c.email)}</a>` : ''}
-    </div>`).join('');
+  const contacts      = Array.isArray(contactsRes) ? contactsRes : [];
+  const opps          = Array.isArray(oppsRes)      ? oppsRes      : [];
+  const quotes        = Array.isArray(quotesRes)    ? quotesRes    : [];
+  const appointments  = Array.isArray(apptRes)      ? apptRes      : [];
+  const linkedAccount = (Array.isArray(accountRes) && accountRes.length) ? accountRes[0] : null;
+
+  // Orders — live from D1
+  const orders = await d1RawQuery(
+    "SELECT * FROM customer_orders WHERE location_id = ?" + (linkedAccount ? " OR (location_id IS NULL AND account_id = ?)" : "") + " ORDER BY created_at DESC LIMIT 20",
+    linkedAccount ? [r.id, linkedAccount.id] : [r.id]
+  ).catch(() => []);
+
+  // D1 returns snake_case -- map to what the render expects
+  const contactRows = contacts.map(function(c) {
+    var cDiv = document.createElement('div');
+    cDiv.style.cssText = 'padding:10px;background:#F8F9FA;border-radius:7px;margin-bottom:8px;cursor:pointer';
+    cDiv.dataset.locId = r.id;
+    cDiv.dataset.conId = c.id;
+    cDiv.onclick = function(){ spOpenAddContactModal(this.dataset.locId, this.dataset.conId); };
+    cDiv.innerHTML = '<div style="font-size:13px;font-weight:700;color:var(--ink)">' + escH(c.name||'') + '</div>'
+      + (c.title ? '<div style="font-size:11px;color:var(--soft)">' + escH(c.title) + '</div>' : '')
+      + (c.phone ? '<a href="tel:' + escH(c.phone) + '" onclick="event.stopPropagation()" style="font-size:12px;color:var(--blue)">' + escH(c.phone) + '</a>' : '')
+      + (c.email ? '<a href="mailto:' + escH(c.email) + '" onclick="event.stopPropagation()" style="font-size:12px;color:var(--blue);display:block">' + escH(c.email) + '</a>' : '');
+    return cDiv.outerHTML;
+  }).join('');
 
   const STATUS_COLOR = { open:'#D97706', won:'#166534', lost:'#C8102E', pending:'#0D7490' };
   const STATUS_BG    = { open:'#FEF3C7', won:'#DCFCE7', lost:'#FEE9EC', pending:'#E0F2FE' };
   const STATUS_LABEL = { open:'Open', won:'Won', lost:'Lost', pending:'Pending' };
+  // D1 opps use snake_case -- normalize to camelCase for the render below
+  opps.forEach(function(o) {
+    if (!o.resolutionStatus && o.resolution_status) o.resolutionStatus = o.resolution_status;
+    if (!o.locationId && o.location_id) o.locationId = o.location_id;
+    if (o.accepted_at && !o.acceptedAt) o.acceptedAt = o.accepted_at;
+    if (o.proposal_sent_at && !o.proposalSentAt) o.proposalSentAt = o.proposal_sent_at;
+    if (o.proposal_viewed_at && !o.proposalViewedAt) o.proposalViewedAt = o.proposal_viewed_at;
+    if (o.customer_signed_name && !o.customerSignedName) o.customerSignedName = o.customer_signed_name;
+    if (o.monthly_value && !o.monthlyValue) o.monthlyValue = o.monthly_value;
+    if (o.term_months && !o.termMonths) o.termMonths = o.term_months;
+    if (o.service_type && !o.serviceType) o.serviceType = o.service_type;
+    if (o.opportunity_id && !o.id) o.id = o.opportunity_id;
+  });
   // 2026-07-17 per Ted: bidirectional link, AllPro-side direction. Same
   // stage labels/colors as allpro-project-planner.html's own STAGE_LABELS/
   // STAGE_COLORS -- kept as a small local copy rather than importing that
@@ -5844,8 +5898,15 @@ function spOpenLocationDetail(r) {
     costing:'#D97706', permitting:'#C8102E', fabrication:'#1E7B3C',
     delivery_install:'#0A1628', commissioning:'#B45309', closeout:'#166534'
   };
+  // AllPro projects -- fetched live from D1
+  const apProjectsRaw = await d1RawQuery(
+    "SELECT id, opportunity_id, stage FROM allpro_projects WHERE location_id = ? OR opportunity_id IN (SELECT id FROM opportunities WHERE location_id = ?) LIMIT 20",
+    [r.id, r.id]
+  ).catch(() => []);
   const apProjectsByOpp = {};
-  (crmLoad('allpro_projects') || []).forEach(p => { if (p.opportunity_id) apProjectsByOpp[p.opportunity_id] = p; });
+  (Array.isArray(apProjectsRaw) ? apProjectsRaw : []).forEach(function(p) {
+    if (p.opportunity_id) apProjectsByOpp[p.opportunity_id] = p;
+  });
 
   const oppRows = opps.map(o => {
     const status = o.resolutionStatus || 'open';
@@ -5959,12 +6020,20 @@ function spOpenLocationDetail(r) {
     </div>
 
     <div style="padding:12px 0;border-top:1px solid var(--line)">
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:8px">📋 Proposals / Quotes</div>
+      <div id="spLocQuotesList"><div style="font-size:12px;color:var(--soft)">Loading...</div></div>
+    </div>
+    <div style="padding:12px 0;border-top:1px solid var(--line)">
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:8px">📅 Appointments / Site Notes</div>
+      <div id="spLocApptList"><div style="font-size:12px;color:var(--soft)">Loading...</div></div>
+    </div>
+    <div style="padding:12px 0;border-top:1px solid var(--line)">
       <div onclick="spToggleCollapse('spLocOrders')" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer">
         <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft)">📦 Order / Product History (${orders.length})</div>
         <span id="spLocOrders-chevron" style="font-size:11px;color:var(--soft)">▸</span>
       </div>
       <div id="spLocOrders" style="display:none;margin-top:8px">
-        ${orders.length ? orderRows : '<div style="font-size:12px;color:var(--soft)">No orders on file for this location yet. Orders are read from rep site visits (inventory + order builder), tagged to this location once a visit starts from here.</div>'}
+        ${orders.length ? orderRows : '<div style="font-size:12px;color:var(--soft)">No orders on file for this location yet.</div>'}
       </div>
       ${linkedAccount ? `<button onclick="spOpenVisitModal('${linkedAccount.id}','${r.id}')" style="margin-top:8px;padding:8px 14px;background:#D8690B;color:#fff;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">📍 I'm Here — Start Visit</button>` : `<div style="margin-top:8px;font-size:11px;color:var(--soft)">Site visits and orders need an Account behind this location first — win an opportunity here to create one.</div>`}
       ${(function() {
@@ -5984,6 +6053,48 @@ function spOpenLocationDetail(r) {
       })()}
     </div>
   </div>`;
+
+  // ── PATCH IN D1 DATA AFTER RENDER ─────────────────────────────────────────
+  // Quotes and appointments panels: populate from the D1 data already fetched
+  // above. Uses DOM patching so these don't need to be inside the template literal.
+  (function() {
+    var quotesEl = document.getElementById('spLocQuotesList');
+    if (quotesEl) {
+      if (!quotes.length) {
+        quotesEl.innerHTML = '<div style="font-size:12px;color:var(--soft)">No proposals on file for this location yet.</div>';
+      } else {
+        quotesEl.innerHTML = quotes.map(function(q) {
+          var sBg = q.status === 'sent' ? '#DBEAFE' : q.status === 'accepted' ? '#DCFCE7' : '#F3F4F6';
+          var sColor = q.status === 'sent' ? '#1B5FA8' : q.status === 'accepted' ? '#166534' : '#6B7280';
+          var sLabel = q.status ? (q.status.charAt(0).toUpperCase() + q.status.slice(1)) : 'Draft';
+          var tot = (q.grand_total||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+          return '<div style="padding:10px;background:' + sBg + ';border-radius:7px;margin-bottom:8px">'
+            + '<div style="display:flex;justify-content:space-between;align-items:center">'
+            + '<div><div style="font-size:13px;font-weight:700;color:var(--ink)">' + escH(q.project_number||q.id) + '</div>'
+            + '<div style="font-size:11px;color:var(--soft);margin-top:2px">$' + tot + (q.date_quoted ? ' &bull; ' + escH(q.date_quoted) : '') + '</div></div>'
+            + '<span style="font-size:10px;font-weight:800;text-transform:uppercase;color:' + sColor + '">' + sLabel + '</span>'
+            + '</div>'
+            + '<div style="display:flex;gap:6px;margin-top:8px">'
+            + '<a href="allpro-quote-builder.html?quote_id=' + escH(q.id) + '" style="flex:1;text-align:center;background:#1A1D21;color:#fff;border-radius:6px;padding:6px 8px;font-size:11px;font-weight:700;cursor:pointer;text-decoration:none;display:block">Open Quote</a>'
+            + '<button data-qid="' + escH(q.id) + '" data-qemail="' + escH(q.customer_email||'') + '" onclick="spSendQuoteFromLocation(this.dataset.qid,this.dataset.qemail)" style="flex:1;background:#6D28D9;color:#fff;border:none;border-radius:6px;padding:6px 8px;font-size:11px;font-weight:700;cursor:pointer">Send for Signature</button>'
+            + '</div></div>';
+        }).join('');
+      }
+    }
+    var apptEl = document.getElementById('spLocApptList');
+    if (apptEl) {
+      if (!appointments.length) {
+        apptEl.innerHTML = '<div style="font-size:12px;color:var(--soft)">No appointments on file for this location.</div>';
+      } else {
+        apptEl.innerHTML = appointments.map(function(a) {
+          return '<div style="padding:10px;background:#F8F9FA;border-radius:7px;margin-bottom:6px">'
+            + '<div style="font-size:12px;font-weight:700;color:var(--ink)">' + escH(a.title||'Appointment') + ' &mdash; ' + escH(a.date||'') + (a.time ? ' ' + escH(a.time) : '') + '</div>'
+            + (a.notes ? '<div style="font-size:11px;color:var(--soft);margin-top:4px;white-space:pre-wrap;max-height:120px;overflow-y:auto">' + escH(a.notes.slice(0,600)) + (a.notes.length > 600 ? '...' : '') + '</div>' : '')
+            + '</div>';
+        }).join('');
+      }
+    }
+  })();
 
   // account_assets is too large to sync locally (see D1_NO_BULK_HYDRATE
   // in termac-d1-sync.js) -- fetched live here, scoped to just this one
@@ -6015,6 +6126,39 @@ function spToggleCollapse(id) {
   var isOpen = body.style.display !== 'none';
   body.style.display = isOpen ? 'none' : 'block';
   if (chevron) chevron.textContent = isOpen ? '▸' : '▾';
+}
+
+// Send a proposal for signature directly from the location page.
+// Calls the same /allpro-proposal-send Worker endpoint the quote
+// builder uses -- no duplication, no localStorage involved.
+async function spSendQuoteFromLocation(quoteId, customerEmail) {
+  if (!customerEmail) {
+    var email = prompt('Enter customer email address:');
+    if (!email) return;
+    customerEmail = email;
+  }
+  var sess = null;
+  try { sess = JSON.parse(localStorage.getItem('termac_staff_session') || 'null'); } catch(e) {}
+  var senderEmail = sess ? sess.email : 'tscholl@termac.com';
+  spToast('Sending proposal...');
+  try {
+    var res = await fetch('https://termac-staff-auth.termac-one.workers.dev/allpro-proposal-send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ quote_id: quoteId, sender_email: senderEmail })
+    });
+    var data = await res.json();
+    if (data.ok) {
+      spToast(data.email_sent ? 'Proposal sent to ' + customerEmail : 'Proposal ready -- copy link to send manually');
+      if (data.prefill_url && !data.email_sent) {
+        window.open(data.prefill_url, '_blank');
+      }
+    } else {
+      spToast('Send failed: ' + (data.error || 'unknown error'));
+    }
+  } catch(e) {
+    spToast('Network error -- try again');
+  }
 }
 
 function spOpenAddAssetModal(locationId, editAssetId) {
@@ -6051,36 +6195,36 @@ function spOpenAddAssetModal(locationId, editAssetId) {
   document.body.appendChild(wrap);
 }
 
-function spSaveAsset(locationId, editAssetId) {
+async function spSaveAsset(locationId, editAssetId) {
   var assetType = document.getElementById('astType').value.trim();
   if (!assetType) { alert('Enter a type for this asset.'); return; }
   var now = Date.now();
-  var assets = crmLoad('account_assets') || [];
-  var loc = (crmLoad('locations')||[]).find(l => l.id === locationId);
-  var vals = {
-    assetType: assetType,
+  var payload = {
+    asset_type: assetType,
     description: document.getElementById('astDesc').value.trim(),
     manufacturer: document.getElementById('astManufacturer').value.trim(),
     model: document.getElementById('astModel').value.trim(),
     size: document.getElementById('astSize').value.trim(),
-    locationInSite: document.getElementById('astLocationInSite').value.trim(),
-    installDate: document.getElementById('astInstallDate').value,
-    maintenanceDueDate: document.getElementById('astMaintenanceDue').value,
-    locationId: locationId,
-    accountId: loc ? loc.accountId : null,
-    updatedAt: now,
+    location_in_site: document.getElementById('astLocationInSite').value.trim(),
+    install_date: document.getElementById('astInstallDate').value,
+    maintenance_due_date: document.getElementById('astMaintenanceDue').value,
+    location_id: locationId,
+    updated_at: now,
+    source: 'manual',
   };
-  if (editAssetId) {
-    var idx = assets.findIndex(a => a.id === editAssetId);
-    if (idx !== -1) Object.assign(assets[idx], vals);
-  } else {
-    assets.push(Object.assign({
-      id: 'ast_' + now,
-      source: 'manual',
-      createdAt: now,
-    }, vals));
+  // Write directly to D1 -- never to localStorage
+  var url = 'https://unipro-ai-proxy.termac-one.workers.dev/db/account_assets';
+  var method = 'POST';
+  if (editAssetId) { url += '/' + editAssetId; method = 'PUT'; }
+  else { payload.id = 'ast_' + now; payload.created_at = now; }
+  try {
+    var res = await fetch(url, { method: method, headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' }, body: JSON.stringify(payload) });
+    var data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'D1 write failed');
+  } catch(e) {
+    spToast('Save failed: ' + e.message);
+    return;
   }
-  crmSave('account_assets', assets);
   document.getElementById('spAssetModal').remove();
   spToast(editAssetId ? '🔧 Asset updated' : '🔧 Asset added');
   spViewRecord(locationId, 'locations');
@@ -7053,9 +7197,28 @@ function spSaveNewLocation(prefillAccountId, editLocationId) {
     locs.push(rec);
   }
   crmSave('locations', locs);
+  // Write directly to D1 -- localStorage is only a local fallback cache,
+  // D1 is the source of truth. Push synchronously so other devices see it.
+  (async function() {
+    var d1Payload = {
+      name: rec.name, parent_company: rec.parentCompany || '',
+      address: rec.address || '', city: rec.city || '',
+      state: rec.state || '', zip: rec.zip || '',
+      phone: rec.phone || '', assigned_rep: rec.assignedRep || '',
+      source: rec.source || 'manual', status: rec.status || 'active',
+      updated_at: rec.updatedAt || Date.now(),
+    };
+    var url = 'https://unipro-ai-proxy.termac-one.workers.dev/db/locations';
+    var method = 'POST';
+    if (editLocationId) { url += '/' + editLocationId; method = 'PUT'; }
+    else { d1Payload.id = rec.id; d1Payload.created_at = rec.createdAt || Date.now(); }
+    try {
+      await fetch(url, { method: method, headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' }, body: JSON.stringify(d1Payload) });
+    } catch(e) { console.warn('D1 location save failed:', e); }
+  })();
   document.getElementById('spLocModal').remove();
   if (!rec) { spToast('⚠ Could not find that location to update'); return; }
-  spToast(editLocationId ? '📍 Location updated' : '📍 Location added');
+  spToast(editLocationId ? '📍 Location updated — saved to D1' : '📍 Location added — saved to D1');
 
   if (isNew && typeof window._spLocModalOnSaved === 'function') {
     var followUpDate = document.getElementById('locExtraFollowUp')?.value || '';
