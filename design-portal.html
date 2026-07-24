@@ -6,6 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Kitchen Designer — AllPro — Termac One</title>
 <link rel="icon" href="icons/icon-main-32.png">
+<script type="module" src="https://ajax.googleapis.com/ajax/libs/@googlemaps/extended-component-library/0.6.15/index.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;800;900&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -108,9 +109,9 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);height:100dvh
 <!-- ROOFTOP ADDRESS BAR (hidden until rooftop mode) -->
 <div class="setup-bar" id="rooftopBar" style="display:none;background:#111928">
   <label style="color:rgba(255,255,255,.6);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em">Job Address</label>
-  <input class="setup-inp" id="roofAddrInp" type="text" placeholder="e.g. 3904 Frankford Ave, Philadelphia PA" style="width:320px"
-    onkeydown="if(event.key==='Enter') loadSatellite()">
-  <button onclick="loadSatellite()" style="background:var(--gold);border:none;color:var(--ink);border-radius:6px;padding:5px 14px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">Load Satellite</button>
+  <gmpx-api-loader key="AIzaSyCkuGQijhzaeSJDRxOHr7wdGeNWcngBEnE" solution-channel="GMP_GE_placepicker_v2"></gmpx-api-loader>
+  <gmpx-place-picker id="roofPlacePicker" placeholder="Start typing the address..." style="width:340px;--gmpx-color-surface:#1A2840;--gmpx-color-on-surface:rgba(255,255,255,.9);--gmpx-color-primary:var(--gold);border-radius:6px;font-size:13px"></gmpx-place-picker>
+  <button onclick="loadSatelliteFromPicker()" style="background:var(--gold);border:none;color:var(--ink);border-radius:6px;padding:5px 14px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">Load Satellite</button>
   <span id="mapStatus" style="font-size:11px;color:rgba(255,255,255,.4);margin-left:8px"></span>
   <div style="margin-left:auto;font-size:11px;color:rgba(255,255,255,.4)">Draw overlay on top of satellite view • same tools apply</div>
 </div>
@@ -335,8 +336,33 @@ function setViewMode(mode) {
 }
 
 // ── GOOGLE MAPS SATELLITE LOAD ─────────────────────────
-function loadSatellite() {
-  var addr = document.getElementById('roofAddrInp').value.trim();
+function loadSatelliteFromPicker() {
+  var picker = document.getElementById('roofPlacePicker');
+  var addr = '';
+  if (picker && picker.value && picker.value.formattedAddress) {
+    addr = picker.value.formattedAddress;
+    roofAddress = addr;
+    // If map already exists and we have coordinates, jump straight there
+    var loc = picker.value.location;
+    if (loc && mapInstance) {
+      mapInstance.setCenter(loc);
+      mapInstance.setZoom(20);
+      document.getElementById('mapLayer').style.display = 'block';
+      document.getElementById('mapStatus').textContent = '\u2713 Satellite loaded \u2014 draw your overlay';
+      return;
+    }
+  } else if (picker && picker.inputElement) {
+    addr = picker.inputElement.value.trim();
+  }
+  if (!addr) { alert('Select or type an address first.'); return; }
+  loadSatellite(addr);
+}
+
+function loadSatellite(addr) {
+  if (!addr) {
+    var picker = document.getElementById('roofPlacePicker');
+    addr = (picker && picker.inputElement) ? picker.inputElement.value.trim() : '';
+  }
   if (!addr) { alert('Enter the job address first.'); return; }
   roofAddress = addr;
   document.getElementById('mapStatus').textContent = 'Loading...';
