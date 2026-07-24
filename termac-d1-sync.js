@@ -52,7 +52,10 @@
     'trade_partners', 'trade_partner_referrals', 'trade_partner_bids',
     'reference_library', 'allpro_rate_tables', 'notifications',
     'accounts_payable', 'expense_reports', 'customer_orders', 'reorder_requests',
-    'warehouse_alerts', 'debriefs', 'rcp_calls', 'account_assets', 'tasks', 'st_services', 'st_deficiencies'];
+    'warehouse_alerts', 'debriefs', 'rcp_calls', 'account_assets', 'tasks', 'st_services', 'st_deficiencies',
+    // 2026-07-24 localStorage-to-D1 migration -- full platform audit
+    'unipro_jobs', 'route_debriefs', 'office_queue', 'callback_queue',
+    'reception_calls', 'tech_referrals', 'hot_lead_notifs', 'payables', 'hr_announcements'];
 
   // 2026-07-20 per Ted: accounts grew past 23,000 rows -- full-table
   // hydration into one localStorage blob was silently failing every
