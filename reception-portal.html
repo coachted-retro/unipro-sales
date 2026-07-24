@@ -737,6 +737,46 @@ function rcpFindRecordByPhone(phone){
   return null;
 }
 
+// Rep name -> Termac email. Used for immediate call-routing emails and
+// 1-hour escalation to management.
+var RCP_REP_EMAILS = {
+  'Brad Fickes':   'bfickes@termac.com',
+  'Chris Carzo':   'ccarzo@termac.com',
+  'Dan Rini':      'drini@termac.com',
+  'Joe McDonnell': 'jmcdonnell@termac.com',
+  'Matt Belz':     'mbelz@termac.com',
+  "TJ O'Reilly":   'toreilly@termac.com',
+  'Ted Scholl':    'tscholl@termac.com',
+  'Todd Grill':    'tgrill@termac.com',
+  'Tom Jordan':    'tjordan@termac.com',
+  'Tom Pittakas':  'tpittakas@termac.com',
+  'Paul Brahan':   'pbrahan@termac.com',
+};
+var RCP_ESCALATION_EMAILS = ['jkennedy@termac.com', 'tpittakas@termac.com'];
+
+// Send an immediate email to the routed rep and queue a 1-hour escalation
+// to Jim + Tom P if no one marks the call as reached.
+function rcpEmailRepOnCall(call) {
+  var repEmail = RCP_REP_EMAILS[call.routeTo];
+  if (!repEmail || typeof sendOrMailto !== 'function') return;
+
+  var callerLine = [call.callerName, call.company].filter(Boolean).join(' / ');
+  var subject = '\uD83D\uDCDE Incoming Call Routed to You \u2014 ' + (callerLine || 'Unknown Caller');
+  var body = 'A call has been routed to you from Reception.\n\n'
+    + 'Caller: ' + (call.callerName || '\u2014') + '\n'
+    + 'Company: ' + (call.company || '\u2014') + '\n'
+    + 'Phone: ' + (call.phone || '\u2014') + '\n'
+    + 'Address: ' + (call.address || '\u2014') + '\n'
+    + 'Call Type: ' + (call.callType || '\u2014') + '\n'
+    + 'Urgency: ' + (call.urgency || 'Normal') + '\n'
+    + 'Logged by: ' + (call.loggedBy || 'Reception') + '\n'
+    + 'Time: ' + new Date(call.ts).toLocaleString('en-US', {weekday:'short',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) + '\n\n'
+    + 'Notes:\n' + (call.notes || '(none)') + '\n\n'
+    + 'Log in to Termac One to view the full record: https://sales.mytermac.com';
+
+  sendOrMailto(repEmail, subject, body);
+}
+
 function rcpLogCall(){
   const name    = document.getElementById('rcpCallerName').value.trim();
   const company = document.getElementById('rcpCallerCompany').value.trim();
@@ -837,6 +877,8 @@ function rcpLogCall(){
         loggedBy: (_rcpUser && _rcpUser.name) || 'Reception'
       });
     }
+    // Immediate email to the assigned rep so they catch it even off-platform.
+    rcpEmailRepOnCall(call);
   }
   rcpToast('Call logged ✓');
   rcpClearForm();
@@ -1038,7 +1080,7 @@ function rcpRenderCallbacks(){
     '<div class="rcp-card" style="padding:0;overflow:hidden;margin-bottom:14px">'
     + '<div style="padding:12px 16px;border-bottom:1px solid var(--line);background:#F8F9FA;display:flex;align-items:center;justify-content:space-between">'
     + '<span style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--soft)">Waiting on Callback \u2014 '+waiting.length+'</span>'
-    + '<span style="font-size:11px;color:var(--soft)">Auto-escalates to management at 2h and 4h</span></div>'
+    + '<span style="font-size:11px;color:var(--soft)">Emails rep immediately \u2014 escalates to management at 1h and 4h</span></div>'
     + (waiting.length
       ? '<table style="width:100%;border-collapse:collapse"><thead><tr style="background:#F8F9FA">'
         + ['Caller','Phone','Routed To','Waiting','Actions'].map(function(h){return '<th style="padding:7px 12px;font-size:10px;font-weight:700;color:var(--soft);text-align:left;border-bottom:1px solid var(--line)">'+h+'</th>';}).join('')
@@ -1077,14 +1119,29 @@ function rcpCheckCallbackEscalations(){
   q.forEach(function(c){
     if(c.status!=='waiting') return;
     var mins = Math.floor((Date.now()-c.ts)/60000);
-    if(mins >= 120 && !c.escalated){
+    if(mins >= 60 && !c.escalated){
       c.escalated = true; changed = true;
+      // In-app alert to management
       if (typeof notifySendCrossDevice === 'function') ['Manager','Jim Kennedy'].forEach(function(who){
         notifySendCrossDevice({ id:'CBE'+Date.now()+who.slice(0,2), recipientName: who, ts: Date.now(),
           caller: c.caller, company: c.company, phone: c.phone,
-          notes: '\u26a0 Callback overdue 2h+: routed to '+c.routedTo+', customer not yet reached.',
+          notes: '\u26a0 Callback overdue 1h+: routed to '+c.routedTo+', customer not yet reached.',
           source: 'Callback Escalation', loggedBy: 'Reception' });
       });
+      // Email escalation to Jim + Tom P
+      if (typeof sendOrMailto === 'function') {
+        var esc1Subject = '\u26a0 Unresponded Call \u2014 1 Hour \u2014 ' + (c.caller || c.company || 'Unknown');
+        var esc1Body = 'A routed call has not been responded to after 1 hour.\n\n'
+          + 'Caller: ' + (c.caller || '\u2014') + '\n'
+          + 'Company: ' + (c.company || '\u2014') + '\n'
+          + 'Phone: ' + (c.phone || '\u2014') + '\n'
+          + 'Routed to: ' + (c.routedTo || '\u2014') + '\n'
+          + 'Call logged: ' + new Date(c.ts).toLocaleString('en-US', {weekday:'short',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) + '\n'
+          + 'Now waiting: ' + mins + ' minutes\n\n'
+          + 'Notes:\n' + (c.notes || '(none)') + '\n\n'
+          + 'Log in to Termac One to view the callback queue: https://sales.mytermac.com/reception-portal';
+        sendOrMailto(RCP_ESCALATION_EMAILS, esc1Subject, esc1Body);
+      }
     }
     if(mins >= 240 && !c.escalated2){
       c.escalated2 = true; changed = true;
@@ -1094,6 +1151,19 @@ function rcpCheckCallbackEscalations(){
           notes: '\ud83d\udea8 Callback overdue 4h+: routed to '+c.routedTo+'. Customer still waiting \u2014 needs immediate attention.',
           source: 'Callback Escalation', loggedBy: 'Reception' });
       });
+      if (typeof sendOrMailto === 'function') {
+        var esc2Subject = '\uD83D\uDEA8 URGENT: Unresponded Call \u2014 4 Hours \u2014 ' + (c.caller || c.company || 'Unknown');
+        var esc2Body = 'URGENT: A routed call has still not been responded to after 4 hours.\n\n'
+          + 'Caller: ' + (c.caller || '\u2014') + '\n'
+          + 'Company: ' + (c.company || '\u2014') + '\n'
+          + 'Phone: ' + (c.phone || '\u2014') + '\n'
+          + 'Routed to: ' + (c.routedTo || '\u2014') + '\n'
+          + 'Call logged: ' + new Date(c.ts).toLocaleString('en-US', {weekday:'short',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) + '\n'
+          + 'Now waiting: ' + mins + ' minutes\n\n'
+          + 'Notes:\n' + (c.notes || '(none)') + '\n\n'
+          + 'Immediate attention required. View the callback queue: https://sales.mytermac.com/reception-portal';
+        sendOrMailto(RCP_ESCALATION_EMAILS, esc2Subject, esc2Body);
+      }
     }
   });
   if(changed) rcpCBSave(q);
