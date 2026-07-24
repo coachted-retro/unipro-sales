@@ -214,16 +214,6 @@ async function apGoHome() {
     <button class="btn btn-gold" onclick="openNewProjectModal()">+ New Project</button>
   </div>
 
-  <div class="kpi-row" id="apKPIs"></div>
-
-  <!-- Jim Kennedy Billing KPI Panel -->
-  <div id="apBillingKPIs" style="margin-bottom:16px"></div>
-
-  <!-- Billing Tracker (Jim's project tracker view) -->
-  <div id="apBillingTracker" style="display:none;margin-bottom:16px"></div>
-
-  <div class="ap-stage-chart" id="apStageChart"></div>
-
   <div class="filter-row" id="apTypeFilters"></div>
 
   <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
@@ -231,11 +221,19 @@ async function apGoHome() {
     <button class="btn" id="apViewBtn-board" onclick="setProjectView('board')" style="background:var(--ink);color:#fff">🗂 Board</button>
     <button class="btn" id="apViewBtn-list" onclick="setProjectView('list')" style="background:#fff;border:1.5px solid var(--line);color:var(--ink)">📋 List</button>
     <button class="btn" id="apViewBtn-billing" onclick="setProjectView('billing')" style="background:#fff;border:1.5px solid var(--line);color:var(--ink)">💰 Billing Tracker</button>
-    <button class="btn" id="apViewBtn-list" onclick="setProjectView('list')" style="background:#fff;border:1.5px solid var(--line);color:var(--ink)">📋 List</button>
   </div>
 
   <div class="kanban" id="apKanban"></div>
   <div id="apProjectList" style="display:none"></div>
+
+  <!-- KPIs below the board so the board is always the first thing you see -->
+  <div class="kpi-row" id="apKPIs" style="margin-top:16px"></div>
+
+  <!-- Jim Kennedy Billing KPI Panel -->
+  <div id="apBillingKPIs" style="margin-bottom:16px"></div>
+
+  <!-- Billing Tracker -->
+  <div id="apBillingTracker" style="display:none;margin-bottom:16px"></div>
 
 </div>
 </div>
@@ -1843,33 +1841,109 @@ function renderCombinedInstallsRows(el, projects, acctName, sqAll, userName) {
     return;
   }
 
-  var rows = projects.map(function(p) {
-    var sq = sqAll.filter(function(r){ return r.id === p.linked_scheduler_id; })[0];
-    var outstanding = [];
-    if (!p.linked_scheduler_id) outstanding.push('UniPro job not created yet');
-    else if (!sq) outstanding.push('Linked job missing');
-    else {
-      if (!sq.tech_id) outstanding.push('No tech assigned');
-      if (!sq.scheduled_date) outstanding.push('Not scheduled');
+  // Sort: active first (by stage), then closed-won, then closed-lost
+  var stageOrder = { intake:0, survey_plan_review:1, proposal_submitted:2, design_drawings:3,
+    costing:4, permitting_ahj:5, fabrication:6, delivery_install:7, commissioning:8,
+    closeout:9, closed_won:10, closed_lost:11 };
+  projects = projects.slice().sort(function(a,b){
+    return (stageOrder[a.stage]||5) - (stageOrder[b.stage]||5);
+  });
+
+  // Payment status helper
+  function payBadge(p) {
+    var paid = p.payment_status || p.paid_status || p.invoice_status || '';
+    if (!paid || paid === '' || paid === 'unknown') {
+      // Try to infer from cost fields
+      if (p.actual_total && p.amount_received && parseFloat(p.amount_received) >= parseFloat(p.actual_total) * 0.95) paid = 'paid';
+      else if (p.invoice_sent) paid = 'invoiced';
+      else paid = 'unknown';
     }
-    if (p.streets_dept_permit_status && p.streets_dept_permit_status !== 'approved') outstanding.push('Streets Dept permit: ' + p.streets_dept_permit_status);
-    if (!p.unipro_signoff_status || p.unipro_signoff_status === '') outstanding.push('Balloon test / sign-off pending');
-    else if (p.unipro_signoff_status === 'failed') outstanding.push('Balloon test FAILED - revisit needed');
+    var cfg = {
+      paid:     { bg:'#DCFCE7', color:'#15803D', label:'Paid ✓' },
+      invoiced: { bg:'#FEF3C7', color:'#92400E', label:'Invoiced' },
+      partial:  { bg:'#DBEAFE', color:'#1E40AF', label:'Partial' },
+      unknown:  { bg:'#F3F4F6', color:'#6B7280', label:'No payment info' },
+      unpaid:   { bg:'#FEE2E2', color:'#B91C1C', label:'Unpaid' },
+    };
+    var c = cfg[paid] || cfg.unknown;
+    return '<span style="background:'+c.bg+';color:'+c.color+';border-radius:6px;padding:3px 9px;font-size:11px;font-weight:800;white-space:nowrap">'+c.label+'</span>';
+  }
 
-    return '<tr>' +
-      '<td>' + (p.project_name || '') + '</td>' +
-      '<td>' + (acctName[p.account_id] || '') + '</td>' +
-      '<td>' + (STAGE_LABELS[p.stage] || p.stage || '') + '</td>' +
-      '<td>' + (p.hood_crew_assigned || '<span style="color:var(--soft)">unassigned</span>') + '</td>' +
-      '<td>' + (sq ? (sq.status || '').replace(/_/g,' ') : '<span style="color:var(--red)">not created</span>') + '</td>' +
-      '<td>' + (sq && sq.tech_id ? (userName[sq.tech_id] || sq.tech_id) : '<span style="color:var(--soft)">unassigned</span>') + '</td>' +
-      '<td style="color:' + (outstanding.length ? 'var(--red)' : 'var(--green)') + '">' + (outstanding.length ? outstanding.join('; ') : 'On track') + '</td>' +
-      '</tr>';
-  }).join('');
+  function stageBadge(stage) {
+    var label = STAGE_LABELS[stage] || stage || 'Unknown';
+    var color = STAGE_COLORS[stage] || '#6B7280';
+    var isClosed = stage === 'closeout' || stage === 'closed_won' || stage === 'closed_lost';
+    var icon = stage === 'closed_won' ? '✓ Won' : stage === 'closed_lost' ? '✕ Lost' : stage === 'closeout' ? '✓ Closed' : label;
+    return '<span style="background:'+color+'22;color:'+color+';border-radius:5px;padding:3px 9px;font-size:11px;font-weight:700;white-space:nowrap">'+icon+'</span>';
+  }
 
-  el.innerHTML = '<table class="cost-table"><thead><tr>' +
-    '<th>Project</th><th>Account</th><th>AllPro Stage</th><th>Hood Crew</th><th>UniPro Status</th><th>Suppression Tech</th><th>Outstanding</th>' +
-    '</tr></thead><tbody>' + rows + '</tbody></table>';
+  // Group by status: active, closed won, closed lost
+  var active = projects.filter(function(p){ return p.stage !== 'closeout' && p.stage !== 'closed_lost'; });
+  var closedWon = projects.filter(function(p){ return p.stage === 'closeout' || p.stage === 'closed_won'; });
+  var closedLost = projects.filter(function(p){ return p.stage === 'closed_lost'; });
+
+  function renderGroup(group, title, titleColor) {
+    if (!group.length) return '';
+    var rows = group.map(function(p) {
+      var sq = sqAll.filter(function(r){ return r.id === p.linked_scheduler_id; })[0];
+      var issues = [];
+      if (!p.linked_scheduler_id) issues.push('UniPro job not linked');
+      if (p.unipro_signoff_status === 'failed') issues.push('Balloon test failed');
+      if (p.streets_dept_permit_status && p.streets_dept_permit_status !== 'approved') issues.push('Permit: '+p.streets_dept_permit_status);
+      var notesFlag = (!p.notes || p.notes.trim().length < 10);
+
+      return '<div style="background:#fff;border:1.5px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:8px">'
+        +'<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">'
+          +'<div style="flex:1;min-width:180px">'
+            +'<div style="font-weight:800;font-size:14px;cursor:pointer;color:var(--blue)" data-pid="'+p.id+'" onclick="openProjectDetail(this.dataset.pid)">'+escSp(p.project_name||'Unnamed')+'</div>'
+            +'<div style="font-size:12px;color:var(--soft);margin-top:2px">'+escSp(acctName[p.account_id]||p.account_id||'No account')+'</div>'
+            +(p.job_number ? '<div style="font-size:11px;color:var(--soft)">Job #'+escSp(p.job_number)+'</div>' : '')
+          +'</div>'
+          +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+            +stageBadge(p.stage)
+            +payBadge(p)
+          +'</div>'
+        +'</div>'
+        // Notes warning and details row
+        +'<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:10px;font-size:12px">'
+          +'<div><span style="color:var(--soft)">Hood Crew:</span> '+(p.hood_crew_assigned||'<span style="color:var(--soft);font-style:italic">unassigned</span>')+'</div>'
+          +'<div><span style="color:var(--soft)">UniPro Status:</span> '+(sq ? (sq.status||'').replace(/_/g,' ') : '<span style="color:var(--red)">not created</span>')+'</div>'
+          +'<div><span style="color:var(--soft)">Tech:</span> '+(sq&&sq.tech_id ? (userName[sq.tech_id]||sq.tech_id) : '<span style="color:var(--soft)">unassigned</span>')+'</div>'
+        +'</div>'
+        +(issues.length ? '<div style="margin-top:8px;font-size:11px;color:var(--red);font-weight:700">⚠ '+issues.join(' · ')+'</div>' : '')
+        +(notesFlag ? '<div style="margin-top:6px;background:#FEF3C7;border-radius:6px;padding:5px 10px;font-size:11px;color:#92400E;font-weight:700">⚠ No notes on file — add them in the project detail</div>' : '')
+      +'</div>';
+    }).join('');
+
+    return '<div style="margin-bottom:20px">'
+      +'<div style="font-family:sans-serif;font-weight:800;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:'+titleColor+';margin-bottom:10px;padding-bottom:5px;border-bottom:2px solid '+titleColor+'22">'+title+' ('+group.length+')</div>'
+      +rows+'</div>';
+  }
+
+  // Payment summary
+  var paidCount   = projects.filter(function(p){ return (p.payment_status||p.paid_status||'') === 'paid' || (p.amount_received && p.actual_total && parseFloat(p.amount_received) >= parseFloat(p.actual_total)*0.95); }).length;
+  var totalVal    = projects.reduce(function(s,p){ return s + (parseFloat(p.actual_total||p.quote_total||p.estimated_total||0)||0); }, 0);
+  var receivedVal = projects.reduce(function(s,p){ return s + (parseFloat(p.amount_received||0)||0); }, 0);
+
+  var summary = '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px">'
+    +'<div style="background:#fff;border-radius:10px;padding:12px 14px;box-shadow:0 1px 4px rgba(0,0,0,.06);text-align:center">'
+      +'<div style="font-family:sans-serif;font-weight:800;font-size:22px;color:var(--ink)">'+projects.length+'</div>'
+      +'<div style="font-size:11px;color:var(--soft);text-transform:uppercase;letter-spacing:.06em">Total Jobs</div>'
+    +'</div>'
+    +'<div style="background:#fff;border-radius:10px;padding:12px 14px;box-shadow:0 1px 4px rgba(0,0,0,.06);text-align:center">'
+      +'<div style="font-family:sans-serif;font-weight:800;font-size:22px;color:var(--green)">'+paidCount+'</div>'
+      +'<div style="font-size:11px;color:var(--soft);text-transform:uppercase;letter-spacing:.06em">Paid</div>'
+    +'</div>'
+    +'<div style="background:#fff;border-radius:10px;padding:12px 14px;box-shadow:0 1px 4px rgba(0,0,0,.06);text-align:center">'
+      +'<div style="font-family:sans-serif;font-weight:800;font-size:22px;color:'+(projects.length-paidCount > 0 ? 'var(--red)' : 'var(--green)')+'">'+( projects.length - paidCount)+'</div>'
+      +'<div style="font-size:11px;color:var(--soft);text-transform:uppercase;letter-spacing:.06em">Unpaid / Unknown</div>'
+    +'</div>'
+    +'</div>';
+
+  el.innerHTML = summary
+    + renderGroup(active, 'Active Jobs', '#1B5FA8')
+    + renderGroup(closedWon, 'Closed — Won', '#16A34A')
+    + renderGroup(closedLost, 'Closed — Lost', '#C8102E');
 }
 
 // Same underlying accounts/contacts data every other portal reads --
@@ -2449,7 +2523,6 @@ function renderAll() {
   var q = (document.getElementById('apProjectSearch') ? document.getElementById('apProjectSearch').value : '').trim().toLowerCase();
   var filtered = q ? projects.filter(function(p) { return JSON.stringify(p).toLowerCase().indexOf(q) !== -1; }) : projects;
   renderKPIs(filtered);
-  renderStageChart(filtered);
   renderTypeFilters();
   if (projectView === 'list') renderProjectList(filtered);
   else renderKanban(filtered);
