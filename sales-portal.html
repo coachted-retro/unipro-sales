@@ -584,7 +584,6 @@ body.rail-open .rail-overlay{display:block}
           <button class="sp-tab sp-nav-dropdown-btn" onclick="spToggleNavDropdown('records')">📋 Records</button>
           <div class="sp-nav-dropdown-menu" id="spNavDropdown-records">
             <button class="sp-tab" id="spTab-locations"    onclick="spNav('locations');spCloseNavDropdowns()">📍 Locations</button>
-            <button class="sp-tab" id="spTab-contacts"     onclick="spNav('contacts');spCloseNavDropdowns()">👤 Contacts</button>
             <button class="sp-tab" id="spTab-opportunities" onclick="spNav('opportunities');spCloseNavDropdowns()">💼 Opportunities</button>
             <button class="sp-tab" id="spTab-accounts"     onclick="spNav('accounts');spCloseNavDropdowns()">🏢 Accounts</button>
           </div>
@@ -6095,21 +6094,34 @@ async function spOpenLocationDetail(r) {
     if (quotesEl) {
       // Also load opportunity-linked proposals for this location
       if (typeof d1Query === 'function') {
-        d1Query('SELECT id, name, value, resolution_status, proposal_pdf_url FROM opportunities WHERE location_id = ? AND resolution_status != ?', [r.id, 'archived']).then(function(oppRes) {
+        // Fetch opportunities by location_id, account_id, or any link to this location
+        var acctId = linkedAccount ? linkedAccount.id : null;
+        var queryStr = acctId
+          ? 'SELECT id, name, value, resolution_status, proposal_pdf_url FROM opportunities WHERE (location_id = ? OR account_id = ?) AND resolution_status != ? ORDER BY created_at DESC'
+          : 'SELECT id, name, value, resolution_status, proposal_pdf_url FROM opportunities WHERE location_id = ? AND resolution_status != ? ORDER BY created_at DESC';
+        var queryParams = acctId ? [r.id, acctId, 'archived'] : [r.id, 'archived'];
+        d1Query(queryStr, queryParams).then(function(oppRes) {
           var opps = (oppRes.ok && oppRes.results) ? oppRes.results : [];
+          if (!opps.length) {
+            quotesEl.innerHTML = '<div style="font-size:12px;color:var(--soft)">No proposals on file for this location yet.</div>';
+            return;
+          }
           var oppCards = opps.map(function(o) {
             var tot = (o.value||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
-            return '<div style="padding:10px;background:#EDE9FE;border-radius:7px;margin-bottom:8px">'
-              + '<div style="display:flex;justify-content:space-between;align-items:center">'
-              + '<div><div style="font-size:13px;font-weight:700;color:var(--ink)">' + escH(o.name||o.id) + '</div>'
-              + '<div style="font-size:11px;color:var(--soft);margin-top:2px">$' + tot + '</div></div>'
-              + '<span style="font-size:10px;font-weight:800;text-transform:uppercase;color:#6D28D9">' + escH(o.resolution_status||'open') + '</span>'
+            var hasPdf = o.proposal_pdf_url && o.proposal_pdf_url.length > 5;
+            return '<div style="padding:12px;background:#EDE9FE;border-radius:8px;margin-bottom:8px">'
+              + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">'
+              + '<div style="flex:1"><div style="font-size:13px;font-weight:700;color:var(--ink)">' + escH(o.name||o.id) + '</div>'
+              + '<div style="font-size:12px;color:#6D28D9;font-weight:700;margin-top:3px">$' + tot + '</div></div>'
+              + '<span style="font-size:10px;font-weight:800;text-transform:uppercase;padding:3px 8px;background:#6D28D9;color:#fff;border-radius:10px">' + escH(o.resolution_status||'open').toUpperCase() + '</span>'
               + '</div>'
-              + '<div style="display:flex;gap:6px;margin-top:8px">'
-              + (o.proposal_pdf_url ? '<button onclick="window.open(\'' + escH(o.proposal_pdf_url) + '\',\'_blank\',\'noopener\')" style="flex:1;background:#16A34A;color:#fff;border:none;border-radius:6px;padding:6px 8px;font-size:11px;font-weight:700;cursor:pointer">📄 View PDF</button>' : '<span style="flex:1;text-align:center;background:#E5E7EB;color:#6B7280;border-radius:6px;padding:6px 8px;font-size:11px;font-weight:700;display:block">PDF Pending</span>')
+              + '<div style="margin-top:10px">'
+              + (hasPdf
+                ? '<button onclick="window.open(' + "'" + escH(o.proposal_pdf_url) + "'" + ','_blank','noopener')" style="width:100%;background:#16A34A;color:#fff;border:none;border-radius:7px;padding:8px;font-size:12px;font-weight:800;cursor:pointer;font-family:Barlow,sans-serif">📄 View PDF</button>'
+                : '<div style="text-align:center;background:#F3F4F6;color:#6B7280;border-radius:7px;padding:8px;font-size:11px;font-weight:700">PDF not uploaded yet</div>')
               + '</div></div>';
           }).join('');
-          if (oppCards) quotesEl.innerHTML = (quotesEl.innerHTML === '<div style="font-size:12px;color:var(--soft)">No proposals on file for this location yet.</div>' ? '' : quotesEl.innerHTML) + oppCards;
+          quotesEl.innerHTML = oppCards;
         });
       }
     }
@@ -6457,30 +6469,25 @@ function spSaveContactToLocation(locationId, editContactId) {
   var name = document.getElementById('contName').value.trim();
   if (!name) { alert('Enter a name.'); return; }
   var now = Date.now();
-  var contacts = crmLoad('contacts') || [];
-  var vals = {
-    name: name,
-    title: document.getElementById('contTitle').value.trim(),
-    phone: document.getElementById('contPhone').value.trim(),
-    email: document.getElementById('contEmail').value.trim(),
-    locationId: locationId,
-    updated: now,
-  };
-  if (editContactId) {
-    var idx = contacts.findIndex(c => c.id === editContactId);
-    if (idx !== -1) Object.assign(contacts[idx], vals);
-  } else {
-    contacts.push(Object.assign({
-      id: 'con_' + now,
-      assignedRep: _spRep.name,
-      status: 'contacted',
-      created: now,
-    }, vals));
+  var contactId = editContactId || ('con_' + now);
+  var ctitle = document.getElementById('contTitle').value.trim();
+  var cphone = document.getElementById('contPhone').value.trim();
+  var cemail = document.getElementById('contEmail').value.trim();
+  var crep   = (_spRep && _spRep.name) ? _spRep.name : '';
+  // Write directly to D1 with snake_case column -- location_id must be set
+  if (typeof d1Query === 'function') {
+    if (editContactId) {
+      d1Query('UPDATE contacts SET name=?,title=?,phone=?,email=?,location_id=?,updated_at=? WHERE id=?',
+        [name, ctitle, cphone, cemail, locationId, now, editContactId]).catch(function(){});
+    } else {
+      d1Query('INSERT INTO contacts (id,name,title,phone,email,location_id,assigned_rep,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
+        [contactId, name, ctitle, cphone, cemail, locationId, crep, 'active', now, now]).catch(function(){});
+    }
   }
-  crmSave('contacts', contacts);
   document.getElementById('spContactModal').remove();
-  spToast(editContactId ? '👤 Contact updated' : '👤 Contact added');
-  spViewRecord(locationId, 'locations');
+  spToast(editContactId ? 'Contact updated' : 'Contact saved');
+  // Short delay so D1 write lands before re-render fetches
+  setTimeout(function(){ spViewRecord(locationId, 'locations'); }, 500);
 }
 
 
