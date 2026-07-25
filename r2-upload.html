@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>AllPro PDF Upload</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+*{box-sizing:border-box}
+body{font-family:Barlow,sans-serif;max-width:860px;margin:0 auto;padding:24px 16px;background:#F3F4F6;color:#1A1D21}
+h1{font-family:'Barlow Condensed',sans-serif;font-size:26px;font-weight:800;margin-bottom:4px}
+p.sub{font-size:13px;color:#6B7280;margin-bottom:20px}
+.token-row{background:#fff;border-radius:10px;padding:16px;margin-bottom:16px}
+.token-row label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#374151;display:block;margin-bottom:6px}
+#apiKey{width:100%;padding:10px 12px;border:1.5px solid #D1D5DB;border-radius:7px;font-size:13px;font-family:monospace}
+.job{background:#fff;border:1.5px solid #E5E7EB;border-radius:10px;padding:14px 16px;margin-bottom:10px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.job-info{flex:1;min-width:200px}
+.job-name{font-size:14px;font-weight:700}
+.job-path{font-size:10px;color:#9CA3AF;margin-top:2px;word-break:break-all}
+.pick-btn{background:#1B5FA8;color:#fff;border:none;border-radius:7px;padding:8px 14px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
+.status{font-size:12px;font-weight:700;min-width:80px;text-align:right}
+.s-wait{color:#9CA3AF}.s-ready{color:#059669}.s-up{color:#D97706}.s-ok{color:#16A34A}.s-err{color:#C8102E}
+input[type=file]{display:none}
+#uploadBtn{width:100%;background:#16A34A;color:#fff;border:none;border-radius:10px;padding:14px;font-size:16px;font-weight:800;cursor:pointer;margin-top:8px;font-family:'Barlow Condensed',sans-serif;letter-spacing:.04em;text-transform:uppercase}
+#uploadBtn:disabled{opacity:.4;cursor:not-allowed}
+#result{margin-top:14px;border-radius:8px;padding:14px;font-weight:700;font-size:14px;display:none}
+.ok-res{background:#DCFCE7;color:#166534}
+.err-res{background:#FEE2E2;color:#991B1B}
+</style>
+</head>
+<body>
+<h1>🏗️ AllPro PDF Upload → R2</h1>
+<p class="sub">Upload proposal PDFs directly to the R2 bucket. URLs are already in D1 — once files are uploaded, View PDF buttons will work immediately.</p>
+
+<div class="token-row">
+  <label>Cloudflare API Token (R2 Edit permission)</label>
+  <input id="apiKey" type="password" placeholder="Paste Cloudflare API token here..." oninput="checkReady()">
+  <div style="font-size:11px;color:#9CA3AF;margin-top:6px">
+    Get token: dash.cloudflare.com → My Profile → API Tokens → Create Token → R2 Token → Edit
+  </div>
+</div>
+
+<div id="jobs"></div>
+
+<button id="uploadBtn" onclick="doUpload()" disabled>⬆ Upload All Selected PDFs to R2</button>
+<div id="result"></div>
+
+<script>
+const ACCT   = 'bea7f3193e909464b233964390151001';
+const BUCKET = 'allpro-job-docs';
+
+const JOBS = [
+  {name:'Luna Cafe — Ventilation Fan Rework (PAP127949)',          hint:'Luna_Cafe_Proposal',          key:'AllPro Jobs/Luna Cafe/Luna_Cafe_Proposal_PAP127949.pdf'},
+  {name:'Furios Deli — Exhaust Hood + Suppression (PAP127951)',    hint:'FURIOS_DELI',                 key:'AllPro Jobs/Furios Deli/Furios_Deli_Proposal_PAP127951.pdf'},
+  {name:'Minhas Construction — SS Shelving (PAP127952)',           hint:'MINHAS',                      key:'AllPro Jobs/Minhas Construction/Minhas_Construction_Proposal_PAP127952.pdf'},
+  {name:'Locke Steel — SS Corner Plate (PAP127955)',               hint:'Locke_Steel',                 key:'AllPro Jobs/Locke Steel/Locke_Steel_Proposal_PAP127955.pdf'},
+  {name:'2 Penn Center — Type I Hood (CAP-2PC-001)',               hint:'CAP-2PC-001',                 key:'AllPro Jobs/2 Penn Center/CAP-2PC-001_2PennCenter_Proposal_FINAL.pdf'},
+  {name:'Chez Wizard — Main Hood Proposal (CAP-CWC-001)',          hint:'CAP-CWC-001',                 key:'AllPro Jobs/Chez Wizard/CAP-CWC-001_ChezWizard_Proposal_FINAL.pdf'},
+  {name:'Chez Wizard — Balloon Test (CAP-CWC-002)',                hint:'CAP-CWC-002',                 key:'AllPro Jobs/Chez Wizard/CAP-CWC-002_ChezWizard_BalloonTest_FINAL.pdf'},
+  {name:'Chez Wizard — 3-Year Inspection Agreement (CAP-CWC-003)', hint:'CAP-CWC-003',                 key:'AllPro Jobs/Chez Wizard/CAP-CWC-003_ChezWizard_InspectionAgreement_FINAL.pdf'},
+  {name:'Chez Wizard — Fire Ext + Exit Lights (CAP-CWC-004)',      hint:'CAP-CWC-004',                 key:'AllPro Jobs/Chez Wizard/CAP-CWC-004_ChezWizard_FireExtExitLights_FINAL.pdf'},
+];
+
+const picked = {};
+
+function render() {
+  document.getElementById('jobs').innerHTML = JOBS.map((j,i) => `
+    <div class="job" id="job${i}">
+      <div class="job-info">
+        <div class="job-name">${j.name}</div>
+        <div class="job-path">${j.key}</div>
+      </div>
+      <label class="pick-btn" for="f${i}">📁 Pick PDF</label>
+      <input type="file" id="f${i}" accept=".pdf" onchange="pick(${i},this)">
+      <div class="status s-wait" id="s${i}">—</div>
+    </div>`).join('');
+}
+
+function pick(i, el) {
+  if (!el.files[0]) return;
+  picked[i] = el.files[0];
+  set(i, '✓ Ready', 's-ready');
+  checkReady();
+}
+
+function set(i, txt, cls) {
+  const el = document.getElementById('s'+i);
+  el.textContent = txt;
+  el.className = 'status ' + cls;
+}
+
+function checkReady() {
+  const hasToken = document.getElementById('apiKey').value.trim().length > 20;
+  const hasFiles = Object.keys(picked).length > 0;
+  document.getElementById('uploadBtn').disabled = !(hasToken && hasFiles);
+}
+
+async function doUpload() {
+  const token = document.getElementById('apiKey').value.trim();
+  document.getElementById('uploadBtn').disabled = true;
+  document.getElementById('result').style.display = 'none';
+  let ok = 0, fail = 0;
+
+  for (const [i, file] of Object.entries(picked)) {
+    const j = JOBS[i];
+    set(i, 'Uploading…', 's-up');
+    try {
+      const r = await fetch(
+        `https://api.cloudflare.com/client/v4/accounts/${ACCT}/r2/buckets/${BUCKET}/objects/${encodeURIComponent(j.key)}`,
+        { method:'PUT', headers:{'Authorization':'Bearer '+token,'Content-Type':'application/pdf'}, body:file }
+      );
+      const d = await r.json();
+      if (d.success) { set(i,'✓ Done','s-ok'); ok++; }
+      else { set(i,'✗ Failed','s-err'); console.error(j.key, d); fail++; }
+    } catch(e) { set(i,'✗ Error','s-err'); console.error(e); fail++; }
+  }
+
+  const res = document.getElementById('result');
+  res.style.display = 'block';
+  if (fail === 0) {
+    res.className = 'ok-res';
+    res.textContent = '✓ All ' + ok + ' PDFs uploaded to R2 successfully. View PDF buttons are now live.';
+  } else {
+    res.className = 'err-res';
+    res.textContent = ok + ' uploaded, ' + fail + ' failed. Check browser console for details.';
+  }
+  document.getElementById('uploadBtn').disabled = false;
+}
+
+render();
+</script>
+</body>
+</html>
