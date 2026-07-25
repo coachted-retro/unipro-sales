@@ -3430,14 +3430,9 @@ function spOpenAddStop() {
   var old = document.getElementById('spAddStopModal');
   if (old) old.remove();
 
-  var leads    = crmLoad('leads');
-  var accounts = crmLoad('accounts');
-  var all      = leads.concat(accounts).filter(function(r){ return r.business || r.name; });
-
   var modal = document.createElement('div');
   modal.id  = 'spAddStopModal';
   modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:5000;display:flex;align-items:flex-start;justify-content:center;padding:60px 20px 20px';
-  modal._all = all;
 
   modal.innerHTML = '<div style="background:#fff;border-radius:14px;width:min(560px,96vw);box-shadow:0 16px 48px rgba(0,0,0,.35);overflow:hidden">'
     + '<div style="background:#1A1D21;padding:16px 20px;display:flex;align-items:center;justify-content:space-between">'
@@ -3471,37 +3466,48 @@ function spCloseAddStop() {
 
 function spAddStopSearch() {
   var q = (document.getElementById('addStopSearch')?.value || '').toLowerCase().trim();
-  var modal = document.getElementById('spAddStopModal');
-  var all   = modal ? modal._all : [];
   var results = document.getElementById('addStopResults');
   if (!results) return;
 
-  var filtered = q.length
-    ? all.filter(function(r){
-        return ((r.business||'')+(r.name||'')+(r.address||'')+(r.phone||'')).toLowerCase().includes(q);
-      }).slice(0,8)
-    : all.slice(0,6);
-
-  if (!filtered.length) {
-    results.innerHTML = '<div style="text-align:center;padding:16px;color:#9CA3AF;font-size:13px">No matches — use cold call below</div>';
+  if (q.length < 2) {
+    // Show recent accounts from cache
+    var cached = (typeof crmLoad === 'function') ? (crmLoad('accounts')||[]).slice(0,6) : [];
+    spAddStopRenderResults(cached, results);
     return;
   }
 
-  results.innerHTML = '';
+  results.innerHTML = '<div style="padding:10px;font-size:12px;color:#9CA3AF">Searching...</div>';
+
+  if (typeof d1Query !== 'function') return;
+  var like = '%' + q + '%';
+  d1Query('SELECT id, business as name, address, city, state, phone FROM accounts WHERE LOWER(business) LIKE ? OR LOWER(address) LIKE ? OR LOWER(phone) LIKE ? LIMIT 10', [like, like, like])
+    .then(function(res) {
+      var rows = (res.ok && res.results) ? res.results : [];
+      spAddStopRenderResults(rows.map(function(r){ return { id: r.id, business: r.name, name: r.name, address: [r.address, r.city, r.state].filter(Boolean).join(', '), phone: r.phone||'' }; }), results);
+    }).catch(function() {
+      results.innerHTML = '<div style="padding:10px;font-size:12px;color:#C8102E">Search error</div>';
+    });
+}
+
+function spAddStopRenderResults(filtered, resultsEl) {
+  if (!resultsEl) return;
+  if (!filtered || !filtered.length) {
+    resultsEl.innerHTML = '<div style="text-align:center;padding:16px;color:#9CA3AF;font-size:13px">No matches -- use cold call below</div>';
+    return;
+  }
+  resultsEl.innerHTML = '';
   filtered.forEach(function(r) {
     var div = document.createElement('div');
     div.style.cssText = 'padding:10px 12px;border-radius:8px;cursor:pointer;border:1.5px solid #E5E7EB;margin-bottom:6px;transition:border-color .12s';
-    var stage = r.lifecycleStage || r.status || '';
-    var acctType = r.accountType ? ' · ' + r.accountType : '';
-    div.innerHTML = '<div style="font-weight:700;font-size:13px;color:#1A1D21">' + escH(r.business||r.name||'Account') + '</div>'
-      + '<div style="font-size:11px;color:#6B7280">'
-        + (r.address ? '📍 ' + escH(r.address) + ' ' : '')
-        + (stage ? '<span style="color:#9CA3AF">· ' + escH(stage) + escH(acctType) + '</span>' : '')
-      + '</div>';
+    div.innerHTML = '<div style="font-weight:700;font-size:13px;color:#1A1D21">' + escH(r.business||r.name||'Account') + '</div>' +
+      '<div style="font-size:11px;color:#6B7280">' +
+        (r.address ? '&#128205; ' + escH(r.address) + ' ' : '') +
+        (r.phone   ? '&#128222; ' + escH(r.phone) : '') +
+      '</div>';
     div.addEventListener('mouseover', function(){ this.style.borderColor='#C8102E'; });
     div.addEventListener('mouseout',  function(){ this.style.borderColor='#E5E7EB'; });
     (function(rec){ div.addEventListener('click', function(){ spAddExistingStop(rec); }); })(r);
-    results.appendChild(div);
+    resultsEl.appendChild(div);
   });
 }
 
@@ -9839,299 +9845,307 @@ function spApptTypeChanged(newType) {
   spOpenApptModal(_spApptId, _spApptTab, newType, keepDate, keepNotes);
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  APPOINTMENT MODAL -- UNIFIED SINGLE VERSION
+//  Called from ALL 5 entry points. Identical behavior everywhere.
+//  - Search-first customer lookup (D1 direct, never free text)
+//  - Auto-fills address + contact name + phone + email on pick
+//  - _spApptLinkedId MUST be set before Save is allowed
+//  - Works whether opened from a record, calendar, or daily plan
+// ═══════════════════════════════════════════════════════════════
+
 function spOpenApptModal(id, tab, mode, presetDate, keepNotes) {
-  _spApptId = id;
-  _spApptTab = tab;
-  _spApptMode = mode || 'appointment';
+  // Reset link state
+  _spApptId        = id   || null;
+  _spApptTab       = tab  || null;
+  _spApptMode      = mode || 'appointment';
   _spApptPresetDate = presetDate || _spApptPresetDate || null;
   _spApptGuestChips = [];
 
-  const data = crmLoad('leads');
-  const r = data.find(x => x.id === id) || {};
-  const addr = r.address || r.addr || '';
+  // If opened from a specific record, pre-link it
+  _spApptLinkedId   = id   || null;
+  _spApptLinkedTab  = tab  || null;
+  _spApptLinkedName = '';
 
-  // If opened from a specific record's page, that record starts pre-linked.
-  if (id && !_spApptLinkedId) {
-    _spApptLinkedId = id; _spApptLinkedTab = tab || 'leads'; _spApptLinkedName = r.business || r.name || r.contact || '';
+  var cfg = SP_ENTRY_TYPES[_spApptMode] || SP_ENTRY_TYPES.appointment;
+  var defaultDate = _spApptPresetDate || new Date(Date.now() + 86400000).toISOString().split('T')[0];
+
+  // If pre-linked, fetch the name immediately
+  if (id) {
+    spApptAutoFill(id, tab, function(data) {
+      _spApptLinkedName = data.name || '';
+      spApptRenderModal(cfg, defaultDate, keepNotes);
+    });
+  } else {
+    spApptRenderModal(cfg, defaultDate, keepNotes);
   }
+}
 
-  const cfg = SP_ENTRY_TYPES[_spApptMode] || SP_ENTRY_TYPES.appointment;
-  if (cfg.linkMode === 'none') { _spApptLinkedId = null; _spApptLinkedTab = null; _spApptLinkedName = ''; }
-  const defaultDate = _spApptPresetDate || new Date(Date.now() + 86400000).toISOString().split('T')[0];
+function spApptRenderModal(cfg, defaultDate, keepNotes) {
+  var old = document.getElementById('spApptModal');
+  if (old) old.remove();
 
-  const typeDropdown = '<select onchange="spApptTypeChanged(this.value)" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:9px 10px;font-size:13px;font-weight:700;background:#fff">' +
+  var typeDropdown = '<select onchange="spApptTypeChanged(this.value)" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:9px 10px;font-size:13px;font-weight:700;background:#fff">' +
     Object.keys(SP_ENTRY_TYPES).map(function(k) {
       return '<option value="' + k + '" ' + (k === _spApptMode ? 'selected' : '') + '>' + SP_ENTRY_TYPES[k].label + '</option>';
     }).join('') + '</select>';
 
-  let linkFieldHtml = '';
-  if (cfg.linkMode !== 'none') {
-    linkFieldHtml = '<div>' +
-      '<label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Business Name (optional)' + '</label>' +
-      '<div data-role="link-field">' +
-      (_spApptLinkedId
-        ? '<div style="display:flex;align-items:center;justify-content:space-between;background:#F1F5F9;border-radius:7px;padding:8px 10px;font-size:13px"><span>&#128279; ' + escH(_spApptLinkedName) + '</span><button type="button" onclick="spApptClearLink()" style="background:none;border:none;color:#C8102E;font-size:12px;cursor:pointer;font-weight:700">Change</button></div>'
-        : '<div style="position:relative">' +
-            '<input type="text" id="spApptLinkSearch" oninput="spApptSearchRecords(this.value)" onblur="setTimeout(function(){var b=document.getElementById(\'spApptLinkResults\');if(b)b.style.display=\'none\';},150)" placeholder="Type the business name..." style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px">' +
-            '<div id="spApptLinkResults" style="display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:#fff;border:1.5px solid #D7DBE0;border-radius:8px;box-shadow:0 8px 20px rgba(0,0,0,.12);z-index:10;max-height:200px;overflow-y:auto"></div>' +
-          '</div>') +
+  var dtHtml = cfg.hasTimeRange
+    ? '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">' +
+        '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Date *</label><input type="date" id="spApptDate" value="' + defaultDate + '" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px"></div>' +
+        '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Leave By</label><input type="time" id="spApptTime" value="09:00" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px"></div>' +
+        '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Arrive By</label><input type="time" id="spApptTimeEnd" value="10:00" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px"></div>' +
+      '</div>'
+    : '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' +
+        '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Date *</label><input type="date" id="spApptDate" value="' + defaultDate + '" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px"></div>' +
+        '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Time</label>' +
+          '<div style="display:flex;gap:6px;align-items:center">' +
+            '<input type="time" id="spApptTime" value="09:00" style="flex:1;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px">' +
+            '<label style="display:flex;align-items:center;gap:5px;font-size:11px;color:#6B7280;white-space:nowrap;cursor:pointer"><input type="checkbox" id="spApptFlexTime" onchange="document.getElementById(\'spApptTime\').disabled=this.checked;document.getElementById(\'spApptTime\').style.opacity=this.checked?\'0.4\':\'1\'"> Flexible</label>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+
+  var allDayHtml = (cfg.hasAllDay || cfg.hasRecurring)
+    ? '<div style="display:flex;gap:16px;align-items:center">' +
+        (cfg.hasAllDay ? '<label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer"><input type="checkbox" id="spApptAllDay" onchange="spApptToggleAllDay(this.checked)"> All-day</label>' : '') +
+        (cfg.hasRecurring ? '<label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer"><input type="checkbox" id="spApptRecurring" onchange="document.getElementById(\'spApptRecurFreq\').style.display=this.checked?\'block\':\'none\'"> Repeats</label>' : '') +
+      '</div>' +
+      (cfg.hasRecurring ? '<select id="spApptRecurFreq" style="display:none;width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px"><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="yearly">Yearly</option></select>' : '')
+    : '';
+
+  // ── CUSTOMER SEARCH FIELD (the core) ──
+  // If already linked, show the locked pill. Otherwise show search.
+  var customerHtml = cfg.linkMode === 'none' ? '' :
+    '<div>' +
+      '<label style="font-size:11px;font-weight:700;color:#1B5FA8;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">' +
+        '🔍 Customer *' +
+      '</label>' +
+      '<div id="spApptCustomerWrap">' +
+        (_spApptLinkedId
+          ? spApptLinkedPill(_spApptLinkedName)
+          : '<div style="position:relative">' +
+              '<input type="text" id="spApptLinkSearch" ' +
+                'oninput="spApptSearchRecords(this.value)" ' +
+                'onblur="setTimeout(function(){var b=document.getElementById(\'spApptLinkResults\');if(b)b.style.display=\'none\';},200)" ' +
+                'placeholder="Type business name, address, or phone..." ' +
+                'style="width:100%;border:2px solid #1B5FA8;border-radius:8px;padding:10px 12px;font-size:14px;outline:none" ' +
+                'autocomplete="off">' +
+              '<div id="spApptLinkResults" style="display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:#fff;border:1.5px solid #D7DBE0;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);z-index:10;max-height:260px;overflow-y:auto"></div>' +
+            '</div>') +
       '</div>' +
     '</div>';
-  }
 
-  let dateTimeHtml;
-  if (cfg.hasTimeRange) {
-    dateTimeHtml = '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">' +
-      '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Date *</label><input type="date" id="spApptDate" value="' + defaultDate + '" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px"></div>' +
-      '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Leave By</label><input type="time" id="spApptTime" value="09:00" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px"></div>' +
-      '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Arrive By</label><input type="time" id="spApptTimeEnd" value="10:00" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px"></div>' +
-    '</div>';
-  } else {
-    dateTimeHtml = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' +
-      '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Date *</label><input type="date" id="spApptDate" value="' + defaultDate + '" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px"></div>' +
-      '<div id="spApptTimeWrap">'  + '<label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Time</label>'  + '<div style="display:flex;gap:6px;align-items:center">'    + '<input type="time" id="spApptTime" value="09:00" style="flex:1;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px">'    + '<label style="display:flex;align-items:center;gap:5px;font-size:11px;color:#6B7280;white-space:nowrap;cursor:pointer">'      + '<input type="checkbox" id="spApptFlexTime" onchange="document.getElementById(\'spApptTime\').disabled=this.checked;document.getElementById(\'spApptTime\').style.opacity=this.checked?\'0.4\':\'1\';"> Flexible'    + '</label>'  + '</div>'+ '</div>' +
-    '</div>';
-  }
-
-  let allDayRecurHtml = '';
-  if (cfg.hasAllDay || cfg.hasRecurring) {
-    allDayRecurHtml = '<div style="display:flex;gap:16px;align-items:center">' +
-      (cfg.hasAllDay ? '<label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer"><input type="checkbox" id="spApptAllDay" onchange="spApptToggleAllDay(this.checked)"> All-day</label>' : '') +
-      (cfg.hasRecurring ? '<label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer"><input type="checkbox" id="spApptRecurring" onchange="document.getElementById(\'spApptRecurFreq\').style.display=this.checked?\'block\':\'none\'"> Repeats</label>' : '') +
-    '</div>' +
-    (cfg.hasRecurring ? '<select id="spApptRecurFreq" style="display:none;width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px"><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="yearly">Yearly</option></select>' : '');
-  }
-
-  const locationHtml = cfg.hasLocation
-    ? '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Location</label><input type="text" id="spApptLocation" value="' + addr.replace(/"/g,'&quot;') + '" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px" placeholder="Business address"></div>'
+  // ── ADDRESS (auto-filled, editable) ──
+  var addrHtml = cfg.hasLocation
+    ? '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Location / Address</label>' +
+        '<input type="text" id="spApptLocation" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px" placeholder="Auto-fills when customer selected"></div>'
     : '';
 
-  // Contact info panel -- populated automatically when a record is selected
-  const contactInfoHtml = '<div id="spApptContactPanel" style="display:none;background:#F8FAFF;border:1.5px solid #BFDBFE;border-radius:8px;padding:12px;display:none">' +
-    '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#1B5FA8;margin-bottom:8px">📋 Contact Info</div>' +
-    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' +
-      '<div><label style="font-size:10px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:3px">Contact Name</label>' +
-        '<input type="text" id="spApptContactName" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:7px 9px;font-size:12px;background:#fff" placeholder="—"></div>' +
-      '<div><label style="font-size:10px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:3px">Phone</label>' +
-        '<input type="tel" id="spApptContactPhone" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:7px 9px;font-size:12px;background:#fff" placeholder="—"></div>' +
-      '<div style="grid-column:1/-1"><label style="font-size:10px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:3px">Email</label>' +
-        '<input type="email" id="spApptContactEmail" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:7px 9px;font-size:12px;background:#fff" placeholder="—"></div>' +
-    '</div>' +
+  // ── CONTACT INFO (auto-filled, hidden until record selected) ──
+  var contactHtml =
+    '<div id="spApptContactPanel" style="display:none;background:#F0F9FF;border:1.5px solid #BAE6FD;border-radius:8px;padding:12px">' +
+      '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#0369A1;margin-bottom:8px">Contact Info</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' +
+        '<div><label style="font-size:10px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:3px">Contact</label>' +
+          '<input type="text" id="spApptContactName" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:7px 9px;font-size:12px;background:#fff" placeholder="Name"></div>' +
+        '<div><label style="font-size:10px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:3px">Phone</label>' +
+          '<input type="tel" id="spApptContactPhone" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:7px 9px;font-size:12px;background:#fff" placeholder="Phone"></div>' +
+        '<div style="grid-column:1/-1"><label style="font-size:10px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:3px">Email</label>' +
+          '<input type="email" id="spApptContactEmail" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:7px 9px;font-size:12px;background:#fff" placeholder="Email"></div>' +
+      '</div>' +
+    '</div>';
+
+  // ── GUESTS ──
+  var guestChips = Object.keys(SP_REPS||{}).filter(function(n){ return n !== (_spRep && _spRep.name); })
+    .map(function(n){ return '<button type="button" onclick="spApptToggleGuestChip(this,' + JSON.stringify(n) + ')" data-guest="' + escH(n) + '" style="border:1.5px solid #D7DBE0;background:#fff;border-radius:20px;padding:4px 11px;font-size:12px;cursor:pointer;color:#333">' + escH(n) + '</button>'; }).join('');
+  var guestsHtml = '<div>' +
+    '<label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Invite someone <span style="font-weight:400;text-transform:none">(optional)</span></label>' +
+    '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px">' + guestChips + '</div>' +
+    '<input type="text" id="spApptGuests" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px" placeholder="Other names or emails, comma separated">' +
   '</div>';
 
-  const guestChips = Object.keys(SP_REPS).filter(function(n){ return n !== (_spRep && _spRep.name); })
-    .map(function(n){ return '<button type="button" onclick="spApptToggleGuestChip(this,' + JSON.stringify(n) + ')" data-guest="' + escH(n) + '" style="border:1.5px solid #D7DBE0;background:#fff;border-radius:20px;padding:4px 11px;font-size:12px;cursor:pointer;color:#333">' + escH(n) + '</button>'; }).join('');
-  const guestsHtml = '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Invite someone <span style="font-weight:400;text-transform:none">(optional)</span></label>' +
-    '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px">' + guestChips + '</div>' +
-    '<input type="text" id="spApptGuests" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px" placeholder="Other names or emails, comma separated (e.g. Jim Kennedy)">' +
-    '<div style="font-size:11px;color:#8A9099;margin-top:3px">They\'ll get a notification with the address and a directions link.</div></div>';
-
-  const brevoNote = _spApptMode === 'appointment'
-    ? '<div style="background:#EBF2FD;border-radius:8px;padding:9px 12px;font-size:11px;color:#1B5FA8">📧 Customer confirmation fires via Brevo when wired. Promotes Lead/Contact to Opportunity.</div>'
-    : '';
-
-  const modalHTML = '<div id="spApptModal" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9700;display:flex;align-items:center;justify-content:center;padding:16px">' +
-    '<div style="background:#fff;border-radius:12px;width:min(480px,96vw);max-height:88vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.3)">' +
+  var html =
+    '<div id="spApptModal" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9700;display:flex;align-items:center;justify-content:center;padding:16px">' +
+    '<div style="background:#fff;border-radius:12px;width:min(500px,96vw);max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.3)">' +
       '<div style="background:' + cfg.color + ';border-radius:12px 12px 0 0;padding:14px 18px;display:flex;align-items:center;justify-content:space-between">' +
         '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:16px;color:#fff;letter-spacing:.04em">' + cfg.label + '</div>' +
-        '<button onclick="spCloseApptModal()" style="background:none;border:none;color:rgba(255,255,255,.7);font-size:20px;cursor:pointer;line-height:1">✕</button>' +
+        '<button onclick="spCloseApptModal()" style="background:none;border:none;color:rgba(255,255,255,.7);font-size:20px;cursor:pointer;line-height:1">&#10005;</button>' +
       '</div>' +
       '<div style="padding:18px;display:flex;flex-direction:column;gap:12px">' +
         typeDropdown +
-        dateTimeHtml +
-        allDayRecurHtml +
-        linkFieldHtml +
-        locationHtml +
-        contactInfoHtml +
+        customerHtml +
+        dtHtml +
+        allDayHtml +
+        addrHtml +
+        contactHtml +
         guestsHtml +
-        brevoNote +
         '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Notes <span style="font-weight:400;text-transform:none">(optional)</span></label>' +
-        '<textarea id="spApptNotes" rows="2" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px" placeholder="What is the plan?">' + (keepNotes||'') + '</textarea></div>' +
-        '<div style="display:flex;gap:8px;justify-content:flex-end">' +
-          '<button onclick="spCloseApptModal()" style="background:none;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 16px;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px">Cancel</button>' +
-          '<button onclick="spSaveAppt()" style="background:' + cfg.color + ';color:#fff;border:none;border-radius:7px;padding:8px 18px;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.04em;text-transform:uppercase">' + cfg.saveLabel + '</button>' +
-        '</div>' +
+          '<textarea id="spApptNotes" rows="2" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px" placeholder="Purpose of visit / what to discuss">' + (keepNotes||'') + '</textarea></div>' +
+        '<button onclick="spSaveAppt()" style="background:' + cfg.color + ';color:#fff;border:none;border-radius:8px;padding:12px;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;letter-spacing:.05em;text-transform:uppercase;width:100%">' + cfg.saveLabel + '</button>' +
+        '<button onclick="spCloseApptModal()" style="background:none;border:1.5px solid #D7DBE0;border-radius:8px;padding:10px;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;color:#6B7280;width:100%">Cancel</button>' +
       '</div>' +
     '</div>' +
-  '</div>';
+    '</div>';
 
-  var existing = document.getElementById('spApptModal');
-  if (existing) existing.remove();
-  document.body.insertAdjacentHTML('beforeend', modalHTML);
+  document.body.insertAdjacentHTML('beforeend', html);
+
+  // Focus search if no record pre-linked
+  if (!_spApptLinkedId) {
+    setTimeout(function(){ var el = document.getElementById('spApptLinkSearch'); if(el) el.focus(); }, 100);
+  }
 }
 
-// ── Search-and-link widget: real records, not free-text ──
-function spApptSearchRecords(query) {
+// Returns the locked-customer pill HTML
+function spApptLinkedPill(name) {
+  return '<div style="display:flex;align-items:center;justify-content:space-between;background:#EFF6FF;border:2px solid #1B5FA8;border-radius:8px;padding:10px 14px;font-size:14px;font-weight:700;color:#1E40AF">' +
+    '<span>&#128279; ' + escH(name || 'Customer') + '</span>' +
+    '<button type="button" onclick="spApptClearLink()" style="background:none;border:none;color:#C8102E;font-size:12px;cursor:pointer;font-weight:700;margin-left:10px">Change</button>' +
+  '</div>';
+}
+
+// ── SEARCH: queries D1 directly, shows results as tappable rows ──
+function spApptSearchRecords(q) {
   var box = document.getElementById('spApptLinkResults');
   if (!box) return;
-  var term = (query||'').trim().toLowerCase();
+  var term = (q || '').trim().toLowerCase();
   if (term.length < 2) { box.style.display = 'none'; return; }
 
-  // Show loading indicator immediately
-  box.innerHTML = '<div style="padding:10px;font-size:12px;color:var(--soft)">Searching…</div>';
+  box.innerHTML = '<div style="padding:10px 14px;font-size:12px;color:#6B7280">Searching...</div>';
   box.style.display = 'block';
 
-  var results = [];
+  if (typeof d1Query !== 'function') return;
 
-  // Check in-memory cache first for instant results
-  var cachedLeads    = (typeof crmLoad === 'function') ? (crmLoad('leads')||[]) : [];
-  var cachedLocations= (typeof crmLoad === 'function') ? (crmLoad('locations')||[]) : [];
-  var cachedContacts = (typeof crmLoad === 'function') ? (crmLoad('contacts')||[]) : [];
+  var like = '%' + term + '%';
 
-  cachedLeads.forEach(function(rec) {
-    var blob = [rec.name, rec.business, rec.contact, rec.address, rec.addr, rec.city].filter(Boolean).join(' ').toLowerCase();
-    if (blob.indexOf(term) !== -1) results.push({ id: rec.id, tab: 'leads', name: rec.business || rec.name || rec.contact, address: rec.address || rec.addr || '', badge: 'Lead' });
+  Promise.all([
+    // Accounts (largest, most likely match -- search first)
+    d1Query('SELECT id, business as name, address, city, state, phone, contact_name FROM accounts WHERE LOWER(business) LIKE ? OR LOWER(address) LIKE ? OR LOWER(phone) LIKE ? LIMIT 8', [like, like, like]),
+    // Locations
+    d1Query('SELECT id, name, address, city, state, phone FROM locations WHERE LOWER(name) LIKE ? OR LOWER(address) LIKE ? OR LOWER(phone) LIKE ? LIMIT 6', [like, like, like]),
+    // Leads
+    d1Query('SELECT id, business as name, address, city, state, phone, contact_name FROM leads WHERE LOWER(business) LIKE ? OR LOWER(contact_name) LIKE ? OR LOWER(phone) LIKE ? LIMIT 6', [like, like, like]),
+  ]).then(function(res) {
+    var currentBox = document.getElementById('spApptLinkResults');
+    var currentInput = document.getElementById('spApptLinkSearch');
+    if (!currentBox) return;
+    if (currentInput && currentInput.value.trim().toLowerCase() !== term) return;
+
+    var rows = [];
+    var seen = {};
+
+    function addRow(r, badge, tab) {
+      if (!r.id || seen[r.id]) return;
+      seen[r.id] = 1;
+      var addr = [r.address, r.city, r.state].filter(Boolean).join(', ');
+      rows.push({ id: r.id, tab: tab, name: r.name || r.business || '', address: addr, phone: r.phone || '', contact: r.contact_name || '', badge: badge });
+    }
+
+    (res[0].ok ? res[0].results||[] : []).forEach(function(r){ addRow(r, 'Account', 'accounts'); });
+    (res[1].ok ? res[1].results||[] : []).forEach(function(r){ addRow(r, 'Location', 'locations'); });
+    (res[2].ok ? res[2].results||[] : []).forEach(function(r){ addRow(r, 'Lead', 'leads'); });
+
+    if (!rows.length) {
+      currentBox.innerHTML = '<div style="padding:12px 14px;font-size:12px;color:#6B7280">No results for "' + escH(term) + '" — check spelling or add as new record</div>';
+      return;
+    }
+
+    currentBox.innerHTML = rows.slice(0, 10).map(function(r) {
+      var payload = escH(JSON.stringify({ id: r.id, tab: r.tab, name: r.name, address: r.address, phone: r.phone, contact: r.contact }));
+      return '<div onmousedown="event.preventDefault();spApptPickRecord(' + JSON.stringify(r.id) + ',' + JSON.stringify(r.tab) + ',' + JSON.stringify(r.name) + ',' + JSON.stringify(r.address) + ',' + JSON.stringify(r.phone) + ',' + JSON.stringify(r.contact) + ')" ' +
+        'ontouchend="event.preventDefault();spApptPickRecord(' + JSON.stringify(r.id) + ',' + JSON.stringify(r.tab) + ',' + JSON.stringify(r.name) + ',' + JSON.stringify(r.address) + ',' + JSON.stringify(r.phone) + ',' + JSON.stringify(r.contact) + ')" ' +
+        'style="padding:10px 14px;cursor:pointer;border-bottom:1px solid #F1F5F9;display:flex;align-items:flex-start;gap:10px">' +
+        '<div style="flex:1">' +
+          '<div style="font-weight:700;font-size:13px;color:#111318">' + escH(r.name) + '</div>' +
+          (r.address ? '<div style="font-size:11px;color:#6B7280;margin-top:1px">&#128205; ' + escH(r.address) + '</div>' : '') +
+          (r.phone   ? '<div style="font-size:11px;color:#6B7280">&#128222; ' + escH(r.phone)   + '</div>' : '') +
+          (r.contact ? '<div style="font-size:11px;color:#6B7280">&#128100; ' + escH(r.contact) + '</div>' : '') +
+        '</div>' +
+        '<span style="font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#6B7280;background:#F1F5F9;border-radius:4px;padding:2px 6px;flex-shrink:0;margin-top:2px">' + r.badge + '</span>' +
+      '</div>';
+    }).join('');
+  }).catch(function() {
+    var b = document.getElementById('spApptLinkResults');
+    if (b) b.innerHTML = '<div style="padding:12px;font-size:12px;color:#C8102E">Search error -- check connection</div>';
   });
-  cachedLocations.forEach(function(rec) {
-    var blob = [rec.name, rec.parentCompany, rec.address, rec.city].filter(Boolean).join(' ').toLowerCase();
-    if (blob.indexOf(term) !== -1) results.push({ id: rec.id, tab: 'locations', name: rec.name, address: rec.address || '', badge: 'Location' });
-  });
-  cachedContacts.forEach(function(rec) {
-    var blob = [rec.name, rec.title, rec.phone].filter(Boolean).join(' ').toLowerCase();
-    if (blob.indexOf(term) !== -1) results.push({ id: rec.id, tab: 'contacts', name: rec.name, address: '', badge: 'Contact' });
-  });
+}
 
-  if (results.length) spApptRenderLinkResults(results, term);
+// ── PICK: locks the customer, fills address + contact, no further D1 call needed ──
+function spApptPickRecord(id, tab, name, address, phone, contact) {
+  _spApptLinkedId   = id;
+  _spApptLinkedTab  = tab;
+  _spApptLinkedName = name;
 
-  // Always query D1 directly -- cache may be empty on first load
-  if (typeof d1Query === 'function') {
-    var like = '%' + term + '%';
+  // Lock the customer field
+  var wrap = document.getElementById('spApptCustomerWrap');
+  if (wrap) wrap.innerHTML = spApptLinkedPill(name);
 
-    // Query locations, leads, and accounts in parallel from D1
-    Promise.all([
-      d1Query('SELECT id, name, address, city, state, phone FROM locations WHERE (LOWER(name) LIKE ? OR LOWER(address) LIKE ?) LIMIT 8', [like, like]),
-      d1Query('SELECT id, business as name, address, city, state, phone FROM leads WHERE (LOWER(business) LIKE ? OR LOWER(contact_name) LIKE ?) LIMIT 8', [like, like]),
-      d1Query('SELECT id, business as name, address, city, state, phone FROM accounts WHERE (LOWER(business) LIKE ? OR LOWER(name) LIKE ?) LIMIT 8', [like, like]),
-    ]).then(function(all) {
-      var currentBox = document.getElementById('spApptLinkResults');
-      var currentInput = document.getElementById('spApptLinkSearch');
-      if (!currentBox) return;
-      // Bail if rep already picked something or changed the search
-      if (currentInput && currentInput.value.trim().toLowerCase() !== term) return;
+  // Auto-fill address
+  var locEl = document.getElementById('spApptLocation');
+  if (locEl && address) locEl.value = address;
 
-      var d1Results = [];
-      var seen = new Set(results.map(function(r){ return r.id; }));
+  // Auto-fill contact panel
+  var panel = document.getElementById('spApptContactPanel');
+  if (panel) {
+    panel.style.display = (contact || phone) ? 'block' : 'none';
+    var nameEl  = document.getElementById('spApptContactName');
+    var phoneEl = document.getElementById('spApptContactPhone');
+    if (nameEl)  nameEl.value  = contact || '';
+    if (phoneEl) phoneEl.value = phone   || '';
+  }
 
-      var locRows  = (all[0].ok && all[0].results) ? all[0].results : [];
-      var leadRows = (all[1].ok && all[1].results) ? all[1].results : [];
-      var acctRows = (all[2].ok && all[2].results) ? all[2].results : [];
-
-      locRows.forEach(function(r) {
-        if (!seen.has(r.id)) { seen.add(r.id); d1Results.push({ id: r.id, tab: 'locations', name: r.name, address: [r.address, r.city, r.state].filter(Boolean).join(', '), badge: 'Location' }); }
-      });
-      leadRows.forEach(function(r) {
-        if (!seen.has(r.id)) { seen.add(r.id); d1Results.push({ id: r.id, tab: 'leads', name: r.business || r.name, address: r.address || '', badge: 'Lead' }); }
-      });
-      acctRows.forEach(function(r) {
-        if (!seen.has(r.id)) { seen.add(r.id); d1Results.push({ id: r.id, tab: 'accounts', name: r.business || r.name, address: r.address || '', badge: 'Account' }); }
-      });
-
-      var combined = results.concat(d1Results).slice(0, 12);
-      spApptRenderLinkResults(combined, term);
-    }).catch(function() {
-      // D1 failed -- cached results already shown, that's fine
+  // If contact email missing, do one quick D1 fetch for it
+  if (id && !contact) {
+    spApptAutoFill(id, tab, function(data) {
+      var emailEl = document.getElementById('spApptContactEmail');
+      if (emailEl && data.email) emailEl.value = data.email;
+      var nameEl2 = document.getElementById('spApptContactName');
+      if (nameEl2 && data.contact && !nameEl2.value) nameEl2.value = data.contact;
+      if (panel && (data.contact || data.email || phone)) panel.style.display = 'block';
     });
   }
 }
 
-function spApptRenderLinkResults(results, term) {
-  var box = document.getElementById('spApptLinkResults');
-  if (!box) return;
-  if (!results.length) { box.innerHTML = '<div style="padding:10px;font-size:12px;color:var(--soft)">No matches for "' + escH(term) + '".</div>'; box.style.display = 'block'; return; }
-  box.innerHTML = results.map(function(rr) {
-    return '<div onmousedown="event.preventDefault();spApptPickRecord(\'' + rr.id + '\',\'' + rr.tab + '\',' + JSON.stringify(rr.name||'') + ')" ontouchend="event.preventDefault();spApptPickRecord(\'' + rr.id + '\',\'' + rr.tab + '\',' + JSON.stringify(rr.name||'') + ')" style="padding:9px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid #F1F5F9">' +
-      '<div style="display:flex;justify-content:space-between;align-items:center">' +
-        '<span style="font-weight:600">' + escH(rr.name||'Unnamed') + '</span>' +
-        '<span style="font-size:10px;color:var(--soft);text-transform:uppercase;margin-left:8px;flex-shrink:0">' + rr.badge + '</span>' +
-      '</div>' +
-      (rr.address ? '<div style="font-size:11px;color:var(--soft);margin-top:2px">&#128205; ' + escH(rr.address) + '</div>' : '') +
-    '</div>';
-  }).join('');
-  box.style.display = 'block';
-}
-function spApptPickRecord(id, tab, name) {
-  _spApptLinkedId = id; _spApptLinkedTab = tab; _spApptLinkedName = name;
-
-  // Show the linked pill immediately -- don't wait for D1
-  var searchWrap = document.getElementById('spApptLinkSearch');
-  if (searchWrap && searchWrap.parentNode) {
-    searchWrap.parentNode.innerHTML =
-      '<div style="display:flex;align-items:center;justify-content:space-between;background:#F1F5F9;border-radius:7px;padding:8px 10px;font-size:13px">' +
-        '<span>&#128279; ' + escH(name) + '</span>' +
-        '<button type="button" onclick="spApptClearLink()" style="background:none;border:none;color:#C8102E;font-size:12px;cursor:pointer;font-weight:700">Change</button>' +
-      '</div>';
-  }
-
-  // Fetch the full record from D1 and populate every field
-  if (typeof d1Query !== 'function') return;
-
-  var table = tab === 'locations' ? 'locations' : tab === 'accounts' ? 'accounts' : 'leads';
-
-  // For locations, also pull linked contacts
-  var mainQuery = tab === 'locations'
-    ? 'SELECT id, name, address, city, state, phone FROM locations WHERE id = ? LIMIT 1'
+// ── AUTO-FILL: fetch full record details from D1 by id+tab ──
+function spApptAutoFill(id, tab, cb) {
+  if (!id || typeof d1Query !== 'function') { if(cb) cb({}); return; }
+  var q = tab === 'locations'
+    ? 'SELECT id, name, address, city, state, phone FROM locations WHERE id=? LIMIT 1'
     : tab === 'accounts'
-    ? 'SELECT id, business as name, address, city, state, phone, contact_name, contact_email FROM accounts WHERE id = ? LIMIT 1'
-    : 'SELECT id, business as name, address, city, state, phone, contact_name, email as contact_email FROM leads WHERE id = ? LIMIT 1';
-
-  var queries = [ d1Query(mainQuery, [id]) ];
-  if (tab === 'locations') {
-    queries.push(d1Query('SELECT contact_name, phone, email FROM contacts WHERE location_id = ? LIMIT 1', [id]));
-  }
-
-  Promise.all(queries).then(function(results) {
-    var rec = results[0].ok && results[0].results && results[0].results[0];
-    var contact = results[1] && results[1].ok && results[1].results && results[1].results[0];
-    if (!rec) return;
-
-    // Auto-fill address
-    var addrParts = [rec.address, rec.city, rec.state].filter(Boolean);
-    var fullAddr = addrParts.join(', ');
-    var locField = document.getElementById('spApptLocation');
-    if (locField && fullAddr) locField.value = fullAddr;
-
-    // Build contact info -- column names vary by table, handle all cases
-    var contactName  = rec.contact_name  || (contact && contact.contact_name) || '';
-    var contactPhone = rec.phone         || (contact && contact.phone)         || '';
-    var contactEmail = rec.contact_email || rec.email || (contact && contact.email) || '';
-
-    // Show and populate the contact panel
-    var panel = document.getElementById('spApptContactPanel');
-    if (panel) {
-      panel.style.display = (contactName || contactPhone || contactEmail) ? 'block' : 'none';
-      var nameEl  = document.getElementById('spApptContactName');
-      var phoneEl = document.getElementById('spApptContactPhone');
-      var emailEl = document.getElementById('spApptContactEmail');
-      if (nameEl)  nameEl.value  = contactName;
-      if (phoneEl) phoneEl.value = contactPhone;
-      if (emailEl) emailEl.value = contactEmail;
-    }
-
-    // If this is a location and we have division info, update the notes placeholder
-    var notesEl = document.getElementById('spApptNotes');
-    if (notesEl && !notesEl.value) {
-      var division = rec.division || rec.service_type || '';
-      if (division) notesEl.placeholder = 'What is the plan? (Division: ' + division + ')';
-    }
-  }).catch(function(e) {
-    console.error('[Appt] Could not load record details:', e);
-  });
+    ? 'SELECT id, business as name, address, city, state, phone, contact_name as contact, contact_email as email FROM accounts WHERE id=? LIMIT 1'
+    : 'SELECT id, business as name, address, city, state, phone, contact_name as contact, email FROM leads WHERE id=? LIMIT 1';
+  d1Query(q, [id]).then(function(res) {
+    var r = res.ok && res.results && res.results[0];
+    if (!r && cb) { cb({}); return; }
+    var addr = [r.address, r.city, r.state].filter(Boolean).join(', ');
+    if (cb) cb({ name: r.name || '', address: addr, phone: r.phone || '', contact: r.contact || '', email: r.email || '' });
+  }).catch(function(){ if(cb) cb({}); });
 }
+
+// ── CLEAR LINK: remove the locked customer, show search again ──
 function spApptClearLink() {
   _spApptLinkedId = null; _spApptLinkedTab = null; _spApptLinkedName = '';
-  // Replace the linked-record pill with the search input again, in place
-  var linkWrap = document.querySelector('#spApptModal [data-role="link-field"]');
-  if (linkWrap) {
-    linkWrap.innerHTML =
+  var wrap = document.getElementById('spApptCustomerWrap');
+  if (wrap) {
+    wrap.innerHTML =
       '<div style="position:relative">' +
-        '<input type="text" id="spApptLinkSearch" oninput="spApptSearchRecords(this.value)" onblur="setTimeout(function(){var b=document.getElementById(\'spApptLinkResults\');if(b)b.style.display=\'none\';},150)" placeholder="Type the business name..." style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px" autofocus>' +
-        '<div id="spApptLinkResults" style="display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:#fff;border:1.5px solid #D7DBE0;border-radius:8px;box-shadow:0 8px 20px rgba(0,0,0,.12);z-index:10;max-height:200px;overflow-y:auto"></div>' +
+        '<input type="text" id="spApptLinkSearch" ' +
+          'oninput="spApptSearchRecords(this.value)" ' +
+          'onblur="setTimeout(function(){var b=document.getElementById(\'spApptLinkResults\');if(b)b.style.display=\'none\';},200)" ' +
+          'placeholder="Type business name, address, or phone..." ' +
+          'style="width:100%;border:2px solid #1B5FA8;border-radius:8px;padding:10px 12px;font-size:14px;outline:none" ' +
+          'autocomplete="off">' +
+        '<div id="spApptLinkResults" style="display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:#fff;border:1.5px solid #D7DBE0;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);z-index:10;max-height:260px;overflow-y:auto"></div>' +
       '</div>';
-  } else {
-    // Fallback to full re-render if wrapper not found
-    spOpenApptModal(null, null, _spApptMode, document.getElementById('spApptDate')?.value, document.getElementById('spApptNotes')?.value);
+    var panel = document.getElementById('spApptContactPanel');
+    if (panel) panel.style.display = 'none';
+    var locEl = document.getElementById('spApptLocation');
+    if (locEl) locEl.value = '';
+    setTimeout(function(){ var el = document.getElementById('spApptLinkSearch'); if(el) el.focus(); }, 50);
   }
 }
+
+
 function spApptToggleAllDay(checked) {
   var wrap = document.getElementById('spApptTimeWrap');
   if (wrap) wrap.style.display = checked ? 'none' : 'block';
