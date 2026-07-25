@@ -1016,23 +1016,29 @@ function apHydrateFromD1() {
   if (typeof d1Query !== 'function') return;
   d1Query('SELECT * FROM allpro_projects ORDER BY created_at DESC', []).then(function(res) {
     if (!res.ok || !res.results || !res.results.length) return;
-    var projects = res.results;
-    // Merge into localStorage so loadProjects() picks them up
-    var existing = crmLoad('allpro_projects') || [];
-    var existingIds = {};
-    existing.forEach(function(p) { existingIds[p.id] = true; });
-    var merged = existing.slice();
-    projects.forEach(function(p) {
-      if (!existingIds[p.id]) merged.push(p);
-      else {
-        // Update existing with D1 data
-        for (var i = 0; i < merged.length; i++) {
-          if (merged[i].id === p.id) { merged[i] = p; break; }
-        }
-      }
+    var d1Projects = res.results;
+    // Update in-memory cache directly -- no localStorage
+    // Prefer local stage if it was set MORE RECENTLY than D1 record
+    var existing = (window.TermacD1Sync && window.TermacD1Sync.crmLoad)
+      ? window.TermacD1Sync.crmLoad('allpro_projects') || []
+      : [];
+    var localMap = {};
+    existing.forEach(function(p){ localMap[p.id] = p; });
+    var merged = d1Projects.map(function(d1p) {
+      var local = localMap[d1p.id];
+      if (!local) return d1p;
+      // If local was updated MORE RECENTLY than D1, keep local stage
+      var localTs  = local.updated_at  || local.stage_updated_at || 0;
+      var d1Ts     = d1p.updated_at    || d1p.stage_updated_at   || 0;
+      if (localTs > d1Ts) return local; // local is newer -- D1 hasn't caught up yet
+      return d1p; // D1 is authoritative
     });
-    if (typeof localStorage !== 'undefined') {
-      try { localStorage.setItem('termac_allpro_projects', JSON.stringify(merged)); } catch(e) {}
+    // Add any local-only records not yet in D1
+    d1Projects.forEach(function(d){ localMap[d.id] = true; });
+    existing.forEach(function(p){ if (!localMap[p.id]) merged.push(p); });
+    // Update cache only -- no localStorage
+    if (window.TermacD1Sync && window.TermacD1Sync.crmSave) {
+      window.TermacD1Sync.crmSave('allpro_projects', merged);
     }
     // Re-render with fresh data
     renderKanban(merged);
@@ -1059,13 +1065,29 @@ function projDisplayName(p) {
   return 'Unnamed Proposal';
 }
 function saveProjects(arr) {
-  crmSave('allpro_projects', arr);
-  // Was localStorage-only before this fix -- allpro_projects is already a
-  // registered D1 sync table (termac-d1-sync.js), just never actually
-  // pushed. Fire-and-forget batch push so a save on one device shows up
-  // for everyone else, not just this browser.
+  // Write to in-memory cache immediately so this session sees changes
+  if (window.TermacD1Sync && typeof window.TermacD1Sync.crmSave === 'function') {
+    window.TermacD1Sync.crmSave('allpro_projects', arr);
+  }
+  // Push to D1 -- source of truth, no localStorage
   if (window.TermacD1Sync && typeof window.TermacD1Sync.d1PushBatch === 'function') {
-    window.TermacD1Sync.d1PushBatch('allpro_projects', arr).catch(function(){});
+    window.TermacD1Sync.d1PushBatch('allpro_projects', arr).catch(function(e){
+      console.error('[AllPro] D1 push failed:', e);
+    });
+  }
+}
+
+// Write a single project's stage directly to D1 via SQL UPDATE
+// Much faster and more reliable than pushing the whole array
+async function saveProjectStageToD1(projectId, newStage, updatedAt) {
+  if (typeof d1Query !== 'function') return;
+  try {
+    await d1Query(
+      'UPDATE allpro_projects SET stage = ?, stage_updated_at = ?, updated_at = ? WHERE id = ?',
+      [newStage, updatedAt, updatedAt, projectId]
+    );
+  } catch(e) {
+    console.error('[AllPro] Stage D1 write failed:', e);
   }
 }
 function loadCostLines() { return crmLoad('allpro_cost_lines'); }
@@ -3364,9 +3386,12 @@ function setProjectStage(id, newStage) {
     alert('\uD83D\uDD12 ' + _gate.label + '\n\n' + _gate.desc + (_amt>0 ? '\n\nAmount due: $'+_amt.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}) : '') + '\n\nOpen the project to record payment or request an override.');
     return false;
   }
+  var _now = Date.now();
   p.stage = newStage;
-  p.stage_updated_at = Date.now();
-  p.updated_at = Date.now();
+  p.stage_updated_at = _now;
+  p.updated_at = _now;
+  // Write stage change directly to D1 immediately -- don't wait for batch push
+  saveProjectStageToD1(id, newStage, _now).catch(function(){});
   // Closeout cross-sell trigger — fires once, only for hood/suppression jobs
   if (newStage === 'closeout' && !p.cross_sell_triggered && p.project_type !== 'custom_fabrication') {
     p.cross_sell_triggered = 1;
