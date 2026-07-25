@@ -247,6 +247,16 @@ function k3dReady(instance) {
   <button class="tb-btn green" onclick="k3dSafe(function(){k3d.exportToParent()})">↩ Use in Proposal</button>
   <div class="tb-sep"></div>
   <button class="tb-btn red" onclick="k3dSafe(function(){k3d.clearScene()})">🗑 Clear</button>
+  <div class="tb-sep"></div>
+  <button class="tb-btn steel" onclick="k3dSafe(function(){k3d.saveLayout()})">💾 Save Layout</button>
+  <button class="tb-btn steel" onclick="k3dSafe(function(){k3d.loadLayout()})">📂 Load Layout</button>
+  <div class="tb-sep"></div>
+  <button class="tb-btn gold" onclick="k3dSafe(function(){k3d.exportView('iso')})">📸 3D Snapshot</button>
+  <button class="tb-btn gold" onclick="k3dSafe(function(){k3d.exportView('top')})">📐 2D Plan</button>
+  <button class="tb-btn gold" onclick="k3dSafe(function(){k3d.exportView('front')})">🔳 Front Elevation</button>
+  <button class="tb-btn green" onclick="k3dSafe(function(){k3d.exportToParent()})">↩ Use in Proposal</button>
+  <div class="tb-sep"></div>
+  <button class="tb-btn red" onclick="k3dSafe(function(){k3d.clearScene()})">🗑 Clear</button>
   <div style="margin-left:auto;font-size:10px;color:rgba(255,255,255,.3);white-space:nowrap">Drag to rotate · Scroll to zoom · Shift+drag to pan</div>
 </div>
 
@@ -318,6 +328,14 @@ function k3dReady(instance) {
         <button class="prop-action delete" onclick="k3dSafe(function(){k3d.deleteSelected()})">✗ Delete</button>
       </div>
     </div>
+    <div class="prop-section">
+      <div class="prop-label">Saved Snapshots</div>
+      <div id="snapshotGallery" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px">
+        <div style="font-size:10px;color:rgba(255,255,255,.3);font-style:italic">No snapshots yet</div>
+      </div>
+      <button onclick="k3dSafe(function(){k3d.clearSnapshots()})" style="width:100%;height:28px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:5px;color:rgba(255,255,255,.4);font-size:10px;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:700">Clear All</button>
+    </div>
+
     <div class="prop-section">
       <div class="prop-label">Disclaimer</div>
       <div style="font-size:10px;color:rgba(255,255,255,.3);line-height:1.5">
@@ -562,7 +580,7 @@ class Kitchen3D {
     group.add(label);
 
     group.position.set(this.roomW / 2, 0, this.roomD * 0.3);
-    group.userData = { selectable: true, type: 'appliance', label: name };
+    group.userData = { selectable: true, type: 'appliance', label: name, args: [name, type, wFt, dFt, topThick, totalH] };
     this.scene.add(group);
     this.objects.push(group);
     this._updateStatus();
@@ -628,7 +646,7 @@ class Kitchen3D {
     group.add(label);
 
     group.position.set(this.roomW / 2, 0, this.roomD * 0.3);
-    group.userData = { selectable: true, type: 'hood', label: lenFt+"' Exhaust Hood" };
+    group.userData = { selectable: true, type: 'hood', label: lenFt+"' Exhaust Hood", args: [lenFt, widFt] };
     this.scene.add(group);
     this.objects.push(group);
     document.getElementById('sb_hood').textContent = lenFt + "' — " + widFt + "' deep";
@@ -647,7 +665,7 @@ class Kitchen3D {
     );
     duct.rotation.z = Math.PI / 2;
     duct.position.set(this.roomW / 2, h * 0.88, this.roomD * 0.3);
-    duct.userData = { selectable: true, type: 'duct', label: lenFt+"' Duct Run" };
+    duct.userData = { selectable: true, type: 'duct', label: lenFt+"' Duct Run", args: [lenFt] };
     this.scene.add(duct);
     this.objects.push(duct);
     this._updateStatus();
@@ -699,7 +717,7 @@ class Kitchen3D {
     group.add(label);
 
     group.position.set(this.roomW * 0.7, 0, this.roomD * 0.6);
-    group.userData = { selectable: true, type: 'table', label: lbl };
+    group.userData = { selectable: true, type: 'table', label: lbl, args: [lenFt, widFt, heightFt, hasSink] };
     this.scene.add(group);
     this.objects.push(group);
     this._updateStatus();
@@ -713,7 +731,7 @@ class Kitchen3D {
     );
     shelf.position.set(this.roomW * 0.3, 5.5, 0.3);
     shelf.castShadow = true;
-    shelf.userData = { selectable: true, type: 'shelf', label: lenFt+"' Wall Shelf" };
+    shelf.userData = { selectable: true, type: 'shelf', label: lenFt+"' Wall Shelf", args: [lenFt, widFt] };
     this.scene.add(shelf);
     this.objects.push(shelf);
     this._updateStatus();
@@ -729,7 +747,7 @@ class Kitchen3D {
     );
     wall.position.set(this.roomW / 2, h / 2, this.roomD / 2);
     wall.castShadow = true;
-    wall.userData = { selectable: true, type: 'wall', label: type.charAt(0).toUpperCase()+type.slice(1)+' Wall '+lenFt+"'" };
+    wall.userData = { selectable: true, type: 'wall', label: type.charAt(0).toUpperCase()+type.slice(1)+' Wall '+lenFt+"'", args: [type, lenFt] };
     this.scene.add(wall);
     this.objects.push(wall);
     this._updateStatus();
@@ -870,6 +888,135 @@ class Kitchen3D {
 
   _updateStatus() {
     document.getElementById('sb_objs').textContent = this.objects.length;
+  }
+
+  // ── SAVE LAYOUT to localStorage (keyed per session) ──
+  saveLayout() {
+    try {
+      var data = this.objects.map(function(o) {
+        return {
+          type:     o.userData.type,
+          label:    o.userData.label,
+          x:        o.position.x,
+          y:        o.position.y,
+          z:        o.position.z,
+          rotY:     o.rotation.y,
+          // appliance constructor args stored in userData
+          args:     o.userData.args || [],
+        };
+      });
+      var layout = {
+        roomW: this.roomW, roomD: this.roomD, roomH: this.roomH,
+        objects: data,
+        savedAt: new Date().toLocaleString(),
+      };
+      localStorage.setItem('k3d_layout', JSON.stringify(layout));
+      document.getElementById('sb_objs').textContent = data.length + ' (saved ✓)';
+      setTimeout(() => this._updateStatus(), 2000);
+    } catch(e) { alert('Save failed: ' + e.message); }
+  }
+
+  // ── LOAD LAYOUT from localStorage ──
+  loadLayout() {
+    try {
+      var raw = localStorage.getItem('k3d_layout');
+      if (!raw) { alert('No saved layout found.'); return; }
+      var layout = JSON.parse(raw);
+      // Clear current scene objects
+      this.objects.forEach(o => this.scene.remove(o));
+      this.objects = [];
+      // Restore room
+      document.getElementById('room_w').value = layout.roomW || 20;
+      document.getElementById('room_d').value = layout.roomD || 15;
+      document.getElementById('room_h').value = layout.roomH || 10;
+      this.buildRoom();
+      // Restore objects
+      var self = this;
+      layout.objects.forEach(function(o) {
+        var obj = null;
+        try {
+          if (o.type === 'appliance' && o.args.length) obj = self.addAppliance.apply(self, o.args);
+          else if (o.type === 'hood' && o.args.length)      obj = self.addHood.apply(self, o.args);
+          else if (o.type === 'table' && o.args.length)     obj = self.addTable.apply(self, o.args);
+          else if (o.type === 'duct' && o.args.length)      obj = self.addDuct.apply(self, o.args);
+          else if (o.type === 'shelf' && o.args.length)     obj = self.addShelf.apply(self, o.args);
+          else if (o.type === 'wall' && o.args.length)      obj = self.addWall.apply(self, o.args);
+          else if (o.type === 'column')                      obj = self.addColumn();
+        } catch(e) {}
+        if (obj) {
+          obj.position.set(o.x, o.y, o.z);
+          obj.rotation.y = o.rotY || 0;
+        }
+      });
+      alert('Layout loaded: ' + (layout.savedAt || '') + ' — ' + layout.objects.length + ' objects');
+    } catch(e) { alert('Load failed: ' + e.message); }
+  }
+
+  // ── EXPORT A SPECIFIC VIEW as PNG ──
+  exportView(viewName) {
+    // Switch to requested camera angle
+    this.setView(viewName);
+    // Allow one frame to render before capturing
+    var self = this;
+    setTimeout(function() {
+      self.renderer.render(self.scene, self.camera);
+      var png = self.renderer.domElement.toDataURL('image/png');
+      var label = viewName === 'iso' ? '3D Isometric' : viewName === 'top' ? '2D Plan View' : 'Front Elevation';
+      var ts = new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+      // Save to snapshot gallery
+      self._addToGallery(label, ts, png, viewName);
+      // Also download
+      var a = document.createElement('a');
+      a.href = png;
+      a.download = 'AllPro_Kitchen_' + viewName + '_' + Date.now() + '.png';
+      a.click();
+    }, 200);
+  }
+
+  // ── ADD IMAGE TO SIDEBAR GALLERY ──
+  _addToGallery(label, ts, png, viewName) {
+    if (!this._snapshots) this._snapshots = [];
+    this._snapshots.push({ label, ts, png, viewName });
+
+    var gallery = document.getElementById('snapshotGallery');
+    if (!gallery) return;
+    if (this._snapshots.length === 1) gallery.innerHTML = '';
+
+    var item = document.createElement('div');
+    item.style.cssText = 'border:1px solid rgba(255,255,255,.15);border-radius:6px;overflow:hidden;cursor:pointer';
+    var idx = this._snapshots.length - 1;
+    item.innerHTML =
+      '<img src="' + png + '" style="width:100%;display:block;aspect-ratio:16/9;object-fit:cover">' +
+      '<div style="padding:5px 7px;display:flex;justify-content:space-between;align-items:center">' +
+        '<div style="font-size:10px;color:rgba(255,255,255,.7);font-weight:700">' + label + '</div>' +
+        '<div style="display:flex;gap:4px">' +
+          '<button onclick="window.k3d._sendSnapshot(' + idx + ')" style="background:#16A34A;border:none;color:#fff;border-radius:4px;padding:2px 6px;font-size:9px;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:700">USE</button>' +
+          '<button onclick="window.k3d._downloadSnapshot(' + idx + ')" style="background:#374151;border:none;color:#fff;border-radius:4px;padding:2px 6px;font-size:9px;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:700">DL</button>' +
+        '</div>' +
+      '</div>';
+    gallery.appendChild(item);
+  }
+
+  _sendSnapshot(idx) {
+    var snap = this._snapshots && this._snapshots[idx];
+    if (!snap) return;
+    try { window.parent.postMessage({ type: 'kitchen3d_export', data: snap.png, label: snap.label, objects: this.objects.map(o => o.userData) }, '*'); } catch(e) {}
+    alert(snap.label + ' sent to field survey tool.');
+  }
+
+  _downloadSnapshot(idx) {
+    var snap = this._snapshots && this._snapshots[idx];
+    if (!snap) return;
+    var a = document.createElement('a');
+    a.href = snap.png;
+    a.download = 'AllPro_Kitchen_' + snap.viewName + '_' + Date.now() + '.png';
+    a.click();
+  }
+
+  clearSnapshots() {
+    this._snapshots = [];
+    var g = document.getElementById('snapshotGallery');
+    if (g) g.innerHTML = '<div style="font-size:10px;color:rgba(255,255,255,.3);font-style:italic">No snapshots yet</div>';
   }
 }
 
