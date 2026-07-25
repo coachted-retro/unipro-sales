@@ -1607,9 +1607,9 @@ function spRecentlyViewed() {
 
 function spCloseCollectModal(){ var m=document.getElementById('spCollectModal'); if(m) m.remove(); window._spCheckPhotoData = null; }
 function spCollectMethodToggle(){ var m=document.getElementById('colMethodField'), w=document.getElementById('colCheckWrap'); if(m&&w) w.style.display=(m.value==='check')?'block':'none'; }
-function spOpenCollectModal(accountId, tab, prefillName, prefillDivision){
+function spOpenCollectModal(accountId, tab, prefillName, prefillDivision, opportunityId){
   var existing=null;
-  if(accountId){ var data=crmLoad('leads'); existing=data.find(function(x){ return x.id===accountId; }); }
+  if(accountId){ try{ var data=crmLoad('leads')||[]; existing=data.find(function(x){ return x.id===accountId; }); }catch(e){} }
   var bizName = existing ? (existing.business||existing.name||'') : (prefillName||'');
   var old=document.getElementById('spCollectModal'); if(old) old.remove();
   var modal=document.createElement('div');
@@ -1617,6 +1617,7 @@ function spOpenCollectModal(accountId, tab, prefillName, prefillDivision){
   modal.dataset.accountId=accountId||'';
   modal.dataset.tab=tab||'contacts';
   modal.dataset.division=(existing&&existing.division)||prefillDivision||'';
+  modal.dataset.opportunityId=opportunityId||'';
   modal.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:5000;display:flex;align-items:center;justify-content:center;padding:20px';
   var L='font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#5A616B;display:block;margin-bottom:5px';
   var F='width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 12px;font-family:Barlow,sans-serif;font-size:13px;outline:none;box-sizing:border-box';
@@ -1630,7 +1631,7 @@ function spOpenCollectModal(accountId, tab, prefillName, prefillDivision){
       +'<div><label style="'+L+'">Account / Business</label><input id="colBizField" value="'+escH(bizName)+'" placeholder="Business name..." style="'+F+'"></div>'
       +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'
         +'<div><label style="'+L+'">Amount *</label><input type="number" step="0.01" min="0" id="colAmtField" placeholder="0.00" style="'+F+'"></div>'
-        +'<div><label style="'+L+'">Method</label><select id="colMethodField" onchange="spCollectMethodToggle()" style="'+F+'"><option value="cash">Cash</option><option value="check">Check</option></select></div>'
+        +'<div><label style="'+L+'">Method</label><select id="colMethodField" onchange="spCollectMethodToggle()" style="'+F+'"><option value="cash">Cash</option><option value="check">Check</option><option value="square" disabled>Credit Card / Square (coming soon)</option></select></div>'
       +'</div>'
       +'<div id="colCheckWrap" style="display:none">'
         +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">'
@@ -1673,41 +1674,54 @@ function spPreviewCollectPhoto(input) {
 }
 function spSaveCollection(){
   var modal=document.getElementById('spCollectModal'); if(!modal) return;
-  var biz=(document.getElementById('colBizField')?.value||'').trim();
-  var amt=parseFloat(document.getElementById('colAmtField')?.value||0)||0;
-  var method=document.getElementById('colMethodField')?.value||'cash';
-  var checkNum=(document.getElementById('colCheckField')?.value||'').trim();
-  var routing=(document.getElementById('colRoutingField')?.value||'').replace(/\D/g,'');
-  var acctNum=(document.getElementById('colAcctNumField')?.value||'').trim();
-  var invNum=(document.getElementById('colInvField')?.value||'').trim();
-  var notes=(document.getElementById('colNotesField')?.value||'').trim();
+  var biz=(document.getElementById('colBizField')?document.getElementById('colBizField').value:'').trim();
+  var amt=parseFloat((document.getElementById('colAmtField')?document.getElementById('colAmtField').value:'0')||0)||0;
+  var method=document.getElementById('colMethodField')?document.getElementById('colMethodField').value:'cash';
+  var checkNum=(document.getElementById('colCheckField')?document.getElementById('colCheckField').value:'').trim();
+  var routing=(document.getElementById('colRoutingField')?document.getElementById('colRoutingField').value:'').replace(/\D/g,'');
+  var acctNum=(document.getElementById('colAcctNumField')?document.getElementById('colAcctNumField').value:'').trim();
+  var invNum=(document.getElementById('colInvField')?document.getElementById('colInvField').value:'').trim();
+  var notes=(document.getElementById('colNotesField')?document.getElementById('colNotesField').value:'').trim();
   if(!biz){ alert('Enter the account or business name.'); return; }
   if(!(amt>0)){ alert('Enter the amount collected.'); return; }
   if(method==='check'){
     if(!checkNum){ alert('Enter the check number.'); return; }
-    if(!routing || routing.length!==9){ alert('Enter the 9-digit ABA routing number from the bottom of the check.'); return; }
-    if(!spAbaChecksum(routing)){ alert('That routing number is not valid. Double-check the 9-digit number at the bottom-left of the check.'); return; }
+    if(!routing||routing.length!==9){ alert('Enter the 9-digit ABA routing number from the bottom of the check.'); return; }
+    if(!spAbaChecksum(routing)){ alert('That routing number is not valid. Double-check the 9 digits at the bottom-left of the check.'); return; }
     if(!acctNum){ alert('Enter the bank account number from the bottom of the check.'); return; }
     if(!window._spCheckPhotoData){ alert('Take a photo of the check before saving.'); return; }
   }
-  var rep=(typeof _spRep!=='undefined' && _spRep && _spRep.name) ? _spRep.name : 'Rep';
-  var bankName=(document.getElementById('colRoutingBankName')?.textContent||'').replace(/^[^ ]+ /,'').trim();
-  var colls=(typeof crmLoad==='function'?crmLoad('collections'):[])||[];
-  colls.unshift({
-    id:'col_'+Date.now(), collectedBy:rep,
-    accountName:biz, division:(modal.dataset.division||''), amount:amt, method:method,
-    checkNum:checkNum, routingNum:(method==='check'?routing:''), bankName:(method==='check'?bankName:''),
-    acctNum:(method==='check'?acctNum:''), payableTo:'Termac', invoiceNum:invNum,
-    notes:notes||'Collected by sales rep', photoData:(method==='check'?(window._spCheckPhotoData||null):null),
-    abaVerified:(method==='check' && routing.length===9 && spAbaChecksum(routing)),
-    status:'collected', collectedAt:Date.now(),
-    collectedDate:new Date().toLocaleDateString('en-US'),
-    history:[{ts:Date.now(),action:'Logged from sales portal',by:rep}]
-  });
-  if(typeof crmSave==='function') crmSave('collections', colls);
-  window._spCheckPhotoData = null;
+  var rep=(typeof _spRep!=='undefined'&&_spRep&&_spRep.name)?_spRep.name:'Rep';
+  var bankName='';
+  var bnEl=document.getElementById('colRoutingBankName');
+  if(bnEl) bankName=bnEl.textContent.replace(/^[^ ]+ /,'').trim();
+  var now=Date.now();
+  var colId='col_'+now;
+  var accountId=modal.dataset.accountId||'';
+  var opportunityId=modal.dataset.opportunityId||'';
+  var photoData=method==='check'?(window._spCheckPhotoData||null):null;
+
+  // Write to D1 -- source of truth
+  if(typeof d1Query==='function'){
+    d1Query('INSERT INTO payments (id,account_id,opportunity_id,collected_by,account_name,amount,method,check_number,routing_number,account_number,bank_name,invoice_number,notes,photo_data,status,collected_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+      [colId,accountId,opportunityId,rep,biz,amt,method,
+       method==='check'?checkNum:'',
+       method==='check'?routing:'',
+       method==='check'?acctNum:'',
+       method==='check'?bankName:'',
+       invNum,notes||'Collected by '+rep,
+       photoData?'[photo attached]':'',
+       'collected',now,now,now
+      ]).catch(function(e){ console.error('[Payment] D1 write failed',e); });
+  }
+
+  window._spCheckPhotoData=null;
   spCloseCollectModal();
-  if(typeof spToast==='function') spToast('\uD83D\uDCB5 Payment logged \u2014 turn in to the office within 48h');
+  if(typeof spToast==='function') spToast('\uD83D\uDCB5 $'+amt.toFixed(2)+' logged \u2014 '+method+' \u2014 turn in to office within 48h');
+  // Refresh the location view if open
+  if(accountId && typeof spViewRecord==='function'){
+    setTimeout(function(){ spViewRecord(accountId,'locations'); },500);
+  }
 }
 
 // ABA routing number validation -- MOD 10 weighted checksum (Federal Reserve standard).
