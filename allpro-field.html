@@ -832,6 +832,24 @@ body {
         </div>
       </div>
 
+      <!-- COMPARABLE PROJECTS -->
+      <div class="card" id="compsCard" style="display:none">
+        <div class="card-head" style="background:#F0FDF4">
+          <span style="font-size:18px">📊</span>
+          <div class="card-title" style="color:var(--green)">Comparable Projects — Market Pricing</div>
+          <div style="font-size:10px;color:var(--soft);font-style:italic">Similar jobs in your territory</div>
+        </div>
+        <div class="card-body">
+          <div id="compsLoading" style="font-size:12px;color:var(--soft);text-align:center;padding:8px">Loading comparable projects…</div>
+          <div id="compsList" style="display:none">
+            <div class="field-grid col3" style="margin-bottom:12px" id="compsKPIs"></div>
+            <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--soft);margin-bottom:6px">Recent Similar Jobs</div>
+            <div id="compsTable"></div>
+            <div style="margin-top:10px;background:#EFF6FF;border-radius:7px;padding:10px 12px;font-size:11px;color:#1E40AF;line-height:1.6" id="compsInsight"></div>
+          </div>
+        </div>
+      </div>
+
       <div class="card">
         <div class="card-head"><span style="font-size:16px">🗒️</span><div class="card-title">Site Notes</div></div>
         <div class="card-body">
@@ -1684,6 +1702,7 @@ function afSelectType(key, btn) {
   btn.classList.add('selected');
   AF[key] = btn.dataset.val;
   if (key === 'hoodType') afCalcCFM();
+  if (key === 'facilityType') afLoadComps();
 }
 
 function afToggleProposalType(type, btn) {
@@ -1694,6 +1713,7 @@ function afToggleProposalType(type, btn) {
     AF.proposalTypes.add(type);
     btn.classList.add('selected');
   }
+  if (AF.facilityType || AF.proposalTypes.size > 0) afLoadComps();
 }
 
 function afSurveyChange() {
@@ -2389,6 +2409,58 @@ function afGeneratePDF() {
 
 // ═══════════════════════════════════════════════
 //  INIT
+// ── BACK NAVIGATION ──
+function afGoBack() {
+  try { if (window.parent && window.parent !== window) { window.parent.postMessage({ type:'close_embed' }, '*'); return; } } catch(e) {}
+  window.location.href = 'sales-portal.html';
+}
+
+// ── COMPARABLE PROJECTS ENGINE ──
+function afLoadComps() {
+  var card = document.getElementById('compsCard');
+  var loading = document.getElementById('compsLoading');
+  var list = document.getElementById('compsList');
+  if (!card) return;
+  card.style.display = '';
+  if (loading) loading.style.display = 'block';
+  if (list) list.style.display = 'none';
+  if (typeof d1Query !== 'function') { if (loading) loading.textContent = 'D1 unavailable'; return; }
+  d1Query(
+    'SELECT o.name, o.value, l.city, l.state, o.stage FROM opportunities o LEFT JOIN locations l ON l.id = o.location_id WHERE (o.resolution_status = ? OR o.stage = ? OR o.stage = ?) AND o.value > 0 ORDER BY o.updated_at DESC LIMIT 30',
+    ['won','won','proposal']
+  ).then(function(res) {
+    var jobs = (res.ok && res.results) ? res.results : [];
+    if (!jobs.length) { if (loading) loading.textContent = 'No comparable jobs yet — builds as you close deals.'; return; }
+    var values = jobs.map(function(j){ return parseFloat(j.value||0); }).filter(function(v){ return v>0; });
+    var avg = values.length ? Math.round(values.reduce(function(s,v){return s+v;},0)/values.length) : 0;
+    var low = values.length ? Math.min.apply(null,values) : 0;
+    var high = values.length ? Math.max.apply(null,values) : 0;
+    function fmt$(n){ return '$'+Math.round(n).toLocaleString(); }
+    var kpis = document.getElementById('compsKPIs');
+    if (kpis) kpis.innerHTML =
+      '<div style="background:var(--bg);border-radius:8px;padding:10px 12px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--soft);margin-bottom:4px">Market Average</div><div style="font-family:JetBrains Mono,monospace;font-size:20px;font-weight:500;color:var(--orange)">'+fmt$(avg)+'</div><div style="font-size:10px;color:var(--soft)">'+values.length+' jobs</div></div>'+
+      '<div style="background:var(--bg);border-radius:8px;padding:10px 12px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--soft);margin-bottom:4px">Range Low</div><div style="font-family:JetBrains Mono,monospace;font-size:20px;font-weight:500;color:var(--green)">'+fmt$(low)+'</div></div>'+
+      '<div style="background:var(--bg);border-radius:8px;padding:10px 12px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--soft);margin-bottom:4px">Range High</div><div style="font-family:JetBrains Mono,monospace;font-size:20px;font-weight:500;color:var(--blue)">'+fmt$(high)+'</div></div>';
+    var table = document.getElementById('compsTable');
+    if (table) table.innerHTML = jobs.slice(0,8).map(function(j){
+      var val=parseFloat(j.value||0);
+      var loc=[j.city,j.state].filter(Boolean).join(', ')||'PA';
+      var diff=avg>0?Math.round((val-avg)/avg*100):0;
+      var diffLabel=diff>0?'+'+diff+'% above avg':diff<0?diff+'% below avg':'at avg';
+      var diffColor=Math.abs(diff)>10?(diff>0?'var(--green)':'var(--red)'):'var(--soft)';
+      return '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)">'+
+        '<div><div style="font-size:12px;font-weight:700">'+(j.name||'—')+'</div>'+
+        '<div style="font-size:10px;color:var(--soft)">'+loc+'</div></div>'+
+        '<div style="text-align:right"><div style="font-family:JetBrains Mono,monospace;font-size:13px;font-weight:500">'+fmt$(val)+'</div>'+
+        '<div style="font-size:9px;color:'+diffColor+';font-weight:700">'+diffLabel+'</div></div></div>';
+    }).join('');
+    var insight = document.getElementById('compsInsight');
+    if (insight) insight.textContent = '💡 Market average for similar jobs in your territory: '+fmt$(avg)+'. Stay within 10–20% to remain competitive. Jobs priced above '+fmt$(Math.round(avg*1.2))+' need a strong scope justification.';
+    if (loading) loading.style.display='none';
+    if (list) list.style.display='block';
+  }).catch(function(){ if(loading) loading.textContent='Could not load comps.'; });
+}
+
 // ═══════════════════════════════════════════════
 // Receive snapshot from 3D visualizer
 window.addEventListener('message', function(e) {
