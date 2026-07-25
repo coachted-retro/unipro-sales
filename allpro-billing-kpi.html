@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AllPro — Project Billing KPI Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800;900&family=Barlow:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#111318;--steel:#1C2331;--mid:#374151;--soft:#6B7280;
+  --line:#E2E5EA;--bg:#F5F6F8;--white:#fff;
+  --gold:#F2B705;--red:#C8102E;--green:#16A34A;--blue:#1B5FA8;
+  --orange:#D97706;--yellow:#FEF9C3;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Barlow,sans-serif;background:var(--bg);color:var(--ink)}
+
+#header{background:var(--steel);border-bottom:3px solid var(--gold);padding:0 20px;height:56px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:100}
+#header h1{font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:18px;color:#fff;letter-spacing:.06em}
+#header h1 span{color:var(--gold)}
+.hdr-btn{height:34px;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.05em;text-transform:uppercase;cursor:pointer;padding:0 14px}
+.hdr-btn.gold{background:var(--gold);color:var(--ink)}
+.hdr-btn.steel{background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.2)}
+.hdr-chip{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:6px;padding:4px 10px;font-size:11px;color:rgba(255,255,255,.7)}
+
+#content{padding:20px;max-width:1400px;margin:0 auto}
+
+/* KPI CARDS */
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:20px}
+.kpi{background:var(--white);border:1.5px solid var(--line);border-radius:10px;padding:14px 16px;position:relative;overflow:hidden}
+.kpi::before{content:'';position:absolute;top:0;left:0;right:0;height:3px}
+.kpi.red::before{background:var(--red)}
+.kpi.green::before{background:var(--green)}
+.kpi.yellow::before{background:var(--gold)}
+.kpi.blue::before{background:var(--blue)}
+.kpi-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--soft);margin-bottom:6px}
+.kpi-val{font-family:'JetBrains Mono',monospace;font-size:28px;font-weight:500;color:var(--ink);line-height:1}
+.kpi-target{font-size:10px;color:var(--soft);margin-top:6px}
+.kpi-status{position:absolute;top:14px;right:14px;font-size:10px;font-weight:800;text-transform:uppercase;padding:2px 7px;border-radius:10px}
+.kpi-status.red{background:#FEE2E2;color:var(--red)}
+.kpi-status.green{background:#DCFCE7;color:var(--green)}
+.kpi-status.yellow{background:#FEF9C3;color:#92400E}
+
+/* SECTION */
+.section{background:var(--white);border:1.5px solid var(--line);border-radius:12px;overflow:hidden;margin-bottom:16px}
+.section-head{padding:12px 16px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--line)}
+.section-title{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink);flex:1}
+
+/* PROJECT TABLE */
+.proj-table{width:100%;border-collapse:collapse}
+.proj-table th{padding:8px 12px;text-align:left;font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--soft);background:#F9FAFB;border-bottom:1px solid var(--line);white-space:nowrap}
+.proj-table td{padding:10px 12px;border-bottom:1px solid var(--line);font-size:12px;vertical-align:middle}
+.proj-table tr:last-child td{border-bottom:none}
+.proj-table tr:hover td{background:#F9FAFB}
+.proj-table tr.unbilled-critical td{background:#FFF5F5}
+.proj-table tr.unbilled-warn td{background:#FFFBEB}
+
+.priority{display:inline-block;padding:2px 8px;border-radius:10px;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.05em}
+.p-critical{background:#FEE2E2;color:#991B1B}
+.p-high{background:#FFEDD5;color:#9A3412}
+.p-normal{background:#DBEAFE;color:#1E40AF}
+.p-low{background:#F3F4F6;color:#6B7280}
+
+.status-chip{display:inline-block;padding:3px 9px;border-radius:10px;font-size:10px;font-weight:700;white-space:nowrap}
+.s-awarded{background:#DBEAFE;color:#1E40AF}
+.s-engineering{background:#EDE9FE;color:#5B21B6}
+.s-fabrication{background:#FEF3C7;color:#92400E}
+.s-install-ready{background:#D1FAE5;color:#065F46}
+.s-scheduled{background:#CFFAFE;color:#164E63}
+.s-unbilled{background:#FEE2E2;color:#991B1B;animation:pulse 2s infinite}
+.s-invoiced{background:#DCFCE7;color:#166534}
+.s-paid{background:#F0FDF4;color:#14532D}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.7}}
+
+.billing-flag{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:500}
+.flag-ok{color:var(--green)}
+.flag-warn{color:var(--orange)}
+.flag-late{color:var(--red);font-weight:700}
+.flag-na{color:var(--soft)}
+
+/* AGING CHART */
+.aging-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;padding:16px}
+.aging-bucket{background:var(--bg);border-radius:8px;padding:12px;text-align:center;border:1.5px solid var(--line)}
+.aging-bucket.has-items{border-color:var(--red);background:#FFF5F5}
+.aging-count{font-family:'JetBrains Mono',monospace;font-size:28px;font-weight:500}
+.aging-count.red{color:var(--red)}
+.aging-label{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--soft);margin-top:4px}
+
+/* WEEKLY REVIEW */
+.review-step{display:flex;align-items:flex-start;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line)}
+.review-step:last-child{border-bottom:none}
+.step-num{width:28px;height:28px;border-radius:50%;background:var(--steel);color:var(--gold);font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:14px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.step-body{flex:1}
+.step-title{font-weight:700;font-size:13px;color:var(--ink)}
+.step-desc{font-size:11px;color:var(--soft);margin-top:3px;line-height:1.5}
+.step-owner{font-size:10px;font-weight:700;color:var(--blue);margin-top:4px}
+
+/* Edit modal */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px}
+.modal{background:var(--white);border-radius:14px;width:min(600px,96vw);box-shadow:0 20px 60px rgba(0,0,0,.3);overflow:hidden}
+.modal-head{background:var(--steel);padding:14px 20px;display:flex;align-items:center;justify-content:space-between}
+.modal-title{font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:16px;color:#fff;letter-spacing:.06em}
+.modal-body{padding:20px;display:grid;grid-template-columns:1fr 1fr;gap:12px;max-height:70vh;overflow-y:auto}
+.modal-field{display:flex;flex-direction:column;gap:4px}
+.modal-field.full{grid-column:1/-1}
+.modal-field label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--soft)}
+.modal-field input,.modal-field select,.modal-field textarea{
+  border:1.5px solid var(--line);border-radius:7px;padding:8px 10px;font-family:Barlow,sans-serif;font-size:13px;color:var(--ink);background:var(--bg);outline:none}
+.modal-field input:focus,.modal-field select:focus{border-color:var(--blue);background:#EFF6FF}
+.modal-foot{padding:14px 20px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end}
+.btn{height:40px;border:none;border-radius:8px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12px;letter-spacing:.05em;text-transform:uppercase;cursor:pointer;padding:0 20px}
+.btn.primary{background:var(--blue);color:#fff}
+.btn.success{background:var(--green);color:#fff}
+.btn.danger{background:var(--red);color:#fff}
+.btn.cancel{background:var(--bg);color:var(--mid);border:1.5px solid var(--line)}
+
+#tcFab,#tcFabCompact,.termac-chat-fab,button[title="Team Messages"],[id*="aiBubble"],[class*="ai-fab"],.sp-ai-fab,#_aiFloatBtn{display:none!important}
+</style>
+</head>
+<body>
+
+<div id="header">
+  <h1>ALL<span>PRO</span> BILLING KPI</h1>
+  <div class="hdr-chip">Jim Kennedy Model — Week of <span id="weekOf"></span></div>
+  <div style="flex:1"></div>
+  <div class="hdr-chip" id="refreshTs">Loading…</div>
+  <button class="hdr-btn steel" onclick="bkLoad()">↻ Refresh</button>
+  <button class="hdr-btn gold" onclick="bkExport()">⬇ Export CSV</button>
+  <button class="hdr-btn steel" onclick="window.parent&&window.parent.postMessage({type:'close_embed'},'*')">← Back</button>
+</div>
+
+<div id="content">
+
+  <!-- KPI ROW -->
+  <div class="kpi-grid" id="kpiGrid">
+    <div class="kpi blue"><div class="kpi-label">Active Projects</div><div class="kpi-val" id="k_active">—</div><div class="kpi-target">All in-progress jobs</div></div>
+    <div class="kpi blue"><div class="kpi-label">Completed Projects</div><div class="kpi-val" id="k_complete">—</div><div class="kpi-target">Done & invoiced or paid</div></div>
+    <div class="kpi red"><div class="kpi-label">Completed — Not Billed</div><div class="kpi-val" id="k_unbilled_count">—</div><div class="kpi-target">Target: 0</div><div class="kpi-status" id="ks_unbilled">—</div></div>
+    <div class="kpi red"><div class="kpi-label">Unbilled Revenue</div><div class="kpi-val" id="k_unbilled_rev">—</div><div class="kpi-target">Target: $0</div><div class="kpi-status" id="ks_rev">—</div></div>
+    <div class="kpi green"><div class="kpi-label">Avg Days to Invoice</div><div class="kpi-val" id="k_avg_days">—</div><div class="kpi-target">Target: ≤ 3 days</div><div class="kpi-status" id="ks_days">—</div></div>
+    <div class="kpi green"><div class="kpi-label">Invoiced Within 5 Days</div><div class="kpi-val" id="k_on_time">—</div><div class="kpi-target">Target: 100%</div><div class="kpi-status" id="ks_ontime">—</div></div>
+    <div class="kpi yellow"><div class="kpi-label">Projects >10 Days Unbilled</div><div class="kpi-val" id="k_over10">—</div><div class="kpi-target">Target: 0</div><div class="kpi-status" id="ks_over10">—</div></div>
+    <div class="kpi yellow"><div class="kpi-label">Projects >30 Days Past Due</div><div class="kpi-val" id="k_over30">—</div><div class="kpi-target">Target: 0</div><div class="kpi-status" id="ks_over30">—</div></div>
+  </div>
+
+  <!-- AGING CHART -->
+  <div class="section">
+    <div class="section-head">
+      <div class="section-title">Completed-Unbilled Aging</div>
+      <div style="font-size:11px;color:var(--soft)">Days since actual completion — jobs awaiting invoice</div>
+    </div>
+    <div class="aging-grid" id="agingGrid">
+      <div class="aging-bucket"><div class="aging-count" id="age_0_3">—</div><div class="aging-label">0–3 Days</div></div>
+      <div class="aging-bucket"><div class="aging-count" id="age_4_5">—</div><div class="aging-label">4–5 Days</div></div>
+      <div class="aging-bucket"><div class="aging-count" id="age_6_10">—</div><div class="aging-label">6–10 Days</div></div>
+      <div class="aging-bucket"><div class="aging-count" id="age_11_30">—</div><div class="aging-label">11–30 Days</div></div>
+      <div class="aging-bucket"><div class="aging-count" id="age_over30">—</div><div class="aging-label">Over 30 Days 🚨</div></div>
+    </div>
+  </div>
+
+  <!-- PROJECT TRACKER -->
+  <div class="section">
+    <div class="section-head">
+      <div class="section-title">Project Tracker</div>
+      <button onclick="bkNewProject()" style="background:var(--blue);color:#fff;border:none;border-radius:6px;padding:6px 14px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">+ New Project</button>
+    </div>
+    <div style="overflow-x:auto">
+      <table class="proj-table">
+        <thead>
+          <tr>
+            <th>Project ID</th>
+            <th>Customer</th>
+            <th>Description</th>
+            <th>PM / Billing Owner</th>
+            <th>Priority</th>
+            <th>Status</th>
+            <th>Promised</th>
+            <th>Completed</th>
+            <th>Invoice Date</th>
+            <th style="text-align:right">Contract Value</th>
+            <th style="text-align:right">Change Orders</th>
+            <th style="text-align:right">Total Billable</th>
+            <th style="text-align:right">Amount Invoiced</th>
+            <th style="text-align:right">Unbilled</th>
+            <th>Days Unbilled</th>
+            <th>Billing Flag</th>
+            <th>Next Action / Blocker</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="projBody">
+          <tr><td colspan="18" style="text-align:center;padding:24px;color:var(--soft)">Loading projects…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- WEEKLY REVIEW CHECKLIST -->
+  <div class="section">
+    <div class="section-head">
+      <div class="section-title">📋 Recommended Weekly Review Process — Jim Kennedy</div>
+      <div style="font-size:11px;color:var(--soft)">Run this protocol at every weekly meeting with Jim & UniPro team</div>
+    </div>
+    <div>
+      <div class="review-step"><div class="step-num">1</div><div class="step-body"><div class="step-title">Project Manager confirms completion date</div><div class="step-desc">PM verifies actual completion on every job listed as Complete or Completed–Not Billed. Completion date locked in system before proceeding.</div><div class="step-owner">Owner: Project Manager (Dan Soleau / Ted Scholl)</div></div></div>
+      <div class="review-step"><div class="step-num">2</div><div class="step-body"><div class="step-title">Completion documents and approved change orders sent to billing owner</div><div class="step-desc">Signed completion ticket, photos, any customer approvals, and all approved change orders transmitted to billing owner (Catherine Sullivan) same day as completion confirmation.</div><div class="step-owner">Owner: Project Manager → Billing Owner (Catherine Sullivan)</div></div></div>
+      <div class="review-step"><div class="step-num">3</div><div class="step-body"><div class="step-title">Invoice issued within 3 business days — 5 days maximum</div><div class="step-desc">Accounting issues invoice within 3 days of receiving complete documentation. Any job exceeding 5 days escalates immediately to Jim Kennedy. No exceptions.</div><div class="step-owner">Owner: Billing Owner (Catherine Sullivan) → Jim Kennedy for escalation</div></div></div>
+      <div class="review-step"><div class="step-num">4</div><div class="step-body"><div class="step-title">Every unbilled job receives an owner, blocker, and next-action date</div><div class="step-desc">No job sits in Completed–Not Billed without a named person responsible, a specific reason it's not billed, and a committed date for the next action. This dashboard tracks all three fields.</div><div class="step-owner">Owner: Ted Scholl (field) + Catherine Sullivan (billing)</div></div></div>
+      <div class="review-step"><div class="step-num">5</div><div class="step-body"><div class="step-title">Leadership reviews all red items weekly until billed</div><div class="step-desc">Any job in the 6–10 day bucket or above is red. Jim, Dan, and Ted review every red item in the weekly meeting until it is invoiced and removed from the unbilled list. No red item closes without a resolution.</div><div class="step-owner">Owner: Jim Kennedy (review lead) — weekly meeting standing agenda item</div></div></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- EDIT MODAL -->
+<div id="editModal" class="modal-overlay" style="display:none">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title" id="modalTitle">Edit Project</div>
+      <button onclick="bkCloseModal()" style="background:none;border:none;color:#fff;font-size:18px;cursor:pointer">×</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="edit_id">
+      <div class="modal-field"><label>Customer Name *</label><input id="edit_customer" type="text" placeholder="Restaurant / company name"></div>
+      <div class="modal-field"><label>Project Description *</label><input id="edit_desc" type="text" placeholder="Custom hood package, tables, etc."></div>
+      <div class="modal-field"><label>Project Manager</label><input id="edit_pm" type="text" value="Ted Scholl"></div>
+      <div class="modal-field"><label>Billing Owner</label><input id="edit_billing_owner" type="text" value="Catherine Sullivan"></div>
+      <div class="modal-field"><label>Priority</label>
+        <select id="edit_priority">
+          <option value="Low">Low</option>
+          <option value="Normal" selected>Normal</option>
+          <option value="High">High</option>
+          <option value="Critical">Critical</option>
+        </select>
+      </div>
+      <div class="modal-field"><label>Status</label>
+        <select id="edit_status">
+          <option value="awarded">Awarded</option>
+          <option value="engineering">Engineering</option>
+          <option value="fabrication">In Fabrication</option>
+          <option value="delivery_install">Ready to Install</option>
+          <option value="commissioning">Installation Scheduled</option>
+          <option value="completed_unbilled">Completed – Not Billed</option>
+          <option value="invoiced">Invoiced</option>
+          <option value="paid">Paid</option>
+        </select>
+      </div>
+      <div class="modal-field"><label>Award Date</label><input id="edit_award" type="date"></div>
+      <div class="modal-field"><label>Promised Completion</label><input id="edit_promised" type="date"></div>
+      <div class="modal-field"><label>Actual Completion</label><input id="edit_actual" type="date"></div>
+      <div class="modal-field"><label>Invoice Date</label><input id="edit_invoice_date" type="date"></div>
+      <div class="modal-field"><label>Contract Value ($)</label><input id="edit_contract" type="number" step="100" min="0"></div>
+      <div class="modal-field"><label>Approved Change Orders ($)</label><input id="edit_co" type="number" step="100" min="0" value="0"></div>
+      <div class="modal-field"><label>Amount Invoiced ($)</label><input id="edit_invoiced" type="number" step="100" min="0" value="0"></div>
+      <div class="modal-field full"><label>Next Action / Blocker</label><input id="edit_blocker" type="text" placeholder="Waiting for signed completion ticket, PO, change order approval…"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn cancel" onclick="bkCloseModal()">Cancel</button>
+      <button class="btn danger" id="btnDelete" onclick="bkDeleteProject()" style="display:none">Delete</button>
+      <button class="btn success" onclick="bkSaveProject()">💾 Save Project</button>
+    </div>
+  </div>
+</div>
+
+<script src="termac-d1-sync.js"></script>
+<script>
+'use strict';
+var BK_PROJECTS = [];
+
+// ── INIT ──
+document.getElementById('weekOf').textContent = new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});
+
+function fmt$(n) {
+  if (n == null || isNaN(n)) return '—';
+  if (Math.abs(n) >= 1000000) return '$'+(n/1000000).toFixed(1)+'M';
+  if (Math.abs(n) >= 1000) return '$'+(n/1000).toFixed(1)+'K';
+  return '$'+Math.round(n).toLocaleString();
+}
+function fmtDate(ts) {
+  if (!ts) return '—';
+  return new Date(ts).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'2-digit'});
+}
+function daysSince(ts) {
+  if (!ts) return null;
+  return Math.floor((Date.now() - ts) / 86400000);
+}
+function escH(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ── LOAD ──
+async function bkLoad() {
+  document.getElementById('refreshTs').textContent = 'Loading…';
+  if (typeof d1Query !== 'function') {
+    document.getElementById('refreshTs').textContent = 'D1 unavailable';
+    bkRenderDemo(); return;
+  }
+  try {
+    var res = await d1Query(
+      'SELECT ap.*, ap.sale_price as contract_value FROM allpro_projects ap ORDER BY ap.created_at DESC LIMIT 200'
+    );
+    BK_PROJECTS = (res.ok && res.results) ? res.results : [];
+    bkRenderAll();
+    document.getElementById('refreshTs').textContent = 'Updated ' + new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+  } catch(e) {
+    document.getElementById('refreshTs').textContent = 'Load error';
+    console.error(e);
+  }
+}
+
+function bkRenderAll() {
+  bkRenderKPIs();
+  bkRenderAging();
+  bkRenderTable();
+}
+
+// ── KPIs ──
+function bkRenderKPIs() {
+  var active = BK_PROJECTS.filter(function(p){ return !['invoiced','paid','won','lost'].includes(p.stage); });
+  var complete = BK_PROJECTS.filter(function(p){ return ['invoiced','paid','won'].includes(p.stage); });
+  var unbilled = BK_PROJECTS.filter(function(p){ return p.stage === 'completed_unbilled' || (p.actual_completion && !p.invoice_date && ['commissioning','closeout'].includes(p.stage)); });
+
+  var unbilledRev = unbilled.reduce(function(s,p){
+    var total = (parseFloat(p.sale_price||p.estimated_value||0)) + (parseFloat(p.approved_change_orders||0));
+    return s + total;
+  }, 0);
+
+  // Avg days to invoice (for jobs that have been invoiced)
+  var invoiced = BK_PROJECTS.filter(function(p){ return p.invoice_date && p.actual_completion; });
+  var avgDays = invoiced.length ? Math.round(invoiced.reduce(function(s,p){
+    return s + Math.max(0, (p.invoice_date - p.actual_completion) / 86400000);
+  }, 0) / invoiced.length) : 0;
+
+  var onTime = invoiced.filter(function(p){ return ((p.invoice_date - p.actual_completion)/86400000) <= 5; }).length;
+  var onTimePct = invoiced.length ? Math.round(onTime/invoiced.length*100) : 100;
+
+  var over10 = unbilled.filter(function(p){ return p.actual_completion && daysSince(p.actual_completion) > 10; }).length;
+  var over30 = BK_PROJECTS.filter(function(p){
+    return p.invoice_date && !['paid','won'].includes(p.stage) && daysSince(p.invoice_date) > 30;
+  }).length;
+
+  setKPI('k_active', active.length, '', '—', '—');
+  setKPI('k_complete', complete.length, '', '—', '—');
+  setKPI('k_unbilled_count', unbilled.length, 'Target: 0', 'ks_unbilled', unbilled.length === 0 ? 'Green' : 'Red');
+  setKPI('k_unbilled_rev', fmt$(unbilledRev), 'Target: $0', 'ks_rev', unbilledRev === 0 ? 'Green' : 'Red');
+  setKPI('k_avg_days', avgDays ? avgDays+'d' : '—', 'Target: ≤ 3 days', 'ks_days', !avgDays||avgDays<=3 ? 'Green' : avgDays<=5 ? 'Yellow' : 'Red');
+  setKPI('k_on_time', onTimePct+'%', 'Target: 100%', 'ks_ontime', onTimePct===100 ? 'Green' : onTimePct>=80 ? 'Yellow' : 'Red');
+  setKPI('k_over10', over10, 'Target: 0', 'ks_over10', over10===0 ? 'Green' : 'Red');
+  setKPI('k_over30', over30, 'Target: 0', 'ks_over30', over30===0 ? 'Green' : 'Red');
+}
+
+function setKPI(valId, val, target, statusId, status) {
+  var el = document.getElementById(valId);
+  if (el) el.textContent = val;
+  if (statusId && statusId !== '—') {
+    var sel = document.getElementById(statusId);
+    if (sel) {
+      sel.textContent = status;
+      sel.className = 'kpi-status ' + (status||'').toLowerCase();
+    }
+  }
+}
+
+// ── AGING ──
+function bkRenderAging() {
+  var unbilled = BK_PROJECTS.filter(function(p){
+    return p.stage === 'completed_unbilled' || (p.actual_completion && !p.invoice_date);
+  });
+  var buckets = { '0_3':0, '4_5':0, '6_10':0, '11_30':0, 'over30':0 };
+  unbilled.forEach(function(p) {
+    var d = daysSince(p.actual_completion);
+    if (d == null) return;
+    if (d <= 3) buckets['0_3']++;
+    else if (d <= 5) buckets['4_5']++;
+    else if (d <= 10) buckets['6_10']++;
+    else if (d <= 30) buckets['11_30']++;
+    else buckets['over30']++;
+  });
+  ['0_3','4_5','6_10','11_30','over30'].forEach(function(k) {
+    var el = document.getElementById('age_'+k);
+    if (!el) return;
+    el.textContent = buckets[k];
+    var isRed = (k==='6_10'||k==='11_30'||k==='over30') && buckets[k] > 0;
+    el.className = 'aging-count' + (isRed ? ' red' : '');
+    el.closest('.aging-bucket').classList.toggle('has-items', buckets[k] > 0 && isRed);
+  });
+}
+
+// ── TABLE ──
+function bkRenderTable() {
+  if (!BK_PROJECTS.length) {
+    document.getElementById('projBody').innerHTML =
+      '<tr><td colspan="18" style="text-align:center;padding:24px;color:var(--soft)">No projects found. Click + New Project to add one.</td></tr>';
+    return;
+  }
+
+  var STATUS_MAP = {
+    awarded:'s-awarded',engineering:'s-engineering',
+    fabrication:'s-fabrication',design_drawings:'s-fabrication',
+    costing:'s-fabrication',delivery_install:'s-install-ready',
+    commissioning:'s-scheduled',completed_unbilled:'s-unbilled',
+    invoiced:'s-invoiced',paid:'s-paid',won:'s-paid',closeout:'s-invoiced',
+  };
+  var STATUS_LABELS = {
+    awarded:'Awarded',engineering:'Engineering',
+    fabrication:'In Fabrication',design_drawings:'In Fabrication',
+    costing:'Costing',delivery_install:'Ready to Install',
+    commissioning:'Install Scheduled',completed_unbilled:'Completed — NOT BILLED',
+    invoiced:'Invoiced',paid:'Paid',won:'Paid / Won',closeout:'Closeout',
+  };
+  var PRIORITY_CLASS = { Critical:'p-critical',High:'p-high',Normal:'p-normal',Low:'p-low' };
+
+  var html = BK_PROJECTS.map(function(p) {
+    var contractVal = parseFloat(p.sale_price||p.estimated_value||0);
+    var co = parseFloat(p.approved_change_orders||0);
+    var totalBillable = contractVal + co;
+    var invoicedAmt = parseFloat(p.amount_invoiced||0);
+    var unbilled = totalBillable - invoicedAmt;
+    var daysUnbilled = p.actual_completion && !p.invoice_date ? daysSince(p.actual_completion) : null;
+    var stageCls = STATUS_MAP[p.stage] || 's-awarded';
+    var stageLabel = STATUS_LABELS[p.stage] || (p.stage||'—');
+    var isUnbilledRow = p.stage === 'completed_unbilled' || (daysUnbilled != null && daysUnbilled > 0);
+    var rowCls = daysUnbilled > 10 ? 'unbilled-critical' : daysUnbilled > 5 ? 'unbilled-warn' : '';
+
+    var billingFlag = '—', flagCls = 'flag-na';
+    if (daysUnbilled != null) {
+      if (daysUnbilled <= 3) { billingFlag = '✓ '+daysUnbilled+'d'; flagCls = 'flag-ok'; }
+      else if (daysUnbilled <= 5) { billingFlag = '⚠ '+daysUnbilled+'d'; flagCls = 'flag-warn'; }
+      else { billingFlag = '🚨 '+daysUnbilled+'d LATE'; flagCls = 'flag-late'; }
+    } else if (p.invoice_date && p.actual_completion) {
+      var inv_days = Math.round((p.invoice_date - p.actual_completion)/86400000);
+      billingFlag = inv_days <= 5 ? '✓ On Time ('+inv_days+'d)' : '⚠ Late ('+inv_days+'d)';
+      flagCls = inv_days <= 5 ? 'flag-ok' : 'flag-warn';
+    } else if (['invoiced','paid','won'].includes(p.stage)) {
+      billingFlag = '✓ Billed'; flagCls = 'flag-ok';
+    }
+
+    var prio = p.priority || 'Normal';
+
+    return '<tr class="'+rowCls+'">' +
+      '<td style="font-family:JetBrains Mono,monospace;font-size:10px">' + escH(p.id||'—') + '</td>' +
+      '<td style="font-weight:700">' + escH(p.customer_name||p.account_name||p.project_name||'—') + '</td>' +
+      '<td>' + escH(p.project_name||p.description||'—') + '</td>' +
+      '<td style="font-size:11px"><div>' + escH(p.project_manager||'Ted Scholl') + '</div><div style="color:var(--soft)">' + escH(p.billing_owner||'Catherine Sullivan') + '</div></td>' +
+      '<td><span class="priority '+PRIORITY_CLASS[prio]+'">' + escH(prio) + '</span></td>' +
+      '<td><span class="status-chip '+stageCls+'">' + escH(stageLabel) + '</span></td>' +
+      '<td style="font-size:11px">' + fmtDate(p.promised_completion) + '</td>' +
+      '<td style="font-size:11px">' + fmtDate(p.actual_completion) + '</td>' +
+      '<td style="font-size:11px">' + fmtDate(p.invoice_date) + '</td>' +
+      '<td style="text-align:right;font-family:JetBrains Mono,monospace">' + fmt$(contractVal) + '</td>' +
+      '<td style="text-align:right;font-family:JetBrains Mono,monospace;color:var(--orange)">' + (co > 0 ? fmt$(co) : '—') + '</td>' +
+      '<td style="text-align:right;font-family:JetBrains Mono,monospace;font-weight:700">' + fmt$(totalBillable) + '</td>' +
+      '<td style="text-align:right;font-family:JetBrains Mono,monospace;color:var(--green)">' + (invoicedAmt > 0 ? fmt$(invoicedAmt) : '—') + '</td>' +
+      '<td style="text-align:right;font-family:JetBrains Mono,monospace;color:' + (unbilled > 0 ? 'var(--red)' : 'var(--soft)') + ';font-weight:' + (unbilled > 0 ? '700' : '400') + '">' + (unbilled > 0 ? fmt$(unbilled) : '—') + '</td>' +
+      '<td><span class="billing-flag '+flagCls+'">' + billingFlag + '</span></td>' +
+      '<td><span class="billing-flag '+flagCls+'">' + billingFlag + '</span></td>' +
+      '<td style="font-size:11px;color:var(--orange);max-width:180px">' + escH(p.next_action||p.billing_blocker||'') + '</td>' +
+      '<td><button onclick="bkEditProject(\''+escH(p.id)+'\')" style="background:var(--bg);border:1.5px solid var(--line);border-radius:6px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer">Edit</button></td>' +
+    '</tr>';
+  }).join('');
+  document.getElementById('projBody').innerHTML = html;
+}
+
+// ── EDIT / SAVE ──
+function bkNewProject() {
+  document.getElementById('modalTitle').textContent = 'New AllPro Project';
+  document.getElementById('edit_id').value = '';
+  ['edit_customer','edit_desc','edit_award','edit_promised','edit_actual','edit_invoice_date','edit_blocker'].forEach(function(id){ document.getElementById(id).value = ''; });
+  ['edit_contract','edit_co','edit_invoiced'].forEach(function(id){ document.getElementById(id).value = '0'; });
+  document.getElementById('edit_pm').value = 'Ted Scholl';
+  document.getElementById('edit_billing_owner').value = 'Catherine Sullivan';
+  document.getElementById('edit_priority').value = 'Normal';
+  document.getElementById('edit_status').value = 'awarded';
+  document.getElementById('btnDelete').style.display = 'none';
+  document.getElementById('editModal').style.display = 'flex';
+}
+
+function bkEditProject(id) {
+  var p = BK_PROJECTS.find(function(x){ return x.id === id; });
+  if (!p) return;
+  document.getElementById('modalTitle').textContent = 'Edit: ' + (p.project_name||id);
+  document.getElementById('edit_id').value = id;
+  document.getElementById('edit_customer').value = p.customer_name||p.account_name||p.project_name||'';
+  document.getElementById('edit_desc').value = p.project_name||p.description||'';
+  document.getElementById('edit_pm').value = p.project_manager||'Ted Scholl';
+  document.getElementById('edit_billing_owner').value = p.billing_owner||'Catherine Sullivan';
+  document.getElementById('edit_priority').value = p.priority||'Normal';
+  document.getElementById('edit_status').value = p.stage||'awarded';
+  document.getElementById('edit_award').value = p.award_date ? new Date(p.award_date).toISOString().slice(0,10) : '';
+  document.getElementById('edit_promised').value = p.promised_completion ? new Date(p.promised_completion).toISOString().slice(0,10) : '';
+  document.getElementById('edit_actual').value = p.actual_completion ? new Date(p.actual_completion).toISOString().slice(0,10) : '';
+  document.getElementById('edit_invoice_date').value = p.invoice_date ? new Date(p.invoice_date).toISOString().slice(0,10) : '';
+  document.getElementById('edit_contract').value = p.sale_price||p.estimated_value||0;
+  document.getElementById('edit_co').value = p.approved_change_orders||0;
+  document.getElementById('edit_invoiced').value = p.amount_invoiced||0;
+  document.getElementById('edit_blocker').value = p.next_action||p.billing_blocker||'';
+  document.getElementById('btnDelete').style.display = '';
+  document.getElementById('editModal').style.display = 'flex';
+}
+
+function bkCloseModal() { document.getElementById('editModal').style.display = 'none'; }
+
+async function bkSaveProject() {
+  var id = document.getElementById('edit_id').value;
+  var now = Date.now();
+  function dateToTs(val) { return val ? new Date(val).getTime() : null; }
+
+  var data = {
+    project_name:           document.getElementById('edit_desc').value.trim(),
+    customer_name:          document.getElementById('edit_customer').value.trim(),
+    project_manager:        document.getElementById('edit_pm').value.trim(),
+    billing_owner:          document.getElementById('edit_billing_owner').value.trim(),
+    priority:               document.getElementById('edit_priority').value,
+    stage:                  document.getElementById('edit_status').value,
+    award_date:             dateToTs(document.getElementById('edit_award').value),
+    promised_completion:    dateToTs(document.getElementById('edit_promised').value),
+    actual_completion:      dateToTs(document.getElementById('edit_actual').value),
+    invoice_date:           dateToTs(document.getElementById('edit_invoice_date').value),
+    sale_price:             parseFloat(document.getElementById('edit_contract').value)||0,
+    approved_change_orders: parseFloat(document.getElementById('edit_co').value)||0,
+    amount_invoiced:        parseFloat(document.getElementById('edit_invoiced').value)||0,
+    next_action:            document.getElementById('edit_blocker').value.trim(),
+    updated_at:             now,
+  };
+
+  if (!data.project_name || !data.customer_name) { alert('Customer name and description are required.'); return; }
+
+  if (typeof d1Query === 'function') {
+    if (id) {
+      await d1Query('UPDATE allpro_projects SET project_name=?,customer_name=?,project_manager=?,billing_owner=?,priority=?,stage=?,award_date=?,promised_completion=?,actual_completion=?,invoice_date=?,sale_price=?,approved_change_orders=?,amount_invoiced=?,next_action=?,updated_at=? WHERE id=?',
+        [data.project_name,data.customer_name,data.project_manager,data.billing_owner,data.priority,data.stage,data.award_date,data.promised_completion,data.actual_completion,data.invoice_date,data.sale_price,data.approved_change_orders,data.amount_invoiced,data.next_action,now,id]);
+    } else {
+      var newId = 'APS-' + String(Date.now()).slice(-6);
+      await d1Query('INSERT INTO allpro_projects (id,project_name,customer_name,project_manager,billing_owner,priority,stage,award_date,promised_completion,actual_completion,invoice_date,sale_price,approved_change_orders,amount_invoiced,next_action,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        [newId,data.project_name,data.customer_name,data.project_manager,data.billing_owner,data.priority,data.stage,data.award_date,data.promised_completion,data.actual_completion,data.invoice_date,data.sale_price,data.approved_change_orders,data.amount_invoiced,data.next_action,now,now]);
+    }
+  }
+  bkCloseModal();
+  await bkLoad();
+}
+
+async function bkDeleteProject() {
+  var id = document.getElementById('edit_id').value;
+  if (!id || !confirm('Archive this project?')) return;
+  if (typeof d1Query === 'function') {
+    await d1Query('UPDATE allpro_projects SET stage=?,updated_at=? WHERE id=?', ['lost', Date.now(), id]);
+  }
+  bkCloseModal();
+  await bkLoad();
+}
+
+// ── EXPORT ──
+function bkExport() {
+  var rows = [['Project ID','Customer','Description','PM','Billing Owner','Priority','Status','Award Date','Promised','Actual Completion','Invoice Date','Contract Value','Change Orders','Total Billable','Amount Invoiced','Unbilled','Days Unbilled','Next Action/Blocker']];
+  BK_PROJECTS.forEach(function(p) {
+    var contractVal = parseFloat(p.sale_price||p.estimated_value||0);
+    var co = parseFloat(p.approved_change_orders||0);
+    var totalBillable = contractVal + co;
+    var invoicedAmt = parseFloat(p.amount_invoiced||0);
+    var daysUnbilled = p.actual_completion && !p.invoice_date ? daysSince(p.actual_completion) : null;
+    rows.push([p.id,p.customer_name||p.project_name,p.project_name||'',p.project_manager||'Ted Scholl',p.billing_owner||'Catherine Sullivan',p.priority||'Normal',p.stage,fmtDate(p.award_date),fmtDate(p.promised_completion),fmtDate(p.actual_completion),fmtDate(p.invoice_date),contractVal,co,totalBillable,invoicedAmt,totalBillable-invoicedAmt,daysUnbilled!=null?daysUnbilled:'',p.next_action||'']);
+  });
+  var csv = rows.map(function(r){ return r.map(function(c){ return '"'+String(c||'').replace(/"/g,'""')+'"'; }).join(','); }).join('\n');
+  var blob = new Blob([csv], {type:'text/csv'});
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'AllPro_Billing_KPI_' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click();
+}
+
+setInterval(bkLoad, 120000);
+window.addEventListener('load', bkLoad);
+</script>
+</body>
+</html>
