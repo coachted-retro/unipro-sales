@@ -782,7 +782,7 @@ body {
             </div>
             <div class="field">
               <label>ZIP</label>
-              <input id="p1_zip" type="text" maxlength="5" oninput="afSurveyChange()">
+              <input id="p1_zip" type="text" maxlength="5" oninput="afSurveyChange();if(this.value.length===5)afLookupAHJ(this.value)">
             </div>
           </div>
         </div>
@@ -1195,6 +1195,9 @@ body {
 
     <!-- ════ PHASE 4: CODE CHECK ════ -->
     <div class="phase-panel" id="ph4">
+      <!-- AHJ Banner -- populated when zip entered in Phase 1 -->
+      <div id="ahjBanner" style="display:none;background:#EFF6FF;border:1.5px solid #BFDBFE;border-radius:10px;padding:14px 16px;margin-bottom:0"></div>
+
       <div class="card">
         <div class="card-head" style="background:#FEF2F2">
           <span style="font-size:18px">🛡️</span>
@@ -1223,6 +1226,18 @@ body {
 
     <!-- ════ PHASE 5: PROPOSAL ════ -->
     <div class="phase-panel" id="ph5">
+
+      <!-- AHJ Scope Statements -->
+      <div class="card" id="ahjScopeCard" style="display:none">
+        <div class="card-head" style="background:#EFF6FF">
+          <span style="font-size:18px">🏛️</span>
+          <div class="card-title" style="color:#1B5FA8">Jurisdiction-Specific Scope Clauses</div>
+          <div style="font-size:10px;color:#6B7280;font-style:italic">Auto-generated · included in proposal</div>
+        </div>
+        <div class="card-body">
+          <div id="ahjScopeList" style="display:flex;flex-direction:column;gap:8px"></div>
+        </div>
+      </div>
 
       <div class="card">
         <div class="card-head" style="background:#F0FDF4">
@@ -1342,6 +1357,84 @@ var CFM_RATES = {
 };
 
 var GAUGE_WEIGHTS = { '16':2.52, '18':2.01, '20':1.51 };
+
+
+// ═══════════════════════════════════════════════
+//  AHJ JURISDICTION ENGINE
+//  Looks up local code rules by ZIP code when
+//  a job address is entered in Phase 1.
+// ═══════════════════════════════════════════════
+var AHJ = null; // current jurisdiction profile
+
+function afLookupAHJ(zip) {
+  if (!zip || zip.length < 5 || typeof d1Query !== 'function') return;
+  // Match by prefix (stored as '191%' etc)
+  d1Query(
+    "SELECT * FROM local_ahj_rules WHERE ? LIKE zip_code OR zip_code = ? LIMIT 1",
+    [zip, zip]
+  ).then(function(res) {
+    var rule = res.ok && res.results && res.results[0];
+    if (!rule) {
+      // Try state-level fallback by first 3 digits
+      var prefix = zip.substring(0, 3) + '%';
+      d1Query("SELECT * FROM local_ahj_rules WHERE zip_code LIKE ? LIMIT 1", [prefix]).then(function(r2) {
+        AHJ = (r2.ok && r2.results && r2.results[0]) || null;
+        afRenderAHJBanner();
+        afRenderNFPA(); // re-render checklist with AHJ overlays
+      });
+      return;
+    }
+    AHJ = rule;
+    afRenderAHJBanner();
+    afRenderNFPA();
+  }).catch(function() { AHJ = null; });
+}
+
+function afRenderAHJBanner() {
+  var banner = document.getElementById('ahjBanner');
+  if (!banner) return;
+  if (!AHJ) {
+    banner.style.display = 'none';
+    return;
+  }
+  banner.style.display = 'block';
+  var flags = [];
+  if (AHJ.requires_pcu_scrubber)        flags.push('<span style="color:#C8102E;font-weight:700">⚠ PCU/Scrubber may be required for charcoal/wood installs</span>');
+  if (AHJ.requires_stamped_drawings)     flags.push('<span style="color:#D97706;font-weight:700">📐 Stamped engineering drawings required for permit</span>');
+  if (AHJ.min_roof_discharge_height_in && AHJ.min_roof_discharge_height_in > 40)
+    flags.push('<span style="color:#D97706;font-weight:700">⬆ Local discharge height: '+AHJ.min_roof_discharge_height_in+'" (NFPA default: 40")</span>');
+  if (AHJ.requires_fire_panel_interlock) flags.push('<span style="color:#374151">✓ Fire panel interlock required</span>');
+
+  banner.innerHTML =
+    '<div style="display:flex;align-items:flex-start;gap:10px">'+
+    '<div style="font-size:20px;flex-shrink:0">🏛️</div>'+
+    '<div style="flex:1">'+
+      '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#1B5FA8;margin-bottom:4px">'+
+        AHJ.municipality_name + ' — ' + AHJ.state +
+        (AHJ.local_fire_code ? '<span style="font-weight:500;color:#6B7280;margin-left:8px;font-size:11px">'+AHJ.local_fire_code+'</span>' : '') +
+      '</div>'+
+      (flags.length ? '<div style="display:flex;flex-direction:column;gap:3px;font-size:11px;margin-bottom:6px">'+flags.join('')+'</div>' : '')+
+      (AHJ.local_code_disclaimer_text ?
+        '<div style="font-size:11px;color:#374151;background:#EFF6FF;border-radius:6px;padding:8px 10px;line-height:1.5">'+
+        '📋 <strong>Proposal disclaimer auto-added:</strong> '+AHJ.local_code_disclaimer_text+
+        '</div>' : '')+
+      (AHJ.ahj_contact_phone ?
+        '<div style="font-size:11px;color:#6B7280;margin-top:6px">AHJ Contact: '+AHJ.ahj_contact_phone+'</div>' : '')+
+    '</div></div>';
+}
+
+// Generate AHJ-aware scope statements for proposal
+function afGetAHJScopeStatements() {
+  var stmts = [];
+  // Always include base NFPA 96 clause
+  stmts.push('Exhaust canopy and grease ductwork are designed in accordance with NFPA 96 (2021 edition). Installation provides a minimum 18-inch clearance to combustible structures per NFPA 96 §4.2.1, or utilizes an NFPA-approved clearance reduction assembly.');
+  if (!AHJ) return stmts;
+  if (AHJ.local_code_disclaimer_text) stmts.push(AHJ.local_code_disclaimer_text);
+  if (AHJ.requires_pcu_scrubber) stmts.push('⚠ NOTE: Local AHJ may require an approved Pollution Control Unit (PCU/Scrubber) for charcoal, wood-fired, or high-volume chain-broiler installations. Confirm with AHJ before finalizing scope.');
+  if (AHJ.requires_stamped_drawings) stmts.push('Permit submission drawings, stamped by a licensed engineer where required by local AHJ, are included in this proposal scope. Plan review fees billed by the municipality are the responsibility of the property owner.');
+  if (AHJ.min_roof_discharge_height_in && AHJ.min_roof_discharge_height_in > 40) stmts.push('Local jurisdiction requires exhaust discharge termination at a minimum of '+AHJ.min_roof_discharge_height_in+' inches above the roof deck (NFPA 96 default: 40 inches). Duct design and fan selection account for this local amendment.');
+  return stmts;
+}
 
 var NFPA_CHECKS = [
   { id:'clearance18', title:'18" Clearance to Combustibles', sub:'Minimum 18" clearance required between hood/ductwork and any combustible material', nfpa:'NFPA 96 §4.2.1', critical:true },
@@ -1463,7 +1556,22 @@ function afGoPhase(n) {
   document.getElementById('btnNextPhase').style.display = n === 5 ? 'none' : '';
   document.getElementById('btnGenPDF').style.display = n === 5 ? '' : 'none';
   if (n === 4) afRenderNFPA();
-  if (n === 5) { afCalcProposal(); afInitSig(); }
+  if (n === 5) {
+    afCalcProposal();
+    afInitSig();
+    // Render AHJ scope statements
+    var stmts = afGetAHJScopeStatements();
+    var scopeCard = document.getElementById('ahjScopeCard');
+    var scopeList = document.getElementById('ahjScopeList');
+    if (scopeCard && scopeList) {
+      scopeCard.style.display = stmts.length ? '' : 'none';
+      scopeList.innerHTML = stmts.map(function(s, i) {
+        return '<div style="padding:10px 12px;background:var(--bg);border-radius:8px;border-left:3px solid '+(i===0?'#6B7280':'#1B5FA8')+'">'+
+          '<div style="font-size:12px;color:var(--ink);line-height:1.5">'+s+'</div>'+
+          '</div>';
+      }).join('');
+    }
+  }
   document.getElementById('workspace').scrollTop = 0;
 }
 function afNext() {
@@ -1523,6 +1631,7 @@ function afSelectLocation(id, name, addr) {
       document.getElementById('p1_city').value   = loc.city || '';
       document.getElementById('p1_state').value  = loc.state || 'PA';
       document.getElementById('p1_zip').value    = loc.zip || '';
+      if (loc.zip && loc.zip.length >= 5) afLookupAHJ(loc.zip);
       document.getElementById('ctx-contact').textContent = loc.contact_name || '—';
       document.getElementById('ctx-contact').classList.remove('empty');
     });
@@ -1739,7 +1848,27 @@ function afUpdateFab(id, key, val) {
 // ═══════════════════════════════════════════════
 function afRenderNFPA() {
   var el = document.getElementById('nfpaChecklist');
-  el.innerHTML = NFPA_CHECKS.map(function(c) {
+  // Build AHJ-specific extra checks
+  var extraChecks = [];
+  if (AHJ) {
+    if (AHJ.requires_pcu_scrubber) {
+      extraChecks.push({ id:'ahj_pcu', title:'PCU/Scrubber — Local AHJ Requirement',
+        sub:'Local ordinance may require Pollution Control Unit for charcoal/wood/chain-broiler installs. Confirm with AHJ before finalizing scope.',
+        nfpa:'Local AHJ — ' + AHJ.municipality_name, critical:true });
+    }
+    if (AHJ.requires_stamped_drawings) {
+      extraChecks.push({ id:'ahj_stamps', title:'Stamped Engineering Drawings Required',
+        sub:'Local AHJ requires PE-stamped fire suppression drawings for permit submission.',
+        nfpa:'Local AHJ — ' + AHJ.municipality_name, critical:false });
+    }
+    if (AHJ.min_roof_discharge_height_in > 40) {
+      extraChecks.push({ id:'ahj_discharge', title:'Local Discharge Height: '+AHJ.min_roof_discharge_height_in+'" (vs NFPA 40")',
+        sub:'Local amendment requires discharge '+AHJ.min_roof_discharge_height_in+'" above roof deck. Confirm duct riser accounts for this.',
+        nfpa:'Local AHJ — ' + AHJ.municipality_name, critical:false });
+    }
+  }
+  var allChecks = extraChecks.concat(NFPA_CHECKS);
+  el.innerHTML = allChecks.map(function(c) {
     var state = nfpaState[c.id];
     var cls = state === true ? 'pass' : state === false ? 'fail' : '';
     var icon = state === true ? '✓' : state === false ? '✗' : '';
@@ -1752,6 +1881,8 @@ function afRenderNFPA() {
       '</div>'+
     '</div>';
   }).join('');
+  // Also re-render AHJ banner
+  afRenderAHJBanner();
 }
 function afToggleNFPA(id) {
   var cur = nfpaState[id];
