@@ -11352,6 +11352,54 @@ function spToast(msg, duration=2800) {
   el._t = setTimeout(() => el.style.opacity = '0', duration);
 }
 
+
+// ════ LOCATION DOCUMENT UPLOAD → R2 ════════════════════
+function spUploadDocToLocation(locationId, locationName) {
+  var input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'application/pdf,image/*';
+  input.onchange = function() {
+    var file = input.files[0];
+    if (!file) return;
+    var safeName = (locationName || locationId).replace(/[\/\\:*?"<>|]/g,'');
+    var key = 'AllPro Jobs/' + safeName + '/' + file.name;
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      if (typeof spToast === 'function') spToast('\u2B06 Uploading ' + file.name + '...');
+      fetch('https://termac-photo-upload.termac-one.workers.dev/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bucket: 'job-docs', key: key, base64: e.target.result, contentType: file.type || 'application/pdf' })
+      })
+      .then(function(r){ return r.json(); })
+      .then(function(data) {
+        if (!data.ok) { alert('Upload failed: ' + (data.error || 'unknown')); return; }
+        var pdfUrl = data.url;
+        if (typeof spToast === 'function') spToast('\u2705 Uploaded! Linking...');
+        if (typeof d1Query === 'function') {
+          d1Query('SELECT id,name FROM opportunities WHERE location_id=? AND (proposal_pdf_url IS NULL OR proposal_pdf_url=\'\') AND resolution_status!=? ORDER BY created_at DESC LIMIT 5', [locationId, 'archived'])
+          .then(function(res) {
+            var opps = (res && res.results) ? res.results : [];
+            var link = function(oppId, oppName) {
+              d1Query('UPDATE opportunities SET proposal_pdf_url=?,updated_at=? WHERE id=?', [pdfUrl, Date.now(), oppId]);
+              if (typeof spToast === 'function') spToast('\u2705 ' + file.name + ' linked to ' + oppName);
+              setTimeout(function(){ if (typeof spViewRecord === 'function') spViewRecord(locationId, 'locations'); }, 700);
+            };
+            if (!opps.length) { spToast('\u2705 Uploaded to R2 — AllPro Jobs/' + safeName + '/'); return; }
+            if (opps.length === 1) { link(opps[0].id, opps[0].name); return; }
+            var msg = 'Link to which proposal?\n' + opps.map(function(o,i){ return (i+1) + '. ' + o.name; }).join('\n');
+            var c = parseInt(prompt(msg)) - 1;
+            if (c >= 0 && c < opps.length) link(opps[c].id, opps[c].name);
+          }).catch(function(){ if (typeof spToast === 'function') spToast('\u2705 Uploaded to R2'); });
+        }
+      })
+      .catch(function(err){ alert('Upload error: ' + err.message); });
+    };
+    reader.readAsDataURL(file);
+  };
+  input.click();
+}
+
 // ══════════════════════════════════════════════════════
 //  INIT
 // ══════════════════════════════════════════════════════
