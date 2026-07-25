@@ -290,6 +290,18 @@ function k3dReady(instance) {
       <div class="pal-item" onclick="k3dSafe(function(){k3d.addShelf(4,1.5)})"><div class="pal-icon">📦</div><div><div class="pal-name">Wall Shelf 4'</div><div class="pal-dim">48"×18"</div></div></div>
     </div>
     <div class="pal-section">
+      <div class="pal-label">📷 Photo Reference</div>
+      <div style="font-size:10px;color:rgba(255,255,255,.35);margin-bottom:8px;line-height:1.4">Take or upload a photo of the space. It becomes the design background.</div>
+      <input type="file" id="k3dPhotoInput" accept="image/*" capture="environment" style="display:none" onchange="k3dSafe(function(){k3d.loadPhoto(document.getElementById('k3dPhotoInput'))})">
+      <button onclick="document.getElementById('k3dPhotoInput').click()" style="width:100%;height:38px;background:#1B5FA8;border:none;border-radius:7px;color:#fff;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer;margin-bottom:6px">📷 Take / Upload Photo</button>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px">
+        <button onclick="k3dSafe(function(){k3d.setPhotoMode('floor')})" id="btnPhotoFloor" style="height:32px;background:#374151;border:1px solid rgba(255,255,255,.2);border-radius:6px;color:#fff;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:10px;cursor:pointer;letter-spacing:.04em">Floor Plan</button>
+        <button onclick="k3dSafe(function(){k3d.setPhotoMode('wall')})" id="btnPhotoWall" style="height:32px;background:#374151;border:1px solid rgba(255,255,255,.2);border-radius:6px;color:#fff;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:10px;cursor:pointer;letter-spacing:.04em">Back Wall</button>
+      </div>
+      <button onclick="k3dSafe(function(){k3d.clearPhoto()})" style="width:100%;height:28px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:5px;color:rgba(255,255,255,.4);font-size:10px;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:700">Remove Photo</button>
+    </div>
+
+    <div class="pal-section">
       <div class="pal-label">Room Structure</div>
       <div class="pal-item" onclick="k3dSafe(function(){k3d.setRoom()})"><div class="pal-icon">🏠</div><div><div class="pal-name">Set Room Size</div><div class="pal-dim">Opens dialog</div></div></div>
       <div class="pal-item" onclick="k3dSafe(function(){k3d.addWall('concrete',10)})"><div class="pal-icon">🧱</div><div><div class="pal-name">Concrete Wall</div><div class="pal-dim">10'</div></div></div>
@@ -300,6 +312,9 @@ function k3dReady(instance) {
 
   <!-- 3D Viewport -->
   <div id="viewport">
+    <div id="photoBanner" style="display:none;position:absolute;top:8px;left:50%;transform:translateX(-50%);background:rgba(27,95,168,.9);color:#fff;border-radius:8px;padding:6px 14px;font-size:11px;font-weight:700;z-index:10;pointer-events:none;font-family:Barlow Condensed,sans-serif;letter-spacing:.04em;text-transform:uppercase">
+      📷 Photo loaded — design on top of it
+    </div>
     <canvas id="threeCanvas"></canvas>
     <div id="loadingMsg" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;color:rgba(255,255,255,.6);font-size:14px">
       <div style="font-size:32px">⏳</div>
@@ -890,6 +905,96 @@ class Kitchen3D {
     document.getElementById('sb_objs').textContent = this.objects.length;
   }
 
+  // ── PHOTO REFERENCE: load a photo as floor or back wall texture ──
+  loadPhoto(input) {
+    if (!input.files || !input.files[0]) return;
+    var self = this;
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      self._photoDataUrl = e.target.result;
+      self._photoMode = self._photoMode || 'floor';
+      self._applyPhoto();
+    };
+    reader.readAsDataURL(input.files[0]);
+    input.value = '';
+  }
+
+  setPhotoMode(mode) {
+    this._photoMode = mode;
+    // Highlight active mode button
+    var fl = document.getElementById('btnPhotoFloor');
+    var wl = document.getElementById('btnPhotoWall');
+    if (fl) fl.style.background = mode === 'floor' ? '#1B5FA8' : '#374151';
+    if (wl) wl.style.background = mode === 'wall'  ? '#1B5FA8' : '#374151';
+    if (this._photoDataUrl) this._applyPhoto();
+  }
+
+  _applyPhoto() {
+    var self = this;
+    var mode = this._photoMode || 'floor';
+
+    // Remove existing photo mesh if any
+    if (this._photoMesh) { this.scene.remove(this._photoMesh); this._photoMesh = null; }
+
+    var img = new Image();
+    img.onload = function() {
+      var canvas = document.createElement('canvas');
+      canvas.width  = img.width;
+      canvas.height = img.height;
+      canvas.getContext('2d').drawImage(img, 0, 0);
+
+      var tex = new THREE.CanvasTexture(canvas);
+      tex.needsUpdate = true;
+
+      var w = self.roomW || 20;
+      var d = self.roomD || 15;
+      var h = self.roomH || 10;
+
+      var geo, mat, mesh;
+
+      if (mode === 'floor') {
+        // Photo as floor texture -- sits just above the actual floor
+        geo  = new THREE.PlaneGeometry(w, d);
+        mat  = new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0.75 });
+        mesh = new THREE.Mesh(geo, mat);
+        mesh.rotation.x = -Math.PI / 2;
+        mesh.position.set(w/2, 0.02, d/2);
+      } else {
+        // Photo as back wall reference -- full wall behind the cooking line
+        var aspect = img.width / img.height;
+        var wallW  = w;
+        var wallH  = Math.min(h, wallW / aspect);
+        geo  = new THREE.PlaneGeometry(wallW, wallH);
+        mat  = new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0.80, side: THREE.FrontSide });
+        mesh = new THREE.Mesh(geo, mat);
+        mesh.position.set(w/2, wallH/2, 0.05); // just in front of back wall
+      }
+
+      mesh.userData = { isPhoto: true, selectable: false };
+      self._photoMesh = mesh;
+      self.scene.add(mesh);
+
+      // Switch to best viewing angle for the mode
+      if (mode === 'floor') self.setView('iso');
+      else self.setView('front');
+      var banner = document.getElementById('photoBanner');
+      if (banner) banner.style.display = 'block';
+    };
+    img.src = this._photoDataUrl;
+  }
+
+  clearPhoto() {
+    if (this._photoMesh) { this.scene.remove(this._photoMesh); this._photoMesh = null; }
+    this._photoDataUrl = null;
+    // Reset mode buttons
+    var fl = document.getElementById('btnPhotoFloor');
+    var wl = document.getElementById('btnPhotoWall');
+    if (fl) fl.style.background = '#374151';
+    if (wl) wl.style.background = '#374151';
+    var banner = document.getElementById('photoBanner');
+    if (banner) banner.style.display = 'none';
+  }
+
   // ── SAVE LAYOUT to localStorage (keyed per session) ──
   saveLayout() {
     try {
@@ -908,6 +1013,8 @@ class Kitchen3D {
       var layout = {
         roomW: this.roomW, roomD: this.roomD, roomH: this.roomH,
         objects: data,
+        photoDataUrl: this._photoDataUrl || null,
+        photoMode: this._photoMode || 'floor',
         savedAt: new Date().toLocaleString(),
       };
       localStorage.setItem('k3d_layout', JSON.stringify(layout));
@@ -948,6 +1055,12 @@ class Kitchen3D {
           obj.rotation.y = o.rotY || 0;
         }
       });
+      // Restore photo if saved
+      if (layout.photoDataUrl) {
+        this._photoDataUrl = layout.photoDataUrl;
+        this._photoMode = layout.photoMode || 'floor';
+        this._applyPhoto();
+      }
       alert('Layout loaded: ' + (layout.savedAt || '') + ' — ' + layout.objects.length + ' objects');
     } catch(e) { alert('Load failed: ' + e.message); }
   }
