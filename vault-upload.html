@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Termac Bid Vault — License Upload</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+*{box-sizing:border-box}
+body{font-family:Barlow,sans-serif;max-width:800px;margin:0 auto;padding:24px 16px;background:#F3F4F6;color:#1A1D21}
+h1{font-family:'Barlow Condensed',sans-serif;font-size:24px;font-weight:800;margin-bottom:4px}
+.card{background:#fff;border-radius:10px;padding:16px;margin-bottom:12px;border:1.5px solid #E5E7EB}
+.label{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#374151;display:block;margin-bottom:6px}
+.pick{background:#1B5FA8;color:#fff;border:none;border-radius:7px;padding:8px 14px;font-size:12px;font-weight:700;cursor:pointer}
+.status{font-size:12px;font-weight:700;margin-top:8px}
+.ok{color:#16A34A}.err{color:#C8102E}.wait{color:#D97706}
+input[type=file]{display:none}
+#uploadBtn{width:100%;background:#16A34A;color:#fff;border:none;border-radius:10px;padding:14px;font-size:16px;font-weight:800;cursor:pointer;margin-top:8px;font-family:'Barlow Condensed',sans-serif;text-transform:uppercase;letter-spacing:.04em}
+#uploadBtn:disabled{opacity:.4;cursor:not-allowed}
+</style>
+</head>
+<body>
+<h1>🏦 Termac Bid Vault — License Upload</h1>
+<p style="font-size:13px;color:#6B7280;margin-bottom:20px">Upload company licenses to the bid vault. Pick each PDF, then upload all.</p>
+
+<div id="docs"></div>
+<button id="uploadBtn" onclick="uploadAll()" disabled>⬆ Upload All to Bid Vault</button>
+<div id="result" style="margin-top:14px;border-radius:8px;padding:12px;font-size:13px;font-weight:700;display:none"></div>
+
+<script>
+const VAULT = 'https://termac-photo-upload.termac-one.workers.dev/';
+const SECRET = 'termac2026';
+
+const DOCS = [
+  {
+    id: 'd1',
+    label: 'City of New Castle Business License — Q3 Fire Suppression',
+    hint: 'license.pdf',
+    key: 'Company Licenses/license_NewCastle_Q3FireSuppression_2026.pdf',
+    detail: 'Q3 Fire Suppression | License #26000297 | Expires 12/31/2026'
+  },
+  {
+    id: 'd2',
+    label: 'Business Licenses Set 1',
+    hint: '1st_set_of_licenses.pdf',
+    key: 'Company Licenses/licenses_set1_Georgetown_Palmer_Norristown_Uwchlan_NewGarden_2026.pdf',
+    detail: 'Georgetown DE | Palmer Township PA | Norristown PA (x2) | Uwchlan Township | New Garden Township — all 2026'
+  },
+  {
+    id: 'd3',
+    label: 'Business Licenses Set 2',
+    hint: '2nd_set_of_licenses.pdf',
+    key: 'Company Licenses/licenses_set2_Wilmington_NJ_Bensalem_Newark_Lewes_Dover_2026.pdf',
+    detail: 'Wilmington DE | NJ DBA Certificate | Bensalem Fire Rescue | Newark DE | City of Lewes DE | City of Dover DE — all 2026'
+  },
+];
+
+const picked = {};
+
+function render() {
+  document.getElementById('docs').innerHTML = DOCS.map(d => `
+    <div class="card">
+      <span class="label">${d.label}</span>
+      <div style="font-size:11px;color:#6B7280;margin-bottom:10px">${d.detail}</div>
+      <label class="pick" for="${d.id}">📁 Pick PDF</label>
+      <input type="file" id="${d.id}" accept=".pdf" onchange="pick('${d.id}',this)">
+      <div class="status wait" id="s_${d.id}">No file selected</div>
+    </div>`).join('');
+}
+
+function pick(id, el) {
+  if (!el.files[0]) return;
+  picked[id] = el.files[0];
+  document.getElementById('s_'+id).textContent = '✓ ' + el.files[0].name + ' ready';
+  document.getElementById('s_'+id).className = 'status ok';
+  document.getElementById('uploadBtn').disabled = false;
+}
+
+async function uploadAll() {
+  document.getElementById('uploadBtn').disabled = true;
+  let ok = 0, fail = 0;
+  for (const d of DOCS) {
+    if (!picked[d.id]) continue;
+    document.getElementById('s_'+d.id).textContent = 'Uploading...';
+    document.getElementById('s_'+d.id).className = 'status wait';
+    const b64 = await toBase64(picked[d.id]);
+    try {
+      const r = await fetch(VAULT, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({bucket:'job-docs', key:d.key, base64:b64, contentType:'application/pdf'})
+      });
+      const data = await r.json();
+      if (data.ok) {
+        document.getElementById('s_'+d.id).textContent = '✓ Uploaded successfully';
+        document.getElementById('s_'+d.id).className = 'status ok';
+        ok++;
+      } else {
+        document.getElementById('s_'+d.id).textContent = '✗ Failed: ' + (data.error||'unknown');
+        document.getElementById('s_'+d.id).className = 'status err';
+        fail++;
+      }
+    } catch(e) {
+      document.getElementById('s_'+d.id).textContent = '✗ Error: ' + e.message;
+      document.getElementById('s_'+d.id).className = 'status err';
+      fail++;
+    }
+  }
+  const res = document.getElementById('result');
+  res.style.display = 'block';
+  res.style.background = fail ? '#FEE2E2' : '#DCFCE7';
+  res.style.color = fail ? '#991B1B' : '#166534';
+  res.textContent = fail === 0
+    ? '✓ All ' + ok + ' license files uploaded to the bid vault successfully'
+    : ok + ' uploaded, ' + fail + ' failed';
+  document.getElementById('uploadBtn').disabled = false;
+}
+
+function toBase64(file) {
+  return new Promise((res) => {
+    const r = new FileReader();
+    r.onload = e => res(e.target.result);
+    r.readAsDataURL(file);
+  });
+}
+
+render();
+</script>
+</body>
+</html>
