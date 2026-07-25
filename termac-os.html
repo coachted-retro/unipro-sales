@@ -18926,6 +18926,140 @@ var VAULT_DEFAULT = {
   updatedBy: null,
 };
 
+
+// ════ VAULT DOCUMENT UPLOAD + AI EXTRACTION ════════════════════════
+// Drop any PDF, image, or spreadsheet -- Claude reads it and pre-fills
+// every matching vault field automatically. You review and save.
+async function vaultExtractFromDoc(input) {
+  var file = input.files[0];
+  if (!file) return;
+  if (typeof showToast === 'function') showToast('\u23F3 Reading ' + file.name + '...');
+
+  // Read as base64
+  var b64 = await new Promise(function(resolve) {
+    var reader = new FileReader();
+    reader.onload = function(e) { resolve(e.target.result); };
+    reader.readAsDataURL(file);
+  });
+
+  var isImage = file.type.startsWith('image/');
+  var isPdf   = file.type === 'application/pdf';
+
+  // Build prompt
+  var systemPrompt = "You are a document parser for a fire protection contractor's bid vault. " +
+    "Extract all business information from the document and return ONLY a valid JSON object. " +
+    "No preamble, no markdown, no explanation -- only the JSON. " +
+    "Return these fields if found (omit fields not found): " +
+    "{ legalName, ein, address, phone, email, licenseNumber, licenseType, licenseJurisdiction, " +
+    "licenseExpiration, licenseEntity, insuranceCarrier, policyNumber, policyType, policyExpiration, " +
+    "coverageLimit, producerName, producerPhone, producerEmail, bondingCompany, bondCapacity, " +
+    "certificationName, certificationHolder, certificationNumber, certificationExpiration, " +
+    "contactName, contactTitle, contactPhone, contactEmail, diversityStatus, " +
+    "pastPerformanceAgency, pastPerformanceValue, pastPerformancePeriod, pastPerformanceService, " +
+    "notes }";
+
+  var messages = [{
+    role: 'user',
+    content: isImage
+      ? [{ type:'image', source:{ type:'base64', media_type:file.type, data:b64.split(',')[1] } },
+         { type:'text', text:'Extract all business/compliance information from this document as JSON.' }]
+      : isPdf
+      ? [{ type:'document', source:{ type:'base64', media_type:'application/pdf', data:b64.split(',')[1] } },
+         { type:'text', text:'Extract all business/compliance information from this document as JSON.' }]
+      : [{ type:'text', text:'I am uploading a document named: ' + file.name + '. Please extract any business information you can infer from the filename and return empty JSON {}.' }]
+  }];
+
+  try {
+    var resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 1000,
+        system: systemPrompt,
+        messages: messages,
+      })
+    });
+    var data = await resp.json();
+    var text = (data.content || []).map(function(c){ return c.text || ''; }).join('');
+    // Strip any markdown fences
+    text = text.replace(/```json/gi,'').replace(/```/g,'').trim();
+    var extracted = JSON.parse(text);
+    vaultApplyExtracted(extracted, file.name);
+  } catch(e) {
+    alert('Could not extract from document. Try a clearer scan or type of file.\nError: ' + e.message);
+  }
+  input.value = ''; // reset input
+}
+
+function vaultApplyExtracted(data, filename) {
+  var filled = 0;
+  var vault = bidsVaultLoad();
+
+  // Apply to license fields if license data found
+  if (data.licenseNumber || data.licenseExpiration) {
+    // Find the first [REQUIRED] license slot or add to notes
+    var emptyLic = vault.licenses.find(function(l){ return l.number === '[REQUIRED]' || l.number === ''; });
+    if (emptyLic) {
+      if (data.licenseNumber)      { emptyLic.number = data.licenseNumber; filled++; }
+      if (data.licenseType)        { emptyLic.type = data.licenseType; filled++; }
+      if (data.licenseJurisdiction){ emptyLic.state = data.licenseJurisdiction; filled++; }
+      if (data.licenseExpiration)  { emptyLic.expiration = data.licenseExpiration; filled++; }
+      if (data.licenseEntity)      { emptyLic.entity = data.licenseEntity; filled++; }
+    } else {
+      vault.licenses.push({
+        state: data.licenseJurisdiction || '',
+        type: data.licenseType || '',
+        number: data.licenseNumber || '',
+        entity: data.licenseEntity || '',
+        expiration: data.licenseExpiration || '',
+        notes: 'Extracted from: ' + filename,
+      });
+      filled++;
+    }
+  }
+
+  // Apply insurance data
+  if (data.insuranceCarrier || data.policyNumber) {
+    var emptyPol = vault.insurance.policies.find(function(p){ return !p.policyNum || p.policyNum === '[REQUIRED]'; });
+    if (emptyPol) {
+      if (data.insuranceCarrier)  { emptyPol.carrier = data.insuranceCarrier; filled++; }
+      if (data.policyNumber)      { emptyPol.policyNum = data.policyNumber; filled++; }
+      if (data.policyExpiration)  { emptyPol.exp = data.policyExpiration; filled++; }
+      if (data.coverageLimit)     { emptyPol.limits = data.coverageLimit; filled++; }
+      if (data.policyType)        { emptyPol.type = data.policyType; filled++; }
+    }
+    if (data.producerName)  { vault.insurance.producer = data.producerName; filled++; }
+    if (data.producerPhone) { vault.insurance.producerPhone = data.producerPhone; filled++; }
+    if (data.producerEmail) { vault.insurance.producerEmail = data.producerEmail; filled++; }
+  }
+
+  // Apply bonding
+  if (data.bondingCompany) { vault.bonding.bondingCompany = data.bondingCompany; vault.bonding.bonded = 'Yes'; filled++; }
+  if (data.bondCapacity)   { vault.bonding.bondCapacity = data.bondCapacity; filled++; }
+
+  // Apply personnel
+  if (data.contactName) {
+    var emptyPerson = vault.personnel.find(function(p){ return p.email === '[REQUIRED]' || p.phone === '[REQUIRED]'; });
+    if (emptyPerson) {
+      if (data.contactPhone) { emptyPerson.phone = data.contactPhone; filled++; }
+      if (data.contactEmail) { emptyPerson.email = data.contactEmail; filled++; }
+    }
+  }
+
+  // Apply EIN / address to entity
+  if (data.ein || data.address) {
+    var entity = vault.entities[0];
+    if (data.ein)     { entity.ein = data.ein; filled++; }
+    if (data.address) { entity.address = data.address; filled++; }
+  }
+
+  // Save and re-render
+  try { localStorage.setItem('termac_company_vault', JSON.stringify(vault)); } catch(e){}
+  if (typeof bidsRenderVault === 'function') bidsRenderVault();
+  if (typeof showToast === 'function') showToast('\u2705 Extracted ' + filled + ' fields from ' + filename + ' -- review and save');
+}
+
 function bidsVaultLoad() {
   try {
     var stored = localStorage.getItem('termac_company_vault');
@@ -32903,6 +33037,8 @@ window.uvCollectData = uvCollectData;
           <div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:20px;color:var(--ink)">🏛️ Company Profile Vault</div>
           <div style="font-size:13px;color:var(--soft);margin-top:2px">Master data source for all bid proposals. AI pulls from this automatically when drafting.</div>
         </div>
+        <label for="vaultDocUploadInput" style="background:#1B5FA8;color:#fff;border:none;border-radius:8px;padding:9px 18px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;display:inline-block;margin-right:8px">📎 Upload & Extract</label>
+        <input type="file" id="vaultDocUploadInput" accept=".pdf,.png,.jpg,.jpeg,.xlsx,.xls,.csv" style="display:none" onchange="vaultExtractFromDoc(this)">
         <button onclick="bidsVaultSave()" style="background:#1E7B3C;color:#fff;border:none;border-radius:8px;padding:9px 18px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">💾 Save Vault</button>
       </div>
       <div id="bidsVaultBody"></div>
