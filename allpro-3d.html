@@ -1,0 +1,868 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>AllPro 3D Kitchen Visualizer</title>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;800;900&family=Barlow:wght@400;600;700&display=swap" rel="stylesheet">
+
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #111318;
+  font-family: 'Barlow', sans-serif;
+  color: #fff;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── TOOLBAR ── */
+#toolbar {
+  height: 52px;
+  background: #1C2331;
+  border-bottom: 2px solid #F2B705;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+#toolbar h1 {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-weight: 900;
+  font-size: 16px;
+  letter-spacing: .06em;
+  color: #fff;
+  white-space: nowrap;
+  margin-right: 6px;
+}
+#toolbar h1 span { color: #F2B705; }
+
+.tb-btn {
+  height: 36px;
+  border: none;
+  border-radius: 7px;
+  font-family: 'Barlow Condensed', sans-serif;
+  font-weight: 800;
+  font-size: 11px;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  cursor: pointer;
+  padding: 0 12px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.tb-btn.steel  { background: #374151; color: #fff; }
+.tb-btn.gold   { background: #F2B705; color: #111318; }
+.tb-btn.blue   { background: #1B5FA8; color: #fff; }
+.tb-btn.green  { background: #16A34A; color: #fff; }
+.tb-btn.red    { background: #C8102E; color: #fff; }
+.tb-sep { width: 1px; background: rgba(255,255,255,.15); height: 28px; flex-shrink: 0; margin: 0 4px; }
+
+/* ── MAIN SPLIT ── */
+#main {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+/* ── LEFT PALETTE ── */
+#palette {
+  width: 200px;
+  background: #1C2331;
+  border-right: 1px solid rgba(255,255,255,.08);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+.pal-section { padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,.06); }
+.pal-label {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-weight: 800;
+  font-size: 9px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,.4);
+  margin-bottom: 6px;
+}
+.pal-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,255,255,.08);
+  margin-bottom: 5px;
+  cursor: pointer;
+  transition: background .15s;
+}
+.pal-item:hover, .pal-item:active { background: rgba(255,255,255,.12); }
+.pal-icon { font-size: 18px; flex-shrink: 0; }
+.pal-name { font-size: 11px; font-weight: 700; color: #fff; line-height: 1.2; }
+.pal-dim  { font-size: 9px; color: rgba(255,255,255,.4); margin-top: 1px; }
+
+/* ── 3D VIEWPORT ── */
+#viewport {
+  flex: 1;
+  position: relative;
+  background: #1A1D21;
+  overflow: hidden;
+}
+#threeCanvas { display: block; width: 100%; height: 100%; }
+
+/* ── RIGHT PROPERTIES ── */
+#props {
+  width: 220px;
+  background: #1C2331;
+  border-left: 1px solid rgba(255,255,255,.08);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+.prop-section { padding: 12px; border-bottom: 1px solid rgba(255,255,255,.06); }
+.prop-label {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-weight: 800;
+  font-size: 9px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,.4);
+  margin-bottom: 8px;
+}
+.prop-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 8px;
+}
+.prop-row label { font-size: 10px; color: rgba(255,255,255,.5); font-weight: 600; }
+.prop-row input, .prop-row select {
+  height: 34px;
+  background: rgba(255,255,255,.07);
+  border: 1px solid rgba(255,255,255,.15);
+  border-radius: 6px;
+  color: #fff;
+  font-family: 'Barlow', sans-serif;
+  font-size: 12px;
+  padding: 0 8px;
+  outline: none;
+  -webkit-appearance: none;
+}
+.prop-row input:focus { border-color: #F2B705; }
+.prop-action {
+  width: 100%;
+  height: 36px;
+  border: none;
+  border-radius: 7px;
+  font-family: 'Barlow Condensed', sans-serif;
+  font-weight: 800;
+  font-size: 11px;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  cursor: pointer;
+  margin-bottom: 6px;
+}
+.prop-action.apply  { background: #F2B705; color: #111318; }
+.prop-action.delete { background: #C8102E; color: #fff; }
+
+/* ── STATUS BAR ── */
+#statusbar {
+  height: 28px;
+  background: #0F1117;
+  border-top: 1px solid rgba(255,255,255,.06);
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  gap: 16px;
+  font-size: 10px;
+  color: rgba(255,255,255,.4);
+  flex-shrink: 0;
+}
+.sb-stat { display: flex; align-items: center; gap: 4px; }
+.sb-val { color: #F2B705; font-weight: 700; }
+
+/* Kill floating buttons */
+#tcFab,#tcFabCompact,.termac-chat-fab,button[title="Team Messages"],
+[id*="aiBubble"],[class*="ai-fab"],.sp-ai-fab,#_aiFloatBtn{display:none!important}
+
+@media (max-width: 600px) {
+  #palette { width: 160px; }
+  #props { display: none; }
+}
+</style>
+
+<!-- Three.js via importmap -- works on deployed site even when CDN blocked from build env -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.158.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.158.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+
+<!-- ══ TOOLBAR ══ -->
+<div id="toolbar">
+  <h1>ALL<span>PRO</span> 3D</h1>
+  <div class="tb-sep"></div>
+  <button class="tb-btn steel" onclick="k3d.setView('iso')">🎥 Iso</button>
+  <button class="tb-btn steel" onclick="k3d.setView('top')">🔭 Top</button>
+  <button class="tb-btn steel" onclick="k3d.setView('front')">🔳 Front</button>
+  <div class="tb-sep"></div>
+  <button class="tb-btn blue" onclick="k3d.toggleGrid()">⊞ Grid</button>
+  <button class="tb-btn blue" onclick="k3d.toggleWireframe()">⬡ Wire</button>
+  <div class="tb-sep"></div>
+  <button class="tb-btn gold" onclick="k3d.captureSnapshot()">📸 Snapshot</button>
+  <button class="tb-btn green" onclick="k3d.exportToParent()">↩ Use in Proposal</button>
+  <div class="tb-sep"></div>
+  <button class="tb-btn red" onclick="k3d.clearScene()">🗑 Clear</button>
+  <div style="margin-left:auto;font-size:10px;color:rgba(255,255,255,.3);white-space:nowrap">Drag to rotate · Scroll to zoom · Shift+drag to pan</div>
+</div>
+
+<!-- ══ MAIN ══ -->
+<div id="main">
+
+  <!-- Palette -->
+  <div id="palette">
+    <div class="pal-section">
+      <div class="pal-label">Cooking Equipment</div>
+      <div class="pal-item" onclick="k3d.addAppliance('6-Burner Range','range',5,2.5,0.25,0.82)"><div class="pal-icon">🔥</div><div><div class="pal-name">6-Burner Range</div><div class="pal-dim">60"×30"</div></div></div>
+      <div class="pal-item" onclick="k3d.addAppliance('4-Burner Range','range',4,2.5,0.25,0.82)"><div class="pal-icon">🔥</div><div><div class="pal-name">4-Burner Range</div><div class="pal-dim">48"×30"</div></div></div>
+      <div class="pal-item" onclick="k3d.addAppliance('Fryer','fryer',1.5,2.5,0.25,0.82)"><div class="pal-icon">🍟</div><div><div class="pal-name">Deep Fryer</div><div class="pal-dim">18"×30"</div></div></div>
+      <div class="pal-item" onclick="k3d.addAppliance('Flat-Top Griddle','griddle',3,2.5,0.25,0.82)"><div class="pal-icon">🥞</div><div><div class="pal-name">Flat-Top Griddle</div><div class="pal-dim">36"×30"</div></div></div>
+      <div class="pal-item" onclick="k3d.addAppliance('Char-Broiler','charbroiler',3,2.5,0.25,0.82)"><div class="pal-icon">🥩</div><div><div class="pal-name">Char-Broiler</div><div class="pal-dim">36"×30"</div></div></div>
+      <div class="pal-item" onclick="k3d.addAppliance('Pizza Deck Oven','oven',5,3.5,0.4,1.2)"><div class="pal-icon">🍕</div><div><div class="pal-name">Pizza Deck Oven</div><div class="pal-dim">60"×42"</div></div></div>
+      <div class="pal-item" onclick="k3d.addAppliance('Wok Range','wok',2,2.5,0.25,0.82)"><div class="pal-icon">🥘</div><div><div class="pal-name">Wok Range</div><div class="pal-dim">24"×30"</div></div></div>
+    </div>
+    <div class="pal-section">
+      <div class="pal-label">Hood & Ventilation</div>
+      <div class="pal-item" onclick="k3d.addHood(8,4)"><div class="pal-icon">🌬️</div><div><div class="pal-name">Exhaust Hood 8'</div><div class="pal-dim">96"×48"</div></div></div>
+      <div class="pal-item" onclick="k3d.addHood(10,4)"><div class="pal-icon">🌬️</div><div><div class="pal-name">Exhaust Hood 10'</div><div class="pal-dim">120"×48"</div></div></div>
+      <div class="pal-item" onclick="k3d.addHood(12,4)"><div class="pal-icon">🌬️</div><div><div class="pal-name">Exhaust Hood 12'</div><div class="pal-dim">144"×48"</div></div></div>
+      <div class="pal-item" onclick="k3d.addDuct(10)"><div class="pal-icon">⬆️</div><div><div class="pal-name">Duct Run 10'</div><div class="pal-dim">12" round</div></div></div>
+    </div>
+    <div class="pal-section">
+      <div class="pal-label">Custom Fabrication</div>
+      <div class="pal-item" onclick="k3d.addTable(6,2,3,false)"><div class="pal-icon">🍽️</div><div><div class="pal-name">Work Table 6'</div><div class="pal-dim">72"×24"</div></div></div>
+      <div class="pal-item" onclick="k3d.addTable(8,2,3,false)"><div class="pal-icon">🍽️</div><div><div class="pal-name">Work Table 8'</div><div class="pal-dim">96"×24"</div></div></div>
+      <div class="pal-item" onclick="k3d.addTable(6,2,3,true)"><div class="pal-icon">🚰</div><div><div class="pal-name">Sink Table 6'</div><div class="pal-dim">72"×24" w/sink</div></div></div>
+      <div class="pal-item" onclick="k3d.addShelf(4,1.5)"><div class="pal-icon">📦</div><div><div class="pal-name">Wall Shelf 4'</div><div class="pal-dim">48"×18"</div></div></div>
+    </div>
+    <div class="pal-section">
+      <div class="pal-label">Room Structure</div>
+      <div class="pal-item" onclick="k3d.setRoom()"><div class="pal-icon">🏠</div><div><div class="pal-name">Set Room Size</div><div class="pal-dim">Opens dialog</div></div></div>
+      <div class="pal-item" onclick="k3d.addWall('concrete',10)"><div class="pal-icon">🧱</div><div><div class="pal-name">Concrete Wall</div><div class="pal-dim">10'</div></div></div>
+      <div class="pal-item" onclick="k3d.addWall('brick',10)"><div class="pal-icon">🏚️</div><div><div class="pal-name">Brick Wall</div><div class="pal-dim">10'</div></div></div>
+      <div class="pal-item" onclick="k3d.addColumn()"><div class="pal-icon">🏛️</div><div><div class="pal-name">Column / Post</div><div class="pal-dim">12"×12"</div></div></div>
+    </div>
+  </div>
+
+  <!-- 3D Viewport -->
+  <div id="viewport">
+    <canvas id="threeCanvas"></canvas>
+    <div id="loadingMsg" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;color:rgba(255,255,255,.6);font-size:14px">
+      <div style="font-size:32px">⏳</div>
+      <div>Loading 3D engine…</div>
+    </div>
+  </div>
+
+  <!-- Properties -->
+  <div id="props">
+    <div class="prop-section">
+      <div class="prop-label">Room Dimensions</div>
+      <div class="prop-row"><label>Width (ft)</label><input id="room_w" type="number" value="20" min="5" max="60"></div>
+      <div class="prop-row"><label>Depth (ft)</label><input id="room_d" type="number" value="15" min="5" max="60"></div>
+      <div class="prop-row"><label>Ceiling Height (ft)</label><input id="room_h" type="number" value="10" min="8" max="20"></div>
+      <button class="prop-action apply" onclick="k3d.applyRoom()">↻ Rebuild Room</button>
+    </div>
+    <div class="prop-section" id="selProps">
+      <div class="prop-label">Selected Object</div>
+      <div id="selNone" style="font-size:11px;color:rgba(255,255,255,.35);font-style:italic">Click an object to select it</div>
+      <div id="selForm" style="display:none">
+        <div class="prop-row"><label>Label</label><input id="sel_label" type="text"></div>
+        <div class="prop-row"><label>X Position</label><input id="sel_x" type="number" step="0.5"></div>
+        <div class="prop-row"><label>Z Position (depth)</label><input id="sel_z" type="number" step="0.5"></div>
+        <div class="prop-row"><label>Rotation (°)</label><input id="sel_rot" type="number" step="15" value="0"></div>
+        <button class="prop-action apply" onclick="k3d.applySelection()">✓ Apply</button>
+        <button class="prop-action delete" onclick="k3d.deleteSelected()">✗ Delete</button>
+      </div>
+    </div>
+    <div class="prop-section">
+      <div class="prop-label">Disclaimer</div>
+      <div style="font-size:10px;color:rgba(255,255,255,.3);line-height:1.5">
+        3D rendering is a conceptual visualization only. Not to engineering scale. All hood sizes, duct runs, CFM calculations, and code requirements are governed by the AllPro Field Survey data, not this visual.
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ══ STATUS BAR ══ -->
+<div id="statusbar">
+  <div class="sb-stat">Objects: <span class="sb-val" id="sb_objs">0</span></div>
+  <div class="sb-stat">Hood: <span class="sb-val" id="sb_hood">—</span></div>
+  <div class="sb-stat">Room: <span class="sb-val" id="sb_room">20'×15'×10'</span></div>
+  <div class="sb-stat" style="margin-left:auto">Drag to rotate · Pinch to zoom · Tap to select</div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// Hide loading message once Three.js is running
+document.getElementById('loadingMsg').style.display = 'none';
+
+// ═══════════════════════════════════════════════
+//  KITCHEN 3D VISUALIZER
+// ═══════════════════════════════════════════════
+class Kitchen3D {
+  constructor() {
+    this.canvas  = document.getElementById('threeCanvas');
+    this.vp      = document.getElementById('viewport');
+    this.objects = []; // selectable objects
+    this.selected = null;
+    this.showGrid = true;
+    this.wireframe = false;
+    this.roomW = 20; this.roomD = 15; this.roomH = 10;
+
+    // Scene
+    this.scene = new THREE.Scene();
+    this.scene.background = new THREE.Color(0x1A1D21);
+    this.scene.fog = new THREE.FogExp2(0x1A1D21, 0.02);
+
+    // Camera
+    this.camera = new THREE.PerspectiveCamera(55, 1, 0.1, 500);
+    this.setView('iso');
+
+    // Renderer
+    this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true, preserveDrawingBuffer: true });
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.2;
+
+    // Controls
+    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+    this.controls.enableDamping = true;
+    this.controls.dampingFactor = 0.08;
+    this.controls.maxPolarAngle = Math.PI / 2 - 0.04;
+    this.controls.minDistance = 3;
+    this.controls.maxDistance = 60;
+
+    // Lights
+    const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+    this.scene.add(ambient);
+    const sun = new THREE.DirectionalLight(0xffffff, 1.0);
+    sun.position.set(8, 20, 12);
+    sun.castShadow = true;
+    sun.shadow.camera.near = 0.1;
+    sun.shadow.camera.far = 100;
+    sun.shadow.camera.left = -30;
+    sun.shadow.camera.right = 30;
+    sun.shadow.camera.top = 30;
+    sun.shadow.camera.bottom = -30;
+    sun.shadow.mapSize.set(2048, 2048);
+    this.scene.add(sun);
+
+    // Shared materials
+    this.MAT = {
+      stainless: new THREE.MeshStandardMaterial({ color: 0xC8CACC, metalness: 0.9, roughness: 0.2 }),
+      stainlessDark: new THREE.MeshStandardMaterial({ color: 0x9EAAAA, metalness: 0.85, roughness: 0.25 }),
+      hood: new THREE.MeshStandardMaterial({ color: 0xB0B8B8, metalness: 0.95, roughness: 0.15, transparent: true, opacity: 0.92 }),
+      duct: new THREE.MeshStandardMaterial({ color: 0x888C8C, metalness: 0.8, roughness: 0.3 }),
+      floor: new THREE.MeshStandardMaterial({ color: 0x2A2D35, roughness: 0.8, metalness: 0 }),
+      wall: new THREE.MeshStandardMaterial({ color: 0x2E3440, roughness: 0.9, metalness: 0 }),
+      concrete: new THREE.MeshStandardMaterial({ color: 0x4B5563, roughness: 0.9 }),
+      brick: new THREE.MeshStandardMaterial({ color: 0x9B2335, roughness: 0.85 }),
+      range: new THREE.MeshStandardMaterial({ color: 0x1C1C1E, metalness: 0.6, roughness: 0.4 }),
+      fryer: new THREE.MeshStandardMaterial({ color: 0x27272A, metalness: 0.5, roughness: 0.5 }),
+      griddle: new THREE.MeshStandardMaterial({ color: 0x3F3F46, metalness: 0.7, roughness: 0.3 }),
+      oven: new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.4, roughness: 0.5 }),
+      selected: new THREE.MeshStandardMaterial({ color: 0xF2B705, metalness: 0.5, roughness: 0.3, emissive: 0x443000 }),
+    };
+
+    // Grid helper
+    this.gridHelper = new THREE.GridHelper(60, 60, 0x374151, 0x1F2937);
+    this.scene.add(this.gridHelper);
+
+    // Raycaster for selection
+    this.raycaster = new THREE.Raycaster();
+    this.mouse = new THREE.Vector2();
+    this.renderer.domElement.addEventListener('click', (e) => this._onClick(e));
+
+    // Touch for tablet
+    this.renderer.domElement.addEventListener('touchend', (e) => {
+      if (e.changedTouches.length === 1) {
+        const t = e.changedTouches[0];
+        this._onClickXY(t.clientX, t.clientY);
+      }
+    });
+
+    this.buildRoom();
+    this.resize();
+    window.addEventListener('resize', () => this.resize());
+    this._animate();
+  }
+
+  // ── RESIZE ──
+  resize() {
+    const w = this.vp.clientWidth, h = this.vp.clientHeight;
+    this.camera.aspect = w / h;
+    this.camera.updateProjectionMatrix();
+    this.renderer.setSize(w, h, false);
+  }
+
+  // ── ANIMATE ──
+  _animate() {
+    requestAnimationFrame(() => this._animate());
+    this.controls.update();
+    this.renderer.render(this.scene, this.camera);
+  }
+
+  // ── CAMERA VIEWS ──
+  setView(v) {
+    const rw = this.roomW || 20, rd = this.roomD || 15;
+    const cx = rw/2, cz = rd/2;
+    if (v === 'iso') { this.camera.position.set(cx + rw * 0.9, (this.roomH||10) * 1.2, cz + rd * 1.0); }
+    else if (v === 'top') { this.camera.position.set(cx, 40, cz + 0.01); }
+    else if (v === 'front') { this.camera.position.set(cx, (this.roomH||10) * 0.6, cz + rd * 1.5); }
+    this.controls.target.set(cx, 1.5, cz);
+    this.controls.update();
+  }
+
+  // ── BUILD ROOM ──
+  buildRoom() {
+    this.roomW = parseFloat(document.getElementById('room_w').value) || 20;
+    this.roomD = parseFloat(document.getElementById('room_d').value) || 15;
+    this.roomH = parseFloat(document.getElementById('room_h').value) || 10;
+
+    // Remove old room meshes
+    this.scene.children.filter(c => c.userData.isRoom).forEach(c => this.scene.remove(c));
+
+    const w = this.roomW, d = this.roomD, h = this.roomH;
+    const addRoom = (geo, mat, pos, rot) => {
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set(...pos);
+      if (rot) m.rotation.set(...rot);
+      m.receiveShadow = true;
+      m.userData.isRoom = true;
+      m.userData.selectable = false;
+      this.scene.add(m);
+    };
+
+    // Floor
+    addRoom(new THREE.PlaneGeometry(w, d), this.MAT.floor, [w/2, 0, d/2], [-Math.PI/2, 0, 0]);
+    // Back wall
+    addRoom(new THREE.PlaneGeometry(w, h), this.MAT.wall, [w/2, h/2, 0], [0, 0, 0]);
+    // Left wall
+    addRoom(new THREE.PlaneGeometry(d, h), this.MAT.wall, [0, h/2, d/2], [0, Math.PI/2, 0]);
+    // Ceiling edge line
+    const edgeMat = new THREE.LineBasicMaterial({ color: 0x374151 });
+    const edgeGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(w, 0.05, d));
+    const edge = new THREE.LineSegments(edgeGeo, edgeMat);
+    edge.position.set(w/2, h, d/2);
+    edge.userData.isRoom = true;
+    this.scene.add(edge);
+
+    this.gridHelper.position.set(w/2, 0.01, d/2);
+    this.gridHelper.scale.set(w/60, 1, d/60);
+    document.getElementById('sb_room').textContent = w+"'×"+d+"'×"+h+"'";
+    document.getElementById('room_w').value = w;
+    document.getElementById('room_d').value = d;
+    document.getElementById('room_h').value = h;
+  }
+
+  applyRoom() {
+    this.buildRoom();
+    this.setView('iso');
+  }
+
+  setRoom() {
+    document.getElementById('room_w').focus();
+    document.getElementById('props').scrollTop = 0;
+  }
+
+  // ── ADD APPLIANCE ──
+  addAppliance(name, type, wFt, dFt, topThick, totalH) {
+    const group = new THREE.Group();
+    const mat = this.MAT[type] || this.MAT.range;
+
+    // Body
+    const body = new THREE.Mesh(
+      new THREE.BoxGeometry(wFt, totalH - topThick, dFt),
+      mat
+    );
+    body.position.y = (totalH - topThick) / 2;
+    body.castShadow = true;
+    group.add(body);
+
+    // Top surface (stainless)
+    const top = new THREE.Mesh(
+      new THREE.BoxGeometry(wFt - 0.04, topThick, dFt - 0.04),
+      this.MAT.stainless
+    );
+    top.position.y = totalH - topThick / 2;
+    top.castShadow = true;
+    group.add(top);
+
+    // Burner circles for ranges
+    if (type === 'range') {
+      const rows = 2, cols = Math.max(2, Math.round(wFt / 1.0));
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const burner = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.18, 0.18, 0.02, 12),
+            new THREE.MeshStandardMaterial({ color: 0x333333 })
+          );
+          burner.position.set(
+            (c - (cols-1)/2) * (wFt / cols) * 0.85,
+            totalH + 0.01,
+            (r - 0.5) * (dFt * 0.4)
+          );
+          group.add(burner);
+        }
+      }
+    }
+
+    // Label sprite
+    const label = this._makeLabel(name, wFt);
+    label.position.set(0, totalH + 0.3, 0);
+    group.add(label);
+
+    group.position.set(this.roomW / 2, 0, this.roomD * 0.3);
+    group.userData = { selectable: true, type: 'appliance', label: name };
+    this.scene.add(group);
+    this.objects.push(group);
+    this._updateStatus();
+    return group;
+  }
+
+  // ── ADD EXHAUST HOOD ──
+  addHood(lenFt, widFt) {
+    const group = new THREE.Group();
+    const h = this.roomH || 10;
+
+    // Main hood body
+    const hood = new THREE.Mesh(
+      new THREE.BoxGeometry(lenFt, 0.15, widFt),
+      this.MAT.hood
+    );
+    hood.position.y = h * 0.7;
+    hood.castShadow = true;
+    group.add(hood);
+
+    // Skirt / return air plenum
+    const skirt = new THREE.Mesh(
+      new THREE.BoxGeometry(lenFt, 0.6, 0.08),
+      this.MAT.stainlessDark
+    );
+    skirt.position.set(0, h * 0.7 - 0.375, widFt / 2 - 0.04);
+    group.add(skirt);
+    const skirt2 = skirt.clone();
+    skirt2.position.z = -(widFt / 2 - 0.04);
+    group.add(skirt2);
+
+    // Grease filters
+    const filters = Math.ceil(lenFt / 1.25);
+    for (let i = 0; i < filters; i++) {
+      const filter = new THREE.Mesh(
+        new THREE.BoxGeometry(1.1, 0.04, widFt - 0.1),
+        new THREE.MeshStandardMaterial({ color: 0x888888, metalness: 0.7 })
+      );
+      filter.position.set((i - (filters-1)/2) * 1.2, h * 0.7 - 0.08, 0);
+      filter.rotation.x = 0.3;
+      group.add(filter);
+    }
+
+    // Duct collar stub
+    const ductStub = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.5, 0.5, 0.8, 16),
+      this.MAT.duct
+    );
+    ductStub.position.set(0, h * 0.7 + 0.4, 0);
+    group.add(ductStub);
+
+    // Suspension rods
+    const rodMat = new THREE.MeshStandardMaterial({ color: 0xAAAAAA });
+    const rodH = h * 0.3;
+    for (let rx of [-lenFt/2 + 0.5, lenFt/2 - 0.5]) {
+      const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, rodH, 6), rodMat);
+      rod.position.set(rx, h * 0.7 + 0.15 + rodH / 2, 0);
+      group.add(rod);
+    }
+
+    const label = this._makeLabel(lenFt+"' Hood", lenFt);
+    label.position.set(0, h * 0.7 + 0.6, 0);
+    group.add(label);
+
+    group.position.set(this.roomW / 2, 0, this.roomD * 0.3);
+    group.userData = { selectable: true, type: 'hood', label: lenFt+"' Exhaust Hood" };
+    this.scene.add(group);
+    this.objects.push(group);
+    document.getElementById('sb_hood').textContent = lenFt + "' — " + widFt + "' deep";
+    this._updateStatus();
+    // Notify parent frame of hood length for CFM sync
+    try { window.parent.postMessage({ type:'hood_added', lenFt, widFt }, '*'); } catch(e){}
+    return group;
+  }
+
+  // ── ADD DUCT RUN ──
+  addDuct(lenFt) {
+    const h = this.roomH || 10;
+    const duct = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.5, 0.5, lenFt, 16),
+      this.MAT.duct
+    );
+    duct.rotation.z = Math.PI / 2;
+    duct.position.set(this.roomW / 2, h * 0.88, this.roomD * 0.3);
+    duct.userData = { selectable: true, type: 'duct', label: lenFt+"' Duct Run" };
+    this.scene.add(duct);
+    this.objects.push(duct);
+    this._updateStatus();
+  }
+
+  // ── ADD TABLE ──
+  addTable(lenFt, widFt, heightFt, hasSink) {
+    const group = new THREE.Group();
+
+    // Top
+    const top = new THREE.Mesh(
+      new THREE.BoxGeometry(lenFt, 0.08, widFt),
+      this.MAT.stainless
+    );
+    top.position.y = heightFt;
+    top.castShadow = true;
+    group.add(top);
+
+    // Sink cutout (visual only)
+    if (hasSink) {
+      const sink = new THREE.Mesh(
+        new THREE.BoxGeometry(1.2, 0.55, 1.0),
+        new THREE.MeshStandardMaterial({ color: 0x8899AA, metalness: 0.9, roughness: 0.15 })
+      );
+      sink.position.set(0, heightFt - 0.28, 0);
+      group.add(sink);
+    }
+
+    // Undershelf
+    const shelf = new THREE.Mesh(
+      new THREE.BoxGeometry(lenFt - 0.1, 0.05, widFt - 0.1),
+      this.MAT.stainlessDark
+    );
+    shelf.position.y = heightFt * 0.4;
+    group.add(shelf);
+
+    // Legs
+    const legMat = new THREE.MeshStandardMaterial({ color: 0xAAAAAA, metalness: 0.95, roughness: 0.1 });
+    const legGeo = new THREE.CylinderGeometry(0.04, 0.04, heightFt, 8);
+    [[-lenFt/2+0.12, -widFt/2+0.12],[lenFt/2-0.12,-widFt/2+0.12],[-lenFt/2+0.12,widFt/2-0.12],[lenFt/2-0.12,widFt/2-0.12]].forEach(([lx,lz]) => {
+      const leg = new THREE.Mesh(legGeo, legMat);
+      leg.position.set(lx, heightFt/2, lz);
+      group.add(leg);
+    });
+
+    const lbl = hasSink ? 'Sink Table '+lenFt+"'" : 'Work Table '+lenFt+"'";
+    const label = this._makeLabel(lbl, lenFt);
+    label.position.set(0, heightFt + 0.3, 0);
+    group.add(label);
+
+    group.position.set(this.roomW * 0.7, 0, this.roomD * 0.6);
+    group.userData = { selectable: true, type: 'table', label: lbl };
+    this.scene.add(group);
+    this.objects.push(group);
+    this._updateStatus();
+  }
+
+  // ── ADD SHELF ──
+  addShelf(lenFt, widFt) {
+    const shelf = new THREE.Mesh(
+      new THREE.BoxGeometry(lenFt, 0.05, widFt),
+      this.MAT.stainless
+    );
+    shelf.position.set(this.roomW * 0.3, 5.5, 0.3);
+    shelf.castShadow = true;
+    shelf.userData = { selectable: true, type: 'shelf', label: lenFt+"' Wall Shelf" };
+    this.scene.add(shelf);
+    this.objects.push(shelf);
+    this._updateStatus();
+  }
+
+  // ── ADD WALL SEGMENT ──
+  addWall(type, lenFt) {
+    const h = this.roomH || 10;
+    const mat = type === 'concrete' ? this.MAT.concrete : this.MAT.brick;
+    const wall = new THREE.Mesh(
+      new THREE.BoxGeometry(lenFt, h, 0.5),
+      mat
+    );
+    wall.position.set(this.roomW / 2, h / 2, this.roomD / 2);
+    wall.castShadow = true;
+    wall.userData = { selectable: true, type: 'wall', label: type.charAt(0).toUpperCase()+type.slice(1)+' Wall '+lenFt+"'" };
+    this.scene.add(wall);
+    this.objects.push(wall);
+    this._updateStatus();
+  }
+
+  // ── ADD COLUMN ──
+  addColumn() {
+    const h = this.roomH || 10;
+    const col = new THREE.Mesh(
+      new THREE.BoxGeometry(1, h, 1),
+      this.MAT.concrete
+    );
+    col.position.set(this.roomW * 0.5, h / 2, this.roomD * 0.5);
+    col.castShadow = true;
+    col.userData = { selectable: true, type: 'column', label: 'Column/Post' };
+    this.scene.add(col);
+    this.objects.push(col);
+    this._updateStatus();
+  }
+
+  // ── TEXT LABEL SPRITE ──
+  _makeLabel(text, wFt) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256; canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.roundRect(2, 2, 252, 60, 8);
+    ctx.fill();
+    ctx.fillStyle = '#F2B705';
+    ctx.font = 'bold 22px Barlow Condensed, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, 128, 32);
+    const tex = new THREE.CanvasTexture(canvas);
+    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
+    const sprite = new THREE.Sprite(mat);
+    sprite.scale.set(Math.max(2, wFt), 0.5, 1);
+    return sprite;
+  }
+
+  // ── SELECTION ──
+  _onClick(e) { this._onClickXY(e.clientX, e.clientY); }
+  _onClickXY(cx, cy) {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    this.mouse.x = ((cx - rect.left) / rect.width) * 2 - 1;
+    this.mouse.y = -((cy - rect.top) / rect.height) * 2 + 1;
+    this.raycaster.setFromCamera(this.mouse, this.camera);
+    const hits = this.raycaster.intersectObjects(this.scene.children, true);
+    const selectable = hits.find(h => {
+      let obj = h.object;
+      while (obj.parent && !obj.userData.selectable) obj = obj.parent;
+      return obj.userData.selectable;
+    });
+    this._deselect();
+    if (selectable) {
+      let obj = selectable.object;
+      while (obj.parent && !obj.userData.selectable) obj = obj.parent;
+      this._select(obj);
+    }
+  }
+
+  _select(obj) {
+    this.selected = obj;
+    obj._prevMat = obj.isMesh ? obj.material : null;
+    if (obj.isMesh) obj.material = this.MAT.selected;
+    document.getElementById('selNone').style.display = 'none';
+    document.getElementById('selForm').style.display = '';
+    document.getElementById('sel_label').value = obj.userData.label || '';
+    document.getElementById('sel_x').value = obj.position.x.toFixed(1);
+    document.getElementById('sel_z').value = obj.position.z.toFixed(1);
+    document.getElementById('sel_rot').value = Math.round(THREE.MathUtils.radToDeg(obj.rotation.y));
+  }
+
+  _deselect() {
+    if (this.selected) {
+      if (this.selected.isMesh && this.selected._prevMat) this.selected.material = this.selected._prevMat;
+      this.selected = null;
+    }
+    document.getElementById('selNone').style.display = '';
+    document.getElementById('selForm').style.display = 'none';
+  }
+
+  applySelection() {
+    if (!this.selected) return;
+    this.selected.position.x = parseFloat(document.getElementById('sel_x').value) || 0;
+    this.selected.position.z = parseFloat(document.getElementById('sel_z').value) || 0;
+    this.selected.rotation.y = THREE.MathUtils.degToRad(parseFloat(document.getElementById('sel_rot').value) || 0);
+    this.selected.userData.label = document.getElementById('sel_label').value;
+  }
+
+  deleteSelected() {
+    if (!this.selected) return;
+    this.scene.remove(this.selected);
+    this.objects = this.objects.filter(o => o !== this.selected);
+    this._deselect();
+    this._updateStatus();
+  }
+
+  // ── TOGGLE HELPERS ──
+  toggleGrid() {
+    this.showGrid = !this.showGrid;
+    this.gridHelper.visible = this.showGrid;
+  }
+
+  toggleWireframe() {
+    this.wireframe = !this.wireframe;
+    Object.values(this.MAT).forEach(m => {
+      if (m.isMeshStandardMaterial) m.wireframe = this.wireframe;
+    });
+  }
+
+  clearScene() {
+    if (!confirm('Clear all objects?')) return;
+    this.objects.forEach(o => this.scene.remove(o));
+    this.objects = [];
+    this._deselect();
+    this._updateStatus();
+  }
+
+  // ── SNAPSHOT ──
+  captureSnapshot() {
+    this.renderer.render(this.scene, this.camera);
+    const png = this.renderer.domElement.toDataURL('image/png');
+    const a = document.createElement('a');
+    a.href = png;
+    a.download = 'AllPro_3D_Kitchen_' + Date.now() + '.png';
+    a.click();
+    // Also post to parent frame for proposal embedding
+    try { window.parent.postMessage({ type:'snapshot', data: png }, '*'); } catch(e){}
+  }
+
+  exportToParent() {
+    this.renderer.render(this.scene, this.camera);
+    const png = this.renderer.domElement.toDataURL('image/png');
+    try { window.parent.postMessage({ type:'kitchen3d_export', data: png, objects: this.objects.map(o => o.userData) }, '*'); } catch(e){}
+    alert('3D snapshot sent to the field survey tool.');
+  }
+
+  _updateStatus() {
+    document.getElementById('sb_objs').textContent = this.objects.length;
+  }
+}
+
+// Initialize and expose globally for toolbar buttons
+window.k3d = new Kitchen3D();
+
+// Listen for messages from parent frame (field tool sending room dims)
+window.addEventListener('message', function(e) {
+  if (e.data && e.data.type === 'set_room') {
+    document.getElementById('room_w').value = e.data.w || 20;
+    document.getElementById('room_d').value = e.data.d || 15;
+    document.getElementById('room_h').value = e.data.h || 10;
+    window.k3d.applyRoom();
+  }
+});
+</script>
+
+</body>
+</html>
