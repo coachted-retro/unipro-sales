@@ -963,6 +963,54 @@ body {
       </div>
 
       <div class="card">
+        <div class="card-head"><span style="font-size:16px">⚡</span><div class="card-title">Structural Complexity</div></div>
+        <div class="card-body">
+          <div class="field-grid col2" style="margin-bottom:10px">
+            <div class="field">
+              <label>Wall / Penetration Type</label>
+              <select id="cx_wall" onchange="afCalcComplexity()">
+                <option value="wall_wood">Wood Stud (+0.00×)</option>
+                <option value="wall_brick">Brick / Masonry (+0.10×)</option>
+                <option value="wall_concrete">Concrete / CMU (+0.20×)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Ceiling Type</label>
+              <select id="cx_ceil" onchange="afCalcComplexity()">
+                <option value="ceil_drop">Drop / Suspended (+0.05×)</option>
+                <option value="ceil_hard">Hard Deck (+0.10×)</option>
+                <option value="ceil_exposed">Exposed Structure (+0.05×)</option>
+              </select>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:10px">
+            <label style="display:flex;align-items:center;gap:6px;padding:8px;background:var(--bg);border-radius:7px;cursor:pointer;font-size:12px">
+              <input type="checkbox" id="cx_fire_wrap" onchange="afCalcComplexity()"> Fire Wrap Reqd
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;padding:8px;background:var(--bg);border-radius:7px;cursor:pointer;font-size:12px">
+              <input type="checkbox" id="cx_mezzanine" onchange="afCalcComplexity()"> Mezzanine / Multi-Story
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;padding:8px;background:var(--bg);border-radius:7px;cursor:pointer;font-size:12px">
+              <input type="checkbox" id="cx_crane" onchange="afCalcComplexity()"> Crane Required
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;padding:8px;background:var(--bg);border-radius:7px;cursor:pointer;font-size:12px">
+              <input type="checkbox" id="cx_confined" onchange="afCalcComplexity()"> Confined Space
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;padding:8px;background:var(--bg);border-radius:7px;cursor:pointer;font-size:12px">
+              <input type="checkbox" id="cx_solid_fuel" onchange="afCalcComplexity()"> Solid Fuel Equip
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;padding:8px;background:var(--bg);border-radius:7px;cursor:pointer;font-size:12px">
+              <input type="checkbox" id="cx_outdoor" onchange="afCalcComplexity()"> Outdoor / Exposed
+            </label>
+          </div>
+          <div class="result-box" id="cx_score_display">
+            <span class="result-label">Complexity Score</span>
+            <span class="result-val">1.00× — L1 Standard</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
         <div class="card-head"><span style="font-size:16px">🧯</span><div class="card-title">Suppression System</div></div>
         <div class="card-body">
           <div class="field-grid col2" style="margin-bottom:10px">
@@ -1190,6 +1238,20 @@ body {
         </div>
       </div>
 
+      <div class="card" id="internalCard" style="display:none">
+        <div class="card-head" style="background:#FEF9C3">
+          <span style="font-size:16px">🔒</span>
+          <div class="card-title" style="color:#92400E">Internal Cost Analysis — NOT FOR CUSTOMER</div>
+        </div>
+        <div class="card-body">
+          <div id="internalCostBlock"></div>
+          <div style="margin-top:12px;display:flex;gap:8px">
+            <button onclick="afGenerateInternalPDF()" style="flex:1;height:44px;background:#92400E;color:#fff;border:none;border-radius:8px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">📊 Export Internal PDF</button>
+            <button onclick="afGenerateUniproBundle()" style="flex:1;height:44px;background:var(--phase2);color:#fff;border:none;border-radius:8px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">🔥 UniPro RFP Bundle</button>
+          </div>
+        </div>
+      </div>
+
       <div class="card" id="sigCard" style="display:none">
         <div class="card-head"><span style="font-size:16px">✍️</span><div class="card-title">Customer Signature</div></div>
         <div class="card-body">
@@ -1277,6 +1339,95 @@ var NFPA_CHECKS = [
   { id:'semi_annual', title:'Semi-Annual Inspection Required', sub:'Customer must maintain semi-annual suppression inspections per NFPA 96', nfpa:'NFPA 96 §11.4.1', critical:false },
   { id:'solid_fuel', title:'Solid Fuel Disclosure', sub:'Wood/charcoal equipment requires spark arrestor, extra overhang, modified CFM', nfpa:'NFPA 96 §14.1', critical:true },
 ];
+
+
+// ═══════════════════════════════════════════════
+//  DYNAMIC COMPLEXITY ENGINE
+//  Scores the job based on structural conditions,
+//  duct geometry, and special hazards.
+//  Outputs a multiplier (1.00 – 1.65) applied to
+//  labor and some material line items.
+// ═══════════════════════════════════════════════
+var COMPLEXITY = {
+  score: 1.00,
+  level: 'L1',
+  factors: [],
+};
+
+var COMPLEXITY_FACTORS = {
+  // Structural wall type
+  wall_wood:       { label: 'Wood stud penetration',       delta: 0.00 },
+  wall_brick:      { label: 'Brick/masonry penetration',    delta: 0.10 },
+  wall_concrete:   { label: 'Concrete/CMU penetration',     delta: 0.20 },
+  // Ceiling type
+  ceil_drop:       { label: 'Drop/suspended ceiling',       delta: 0.05 },
+  ceil_hard:       { label: 'Hard deck ceiling',            delta: 0.10 },
+  ceil_exposed:    { label: 'Exposed structure/truss',      delta: 0.05 },
+  // Duct run length
+  duct_0_15:       { label: 'Duct run 0–15 ft',             delta: 0.00 },
+  duct_16_30:      { label: 'Duct run 16–30 ft',            delta: 0.08 },
+  duct_31_50:      { label: 'Duct run 31–50 ft',            delta: 0.15 },
+  duct_over_50:    { label: 'Duct run over 50 ft',          delta: 0.25 },
+  // Elbow count
+  elbows_0_2:      { label: '0–2 elbows',                   delta: 0.00 },
+  elbows_3_5:      { label: '3–5 elbows',                   delta: 0.08 },
+  elbows_over_5:   { label: '6+ elbows',                    delta: 0.15 },
+  // Special conditions
+  fire_wrap:       { label: 'Fire-rated enclosure required', delta: 0.15 },
+  mezzanine:       { label: 'Mezzanine / multi-story run',  delta: 0.20 },
+  crane:           { label: 'Crane/boom lift required',      delta: 0.20 },
+  confined:        { label: 'Confined space / low headroom', delta: 0.12 },
+  solid_fuel:      { label: 'Solid fuel equipment',          delta: 0.15 },
+  outdoor:         { label: 'Outdoor / exposed install',     delta: 0.10 },
+};
+
+function afCalcComplexity() {
+  var score = 1.00;
+  var active = [];
+
+  // Wall type
+  var wall = document.getElementById('cx_wall') ? document.getElementById('cx_wall').value : 'wall_wood';
+  if (COMPLEXITY_FACTORS[wall]) { score += COMPLEXITY_FACTORS[wall].delta; active.push(COMPLEXITY_FACTORS[wall].label); }
+
+  // Ceiling
+  var ceil = document.getElementById('cx_ceil') ? document.getElementById('cx_ceil').value : 'ceil_drop';
+  if (COMPLEXITY_FACTORS[ceil]) { score += COMPLEXITY_FACTORS[ceil].delta; active.push(COMPLEXITY_FACTORS[ceil].label); }
+
+  // Duct run
+  var ductLen = parseFloat(document.getElementById('p2_ductlen') ? document.getElementById('p2_ductlen').value : 0) || 0;
+  var ductKey = ductLen <= 15 ? 'duct_0_15' : ductLen <= 30 ? 'duct_16_30' : ductLen <= 50 ? 'duct_31_50' : 'duct_over_50';
+  if (ductLen > 0) { score += COMPLEXITY_FACTORS[ductKey].delta; if (COMPLEXITY_FACTORS[ductKey].delta > 0) active.push(COMPLEXITY_FACTORS[ductKey].label); }
+
+  // Elbows
+  var elbows = (parseInt(document.getElementById('p2_90') ? document.getElementById('p2_90').value : 0)||0) + (parseInt(document.getElementById('p2_45') ? document.getElementById('p2_45').value : 0)||0);
+  var elbKey = elbows <= 2 ? 'elbows_0_2' : elbows <= 5 ? 'elbows_3_5' : 'elbows_over_5';
+  if (elbows > 0) { score += COMPLEXITY_FACTORS[elbKey].delta; if (COMPLEXITY_FACTORS[elbKey].delta > 0) active.push(COMPLEXITY_FACTORS[elbKey].label); }
+
+  // Checkboxes
+  ['fire_wrap','mezzanine','crane','confined','solid_fuel','outdoor'].forEach(function(k) {
+    var el = document.getElementById('cx_'+k);
+    if (el && el.checked) { score += COMPLEXITY_FACTORS[k].delta; active.push(COMPLEXITY_FACTORS[k].label); }
+  });
+
+  score = Math.min(Math.max(score, 1.00), 1.65);
+  var level = score < 1.10 ? 'L1 — Standard' : score < 1.25 ? 'L2 — Moderate' : score < 1.40 ? 'L3 — Complex' : 'L4 — High Complexity';
+
+  COMPLEXITY.score = score;
+  COMPLEXITY.level = level;
+  COMPLEXITY.factors = active;
+
+  // Update display
+  var el = document.getElementById('cx_score_display');
+  if (el) {
+    var color = score < 1.10 ? '#16A34A' : score < 1.25 ? '#D97706' : score < 1.40 ? '#C8102E' : '#7C3AED';
+    el.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'+
+      '<span style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:22px;color:'+color+'">'+score.toFixed(2)+'× — '+level+'</span>'+
+      '</div>'+
+      (active.length ? '<div style="font-size:11px;color:var(--soft)">Factors: '+active.join(' · ')+'</div>' : '<div style="font-size:11px;color:var(--soft)">Standard conditions</div>');
+  }
+
+  afCalcProposal();
+}
 
 // Checklist state
 var nfpaState = {};
@@ -1603,8 +1754,8 @@ function afCalcProposal() {
     var c = AF.cfmResult;
     var hoodSqFt    = c.lenFt * (parseFloat(document.getElementById('p2_wid').value)||4);
     var matCost     = hoodSqFt * RATE.hoodPerSqft;
-    var shopHrs     = 12 + (c.lenFt * 1.5);
-    var fieldHrs    = 16 + (c.lenFt * 2.0);
+    var shopHrs     = (12 + (c.lenFt * 1.5)) * COMPLEXITY.score;
+    var fieldHrs    = (16 + (c.lenFt * 2.0)) * COMPLEXITY.score;
     var matPrice    = Math.round(matCost * (1 + RATE.matMarkup));
     var laborPrice  = Math.round((shopHrs * RATE.shopLabor) + (fieldHrs * RATE.fieldLabor));
     var hoodPrice   = matPrice + laborPrice;
@@ -1741,6 +1892,46 @@ function afRenderLineItems() {
   var grand = sub + tax;
   var deposit = Math.round(grand * 0.50);
   AF.grandTotal = grand;
+
+  // Internal cost analysis
+  var rawMat  = sel.filter(function(i){ return i.cat !== 'Services'; }).reduce(function(s,i){ return s + (i.rawCost||i.price*0.55); }, 0);
+  var rawLab  = sel.filter(function(i){ return i.shopHrs||i.fieldHrs; }).reduce(function(s,i){
+    return s + ((i.shopHrs||0)*RATE.shopLabor) + ((i.fieldHrs||0)*RATE.fieldLabor);
+  }, 0);
+  var internalTotal = Math.round(rawMat + rawLab);
+  var grossProfit   = grand - internalTotal;
+  var grossMargin   = grand > 0 ? (grossProfit / grand * 100) : 0;
+
+  var intEl = document.getElementById('internalCostBlock');
+  if (intEl) {
+    var cxFactors = COMPLEXITY.factors.length ? COMPLEXITY.factors.join(', ') : 'None (standard conditions)';
+    intEl.innerHTML =
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">'+
+        '<div class="result-box" style="flex-direction:column;align-items:flex-start">'+
+          '<span class="result-label">Raw Materials</span>'+
+          '<span class="result-val">$'+rawMat.toLocaleString(undefined,{maximumFractionDigits:0})+'</span>'+
+        '</div>'+
+        '<div class="result-box" style="flex-direction:column;align-items:flex-start">'+
+          '<span class="result-label">Burdened Labor</span>'+
+          '<span class="result-val">$'+rawLab.toLocaleString(undefined,{maximumFractionDigits:0})+'</span>'+
+        '</div>'+
+        '<div class="result-box" style="flex-direction:column;align-items:flex-start">'+
+          '<span class="result-label">Internal Total</span>'+
+          '<span class="result-val">$'+internalTotal.toLocaleString()+'</span>'+
+        '</div>'+
+        '<div class="result-box" style="flex-direction:column;align-items:flex-start">'+
+          '<span class="result-label">Gross Profit</span>'+
+          '<span class="result-val '+(grossMargin >= 25 ? 'ok' : grossMargin >= 15 ? 'gold' : 'warn')+'">'+
+            '$'+grossProfit.toLocaleString()+' ('+grossMargin.toFixed(1)+'%)</span>'+
+        '</div>'+
+      '</div>'+
+      '<div style="font-size:11px;color:var(--soft);border-top:1px solid var(--line);padding-top:8px">'+
+        '<div><strong>Complexity:</strong> '+COMPLEXITY.score.toFixed(2)+'× — '+COMPLEXITY.level+'</div>'+
+        '<div style="margin-top:3px"><strong>Active Factors:</strong> '+cxFactors+'</div>'+
+        '<div style="margin-top:3px;color:var(--red);font-weight:700">'+(grossMargin < 20 ? '⚠ Margin below 20% target — review before submitting' : '')+'</div>'+
+      '</div>';
+    document.getElementById('internalCard').style.display = '';
+  }
 
   document.getElementById('totalsCard').style.display = '';
   document.getElementById('sigCard').style.display = '';
@@ -1884,6 +2075,72 @@ function afSaveDraft() {
       if (typeof showToast === 'function') showToast('💾 Draft saved locally');
     });
   }
+}
+
+function afGenerateInternalPDF() {
+  if (typeof showToast === 'function') showToast('📊 Internal cost analysis ready to print — use browser Print');
+  // Open print dialog for internal-only section
+  window.print();
+}
+
+function afGenerateUniproBundle() {
+  // Build an intercompany RFP for UniPro fire division
+  // Strips customer pricing, includes hood specs, suppression specs, layout
+  var biz  = document.getElementById('p1_biz').value.trim() || 'Unknown Location';
+  var addr = document.getElementById('p1_addr').value.trim();
+  var hoodLen = document.getElementById('p2_len').value;
+  var hoodWid = document.getElementById('p2_wid').value;
+  var hoodType = AF.hoodType || 'Type I';
+  var cfm = AF.cfmResult ? AF.cfmResult.totalCFM : '—';
+  var supType = document.getElementById('p2_suptype').value;
+  var nozzles = document.getElementById('p2_nozzles').value;
+  var cylSize = document.getElementById('p2_cylsize').value;
+  var duty = document.getElementById('p2_duty').value;
+
+  if (supType === 'none') {
+    alert('No suppression system in this survey. UniPro RFP not applicable.');
+    return;
+  }
+
+  var rfpContent = [
+    'ALLPRO STAINLESS STEEL — INTERCOMPANY FIRE PROTECTION RFP',
+    'TO: UniPro Fire Protection Division',
+    'FROM: Ted Scholl, AllPro Bid Manager',
+    'DATE: ' + new Date().toLocaleDateString('en-US', {month:'long', day:'numeric', year:'numeric'}),
+    '',
+    'SITE: ' + biz + ' — ' + addr,
+    '',
+    'SCOPE: UniPro to provide intercompany pricing for fire suppression',
+    'installation per the following AllPro hood specifications.',
+    '',
+    'HOOD SPECIFICATIONS (AllPro Scope — for Ansul nozzle positioning):',
+    '  Hood Type:    ' + hoodType,
+    '  Dimensions:   ' + hoodLen + "' L × " + hoodWid + "' W",
+    '  Appliance Duty: ' + duty.replace('_', ' ').toUpperCase(),
+    '  Required CFM: ' + cfm + ' CFM',
+    '',
+    'SUPPRESSION SYSTEM SPECS (UniPro Scope):',
+    '  System:       ' + (supType === 'ansul_r102' ? 'Ansul R-102 Wet Chemical' : supType),
+    '  Cylinder:     ' + cylSize + ' Gallon',
+    '  Nozzle Count: ' + nozzles + ' nozzles per NFPA 96 Table 10.2.3',
+    '  Gas Shutoff:  ' + (document.getElementById('p2_shutoff').value),
+    '',
+    'PRICING NOTE: This RFP does not include customer-facing pricing.',
+    'UniPro to return intercompany billing quote only.',
+    'All stainless/hood pricing is AllPro scope and is excluded.',
+    '',
+    'ATTACHMENTS: Site photos, 2D layout, and roof plan attached separately.',
+    '',
+    '—',
+    'Ted Scholl | AllPro Stainless Steel | tscholl@termac.com | 267-421-6336',
+  ].join('\n');
+
+  // Open in new window for print/save
+  var w = window.open('', '_blank', 'width=700,height=900');
+  w.document.write('<pre style="font-family:monospace;padding:32px;font-size:13px;line-height:1.6">'+rfpContent+'</pre>');
+  w.document.title = 'UniPro RFP — ' + biz;
+  w.document.close();
+  if (typeof showToast === 'function') showToast('🔥 UniPro RFP bundle generated');
 }
 
 function afGeneratePDF() {
