@@ -9999,9 +9999,9 @@ function spApptSearchRecords(query) {
 
     // Query locations, leads, and accounts in parallel from D1
     Promise.all([
-      d1Query('SELECT id, name, address, city, state FROM locations WHERE (LOWER(name) LIKE ? OR LOWER(address) LIKE ?) AND status != ? LIMIT 6', [like, like, 'deleted']),
-      d1Query('SELECT id, name, business, address FROM leads WHERE (LOWER(name) LIKE ? OR LOWER(business) LIKE ? OR LOWER(address) LIKE ?) AND status != ? LIMIT 6', [like, like, like, 'deleted']),
-      d1Query('SELECT id, name, business, address FROM accounts WHERE (LOWER(name) LIKE ? OR LOWER(business) LIKE ?) LIMIT 6', [like, like]),
+      d1Query('SELECT id, name, address, city, state, phone FROM locations WHERE (LOWER(name) LIKE ? OR LOWER(address) LIKE ?) LIMIT 8', [like, like]),
+      d1Query('SELECT id, business as name, address, city, state, phone FROM leads WHERE (LOWER(business) LIKE ? OR LOWER(contact_name) LIKE ?) LIMIT 8', [like, like]),
+      d1Query('SELECT id, business as name, address, city, state, phone FROM accounts WHERE (LOWER(business) LIKE ? OR LOWER(name) LIKE ?) LIMIT 8', [like, like]),
     ]).then(function(all) {
       var currentBox = document.getElementById('spApptLinkResults');
       var currentInput = document.getElementById('spApptLinkSearch');
@@ -10067,12 +10067,16 @@ function spApptPickRecord(id, tab, name) {
 
   var table = tab === 'locations' ? 'locations' : tab === 'accounts' ? 'accounts' : 'leads';
 
-  // For locations, also pull the parent account for full contact info
-  var queries = [
-    d1Query('SELECT * FROM ' + table + ' WHERE id = ? LIMIT 1', [id])
-  ];
+  // For locations, also pull linked contacts
+  var mainQuery = tab === 'locations'
+    ? 'SELECT id, name, address, city, state, phone FROM locations WHERE id = ? LIMIT 1'
+    : tab === 'accounts'
+    ? 'SELECT id, business as name, address, city, state, phone, contact_name, contact_email FROM accounts WHERE id = ? LIMIT 1'
+    : 'SELECT id, business as name, address, city, state, phone, contact_name, email as contact_email FROM leads WHERE id = ? LIMIT 1';
+
+  var queries = [ d1Query(mainQuery, [id]) ];
   if (tab === 'locations') {
-    queries.push(d1Query('SELECT * FROM contacts WHERE location_id = ? LIMIT 1', [id]));
+    queries.push(d1Query('SELECT contact_name, phone, email FROM contacts WHERE location_id = ? LIMIT 1', [id]));
   }
 
   Promise.all(queries).then(function(results) {
@@ -10081,15 +10085,15 @@ function spApptPickRecord(id, tab, name) {
     if (!rec) return;
 
     // Auto-fill address
-    var addrParts = [rec.address || rec.addr, rec.city, rec.state].filter(Boolean);
+    var addrParts = [rec.address, rec.city, rec.state].filter(Boolean);
     var fullAddr = addrParts.join(', ');
     var locField = document.getElementById('spApptLocation');
     if (locField && fullAddr) locField.value = fullAddr;
 
-    // Build contact info from the record itself or a linked contact row
-    var contactName  = rec.contact_name || rec.contact || (contact && (contact.name || contact.contact_name)) || '';
-    var contactPhone = rec.phone || rec.contact_phone || (contact && contact.phone) || '';
-    var contactEmail = rec.email || rec.contact_email || (contact && contact.email) || '';
+    // Build contact info -- column names vary by table, handle all cases
+    var contactName  = rec.contact_name  || (contact && contact.contact_name) || '';
+    var contactPhone = rec.phone         || (contact && contact.phone)         || '';
+    var contactEmail = rec.contact_email || rec.email || (contact && contact.email) || '';
 
     // Show and populate the contact panel
     var panel = document.getElementById('spApptContactPanel');
