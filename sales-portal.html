@@ -9952,46 +9952,71 @@ function spApptSearchRecords(query) {
   if (!box) return;
   var term = (query||'').trim().toLowerCase();
   if (term.length < 2) { box.style.display = 'none'; return; }
+
+  // Show loading indicator immediately
+  box.innerHTML = '<div style="padding:10px;font-size:12px;color:var(--soft)">Searching…</div>';
+  box.style.display = 'block';
+
   var results = [];
 
-  // 2026-07-20 FIX per Ted: this only ever searched leads + accounts --
-  // a real business sitting as a Location (the actual primary entity
-  // now) or a Contact could never be found here at all, showing "No
-  // matches" for something that genuinely exists. Locations and
-  // contacts are both small, safe to check locally; accounts is
-  // queried live (see below) since it's too large to trust the local
-  // cache for -- same reasoning as everywhere else this got fixed
-  // tonight.
-  crmLoad('leads').forEach(function(rec) {
+  // Check in-memory cache first for instant results
+  var cachedLeads    = (typeof crmLoad === 'function') ? (crmLoad('leads')||[]) : [];
+  var cachedLocations= (typeof crmLoad === 'function') ? (crmLoad('locations')||[]) : [];
+  var cachedContacts = (typeof crmLoad === 'function') ? (crmLoad('contacts')||[]) : [];
+
+  cachedLeads.forEach(function(rec) {
     var blob = [rec.name, rec.business, rec.contact, rec.address, rec.addr, rec.city].filter(Boolean).join(' ').toLowerCase();
     if (blob.indexOf(term) !== -1) results.push({ id: rec.id, tab: 'leads', name: rec.business || rec.name || rec.contact, address: rec.address || rec.addr || '', badge: 'Lead' });
   });
-  crmLoad('locations').forEach(function(rec) {
+  cachedLocations.forEach(function(rec) {
     var blob = [rec.name, rec.parentCompany, rec.address, rec.city].filter(Boolean).join(' ').toLowerCase();
     if (blob.indexOf(term) !== -1) results.push({ id: rec.id, tab: 'locations', name: rec.name, address: rec.address || '', badge: 'Location' });
   });
-  crmLoad('contacts').forEach(function(rec) {
+  cachedContacts.forEach(function(rec) {
     var blob = [rec.name, rec.title, rec.phone].filter(Boolean).join(' ').toLowerCase();
     if (blob.indexOf(term) !== -1) results.push({ id: rec.id, tab: 'contacts', name: rec.name, address: '', badge: 'Contact' });
   });
 
-  results = results.slice(0, 8);
-  spApptRenderLinkResults(results, term);
+  if (results.length) spApptRenderLinkResults(results, term);
 
-  // Accounts queried live, appended once it resolves -- local results
-  // above already show instantly, this just adds to them.
-  if (typeof d1SearchAccounts === 'function') {
-    d1SearchAccounts(term, 5).then(function(rows) {
+  // Always query D1 directly -- cache may be empty on first load
+  if (typeof d1Query === 'function') {
+    var like = '%' + term + '%';
+
+    // Query locations, leads, and accounts in parallel from D1
+    Promise.all([
+      d1Query('SELECT id, name, address, city, state FROM locations WHERE (LOWER(name) LIKE ? OR LOWER(address) LIKE ?) AND status != ? LIMIT 6', [like, like, 'deleted']),
+      d1Query('SELECT id, name, business, address FROM leads WHERE (LOWER(name) LIKE ? OR LOWER(business) LIKE ? OR LOWER(address) LIKE ?) AND status != ? LIMIT 6', [like, like, like, 'deleted']),
+      d1Query('SELECT id, name, business, address FROM accounts WHERE (LOWER(name) LIKE ? OR LOWER(business) LIKE ?) LIMIT 6', [like, like]),
+    ]).then(function(all) {
       var currentBox = document.getElementById('spApptLinkResults');
       var currentInput = document.getElementById('spApptLinkSearch');
-      // Bail if the rep already picked something or changed the search
-      // while this was in flight.
-      if (!currentBox || !currentInput || currentInput.value.trim().toLowerCase() !== term) return;
-      var acctResults = rows.map(function(rec) {
-        return { id: rec.id, tab: 'accounts', name: rec.business || rec.name || '', address: rec.address || '', badge: 'Account' };
+      if (!currentBox) return;
+      // Bail if rep already picked something or changed the search
+      if (currentInput && currentInput.value.trim().toLowerCase() !== term) return;
+
+      var d1Results = [];
+      var seen = new Set(results.map(function(r){ return r.id; }));
+
+      var locRows  = (all[0].ok && all[0].results) ? all[0].results : [];
+      var leadRows = (all[1].ok && all[1].results) ? all[1].results : [];
+      var acctRows = (all[2].ok && all[2].results) ? all[2].results : [];
+
+      locRows.forEach(function(r) {
+        if (!seen.has(r.id)) { seen.add(r.id); d1Results.push({ id: r.id, tab: 'locations', name: r.name, address: [r.address, r.city, r.state].filter(Boolean).join(', '), badge: 'Location' }); }
       });
-      if (acctResults.length) spApptRenderLinkResults(results.concat(acctResults).slice(0, 12), term);
-    }).catch(function() {});
+      leadRows.forEach(function(r) {
+        if (!seen.has(r.id)) { seen.add(r.id); d1Results.push({ id: r.id, tab: 'leads', name: r.business || r.name, address: r.address || '', badge: 'Lead' }); }
+      });
+      acctRows.forEach(function(r) {
+        if (!seen.has(r.id)) { seen.add(r.id); d1Results.push({ id: r.id, tab: 'accounts', name: r.business || r.name, address: r.address || '', badge: 'Account' }); }
+      });
+
+      var combined = results.concat(d1Results).slice(0, 12);
+      spApptRenderLinkResults(combined, term);
+    }).catch(function() {
+      // D1 failed -- cached results already shown, that's fine
+    });
   }
 }
 
