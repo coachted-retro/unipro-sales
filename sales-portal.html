@@ -9906,6 +9906,19 @@ function spOpenApptModal(id, tab, mode, presetDate, keepNotes) {
     ? '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Location</label><input type="text" id="spApptLocation" value="' + addr.replace(/"/g,'&quot;') + '" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px" placeholder="Business address"></div>'
     : '';
 
+  // Contact info panel -- populated automatically when a record is selected
+  const contactInfoHtml = '<div id="spApptContactPanel" style="display:none;background:#F8FAFF;border:1.5px solid #BFDBFE;border-radius:8px;padding:12px;display:none">' +
+    '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#1B5FA8;margin-bottom:8px">📋 Contact Info</div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' +
+      '<div><label style="font-size:10px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:3px">Contact Name</label>' +
+        '<input type="text" id="spApptContactName" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:7px 9px;font-size:12px;background:#fff" placeholder="—"></div>' +
+      '<div><label style="font-size:10px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:3px">Phone</label>' +
+        '<input type="tel" id="spApptContactPhone" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:7px 9px;font-size:12px;background:#fff" placeholder="—"></div>' +
+      '<div style="grid-column:1/-1"><label style="font-size:10px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:3px">Email</label>' +
+        '<input type="email" id="spApptContactEmail" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:7px 9px;font-size:12px;background:#fff" placeholder="—"></div>' +
+    '</div>' +
+  '</div>';
+
   const guestChips = Object.keys(SP_REPS).filter(function(n){ return n !== (_spRep && _spRep.name); })
     .map(function(n){ return '<button type="button" onclick="spApptToggleGuestChip(this,' + JSON.stringify(n) + ')" data-guest="' + escH(n) + '" style="border:1.5px solid #D7DBE0;background:#fff;border-radius:20px;padding:4px 11px;font-size:12px;cursor:pointer;color:#333">' + escH(n) + '</button>'; }).join('');
   const guestsHtml = '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Invite someone <span style="font-weight:400;text-transform:none">(optional)</span></label>' +
@@ -9929,6 +9942,7 @@ function spOpenApptModal(id, tab, mode, presetDate, keepNotes) {
         allDayRecurHtml +
         linkFieldHtml +
         locationHtml +
+        contactInfoHtml +
         guestsHtml +
         brevoNote +
         '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Notes <span style="font-weight:400;text-transform:none">(optional)</span></label>' +
@@ -10037,20 +10051,67 @@ function spApptRenderLinkResults(results, term) {
 }
 function spApptPickRecord(id, tab, name) {
   _spApptLinkedId = id; _spApptLinkedTab = tab; _spApptLinkedName = name;
-  // Update the link field in place -- no full modal re-render needed.
-  // Re-render was causing mobile tap to get lost in the re-paint and
-  // the dropdown to stay open due to blur/focus race.
+
+  // Show the linked pill immediately -- don't wait for D1
   var searchWrap = document.getElementById('spApptLinkSearch');
-  var resultsBox = document.getElementById('spApptLinkResults');
   if (searchWrap && searchWrap.parentNode) {
     searchWrap.parentNode.innerHTML =
       '<div style="display:flex;align-items:center;justify-content:space-between;background:#F1F5F9;border-radius:7px;padding:8px 10px;font-size:13px">' +
         '<span>&#128279; ' + escH(name) + '</span>' +
         '<button type="button" onclick="spApptClearLink()" style="background:none;border:none;color:#C8102E;font-size:12px;cursor:pointer;font-weight:700">Change</button>' +
       '</div>';
-  } else if (resultsBox) {
-    resultsBox.style.display = 'none';
   }
+
+  // Fetch the full record from D1 and populate every field
+  if (typeof d1Query !== 'function') return;
+
+  var table = tab === 'locations' ? 'locations' : tab === 'accounts' ? 'accounts' : 'leads';
+
+  // For locations, also pull the parent account for full contact info
+  var queries = [
+    d1Query('SELECT * FROM ' + table + ' WHERE id = ? LIMIT 1', [id])
+  ];
+  if (tab === 'locations') {
+    queries.push(d1Query('SELECT * FROM contacts WHERE location_id = ? LIMIT 1', [id]));
+  }
+
+  Promise.all(queries).then(function(results) {
+    var rec = results[0].ok && results[0].results && results[0].results[0];
+    var contact = results[1] && results[1].ok && results[1].results && results[1].results[0];
+    if (!rec) return;
+
+    // Auto-fill address
+    var addrParts = [rec.address || rec.addr, rec.city, rec.state].filter(Boolean);
+    var fullAddr = addrParts.join(', ');
+    var locField = document.getElementById('spApptLocation');
+    if (locField && fullAddr) locField.value = fullAddr;
+
+    // Build contact info from the record itself or a linked contact row
+    var contactName  = rec.contact_name || rec.contact || (contact && (contact.name || contact.contact_name)) || '';
+    var contactPhone = rec.phone || rec.contact_phone || (contact && contact.phone) || '';
+    var contactEmail = rec.email || rec.contact_email || (contact && contact.email) || '';
+
+    // Show and populate the contact panel
+    var panel = document.getElementById('spApptContactPanel');
+    if (panel) {
+      panel.style.display = (contactName || contactPhone || contactEmail) ? 'block' : 'none';
+      var nameEl  = document.getElementById('spApptContactName');
+      var phoneEl = document.getElementById('spApptContactPhone');
+      var emailEl = document.getElementById('spApptContactEmail');
+      if (nameEl)  nameEl.value  = contactName;
+      if (phoneEl) phoneEl.value = contactPhone;
+      if (emailEl) emailEl.value = contactEmail;
+    }
+
+    // If this is a location and we have division info, update the notes placeholder
+    var notesEl = document.getElementById('spApptNotes');
+    if (notesEl && !notesEl.value) {
+      var division = rec.division || rec.service_type || '';
+      if (division) notesEl.placeholder = 'What is the plan? (Division: ' + division + ')';
+    }
+  }).catch(function(e) {
+    console.error('[Appt] Could not load record details:', e);
+  });
 }
 function spApptClearLink() {
   _spApptLinkedId = null; _spApptLinkedTab = null; _spApptLinkedName = '';
@@ -10540,6 +10601,10 @@ async function spCommitAppt(patternKeysToClear) {
   const recurring = document.getElementById('spApptRecurring')?.checked || false;
   const recurFreq = recurring ? (document.getElementById('spApptRecurFreq')?.value || 'weekly') : null;
   const location = cfg.hasLocation ? (document.getElementById('spApptLocation')?.value.trim() || '') : '';
+  // Contact info auto-populated from the linked record
+  const apptContactName  = document.getElementById('spApptContactName')?.value.trim()  || '';
+  const apptContactPhone = document.getElementById('spApptContactPhone')?.value.trim() || '';
+  const apptContactEmail = document.getElementById('spApptContactEmail')?.value.trim() || '';
 
   if ((patternKeysToClear || []).length) {
     const pattern = _spSchedCache || {};
@@ -10582,6 +10647,7 @@ async function spCommitAppt(patternKeysToClear) {
       id: newApptId,
       recordId: linkedId, tab: linkedTab, type: mode, date, time, timeEnd, address: location, notes,
       title, allDay, recurring, recurFreq, guests,
+      contact_name: apptContactName, contact_phone: apptContactPhone, contact_email: apptContactEmail,
       isFlexStop: mode !== 'appointment', createdAt: Date.now(), createdBy: _spRep.name,
     });
     crmSave('appointments', appts);
