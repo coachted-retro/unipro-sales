@@ -3423,11 +3423,38 @@ function setProjectStage(id, newStage) {
     return false;
   }
   var _now = Date.now();
+  var _prevStage = p.stage;
   p.stage = newStage;
   p.stage_updated_at = _now;
   p.updated_at = _now;
   // Write stage change directly to D1 immediately -- don't wait for batch push
   saveProjectStageToD1(id, newStage, _now).catch(function(){});
+  // Fire unified pipeline event
+  (function() {
+    var evtData = {
+      type: 'stage_change',
+      event_type: 'STAGE_CHANGED',
+      source_table: 'allpro_projects',
+      source_id: id,
+      site_name: p.project_name || id,
+      division: 'AllPro',
+      assigned_rep: (typeof _currentUser !== 'undefined' && _currentUser) ? _currentUser.name : 'Ted Scholl',
+      previous_stage: _prevStage,
+      new_stage: newStage,
+      quoted_price: p.sale_price || p.estimated_value || 0,
+      forecast_month: new Date().toISOString().slice(0,7),
+      permit_required: (newStage === 'permitting_ahj') ? 1 : 0,
+    };
+    // Emit to parent frame pipeline dashboard
+    try { window.parent.postMessage(evtData, '*'); } catch(e){}
+    // Also write locally if pipeline dashboard is loaded
+    if (typeof window.tpEmitEvent === 'function') window.tpEmitEvent(evtData);
+    // Write to pipeline_unified in D1
+    if (typeof d1Query === 'function') {
+      d1Query('UPDATE pipeline_unified SET stage=?,last_event=?,last_event_at=?,updated_at=? WHERE source_id=?',
+        [newStage, 'STAGE_CHANGED', Date.now(), Date.now(), id]).catch(function(){});
+    }
+  })();
   // Closeout cross-sell trigger — fires once, only for hood/suppression jobs
   if (newStage === 'closeout' && !p.cross_sell_triggered && p.project_type !== 'custom_fabrication') {
     p.cross_sell_triggered = 1;

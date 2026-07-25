@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Termac — Unified Pipeline</title>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800;900&family=Barlow:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --ink:#111318;--steel:#1C2331;--mid:#374151;--soft:#6B7280;
+  --line:#E2E5EA;--bg:#F5F6F8;--white:#fff;
+  --gold:#F2B705;--red:#C8102E;--green:#16A34A;--blue:#1B5FA8;
+  --purple:#7C3AED;--orange:#D97706;--teal:#0891B2;
+  --allpro:#C8102E;--unipro:#1B5FA8;--dms:#7C3AED;--gto:#16A34A;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Barlow,sans-serif;background:var(--bg);color:var(--ink);min-height:100vh}
+
+/* ── HEADER ── */
+#header{background:var(--steel);border-bottom:3px solid var(--gold);padding:0 20px;height:56px;display:flex;align-items:center;gap:14px;position:sticky;top:0;z-index:100}
+#header h1{font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:20px;color:#fff;letter-spacing:.06em}
+#header h1 span{color:var(--gold)}
+.hdr-chip{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);border-radius:6px;padding:4px 10px;font-size:11px;font-weight:700;color:rgba(255,255,255,.8);white-space:nowrap}
+.hdr-btn{height:34px;border:none;border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.05em;text-transform:uppercase;cursor:pointer;padding:0 14px;white-space:nowrap}
+.hdr-btn.gold{background:var(--gold);color:var(--ink)}
+.hdr-btn.steel{background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.2)}
+
+/* ── TABS ── */
+#tabs{background:var(--white);border-bottom:1px solid var(--line);display:flex;padding:0 20px;overflow-x:auto}
+.tab{padding:14px 18px;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--soft);cursor:pointer;border-bottom:3px solid transparent;white-space:nowrap;transition:all .15s}
+.tab.active{color:var(--ink);border-color:var(--gold)}
+.tab-badge{background:var(--red);color:#fff;border-radius:10px;padding:1px 6px;font-size:9px;margin-left:5px;vertical-align:middle}
+
+/* ── MAIN CONTENT ── */
+#content{padding:20px;max-width:1400px;margin:0 auto}
+
+/* ── KPI ROW ── */
+.kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px}
+.kpi{background:var(--white);border:1.5px solid var(--line);border-radius:10px;padding:14px 16px}
+.kpi-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--soft);margin-bottom:6px}
+.kpi-val{font-family:'JetBrains Mono',monospace;font-weight:500;font-size:22px;color:var(--ink)}
+.kpi-sub{font-size:11px;color:var(--soft);margin-top:4px}
+.kpi-val.gold{color:var(--orange)}
+.kpi-val.green{color:var(--green)}
+.kpi-val.red{color:var(--red)}
+.kpi-val.blue{color:var(--blue)}
+
+/* ── PANEL SECTION ── */
+.section{background:var(--white);border:1.5px solid var(--line);border-radius:12px;overflow:hidden;margin-bottom:16px}
+.section-head{padding:12px 16px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--line)}
+.section-title{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink);flex:1}
+.section-body{padding:0}
+
+/* ── PIPELINE TABLE ── */
+.pipeline-table{width:100%;border-collapse:collapse}
+.pipeline-table th{padding:8px 14px;text-align:left;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--soft);background:#F9FAFB;border-bottom:1px solid var(--line)}
+.pipeline-table td{padding:10px 14px;border-bottom:1px solid var(--line);font-size:13px;vertical-align:middle}
+.pipeline-table tr:last-child td{border-bottom:none}
+.pipeline-table tr:hover td{background:#F9FAFB}
+
+.div-chip{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em}
+.div-allpro{background:#FEE2E2;color:#991B1B}
+.div-unipro{background:#DBEAFE;color:#1E40AF}
+.div-dms{background:#EDE9FE;color:#5B21B6}
+.div-gto{background:#D1FAE5;color:#065F46}
+
+.stage-bar{display:flex;align-items:center;gap:6px}
+.stage-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.prob-bar{flex:1;height:4px;background:var(--line);border-radius:2px;overflow:hidden}
+.prob-fill{height:100%;border-radius:2px;background:var(--green)}
+
+.money{font-family:'JetBrains Mono',monospace;font-weight:500}
+.money.big{font-size:14px}
+.money.weighted{color:var(--orange)}
+
+/* ── FUNNEL ── */
+.funnel-wrap{padding:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px}
+.funnel-stage{background:var(--bg);border-radius:8px;padding:12px;text-align:center}
+.funnel-count{font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:500;color:var(--ink)}
+.funnel-val{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--orange);margin-top:2px}
+.funnel-label{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--soft);margin-top:4px}
+.funnel-bar{height:4px;border-radius:2px;margin-top:8px}
+
+/* ── EVENT FEED ── */
+.event-item{display:flex;align-items:flex-start;gap:10px;padding:10px 16px;border-bottom:1px solid var(--line)}
+.event-item:last-child{border-bottom:none}
+.event-icon{font-size:18px;flex-shrink:0;margin-top:1px}
+.event-body{flex:1}
+.event-title{font-size:13px;font-weight:700;color:var(--ink)}
+.event-sub{font-size:11px;color:var(--soft);margin-top:2px}
+.event-ts{font-size:10px;color:var(--soft);white-space:nowrap;margin-top:2px}
+
+/* ── DIVISION SCORECARDS ── */
+.scorecard-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
+.scorecard{background:var(--white);border:1.5px solid var(--line);border-radius:12px;overflow:hidden}
+.scorecard-head{padding:12px 16px;display:flex;align-items:center;gap:10px}
+.scorecard-name{font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:14px;letter-spacing:.06em;color:#fff;flex:1}
+.scorecard-body{padding:14px 16px}
+.sc-row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line);font-size:12px}
+.sc-row:last-child{border-bottom:none}
+.sc-label{color:var(--soft)}
+.sc-val{font-family:'JetBrains Mono',monospace;font-weight:500}
+
+/* ── FILTERS ── */
+.filter-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+.filter-btn{height:32px;border:1.5px solid var(--line);border-radius:6px;background:var(--white);font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--soft);cursor:pointer;padding:0 12px;transition:all .15s}
+.filter-btn.active{background:var(--blue);border-color:var(--blue);color:#fff}
+
+/* Floating buttons -- kill on sub-page */
+#tcFab,#tcFabCompact,.termac-chat-fab,button[title="Team Messages"],[id*="aiBubble"],[class*="ai-fab"],.sp-ai-fab,#_aiFloatBtn{display:none!important}
+</style>
+</head>
+<body>
+
+<!-- ══ HEADER ══ -->
+<div id="header">
+  <h1>TERMAC <span>PIPELINE</span></h1>
+  <div class="hdr-chip">Single Pane of Glass</div>
+  <div style="flex:1"></div>
+  <div class="hdr-chip" id="lastRefresh">Loading…</div>
+  <button class="hdr-btn steel" onclick="tpLoad()">↻ Refresh</button>
+  <button class="hdr-btn gold" onclick="window.parent && window.parent.postMessage({type:'close_embed'},'*')">← Back</button>
+</div>
+
+<!-- ══ TABS ══ -->
+<div id="tabs">
+  <div class="tab active" onclick="tpTab('pipeline')">📊 Pipeline</div>
+  <div class="tab" onclick="tpTab('divisions')">🏢 Divisions</div>
+  <div class="tab" onclick="tpTab('events')">⚡ Event Feed</div>
+  <div class="tab" onclick="tpTab('manager')">👔 Manager View</div>
+</div>
+
+<!-- ══ CONTENT ══ -->
+<div id="content">
+
+  <!-- PIPELINE TAB -->
+  <div id="tab-pipeline">
+    <div class="kpi-row" id="kpiRow">
+      <div class="kpi"><div class="kpi-label">Total Pipeline</div><div class="kpi-val" id="k_total">—</div><div class="kpi-sub">All open deals</div></div>
+      <div class="kpi"><div class="kpi-label">Weighted Value</div><div class="kpi-val gold" id="k_weighted">—</div><div class="kpi-sub">Probability-adjusted</div></div>
+      <div class="kpi"><div class="kpi-label">This Month</div><div class="kpi-val green" id="k_month">—</div><div class="kpi-sub">Expected to close</div></div>
+      <div class="kpi"><div class="kpi-label">Active Deals</div><div class="kpi-val blue" id="k_count">—</div><div class="kpi-sub">Across all divisions</div></div>
+      <div class="kpi"><div class="kpi-label">Avg Deal Size</div><div class="kpi-val" id="k_avg">—</div><div class="kpi-sub">Active pipeline</div></div>
+      <div class="kpi"><div class="kpi-label">Permits Pending</div><div class="kpi-val red" id="k_permits">—</div><div class="kpi-sub">AHJ action required</div></div>
+    </div>
+
+    <div class="filter-row" id="filterRow">
+      <button class="filter-btn active" onclick="tpFilter('all',this)">All Divisions</button>
+      <button class="filter-btn" onclick="tpFilter('AllPro',this)">AllPro</button>
+      <button class="filter-btn" onclick="tpFilter('UniPro',this)">UniPro</button>
+      <button class="filter-btn" onclick="tpFilter('DMS',this)">DMS</button>
+      <div style="margin-left:auto;display:flex;gap:6px">
+        <button class="filter-btn" onclick="tpSort('value')">Sort: Value</button>
+        <button class="filter-btn" onclick="tpSort('prob')">Sort: Weighted</button>
+        <button class="filter-btn" onclick="tpSort('stage')">Sort: Stage</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-head">
+        <div class="section-title">Active Pipeline</div>
+        <div id="pipelineCount" style="font-size:11px;color:var(--soft)"></div>
+      </div>
+      <div class="section-body">
+        <table class="pipeline-table">
+          <thead>
+            <tr>
+              <th>Deal / Site</th>
+              <th>Division</th>
+              <th>Rep</th>
+              <th>Stage</th>
+              <th style="text-align:right">Value</th>
+              <th style="text-align:right">Weighted</th>
+              <th>Flags</th>
+            </tr>
+          </thead>
+          <tbody id="pipelineBody">
+            <tr><td colspan="7" style="text-align:center;padding:24px;color:var(--soft)">Loading pipeline…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-head"><div class="section-title">Stage Funnel</div></div>
+      <div class="funnel-wrap" id="funnelWrap"></div>
+    </div>
+  </div>
+
+  <!-- DIVISIONS TAB -->
+  <div id="tab-divisions" style="display:none">
+    <div class="scorecard-grid" id="scorecardGrid"></div>
+  </div>
+
+  <!-- EVENTS TAB -->
+  <div id="tab-events" style="display:none">
+    <div class="section">
+      <div class="section-head"><div class="section-title">⚡ Live Event Feed</div></div>
+      <div id="eventFeed">
+        <div style="text-align:center;padding:24px;color:var(--soft);font-size:13px">No events yet — events fire when deals change stage</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MANAGER TAB -->
+  <div id="tab-manager" style="display:none">
+    <div class="kpi-row" id="mgr-kpis"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="section">
+        <div class="section-head"><div class="section-title">Revenue by Division</div></div>
+        <div id="mgr-by-div" style="padding:16px"></div>
+      </div>
+      <div class="section">
+        <div class="section-head"><div class="section-title">Rep Performance</div></div>
+        <div id="mgr-by-rep" style="padding:16px"></div>
+      </div>
+    </div>
+    <div class="section" style="margin-top:16px">
+      <div class="section-head"><div class="section-title">AHJ Permit Tracker</div></div>
+      <div id="mgr-ahj" style="padding:16px;font-size:12px;color:var(--soft)">Loading AHJ permit data…</div>
+    </div>
+  </div>
+
+</div>
+
+<script src="termac-d1-sync.js"></script>
+<script>
+'use strict';
+
+var TP = {
+  pipeline: [],
+  events: [],
+  filter: 'all',
+  sortBy: 'value',
+  currentTab: 'pipeline',
+};
+
+var STAGE_COLORS = {
+  lead:'#9CA3AF', contacted:'#60A5FA', survey:'#818CF8',
+  proposal:'#A78BFA', proposal_submitted:'#A78BFA',
+  negotiation:'#F59E0B', won:'#34D399', lost:'#F87171',
+  intake:'#9CA3AF', survey_plan_review:'#60A5FA',
+  design_drawings:'#818CF8', costing:'#C084FC',
+  permitting_ahj:'#FB923C', fabrication:'#A3E635',
+  delivery_install:'#34D399', commissioning:'#10B981',
+  closeout:'#059669', watching:'#9CA3AF', qualifying:'#60A5FA',
+  submitted:'#A78BFA', shortlisted:'#F59E0B', awarded:'#34D399',
+};
+
+var DIV_COLORS = {
+  AllPro: '#C8102E', UniPro: '#1B5FA8', DMS: '#7C3AED',
+  GTO: '#16A34A', FilterMan: '#D97706',
+};
+
+function fmt$(n) {
+  if (!n) return '$0';
+  if (n >= 1000000) return '$' + (n/1000000).toFixed(1) + 'M';
+  if (n >= 1000) return '$' + (n/1000).toFixed(1) + 'K';
+  return '$' + Math.round(n).toLocaleString();
+}
+function escH(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ── LOAD DATA ──
+async function tpLoad() {
+  document.getElementById('lastRefresh').textContent = 'Refreshing…';
+  if (typeof d1Query !== 'function') {
+    document.getElementById('lastRefresh').textContent = 'D1 not connected';
+    return;
+  }
+
+  try {
+    // Load pipeline_unified
+    var pRes = await d1Query(
+      'SELECT pu.*, sp.probability_pct as prob FROM pipeline_unified pu ' +
+      'LEFT JOIN stage_probabilities sp ON sp.source_table=pu.source_table AND sp.stage=pu.stage ' +
+      'WHERE pu.stage NOT IN (\'lost\',\'won\',\'closeout\') ' +
+      'ORDER BY pu.quoted_value DESC LIMIT 100'
+    );
+    TP.pipeline = (pRes.ok && pRes.results) ? pRes.results : [];
+
+    // Load recent events
+    var eRes = await d1Query(
+      'SELECT * FROM pipeline_events ORDER BY created_at DESC LIMIT 30'
+    );
+    TP.events = (eRes.ok && eRes.results) ? eRes.results : [];
+
+    tpRenderAll();
+    document.getElementById('lastRefresh').textContent = 'Updated ' + new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+  } catch(e) {
+    document.getElementById('lastRefresh').textContent = 'Load error';
+    console.error(e);
+  }
+}
+
+function tpRenderAll() {
+  tpRenderKPIs();
+  tpRenderPipeline();
+  tpRenderFunnel();
+  tpRenderDivisions();
+  tpRenderEvents();
+  tpRenderManager();
+}
+
+// ── KPIs ──
+function tpRenderKPIs() {
+  var filtered = tpFiltered();
+  var total    = filtered.reduce(function(s,r){ return s+(r.quoted_value||0); }, 0);
+  var weighted = filtered.reduce(function(s,r){ return s+(r.weighted_value||0); }, 0);
+  var thisMonth= new Date().toISOString().slice(0,7);
+  var month    = filtered.filter(function(r){ return r.forecast_month === thisMonth; })
+                         .reduce(function(s,r){ return s+(r.weighted_value||0); }, 0);
+  var permits  = filtered.filter(function(r){ return r.permit_required; }).length;
+  var avg      = filtered.length ? total / filtered.length : 0;
+
+  document.getElementById('k_total').textContent   = fmt$(total);
+  document.getElementById('k_weighted').textContent = fmt$(weighted);
+  document.getElementById('k_month').textContent   = fmt$(month);
+  document.getElementById('k_count').textContent   = filtered.length;
+  document.getElementById('k_avg').textContent     = fmt$(avg);
+  document.getElementById('k_permits').textContent  = permits || '—';
+}
+
+// ── PIPELINE TABLE ──
+function tpRenderPipeline() {
+  var rows = tpFiltered();
+  if (TP.sortBy === 'value')  rows.sort(function(a,b){ return (b.quoted_value||0)-(a.quoted_value||0); });
+  if (TP.sortBy === 'weighted') rows.sort(function(a,b){ return (b.weighted_value||0)-(a.weighted_value||0); });
+  if (TP.sortBy === 'stage')  rows.sort(function(a,b){ return (b.stage_rank||0)-(a.stage_rank||0); });
+
+  document.getElementById('pipelineCount').textContent = rows.length + ' deals';
+
+  if (!rows.length) {
+    document.getElementById('pipelineBody').innerHTML =
+      '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--soft)">No active deals match this filter</td></tr>';
+    return;
+  }
+
+  var html = rows.map(function(r) {
+    var divClass = 'div-' + (r.division||'').toLowerCase();
+    var stageColor = STAGE_COLORS[r.stage] || '#9CA3AF';
+    var prob = r.prob || r.probability_pct || 0;
+    var flags = [];
+    if (r.permit_required)   flags.push('<span style="color:var(--orange);font-size:10px;font-weight:700">📋 PERMIT</span>');
+    if (r.allpro_linked)     flags.push('<span style="color:var(--red);font-size:10px;font-weight:700">🏗 AP</span>');
+    if (r.unipro_linked)     flags.push('<span style="color:var(--blue);font-size:10px;font-weight:700">🧯 UP</span>');
+
+    return '<tr>' +
+      '<td><div style="font-weight:700;font-size:13px">' + escH(r.site_name||'Unnamed') + '</div>' +
+        '<div style="font-size:10px;color:var(--soft);margin-top:1px">' + escH(r.source_table) + ' · ' + escH(r.source_id||'') + '</div></td>' +
+      '<td><span class="div-chip ' + divClass + '">' + escH(r.division||'—') + '</span></td>' +
+      '<td style="font-size:12px">' + escH(r.rep||'—') + '</td>' +
+      '<td><div class="stage-bar">' +
+        '<div class="stage-dot" style="background:' + stageColor + '"></div>' +
+        '<div style="flex:1"><div style="font-size:11px;font-weight:600">' + escH(r.stage||'—') + '</div>' +
+          '<div class="prob-bar"><div class="prob-fill" style="width:' + prob + '%;background:' + stageColor + '"></div></div></div>' +
+        '<span style="font-size:10px;color:var(--soft)">' + Math.round(prob) + '%</span>' +
+      '</div></td>' +
+      '<td style="text-align:right"><span class="money big">' + fmt$(r.quoted_value) + '</span></td>' +
+      '<td style="text-align:right"><span class="money weighted">' + fmt$(r.weighted_value) + '</span></td>' +
+      '<td>' + (flags.join(' ') || '—') + '</td>' +
+    '</tr>';
+  }).join('');
+
+  document.getElementById('pipelineBody').innerHTML = html;
+}
+
+// ── FUNNEL ──
+function tpRenderFunnel() {
+  var rows = tpFiltered();
+  var stages = {};
+  rows.forEach(function(r) {
+    var s = r.stage || 'unknown';
+    if (!stages[s]) stages[s] = { count:0, value:0, rank:r.stage_rank||0, color: STAGE_COLORS[s]||'#9CA3AF' };
+    stages[s].count++;
+    stages[s].value += (r.quoted_value||0);
+  });
+  var sorted = Object.entries(stages).sort(function(a,b){ return (a[1].rank||0)-(b[1].rank||0); });
+  var maxVal = Math.max.apply(null, sorted.map(function(s){ return s[1].value; })) || 1;
+
+  document.getElementById('funnelWrap').innerHTML = sorted.map(function(entry) {
+    var s = entry[0], d = entry[1];
+    var pct = Math.round(d.value / maxVal * 100);
+    return '<div class="funnel-stage">' +
+      '<div class="funnel-count">' + d.count + '</div>' +
+      '<div class="funnel-val">' + fmt$(d.value) + '</div>' +
+      '<div class="funnel-label">' + escH(s) + '</div>' +
+      '<div class="funnel-bar" style="background:' + d.color + ';opacity:' + (0.3 + pct/100*0.7) + ';width:' + pct + '%;margin:auto"></div>' +
+    '</div>';
+  }).join('');
+}
+
+// ── DIVISIONS ──
+function tpRenderDivisions() {
+  var divs = {};
+  TP.pipeline.forEach(function(r) {
+    var d = r.division || 'Other';
+    if (!divs[d]) divs[d] = { deals:0, total:0, weighted:0, reps:{} };
+    divs[d].deals++;
+    divs[d].total += (r.quoted_value||0);
+    divs[d].weighted += (r.weighted_value||0);
+    if (r.rep) divs[d].reps[r.rep] = (divs[d].reps[r.rep]||0) + (r.quoted_value||0);
+  });
+
+  var html = Object.entries(divs).map(function(entry) {
+    var name = entry[0], d = entry[1];
+    var color = DIV_COLORS[name] || '#6B7280';
+    var topRep = Object.entries(d.reps).sort(function(a,b){ return b[1]-a[1]; })[0];
+    return '<div class="scorecard">' +
+      '<div class="scorecard-head" style="background:' + color + '">' +
+        '<div class="scorecard-name">' + escH(name) + '</div>' +
+        '<div style="font-size:20px">' + (name==='AllPro'?'🏗️':name==='UniPro'?'🧯':name==='DMS'?'📞':'📦') + '</div>' +
+      '</div>' +
+      '<div class="scorecard-body">' +
+        '<div class="sc-row"><span class="sc-label">Active Deals</span><span class="sc-val">' + d.deals + '</span></div>' +
+        '<div class="sc-row"><span class="sc-label">Pipeline Value</span><span class="sc-val">' + fmt$(d.total) + '</span></div>' +
+        '<div class="sc-row"><span class="sc-label">Weighted Value</span><span class="sc-val" style="color:var(--orange)">' + fmt$(d.weighted) + '</span></div>' +
+        '<div class="sc-row"><span class="sc-label">Avg Deal Size</span><span class="sc-val">' + fmt$(d.deals ? d.total/d.deals : 0) + '</span></div>' +
+        (topRep ? '<div class="sc-row"><span class="sc-label">Top Rep</span><span class="sc-val" style="font-size:11px">' + escH(topRep[0]) + '</span></div>' : '') +
+      '</div>' +
+    '</div>';
+  }).join('');
+
+  document.getElementById('scorecardGrid').innerHTML = html || '<div style="color:var(--soft);padding:20px">No division data yet</div>';
+}
+
+// ── EVENTS ──
+function tpRenderEvents() {
+  if (!TP.events.length) return;
+  var icons = {
+    STAGE_CHANGED:'🔄', SURVEY_SUBMITTED:'📋', PROPOSAL_SENT:'📤',
+    CLIENT_APPROVED:'✅', PAYMENT_RECEIVED:'💰', JOB_CLOSED:'🎉',
+  };
+  document.getElementById('eventFeed').innerHTML = TP.events.map(function(e) {
+    var ts = e.created_at ? new Date(e.created_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}) : '';
+    return '<div class="event-item">' +
+      '<div class="event-icon">' + (icons[e.event_type]||'📌') + '</div>' +
+      '<div class="event-body">' +
+        '<div class="event-title">' + escH(e.site_name||e.source_id) + ' — ' + escH(e.event_type) + '</div>' +
+        '<div class="event-sub">' + escH(e.previous_stage||'') + (e.previous_stage&&e.new_stage?' → ':'') + escH(e.new_stage||'') +
+          (e.quoted_price ? ' · ' + fmt$(e.quoted_price) : '') +
+          (e.gross_margin_pct ? ' · ' + e.gross_margin_pct.toFixed(1) + '% margin' : '') + '</div>' +
+        '<div class="event-ts">' + escH(e.division||'') + (e.assigned_rep ? ' · ' + escH(e.assigned_rep) : '') + (ts ? ' · ' + ts : '') + '</div>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+// ── MANAGER VIEW ──
+function tpRenderManager() {
+  // KPIs
+  var total     = TP.pipeline.reduce(function(s,r){ return s+(r.quoted_value||0); }, 0);
+  var weighted  = TP.pipeline.reduce(function(s,r){ return s+(r.weighted_value||0); }, 0);
+  var deals     = TP.pipeline.length;
+  var permits   = TP.pipeline.filter(function(r){ return r.permit_required; }).length;
+
+  document.getElementById('mgr-kpis').innerHTML =
+    '<div class="kpi"><div class="kpi-label">Total Open Pipeline</div><div class="kpi-val">' + fmt$(total) + '</div></div>' +
+    '<div class="kpi"><div class="kpi-label">Weighted Forecast</div><div class="kpi-val gold">' + fmt$(weighted) + '</div></div>' +
+    '<div class="kpi"><div class="kpi-label">Active Deals</div><div class="kpi-val blue">' + deals + '</div></div>' +
+    '<div class="kpi"><div class="kpi-label">Permits Needed</div><div class="kpi-val red">' + (permits||'0') + '</div></div>';
+
+  // By division
+  var divs = {};
+  TP.pipeline.forEach(function(r) {
+    var d = r.division||'Other';
+    if (!divs[d]) divs[d] = 0;
+    divs[d] += (r.quoted_value||0);
+  });
+  var divTotal = Object.values(divs).reduce(function(s,v){ return s+v; }, 0) || 1;
+  document.getElementById('mgr-by-div').innerHTML = Object.entries(divs)
+    .sort(function(a,b){ return b[1]-a[1]; })
+    .map(function(e) {
+      var pct = Math.round(e[1]/divTotal*100);
+      var color = DIV_COLORS[e[0]] || '#9CA3AF';
+      return '<div style="margin-bottom:12px">' +
+        '<div style="display:flex;justify-content:space-between;margin-bottom:4px">' +
+          '<span style="font-size:12px;font-weight:700">' + escH(e[0]) + '</span>' +
+          '<span style="font-family:JetBrains Mono,monospace;font-size:12px">' + fmt$(e[1]) + ' <span style="color:var(--soft)">(' + pct + '%)</span></span>' +
+        '</div>' +
+        '<div style="height:8px;background:var(--line);border-radius:4px;overflow:hidden">' +
+          '<div style="height:100%;width:' + pct + '%;background:' + color + ';border-radius:4px"></div>' +
+        '</div></div>';
+    }).join('') || '<div style="color:var(--soft)">No data</div>';
+
+  // By rep
+  var reps = {};
+  TP.pipeline.forEach(function(r) {
+    if (!r.rep) return;
+    if (!reps[r.rep]) reps[r.rep] = { deals:0, value:0 };
+    reps[r.rep].deals++;
+    reps[r.rep].value += (r.quoted_value||0);
+  });
+  document.getElementById('mgr-by-rep').innerHTML = Object.entries(reps)
+    .sort(function(a,b){ return b[1].value-a[1].value; })
+    .map(function(e) {
+      return '<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line)">' +
+        '<div><div style="font-size:12px;font-weight:700">' + escH(e[0]) + '</div>' +
+          '<div style="font-size:10px;color:var(--soft)">' + e[1].deals + ' deals</div></div>' +
+        '<div style="font-family:JetBrains Mono,monospace;font-size:13px;font-weight:500">' + fmt$(e[1].value) + '</div>' +
+      '</div>';
+    }).join('') || '<div style="color:var(--soft)">No rep data</div>';
+
+  // AHJ tracker
+  var ahjItems = TP.pipeline.filter(function(r){ return r.ahj_jurisdiction || r.permit_required; });
+  document.getElementById('mgr-ahj').innerHTML = ahjItems.length ?
+    ahjItems.map(function(r) {
+      return '<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line);font-size:12px">' +
+        '<div><div style="font-weight:700">' + escH(r.site_name||'Unknown') + '</div>' +
+          '<div style="color:var(--soft)">' + escH(r.ahj_jurisdiction||'—') + '</div></div>' +
+        '<div style="text-align:right">' +
+          (r.permit_required ? '<span style="color:var(--orange);font-weight:700;font-size:10px">PERMIT REQD</span>' : '') +
+        '</div></div>';
+    }).join('') :
+    '<div style="color:var(--soft)">No permit-flagged deals in current pipeline</div>';
+}
+
+// ── HELPERS ──
+function tpFiltered() {
+  if (TP.filter === 'all') return TP.pipeline;
+  return TP.pipeline.filter(function(r){ return r.division === TP.filter; });
+}
+
+function tpFilter(div, btn) {
+  TP.filter = div;
+  document.querySelectorAll('#filterRow .filter-btn').forEach(function(b){ b.classList.remove('active'); });
+  if (btn) btn.classList.add('active');
+  tpRenderKPIs();
+  tpRenderPipeline();
+  tpRenderFunnel();
+}
+
+function tpSort(by) {
+  TP.sortBy = by;
+  tpRenderPipeline();
+}
+
+function tpTab(name) {
+  TP.currentTab = name;
+  document.querySelectorAll('.tab').forEach(function(t,i){
+    var tabs = ['pipeline','divisions','events','manager'];
+    t.classList.toggle('active', tabs[i] === name);
+  });
+  ['pipeline','divisions','events','manager'].forEach(function(t) {
+    var el = document.getElementById('tab-'+t);
+    if (el) el.style.display = (t === name) ? '' : 'none';
+  });
+}
+
+// ── STAGE CHANGE EVENT EMITTER (called from other tools) ──
+window.tpEmitEvent = async function(eventData) {
+  if (typeof d1Query !== 'function') return;
+  var id = 'EVT-' + Date.now() + '-' + Math.random().toString(36).slice(2,6);
+  var now = Date.now();
+  try {
+    await d1Query(
+      'INSERT INTO pipeline_events (id,event_type,source_table,source_id,site_name,division,assigned_rep,previous_stage,new_stage,quoted_price,gross_margin_pct,forecast_month,permit_required,ahj_jurisdiction,unipro_compliance_type,payload,created_at,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+      [id, eventData.event_type||'STAGE_CHANGED', eventData.source_table||'opportunities',
+       eventData.source_id||'', eventData.site_name||'', eventData.division||'',
+       eventData.assigned_rep||'', eventData.previous_stage||'', eventData.new_stage||'',
+       eventData.quoted_price||0, eventData.gross_margin_pct||0, eventData.forecast_month||'',
+       eventData.permit_required?1:0, eventData.ahj_jurisdiction||'', eventData.unipro_compliance_type||'',
+       eventData.payload ? JSON.stringify(eventData.payload) : null, now, eventData.created_by||'system']
+    );
+    // Also update pipeline_unified
+    if (eventData.source_id) {
+      await d1Query(
+        'UPDATE pipeline_unified SET stage=?,last_event=?,last_event_at=?,updated_at=? WHERE source_id=?',
+        [eventData.new_stage||'', eventData.event_type||'', now, now, eventData.source_id]
+      );
+    }
+  } catch(e) { console.error('[Pipeline] Event write failed', e); }
+};
+
+// Listen for events from other frames
+window.addEventListener('message', function(e) {
+  if (e.data && e.data.type === 'stage_change') {
+    window.tpEmitEvent(e.data);
+    setTimeout(tpLoad, 500); // refresh after event
+  }
+});
+
+// Auto-refresh every 2 minutes
+setInterval(tpLoad, 120000);
+window.addEventListener('load', tpLoad);
+</script>
+</body>
+</html>
