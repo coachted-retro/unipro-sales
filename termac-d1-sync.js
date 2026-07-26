@@ -1,3 +1,17 @@
+
+// ── d1Query -- parameterized D1 query helper (shared, canonical copy) ──
+// Sends raw SQL + params to the proxy /db/query endpoint.
+// All portals use this -- do NOT add local copies to individual files.
+function d1Query(sql, params) {
+  return fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/query', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+    body: JSON.stringify({ sql: sql, params: params || [] })
+  })
+  .then(function(res) { return res.json(); })
+  .catch(function(err) { return { ok: false, error: err.message, results: [] }; });
+}
+
 // ════════════════════════════════════════════════════════════════════════
 // TERMAC D1 SYNC — shared cross-device persistence layer
 // ────────────────────────────────────────────────────────────────────────
@@ -951,7 +965,7 @@
     if (D1_SYNC_TABLES.includes(key)) {
       fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/' + key + '/' + id, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'X-API-Secret': D1_API_SECRET },
+        headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
         body: JSON.stringify({ status: 'deleted', updated_at: Date.now() })
       }).catch(function() {});
     }
@@ -1493,6 +1507,7 @@
     crmSave: crmSave,
     crmLoad: crmLoad,
     crmLoadAsync: crmLoadAsync,
+    d1Query: d1Query,
     crmInvalidate: crmInvalidate,
     crmDelete: crmDelete,
     SYNC_TABLES: D1_SYNC_TABLES,
@@ -1514,6 +1529,7 @@
   if (typeof global.crmSave !== 'function') global.crmSave = crmSave;
   if (typeof global.crmLoad !== 'function') global.crmLoad = crmLoad;
   if (typeof global.crmLoadAsync !== 'function') global.crmLoadAsync = crmLoadAsync;
+  if (typeof global.d1Query !== 'function') global.d1Query = d1Query;
   if (typeof global.crmInvalidate !== 'function') global.crmInvalidate = crmInvalidate;
   if (typeof global.crmDelete !== 'function') global.crmDelete = crmDelete;
   if (typeof global.sendMailAsMe !== 'function') global.sendMailAsMe = sendMailAsMe;
