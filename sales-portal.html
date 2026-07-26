@@ -4861,8 +4861,15 @@ function spColdTargetAdd(btn) {
 }
 
 function spViewApptDetail(apptId) {
-  const a = (crmLoad('appointments') || []).find(function(x){ return x.id === apptId; });
-  if (!a) return;
+  // Fetch appointment from D1 -- it is never in localStorage
+  d1Query('SELECT * FROM appointments WHERE id=? LIMIT 1', [apptId])
+  .then(function(res) {
+    var a = res.ok && res.results && res.results[0];
+    if (!a) { spToast('Appointment not found.'); return; }
+    _spViewApptDetailRender(apptId, a);
+  });
+}
+function _spViewApptDetailRender(apptId, a) {
   const typeLabel = a.type === 'appointment' ? '📅 Appointment' : '🗺️ Site Visit';
   const dateLabel = a.date ? new Date(a.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'}) : '';
 
@@ -4949,7 +4956,7 @@ function spViewApptDetail(apptId) {
     + '</div>'
   + '</div>';
   document.body.appendChild(wrap);
-}
+}  // end _spViewApptDetailRender
 
 // Creates a real lead record from a calendar stop that has no linked
 // account/lead yet (the "existing customer, not yet migrated" case),
@@ -4958,10 +4965,16 @@ function spViewApptDetail(apptId) {
 // straight into the new record so notes and follow-up work immediately
 // instead of waiting on a data migration. Added 2026-07-14 per Ted.
 function spQuickCreateFromAppt(apptId) {
-  const appts = crmLoad('appointments') || [];
-  const idx = appts.findIndex(x => x.id === apptId);
-  if (idx < 0) return;
-  const a = appts[idx];
+  // Fetch appointment from D1
+  d1Query('SELECT * FROM appointments WHERE id=? LIMIT 1', [apptId])
+  .then(function(res) {
+    var a = res.ok && res.results && res.results[0];
+    if (!a) { spToast('Appointment not found.'); return; }
+    _spDoQuickCreate(apptId, a);
+  });
+}
+function _spDoQuickCreate(apptId, a) {
+  // (moved from spQuickCreateFromAppt -- now reads from D1)
   if (!a.business) { spToast('No business name on this stop to create from'); return; }
 
   const leads = crmLoad('leads') || [];
@@ -10517,18 +10530,26 @@ var _svApptData = null;
 var _swSelectedSvcs = [];
 
 function spOpenStartVisit(apptId) {
-  // Find the appointment
-  var appts = crmLoad('appointments') || [];
-  var appt = appts.find(function(a){ return a.id === apptId; });
-  if (!appt) { spToast('Appointment not found.'); return; }
-  _svApptId = apptId;
-  _svApptData = appt;
+  // Fetch appointment from D1
+  d1Query('SELECT * FROM appointments WHERE id=? LIMIT 1', [apptId])
+  .then(function(res) {
+    var appt = res.ok && res.results && res.results[0];
+    if (!appt) { spToast('Appointment not found.'); return; }
+    _svApptId = apptId;
+    _svApptData = appt;
+    var title = appt.business || appt.title || 'This Stop';
+    document.getElementById('svTitle').textContent = 'Start Visit — ' + title;
+    document.getElementById('svSub').textContent = appt.location || appt.address || 'Tap how you want to proceed';
+    document.getElementById('spStartVisitOverlay').classList.add('open');
+  });
+}
+function _spOpenStartVisitLegacy(apptId) {
 
   var title = appt.business || appt.title || 'This Stop';
   document.getElementById('svTitle').textContent = 'Start Visit — ' + title;
   document.getElementById('svSub').textContent = appt.location || appt.address || 'Tap how you want to proceed';
   document.getElementById('spStartVisitOverlay').classList.add('open');
-}
+} // end _spOpenStartVisitLegacy
 
 function spCloseStartVisit() {
   document.getElementById('spStartVisitOverlay').classList.remove('open');
