@@ -9989,15 +9989,7 @@ function spApptRenderModal(cfg, defaultDate, keepNotes) {
       '</div>' +
     '</div>';
 
-  // ── GUESTS ──
-  var guestChips = Object.keys(SP_REPS||{}).filter(function(n){ return n !== (_spRep && _spRep.name); })
-    .map(function(n){ return '<button type="button" onclick="spApptToggleGuestChip(this,' + JSON.stringify(n) + ')" data-guest="' + escH(n) + '" style="border:1.5px solid #D7DBE0;background:#fff;border-radius:20px;padding:4px 11px;font-size:12px;cursor:pointer;color:#333">' + escH(n) + '</button>'; }).join('');
-  var guestsHtml = '<div>' +
-    '<label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Invite someone <span style="font-weight:400;text-transform:none">(optional)</span></label>' +
-    '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px">' + guestChips + '</div>' +
-    '<input type="text" id="spApptGuests" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px" placeholder="Other names or emails, comma separated">' +
-  '</div>';
-
+  
   var html =
     '<div id="spApptModal" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9700;display:flex;align-items:center;justify-content:center;padding:16px">' +
     '<div style="background:#fff;border-radius:12px;width:min(500px,96vw);max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.3)">' +
@@ -10012,7 +10004,6 @@ function spApptRenderModal(cfg, defaultDate, keepNotes) {
         allDayHtml +
         addrHtml +
         contactHtml +
-        guestsHtml +
         '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Notes <span style="font-weight:400;text-transform:none">(optional)</span></label>' +
           '<textarea id="spApptNotes" rows="2" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px" placeholder="Purpose of visit / what to discuss">' + (keepNotes||'') + '</textarea></div>' +
         '<button onclick="spSaveAppt()" style="background:' + cfg.color + ';color:#fff;border:none;border-radius:8px;padding:12px;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;letter-spacing:.05em;text-transform:uppercase;width:100%">' + cfg.saveLabel + '</button>' +
@@ -10292,7 +10283,7 @@ function spApptToggleGuestChip(btn, name) {
   else { _spApptGuestChips.push(name); btn.style.background = '#C8102E'; btn.style.color = '#fff'; btn.style.borderColor = '#C8102E'; }
 }
 function spApptCollectGuests() {
-  var free = (document.getElementById('spApptGuests')?.value || '').split(',').map(function(s){ return s.trim(); }).filter(Boolean);
+  return []; // guest UI removed
   var all = _spApptGuestChips.concat(free);
   return Array.from(new Set(all));
 }
@@ -10683,23 +10674,35 @@ document.addEventListener('click', function(e){
 setTimeout(function(){ spFetchNotifications(); setInterval(spFetchNotifications, 60000); }, 1500);
 
 async function spSaveAppt() {
-  const date = document.getElementById('spApptDate')?.value || '';
-  const allDay = document.getElementById('spApptAllDay')?.checked || false;
-  const time = allDay ? '' : (document.getElementById('spApptTime')?.value || '');
-  const timeEnd = document.getElementById('spApptTimeEnd')?.value || '';
+  try {
+    const date = document.getElementById('spApptDate')?.value || '';
+    const allDay = document.getElementById('spApptAllDay')?.checked || false;
+    const time = allDay ? '' : (document.getElementById('spApptTime')?.value || '');
+    const timeEnd = document.getElementById('spApptTimeEnd')?.value || '';
 
-  if (!date) { alert('Please select a date.'); return; }
-  const cfg = SP_ENTRY_TYPES[_spApptMode] || SP_ENTRY_TYPES.appointment;
-  // TBD appointments with no linked record are valid -- a typed name or notes-only appointment is allowed.
+    if (!date) { alert('Please select a date.'); return; }
 
-  if (!allDay && time) {
-    const conflicts = await spCheckOverbooking(date, time, timeEnd);
-    if (conflicts.length) {
-      spShowApptConflictModal(conflicts, date, time);
-      return; // rep decides in the modal - spCommitAppt runs from there
+    // Disable the save button immediately to prevent double-tap
+    var saveBtn = document.querySelector('#spApptModal button[onclick="spSaveAppt()"]');
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving...'; }
+
+    if (!allDay && time) {
+      try {
+        const conflicts = await spCheckOverbooking(date, time, timeEnd);
+        if (conflicts.length) {
+          spShowApptConflictModal(conflicts, date, time);
+          if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'SAVE APPOINTMENT'; }
+          return;
+        }
+      } catch(e) { /* overbooking check failure is non-blocking */ }
     }
+    await spCommitAppt([]);
+  } catch(e) {
+    console.error('spSaveAppt error:', e);
+    if (typeof spToast === 'function') spToast('Save error: ' + (e.message || 'unknown'));
+    var saveBtn2 = document.querySelector('#spApptModal button');
+    if (saveBtn2 && saveBtn2.disabled) { saveBtn2.disabled = false; saveBtn2.textContent = 'SAVE APPOINTMENT'; }
   }
-  await spCommitAppt([]);
 }
 
 // Real decision, not just a warning: clear the blocked time and go ahead,
