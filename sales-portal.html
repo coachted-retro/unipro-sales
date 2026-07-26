@@ -9960,7 +9960,6 @@ function spApptRenderModal(cfg, defaultDate, keepNotes) {
           : '<div style="position:relative">' +
               '<input type="text" id="spApptLinkSearch" ' +
                 'oninput="spApptSearchRecords(this.value)" ' +
-                'onblur="setTimeout(function(){var b=document.getElementById(\'spApptLinkResults\');if(b)b.style.display=\'none\';},200)" ' +
                 'placeholder="Type business name, address, or phone..." ' +
                 'style="width:100%;border:2px solid #1B5FA8;border-radius:8px;padding:10px 12px;font-size:14px;outline:none" ' +
                 'autocomplete="off">' +
@@ -10080,7 +10079,7 @@ function spApptSearchRecords(q) {
     (res[2].ok ? res[2].results||[] : []).forEach(function(r){ addRow(r, 'Lead', 'leads'); });
 
     if (!rows.length) {
-      currentBox.innerHTML = '<div style="padding:12px 14px;font-size:12px;color:#6B7280">No results for "' + escH(term) + '" — check spelling or add as new record</div>';
+      currentBox.innerHTML = '<div style="padding:12px 14px;font-size:12px;color:#6B7280">No match for "' + escH(term) + '" &mdash; <button onmousedown="event.preventDefault();spApptCreateNew(' + JSON.stringify(term) + ')" ontouchstart="event.preventDefault();spApptCreateNew(' + JSON.stringify(term) + ')" style="background:none;border:none;color:#1B5FA8;font-weight:700;cursor:pointer;padding:0;font-size:12px">+ Add as new location</button></div>';
       return;
     }
 
@@ -10257,7 +10256,6 @@ function spApptClearLink() {
       '<div style="position:relative">' +
         '<input type="text" id="spApptLinkSearch" ' +
           'oninput="spApptSearchRecords(this.value)" ' +
-          'onblur="setTimeout(function(){var b=document.getElementById(\'spApptLinkResults\');if(b)b.style.display=\'none\';},200)" ' +
           'placeholder="Type business name, address, or phone..." ' +
           'style="width:100%;border:2px solid #1B5FA8;border-radius:8px;padding:10px 12px;font-size:14px;outline:none" ' +
           'autocomplete="off">' +
@@ -10287,6 +10285,81 @@ function spApptCollectGuests() {
   var all = _spApptGuestChips.concat(free);
   return Array.from(new Set(all));
 }
+// ── CREATE NEW: when customer not found, create a location and link it ──
+function spApptCreateNew(name) {
+  var box = document.getElementById('spApptLinkResults');
+  if (box) box.style.display = 'none';
+  var input = document.getElementById('spApptLinkSearch');
+  var searchTerm = (input ? input.value.trim() : name) || name || '';
+
+  // Show an inline mini-form inside the results box to capture address + phone
+  if (box) {
+    box.style.display = 'block';
+    box.innerHTML =
+      '<div style="padding:14px;background:#FFF8EC;border-bottom:1px solid #FDE68A">' +
+        '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;color:#92400E;margin-bottom:8px">NEW LOCATION</div>' +
+        '<input id="spNewLocName" type="text" value="' + escH(searchTerm) + '" placeholder="Business name" style="width:100%;border:1.5px solid #D7DBE0;border-radius:6px;padding:7px 10px;font-size:13px;margin-bottom:6px;box-sizing:border-box">' +
+        '<input id="spNewLocAddr" type="text" placeholder="Address (optional)" style="width:100%;border:1.5px solid #D7DBE0;border-radius:6px;padding:7px 10px;font-size:13px;margin-bottom:6px;box-sizing:border-box">' +
+        '<input id="spNewLocPhone" type="tel" placeholder="Phone (optional)" style="width:100%;border:1.5px solid #D7DBE0;border-radius:6px;padding:7px 10px;font-size:13px;margin-bottom:8px;box-sizing:border-box">' +
+        '<button onmousedown="event.preventDefault();spApptSaveNewLocation()" ontouchstart="event.preventDefault();spApptSaveNewLocation()" style="width:100%;background:#1B5FA8;color:#fff;border:none;border-radius:7px;padding:9px;font-weight:700;font-size:13px;cursor:pointer">Create &amp; Link</button>' +
+        '<button onmousedown="event.preventDefault();document.getElementById(\'spApptLinkResults\').style.display=\'none\'" ontouchstart="event.preventDefault();document.getElementById(\'spApptLinkResults\').style.display=\'none\'" style="width:100%;background:none;border:none;color:#6B7280;font-size:12px;cursor:pointer;margin-top:4px;padding:4px">Cancel</button>' +
+      '</div>';
+  }
+}
+
+// ── SAVE NEW LOCATION: writes to D1, then picks it as the linked record ──
+function spApptSaveNewLocation() {
+  var name  = (document.getElementById('spNewLocName')?.value || '').trim();
+  var addr  = (document.getElementById('spNewLocAddr')?.value || '').trim();
+  var phone = (document.getElementById('spNewLocPhone')?.value || '').trim();
+  if (!name) { spToast('Please enter a business name.'); return; }
+
+  var newId = 'loc_' + Date.now();
+  var repName = (_spRep && _spRep.name) ? _spRep.name : '';
+  var payload = {
+    id: newId,
+    name: name,
+    address: addr,
+    phone: phone,
+    assigned_rep: repName,
+    status: 'active',
+    source: 'appointment',
+    created_at: Date.now(),
+    updated_at: Date.now()
+  };
+
+  var box = document.getElementById('spApptLinkResults');
+  if (box) box.innerHTML = '<div style="padding:12px;font-size:12px;color:#6B7280">Creating...</div>';
+
+  fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/locations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+    body: JSON.stringify(payload)
+  }).then(function(r){ return r.json(); }).then(function(d){
+    if (!d.ok) { spToast('Error creating location: ' + (d.error||'unknown')); return; }
+    // Pick the new location as the linked record
+    spApptPickRecord(newId, 'locations', name, addr, phone, '');
+    if (box) box.style.display = 'none';
+    spToast('New location created and linked.');
+  }).catch(function(){ spToast('Connection error. Please try again.'); });
+}
+
+// Close appointment search dropdown when tapping outside it
+document.addEventListener('touchstart', function(e) {
+  var box = document.getElementById('spApptLinkResults');
+  var input = document.getElementById('spApptLinkSearch');
+  if (box && input && !box.contains(e.target) && e.target !== input) {
+    box.style.display = 'none';
+  }
+}, { passive: true });
+document.addEventListener('mousedown', function(e) {
+  var box = document.getElementById('spApptLinkResults');
+  var input = document.getElementById('spApptLinkSearch');
+  if (box && input && !box.contains(e.target) && e.target !== input) {
+    box.style.display = 'none';
+  }
+});
+
 function spMapsDirectionsLink(address) {
   if (!address) return '';
   return 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(address);
