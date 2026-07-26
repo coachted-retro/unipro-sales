@@ -4964,28 +4964,24 @@ function spQuickCreateFromAppt(apptId) {
     updated: now,
     activityLog: [{ ts: now, type: 'system', icon: '🆕', title: 'Created from calendar stop', note: 'Auto-created — was not yet in Termac One', who: _spRep ? _spRep.name : 'System' }],
   };
-  leads.unshift(rec);
-  crmSave('leads', leads);
-
-  a.recordId = newId;
-  a.tab = 'leads';
-  appts[idx] = a;
-  crmSave('appointments', appts);
-
-  // Push new lead and updated appointment to D1
+  // Write new lead directly to D1
   fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/leads', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
     body: JSON.stringify(rec)
-  }).catch(function(){});
-  if (typeof TermacD1Sync !== 'undefined' && TermacD1Sync.d1Push) {
-    TermacD1Sync.d1Push('appointments', appts[idx]).catch(function(){});
-  }
-
-  const modal = document.getElementById('spApptDetailModal');
-  if (modal) modal.remove();
-  spToast('Added to Termac One');
-  spViewRecord(newId, 'leads');
+  }).then(function(r){ return r.json(); }).then(function(d){
+    if (!d.ok) { spToast('Error creating lead: ' + (d.error||'unknown')); return; }
+    // Link appointment to new lead in D1
+    fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/appointments/' + apptId, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+      body: JSON.stringify({ record_id: newId, tab: 'leads', updated_at: Date.now() })
+    }).catch(function(){});
+    const modal = document.getElementById('spApptDetailModal');
+    if (modal) modal.remove();
+    spToast('Added to Termac One');
+    spViewRecord(newId, 'leads');
+  }).catch(function(){ spToast('Connection error -- try again.'); });
 }
 
 // ══════════════════════════════════════════════════════
@@ -5138,60 +5134,46 @@ function spSaveApptEdit(apptId) {
   var newType  = (document.getElementById('apptEditType') || {}).value || 'appointment';
   if (!newDate) { if (typeof spToast === 'function') spToast('Date is required.'); return; }
 
-  var appts = crmLoad('appointments') || [];
-  var idx = appts.findIndex(function(x){ return x.id === apptId; });
-  if (idx < 0) { if (typeof spToast === 'function') spToast('Appointment not found.'); return; }
-
-  appts[idx].date    = newDate;
-  appts[idx].time    = newTime;
-  appts[idx].title   = newTitle;
-  appts[idx].notes   = newNotes;
-  appts[idx].type    = newType;
-  appts[idx].updated = Date.now();
-  crmSave('appointments', appts);
-
-  // Push edit to D1 immediately so other devices and the agenda see the
-  // updated date without waiting for the background sweep. This also
-  // means a moved appointment shows up on the new date right away
-  // instead of still appearing on the old date until the next hydration.
-  (function(updatedAppt) {
-    if (typeof TermacD1Sync !== 'undefined' && TermacD1Sync.d1Push) {
-      TermacD1Sync.d1Push('appointments', updatedAppt).catch(function(){});
+  // Update directly in D1 -- no localStorage
+  var updatePayload = {
+    date: newDate, time: newTime, title: newTitle,
+    notes: newNotes, type: newType, updated_at: Date.now()
+  };
+  fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/appointments/' + apptId, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+    body: JSON.stringify(updatePayload)
+  }).then(function(r){ return r.json(); }).then(function(d){
+    if (!d.ok) { if (typeof spToast === 'function') spToast('Save failed: ' + (d.error || 'unknown')); return; }
+      if (typeof spToast === 'function') spToast('Appointment updated.');
+    if (typeof spRenderCalendar === 'function') spRenderCalendar();
+    var selDay = document.querySelector('.sp-cal-day.sp-cal-selected, .sp-cal-day[data-selected]');
+    if (selDay && selDay.dataset.date && typeof spShowDayPanel === 'function') {
+      spShowDayPanel(selDay.dataset.date);
+    } else {
+      var todayCell = document.querySelector('.sp-cal-day.sp-cal-today, [data-today]');
+      if (todayCell && typeof spShowDayPanel === 'function') spShowDayPanel(todayCell.dataset.date || newDate);
     }
-  })(appts[idx]);
-
-  document.getElementById('spApptEditModal').remove();
-  if (typeof spToast === 'function') spToast('Appointment updated.');
-  // Refresh the calendar view — both the grid dots and the right-panel day list
-  if (typeof spRenderCalendar === 'function') spRenderCalendar();
-  // Also refresh the selected-day panel if it's visible
-  var selDay = document.querySelector('.sp-cal-day.sp-cal-selected, .sp-cal-day[data-selected]');
-  if (selDay && selDay.dataset.date && typeof spShowDayPanel === 'function') {
-    spShowDayPanel(selDay.dataset.date);
-  } else {
-    // Fallback: re-click today's date cell to force the right panel to update
-    var todayCell = document.querySelector('.sp-cal-day.sp-cal-today, [data-today]');
-    if (todayCell && typeof spShowDayPanel === 'function') spShowDayPanel(todayCell.dataset.date || newDate);
-  }
+  }).catch(function(){ if (typeof spToast === 'function') spToast('Save error -- check connection.'); });
 }
 
 function spDeleteAppt(apptId) {
   if (!confirm('Delete this appointment? This cannot be undone.')) return;
-  var appts = (crmLoad('appointments') || []).filter(function(x){ return x.id !== apptId; });
-  crmSave('appointments', appts);
-  // Delete from D1 directly
+  // Delete directly from D1 -- no localStorage
   fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/appointments/' + apptId, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' }
-  }).catch(function(){});
-  // Close any open modal
-  ['spApptEditModal','spApptDetailModal'].forEach(function(id){
-    var m = document.getElementById(id);
-    if (m) m.remove();
+  }).then(function(r){ return r.json(); }).then(function(d){
+    if (!d.ok) { if (typeof spToast === 'function') spToast('Delete failed: ' + (d.error || 'unknown error')); return; }
+    ['spApptEditModal','spApptDetailModal'].forEach(function(id){
+      var m = document.getElementById(id); if (m) m.remove();
+    });
+    if (typeof spToast === 'function') spToast('Appointment deleted.');
+    if (typeof spRenderCalendar === 'function') spRenderCalendar();
+    else if (typeof renderAll === 'function') renderAll();
+  }).catch(function(e){
+    if (typeof spToast === 'function') spToast('Delete error -- check connection.');
   });
-  if (typeof spToast === 'function') spToast('Appointment deleted.');
-  if (typeof spRenderCalendar === 'function') spRenderCalendar();
-  else if (typeof renderAll === 'function') renderAll();
 }
 
 // Search and link an existing opportunity to a location.
