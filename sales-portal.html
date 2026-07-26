@@ -5949,12 +5949,17 @@ function spLoadDetailRelated(recordId, tab, record) {
         } else {
           // No location record but account may have address directly
           if (record && record.address) {
-            locsContent.innerHTML = '<div style="padding:10px 12px;background:#F8F9FA;border-radius:8px;margin-bottom:6px">' +
-              '<div style="font-size:12px;color:var(--soft);margin-bottom:6px">Primary address from account record:</div>' +
-              '<div style="font-size:13px;font-weight:700;color:var(--ink)">📍 ' + escH(record.address || '') + (record.city ? ', ' + escH(record.city) : '') + (record.state ? ', ' + escH(record.state) : '') + '</div>' +
-              (record.phone ? '<div style="font-size:12px;margin-top:4px"><a href="tel:' + escH(record.phone) + '" style="color:var(--blue)">📞 ' + escH(record.phone) + '</a></div>' : '') +
-            '</div>' +
-            '<div style="font-size:11px;color:var(--soft);margin-top:4px">No linked Location record yet. Tap + Add Location to create one with full survey and service history.</div>';
+            locsContent.innerHTML = '<div style="background:#F8F9FA;border-radius:8px;margin-bottom:6px">' +
+              '<div style="padding:10px 12px">' +
+                '<div style="font-size:12px;color:var(--soft);margin-bottom:4px">Primary address on account:</div>' +
+                '<div style="font-size:13px;font-weight:700;color:var(--ink)">📍 ' + escH(record.address || '') + (record.city ? ', ' + escH(record.city) : '') + (record.state ? ', ' + escH(record.state) : '') + '</div>' +
+                (record.phone ? '<div style="font-size:12px;margin-top:3px"><a href="tel:' + escH(record.phone) + '" style="color:var(--blue)">📞 ' + escH(record.phone) + '</a></div>' : '') +
+              '</div>' +
+              '<div style="border-top:1px solid #E5E7EB;padding:8px 12px;display:flex;justify-content:space-between;align-items:center">' +
+                '<div style="font-size:11px;color:var(--soft)">No Location record linked yet</div>' +
+                '<button onclick="spCreateLocationFromAccount(\'' + escH(record.id||'') + '\',\'' + escH(record.business||record.name||'') + '\',\'' + escH((record.address||'')+(record.city?','+record.city:'')+(record.state?' '+record.state:'')) + '\',\'' + escH(record.phone||'') + '\')" style="background:#1B5FA8;color:#fff;border:none;border-radius:6px;padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer">Create Location Record</button>' +
+              '</div>' +
+            '</div>';
           } else {
             locsContent.innerHTML = '<div style="font-size:12px;color:var(--soft)">No locations linked yet.</div>';
           }
@@ -6007,6 +6012,35 @@ function spOpenAddContactModal(accountId, tab) {
 }
 
 function spCloseAddContactModal() { var m = document.getElementById('spAddContactModal'); if(m) m.remove(); }
+
+// Create a Location record from the account's own address data -- one tap, no form needed
+function spCreateLocationFromAccount(accountId, name, address, phone) {
+  if (!accountId || !name) { spToast('Missing account data.'); return; }
+  var newLocId = 'loc_' + Date.now();
+  var payload = {
+    id: newLocId,
+    name: name,
+    address: address || '',
+    phone: phone || '',
+    account_id: accountId,
+    assigned_rep: (_spRep && _spRep.name) ? _spRep.name : '',
+    status: 'active',
+    source: 'account_migration',
+    created_at: Date.now(),
+    updated_at: Date.now()
+  };
+  fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/locations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+    body: JSON.stringify(payload)
+  }).then(function(r){ return r.json(); }).then(function(d) {
+    if (!d.ok) { spToast('Error: ' + (d.error||'unknown')); return; }
+    spToast('Location record created.');
+    // Reload the detail related panel
+    var rec = window._spLastDetailRecord;
+    if (rec) spLoadDetailRelated(accountId, 'accounts', rec);
+  }).catch(function(){ spToast('Connection error.'); });
+}
 function spSaveNewContact() {
   var modal = document.getElementById('spAddContactModal');
   var accountId = modal ? modal.dataset.accountId : '';
@@ -10079,6 +10113,9 @@ function spOpenApptModal(id, tab, mode, presetDate, keepNotes) {
   _spApptLinkedId   = id   || null;
   _spApptLinkedTab  = tab  || null;
   _spApptLinkedName = '';
+  _spApptPresetAddress = '';
+  _spApptPresetPhone = '';
+  _spApptPresetContact = '';
 
   var cfg = SP_ENTRY_TYPES[_spApptMode] || SP_ENTRY_TYPES.appointment;
   var defaultDate = _spApptPresetDate || new Date(Date.now() + 86400000).toISOString().split('T')[0];
@@ -10087,6 +10124,9 @@ function spOpenApptModal(id, tab, mode, presetDate, keepNotes) {
   if (id) {
     spApptAutoFill(id, tab, function(data) {
       _spApptLinkedName = data.name || '';
+      _spApptPresetAddress = data.address || '';
+      _spApptPresetPhone = data.phone || '';
+      _spApptPresetContact = data.contact || '';
       spApptRenderModal(cfg, defaultDate, keepNotes);
     });
   } else {
@@ -10158,10 +10198,14 @@ function spApptRenderModal(cfg, defaultDate, keepNotes) {
       + '</div>';
 
   // ── ADDRESS (auto-filled, editable) ──
+  // ── ADDRESS (auto-filled, editable) ──
   var addrHtml = cfg.hasLocation
-    ? '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Location / Address</label>' +
-        '<input type="text" id="spApptLocation" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px" placeholder="Auto-fills when customer selected"></div>'
+    ? ('<div>' +
+        '<label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">LOCATION / ADDRESS</label>' +
+        '<input type="text" id="spApptLocation" value="' + escH(_spApptPresetAddress || '') + '" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px" placeholder="Auto-fills when customer selected">' +
+      '</div>')
     : '';
+
 
   // ── CONTACT INFO (auto-filled, hidden until record selected) ──
   var contactHtml =
