@@ -31,7 +31,7 @@
   'use strict';
 
   var D1_API_URL = 'https://unipro-ai-proxy.termac-one.workers.dev';
-  var D1_API_SECRET = '5595f2f81254fb603ccb9a57854775c8c91a6410b4adbaccb1f73b4a24282582';
+  var D1_API_SECRET = 'termac2026';
   // 2026-07-16 FIX: service_pricing_catalog and rep_comp_profiles used to
   // sit at the very end of this list. d1HydrateAll works through it
   // sequentially, one table at a time, so anything at the end only
