@@ -220,14 +220,195 @@ function k3dReady(instance) {
 }
 </script>
 
-<!-- Three.js via importmap -- works on deployed site even when CDN blocked from build env -->
-<script type="importmap">
-{
-  "imports": {
-    "three": "https://unpkg.com/three@0.158.0/build/three.module.js",
-    "three/addons/": "https://unpkg.com/three@0.158.0/examples/jsm/"
-  }
-}
+<!-- Three.js global build -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+<script>
+// OrbitControls -- inline, no external dependency
+// Adapted from Three.js r134 OrbitControls for global script use
+(function(){
+  'use strict';
+  THREE.OrbitControls = function(object, domElement) {
+    this.object = object;
+    this.domElement = domElement;
+    this.enabled = true;
+    this.enableDamping = false;
+    this.dampingFactor = 0.05;
+    this.enableZoom = true;
+    this.zoomSpeed = 1.0;
+    this.enableRotate = true;
+    this.rotateSpeed = 1.0;
+    this.enablePan = true;
+    this.panSpeed = 1.0;
+    this.minDistance = 0;
+    this.maxDistance = Infinity;
+    this.minPolarAngle = 0;
+    this.maxPolarAngle = Math.PI;
+    this.target = new THREE.Vector3();
+
+    var scope = this;
+    var STATE = { NONE: -1, ROTATE: 0, DOLLY: 1, PAN: 2, TOUCH_ROTATE: 3, TOUCH_PAN: 4, TOUCH_DOLLY_PAN: 5 };
+    var state = STATE.NONE;
+    var EPS = 0.000001;
+    var spherical = new THREE.Spherical();
+    var sphericalDelta = new THREE.Spherical();
+    var scale = 1;
+    var panOffset = new THREE.Vector3();
+    var rotateStart = new THREE.Vector2();
+    var rotateEnd = new THREE.Vector2();
+    var rotateDelta = new THREE.Vector2();
+    var panStart = new THREE.Vector2();
+    var panEnd = new THREE.Vector2();
+    var panDelta = new THREE.Vector2();
+    var dollyStart = new THREE.Vector2();
+    var dollyEnd = new THREE.Vector2();
+    var dollyDelta = new THREE.Vector2();
+
+    function getZoomScale(){ return Math.pow(0.95, scope.zoomSpeed); }
+    function rotateLeft(angle){ sphericalDelta.theta -= angle; }
+    function rotateUp(angle){ sphericalDelta.phi -= angle; }
+
+    var panLeftV = new THREE.Vector3();
+    function panLeft(distance, objectMatrix){
+      panLeftV.setFromMatrixColumn(objectMatrix, 0);
+      panLeftV.multiplyScalar(-distance);
+      panOffset.add(panLeftV);
+    }
+    var panUpV = new THREE.Vector3();
+    function panUp(distance, objectMatrix){
+      panUpV.setFromMatrixColumn(objectMatrix, 1);
+      panUpV.multiplyScalar(distance);
+      panOffset.add(panUpV);
+    }
+    var panV = new THREE.Vector3();
+    function pan(deltaX, deltaY){
+      var el = scope.domElement;
+      if(scope.object.isPerspectiveCamera){
+        var pos = scope.object.position;
+        panV.copy(pos).sub(scope.target);
+        var targetDist = panV.length();
+        targetDist *= Math.tan((scope.object.fov/2)*Math.PI/180);
+        panLeft(2*deltaX*targetDist/el.clientHeight, scope.object.matrix);
+        panUp(2*deltaY*targetDist/el.clientHeight, scope.object.matrix);
+      }
+    }
+    function dollyIn(dollyScale){ scale /= dollyScale; }
+    function dollyOut(dollyScale){ scale *= dollyScale; }
+
+    this.update = function(){
+      var offset = new THREE.Vector3();
+      var quat = new THREE.Quaternion().setFromUnitVectors(object.up, new THREE.Vector3(0,1,0));
+      var quatInverse = quat.clone().invert();
+      var lastPos = new THREE.Vector3();
+      var lastQuat = new THREE.Quaternion();
+      return function update(){
+        var pos = scope.object.position;
+        offset.copy(pos).sub(scope.target);
+        offset.applyQuaternion(quat);
+        spherical.setFromVector3(offset);
+        spherical.theta += sphericalDelta.theta;
+        spherical.phi += sphericalDelta.phi;
+        spherical.phi = Math.max(scope.minPolarAngle, Math.min(scope.maxPolarAngle, spherical.phi));
+        spherical.makeSafe();
+        spherical.radius *= scale;
+        spherical.radius = Math.max(scope.minDistance, Math.min(scope.maxDistance, spherical.radius));
+        scope.target.add(panOffset);
+        offset.setFromSpherical(spherical);
+        offset.applyQuaternion(quatInverse);
+        pos.copy(scope.target).add(offset);
+        scope.object.lookAt(scope.target);
+        if(scope.enableDamping){
+          sphericalDelta.theta *= (1-scope.dampingFactor);
+          sphericalDelta.phi *= (1-scope.dampingFactor);
+          panOffset.multiplyScalar(1-scope.dampingFactor);
+        } else {
+          sphericalDelta.set(0,0,0);
+          panOffset.set(0,0,0);
+        }
+        scale = 1;
+        return false;
+      };
+    }();
+
+    this.dispose = function(){
+      scope.domElement.removeEventListener('contextmenu', onContextMenu);
+      scope.domElement.removeEventListener('pointerdown', onPointerDown);
+      scope.domElement.removeEventListener('wheel', onMouseWheel);
+    };
+
+    // Mouse events
+    function onPointerDown(e){
+      if(!scope.enabled) return;
+      if(e.button===0){ state=STATE.ROTATE; rotateStart.set(e.clientX,e.clientY); }
+      else if(e.button===1){ state=STATE.DOLLY; dollyStart.set(e.clientX,e.clientY); }
+      else if(e.button===2){ state=STATE.PAN; panStart.set(e.clientX,e.clientY); }
+      if(state!==STATE.NONE){ scope.domElement.ownerDocument.addEventListener('pointermove',onPointerMove); scope.domElement.ownerDocument.addEventListener('pointerup',onPointerUp); }
+    }
+    function onPointerMove(e){
+      if(!scope.enabled) return;
+      if(state===STATE.ROTATE){
+        rotateEnd.set(e.clientX,e.clientY);
+        rotateDelta.subVectors(rotateEnd,rotateStart).multiplyScalar(scope.rotateSpeed);
+        var el=scope.domElement;
+        rotateLeft(2*Math.PI*rotateDelta.x/el.clientHeight);
+        rotateUp(2*Math.PI*rotateDelta.y/el.clientHeight);
+        rotateStart.copy(rotateEnd);
+        scope.update();
+      } else if(state===STATE.PAN){
+        panEnd.set(e.clientX,e.clientY);
+        panDelta.subVectors(panEnd,panStart).multiplyScalar(scope.panSpeed);
+        pan(panDelta.x,panDelta.y);
+        panStart.copy(panEnd);
+        scope.update();
+      } else if(state===STATE.DOLLY){
+        dollyEnd.set(e.clientX,e.clientY);
+        dollyDelta.subVectors(dollyEnd,dollyStart);
+        if(dollyDelta.y>0) dollyIn(getZoomScale()); else if(dollyDelta.y<0) dollyOut(getZoomScale());
+        dollyStart.copy(dollyEnd);
+        scope.update();
+      }
+    }
+    function onPointerUp(){ scope.domElement.ownerDocument.removeEventListener('pointermove',onPointerMove); scope.domElement.ownerDocument.removeEventListener('pointerup',onPointerUp); state=STATE.NONE; }
+    function onMouseWheel(e){ if(!scope.enabled) return; e.preventDefault(); if(e.deltaY<0) dollyOut(getZoomScale()); else dollyIn(getZoomScale()); scope.update(); }
+
+    // Touch events
+    var touch1 = new THREE.Vector2(), touch2 = new THREE.Vector2();
+    function onTouchStart(e){
+      e.preventDefault();
+      if(e.touches.length===1){ state=STATE.TOUCH_ROTATE; rotateStart.set(e.touches[0].pageX,e.touches[0].pageY); }
+      else if(e.touches.length===2){ state=STATE.TOUCH_DOLLY_PAN; touch1.set(e.touches[0].pageX,e.touches[0].pageY); touch2.set(e.touches[1].pageX,e.touches[1].pageY); dollyStart.set(0, touch1.distanceTo(touch2)); }
+    }
+    function onTouchMove(e){
+      e.preventDefault();
+      if(e.touches.length===1 && state===STATE.TOUCH_ROTATE){
+        rotateEnd.set(e.touches[0].pageX,e.touches[0].pageY);
+        rotateDelta.subVectors(rotateEnd,rotateStart).multiplyScalar(scope.rotateSpeed);
+        var el=scope.domElement;
+        rotateLeft(2*Math.PI*rotateDelta.x/el.clientHeight);
+        rotateUp(2*Math.PI*rotateDelta.y/el.clientHeight);
+        rotateStart.copy(rotateEnd);
+        scope.update();
+      } else if(e.touches.length===2 && state===STATE.TOUCH_DOLLY_PAN){
+        touch1.set(e.touches[0].pageX,e.touches[0].pageY);
+        touch2.set(e.touches[1].pageX,e.touches[1].pageY);
+        dollyEnd.set(0, touch1.distanceTo(touch2));
+        dollyDelta.subVectors(dollyEnd,dollyStart);
+        if(dollyDelta.y>0) dollyOut(getZoomScale()); else if(dollyDelta.y<0) dollyIn(getZoomScale());
+        dollyStart.copy(dollyEnd);
+        scope.update();
+      }
+    }
+
+    function onContextMenu(e){ if(!scope.enabled) return; e.preventDefault(); }
+
+    scope.domElement.addEventListener('contextmenu', onContextMenu);
+    scope.domElement.addEventListener('pointerdown', onPointerDown);
+    scope.domElement.addEventListener('wheel', onMouseWheel, {passive:false});
+    scope.domElement.addEventListener('touchstart', onTouchStart, {passive:false});
+    scope.domElement.addEventListener('touchmove', onTouchMove, {passive:false});
+
+    this.update();
+  };
+})();
 </script>
 </head>
 <body>
@@ -369,9 +550,8 @@ function k3dReady(instance) {
   <div class="sb-stat" style="margin-left:auto">Drag to rotate · Pinch to zoom · Tap to select</div>
 </div>
 
-<script type="module">
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+<script>
+// THREE loaded globally. OrbitControls inlined as THREE.OrbitControls above.
 
 // Hide loading message once Three.js is running
 document.getElementById('loadingMsg').style.display = 'none';
@@ -407,7 +587,7 @@ class Kitchen3D {
     this.renderer.toneMappingExposure = 1.2;
 
     // Controls
-    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+    this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
     this.controls.maxPolarAngle = Math.PI / 2 - 0.04;
