@@ -4910,6 +4910,7 @@ function spViewApptDetail(apptId) {
         + (division ? '<span style="background:rgba(255,255,255,.2);color:#fff;border-radius:4px;padding:2px 7px;font-size:10px;font-weight:700">' + escH(division) + '</span>' : '')
       + '</div>'
       + '<button onclick="document.getElementById(\'spApptDetailModal\').remove()" style="background:none;border:none;color:rgba(255,255,255,.7);font-size:20px;cursor:pointer;line-height:1">✕</button>'
+      + '<button onclick="spDeleteAppt(\'' + apptId + '\')" style="background:none;border:none;color:#EF4444;font-size:12px;font-weight:700;cursor:pointer;margin-top:2px;padding:6px;width:100%">🗑 Delete This Appointment</button>'
     + '</div>'
     + '<div style="padding:20px;display:flex;flex-direction:column;gap:12px">'
       + '<div>'
@@ -4971,9 +4972,19 @@ function spQuickCreateFromAppt(apptId) {
   appts[idx] = a;
   crmSave('appointments', appts);
 
+  // Push new lead and updated appointment to D1
+  fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/leads', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+    body: JSON.stringify(rec)
+  }).catch(function(){});
+  if (typeof TermacD1Sync !== 'undefined' && TermacD1Sync.d1Push) {
+    TermacD1Sync.d1Push('appointments', appts[idx]).catch(function(){});
+  }
+
   const modal = document.getElementById('spApptDetailModal');
   if (modal) modal.remove();
-  spToast('✅ Added to Termac One');
+  spToast('Added to Termac One');
   spViewRecord(newId, 'leads');
 }
 
@@ -5168,8 +5179,16 @@ function spDeleteAppt(apptId) {
   if (!confirm('Delete this appointment? This cannot be undone.')) return;
   var appts = (crmLoad('appointments') || []).filter(function(x){ return x.id !== apptId; });
   crmSave('appointments', appts);
-  var m = document.getElementById('spApptEditModal');
-  if (m) m.remove();
+  // Delete from D1 directly
+  fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/appointments/' + apptId, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' }
+  }).catch(function(){});
+  // Close any open modal
+  ['spApptEditModal','spApptDetailModal'].forEach(function(id){
+    var m = document.getElementById(id);
+    if (m) m.remove();
+  });
   if (typeof spToast === 'function') spToast('Appointment deleted.');
   if (typeof spRenderCalendar === 'function') spRenderCalendar();
   else if (typeof renderAll === 'function') renderAll();
@@ -10110,11 +10129,22 @@ function spApptLoadCustomerContext(id, tab, name, address, phone, contact) {
   var notesEl = modal.querySelector('textarea#spApptNotes');
   if (!notesEl) return;
 
+  // Find modal body for insertion
+  var modalBody = modal.querySelector('[style*="flex-direction:column"]') || modal.querySelector('[style*="padding:18px"]') || modal;
+
   var loader = document.createElement('div');
   loader.id = 'spApptContextPanel';
   loader.style.cssText = 'background:#F0F9FF;border:1.5px solid #BAE6FD;border-radius:8px;padding:12px;font-size:11px;color:#0369A1';
   loader.innerHTML = '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#0369A1;margin-bottom:4px">Loading customer info...</div>';
-  notesEl.parentElement.parentElement.insertBefore(loader, notesEl.parentElement);
+
+  // Insert after the customer wrap div
+  var custWrap = document.getElementById('spApptCustomerWrap');
+  var insertAfter = custWrap ? custWrap.closest('div') : null;
+  if (insertAfter && insertAfter.nextSibling) {
+    insertAfter.parentNode.insertBefore(loader, insertAfter.nextSibling);
+  } else {
+    modalBody.appendChild(loader);
+  }
 
   if (!id || typeof d1Query !== 'function') {
     loader.remove();
