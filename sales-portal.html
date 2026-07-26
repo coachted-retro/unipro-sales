@@ -10084,17 +10084,22 @@ function spApptSearchRecords(q) {
     }
 
     currentBox.innerHTML = rows.slice(0, 10).map(function(r) {
-      var payload = escH(JSON.stringify({ id: r.id, tab: r.tab, name: r.name, address: r.address, phone: r.phone, contact: r.contact }));
-      var pickCall = 'event.preventDefault();event.stopPropagation();spApptPickRecord(' + JSON.stringify(r.id) + ',' + JSON.stringify(r.tab) + ',' + JSON.stringify(r.name) + ',' + JSON.stringify(r.address) + ',' + JSON.stringify(r.phone) + ',' + JSON.stringify(r.contact) + ')';
-      return '<div onmousedown="' + pickCall + '" ontouchstart="' + pickCall + '" onclick="' + pickCall + '" ' +
-        'style="padding:10px 14px;cursor:pointer;border-bottom:1px solid #F1F5F9;display:flex;align-items:flex-start;gap:10px">' +
+      // Store record data as data-attributes -- no inline JS, no quoting issues, iOS safe
+      return '<div class="sp-appt-pick-row"' +
+        ' data-id="' + escH(r.id) + '"' +
+        ' data-tab="' + escH(r.tab) + '"' +
+        ' data-name="' + escH(r.name) + '"' +
+        ' data-address="' + escH(r.address) + '"' +
+        ' data-phone="' + escH(r.phone) + '"' +
+        ' data-contact="' + escH(r.contact) + '"' +
+        ' style="padding:12px 14px;cursor:pointer;border-bottom:1px solid #F1F5F9;display:flex;align-items:flex-start;gap:10px;-webkit-tap-highlight-color:rgba(27,95,168,0.15);min-height:48px">' +
         '<div style="flex:1">' +
           '<div style="font-weight:700;font-size:13px;color:#111318">' + escH(r.name) + '</div>' +
-          (r.address ? '<div style="font-size:11px;color:#6B7280;margin-top:1px">&#128205; ' + escH(r.address) + '</div>' : '') +
+          (r.address ? '<div style="font-size:11px;color:#6B7280;margin-top:2px">&#128205; ' + escH(r.address) + '</div>' : '') +
           (r.phone   ? '<div style="font-size:11px;color:#6B7280">&#128222; ' + escH(r.phone)   + '</div>' : '') +
           (r.contact ? '<div style="font-size:11px;color:#6B7280">&#128100; ' + escH(r.contact) + '</div>' : '') +
         '</div>' +
-        '<span style="font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#6B7280;background:#F1F5F9;border-radius:4px;padding:2px 6px;flex-shrink:0;margin-top:2px">' + r.badge + '</span>' +
+        '<span style="font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#6B7280;background:#F1F5F9;border-radius:4px;padding:2px 6px;flex-shrink:0">' + escH(r.badge) + '</span>' +
       '</div>';
     }).join('');
   }).catch(function() {
@@ -10109,26 +10114,49 @@ function spApptPickRecord(id, tab, name, address, phone, contact) {
   _spApptLinkedTab  = tab;
   _spApptLinkedName = name;
 
-  // Lock the customer field
+  // Close the search results immediately
+  var box = document.getElementById('spApptLinkResults');
+  if (box) box.style.display = 'none';
+
+  // Lock the customer field to the selected name + clear button
   var wrap = document.getElementById('spApptCustomerWrap');
   if (wrap) wrap.innerHTML = spApptLinkedPill(name);
 
-  // Auto-fill address -- address is already combined street+city+state from search
+  // Fill address field
   var locEl = document.getElementById('spApptLocation');
   if (locEl) locEl.value = address || '';
 
-  // Auto-fill contact panel
+  // Show contact panel with phone + contact name
   var panel = document.getElementById('spApptContactPanel');
   if (panel) {
-    panel.style.display = (contact || phone) ? 'block' : 'none';
-    var nameEl  = document.getElementById('spApptContactName');
-    var phoneEl = document.getElementById('spApptContactPhone');
-    if (nameEl)  nameEl.value  = contact || '';
-    if (phoneEl) phoneEl.value = phone   || '';
+    if (contact || phone) {
+      panel.style.display = 'block';
+      var nameEl  = document.getElementById('spApptContactName');
+      var phoneEl = document.getElementById('spApptContactPhone');
+      if (nameEl)  nameEl.value  = contact || '';
+      if (phoneEl) phoneEl.value = phone   || '';
+    } else {
+      panel.style.display = 'none';
+    }
   }
 
-  // Pull full customer context from D1 and render it in the modal
-  spApptLoadCustomerContext(id, tab, name, address, phone, contact);
+  // Show a quick inline summary bar beneath the locked customer pill
+  // so the rep can see address + Maps link + phone without waiting for D1
+  var mapsUrl = address ? 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(address) : '';
+  var existingBar = document.getElementById('spApptQuickBar');
+  if (existingBar) existingBar.remove();
+  if (address || phone) {
+    var bar = document.createElement('div');
+    bar.id = 'spApptQuickBar';
+    bar.style.cssText = 'background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;padding:10px 12px;font-size:12px;color:#1e40af;display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:4px';
+    bar.innerHTML =
+      '<div>' +
+        (address ? '<div style="font-weight:700;margin-bottom:2px">&#128205; ' + escH(address) + '</div>' : '') +
+        (phone   ? '<div><a href="tel:' + escH(phone) + '" style="color:#1e40af;text-decoration:none">&#128222; ' + escH(phone) + '</a></div>' : '') +
+      '</div>' +
+      (mapsUrl ? '<a href="' + mapsUrl + '" target="_blank" style="background:#1B5FA8;color:#fff;border-radius:6px;padding:7px 12px;font-size:11px;font-weight:700;text-decoration:none;white-space:nowrap;flex-shrink:0">&#128205; Directions</a>' : '');
+    if (wrap) wrap.insertAdjacentElement('afterend', bar);
+  }
 }
 
 // ── Pulls full customer record + open opps + notes from D1 and renders context panel ──
@@ -10343,6 +10371,26 @@ function spApptSaveNewLocation() {
     spToast('New location created and linked.');
   }).catch(function(){ spToast('Connection error. Please try again.'); });
 }
+
+// ── DELEGATED PICKER: handles tap/click on search result rows ──
+// Uses data attributes instead of inline JS -- works on all iOS/Android
+(function() {
+  function handlePickRow(e) {
+    var row = e.target.closest ? e.target.closest('.sp-appt-pick-row') : null;
+    if (!row) return;
+    e.preventDefault();
+    e.stopPropagation();
+    var id      = row.getAttribute('data-id') || '';
+    var tab     = row.getAttribute('data-tab') || '';
+    var name    = row.getAttribute('data-name') || '';
+    var address = row.getAttribute('data-address') || '';
+    var phone   = row.getAttribute('data-phone') || '';
+    var contact = row.getAttribute('data-contact') || '';
+    spApptPickRecord(id, tab, name, address, phone, contact);
+  }
+  document.addEventListener('touchstart', handlePickRow, { passive: false });
+  document.addEventListener('mousedown', handlePickRow);
+})();
 
 // Close appointment search dropdown when tapping outside it
 document.addEventListener('touchstart', function(e) {
