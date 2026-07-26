@@ -10968,42 +10968,37 @@ async function spCommitAppt(patternKeysToClear) {
     }).catch(function(){});
   }
 
-  try {
+  // ── Close modal and toast IMMEDIATELY after D1 save -- nothing below can block this ──
+  document.getElementById('spApptModal')?.remove();
+  spToast('Appointment saved');
+  if (typeof spRenderCalendar === 'function') spRenderCalendar();
+  if (typeof spRenderHome === 'function') setTimeout(spRenderHome, 100);
 
-    // Outlook calendar sync -- creates a matching event in the rep's real
-    // Outlook calendar via Microsoft Graph. Fires in the background; any
-    // failure is silently ignored so it never blocks the save. The endpoint
-    // requires Calendars.ReadWrite scope (granted 2026-07-20 by Fernando).
-    // Users who signed in before this permission was added need to sign out
-    // and back in once to get a token with the new scope.
-    (function() {
-      try {
-        var session = JSON.parse(localStorage.getItem('termac_staff_session') || 'null');
-        if (!session || !session.email) return;
-        var startDt = date + 'T' + (time || '08:00') + ':00';
-        var endDt   = date + 'T' + (timeEnd || (time ? time.replace(/(\d+):(\d+)/, function(_,h,m){ var eh=parseInt(h)+1; return (eh<10?'0':'')+eh+':'+m; }) : '09:00')) + ':00';
-        var eventBody = (notes || '') + (location ? '\n\n📍 ' + location : '');
-        fetch('https://termac-staff-auth.termac-one.workers.dev/calendar-push', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            from_email: session.email,
-            event: {
-              subject: (linkedName ? linkedName + ' \u2014 ' : '') + (notes || 'Termac One Appointment'),
-              start: startDt,
-              end: endDt,
-              location: location || '',
-              body: eventBody
-            }
-          })
-        }).then(function(res){ return res.json(); }).then(function(data){
-          if (data.ok && typeof spToast === 'function') spToast('\uD83D\uDCC5 Added to your Outlook calendar');
-        }).catch(function(){});
-      } catch(e) {}
-    })();
-  } catch(e){}
+  // Outlook calendar sync -- fully detached, cannot block save
+  setTimeout(function() {
+    try {
+      var session = null;
+      try { session = JSON.parse(localStorage.getItem('termac_staff_session') || 'null'); } catch(e){}
+      if (!session || !session.email) return;
+      var startDt = date + 'T' + (time || '08:00') + ':00';
+      var endDt = date + 'T' + (timeEnd || (time ? time.replace(/(\d+):(\d+)/, function(_,h,m){ var eh=parseInt(h)+1; return String(eh).padStart(2,'0')+':'+m; }) : '09:00')) + ':00';
+      fetch('https://termac-staff-auth.termac-one.workers.dev/calendar-push', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          from_email: session.email,
+          event: {
+            subject: (linkedName ? linkedName + ' - ' : '') + (notes || 'Termac One Appointment'),
+            start: startDt, end: endDt,
+            location: location || '', body: (notes || '') + (location ? '\n\n' + location : '')
+          }
+        })
+      }).catch(function(){});
+    } catch(e){}
+  }, 0);
 
-  // Notify anyone invited along - directions link included so they don't
+  // Notify anyone invited
+  // along -- directions link included so they don't have to ask where to meet.
   // have to ask where to meet.
   if (guests.length && typeof TermacD1Sync !== 'undefined') {
     const dateLabel2 = new Date(date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
@@ -11023,8 +11018,7 @@ async function spCommitAppt(patternKeysToClear) {
     });
   }
 
-  document.getElementById('spApptModal')?.remove();
-  spToast(cfg.saveLabel.replace('Save ', '') + ' saved' + (guests.length ? (' \u2014 ' + guests.length + ' invited') : ''));
+  // Modal already closed above
 
   // ── ALLPRO INTAKE: if Ted saves an appointment linked to a location/account,
   // create an allpro_projects record at stage 'intake' so it shows immediately
