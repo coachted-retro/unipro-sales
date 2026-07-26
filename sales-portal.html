@@ -5158,21 +5158,37 @@ function spSaveApptEdit(apptId) {
 
 function spDeleteAppt(apptId) {
   if (!confirm('Delete this appointment? This cannot be undone.')) return;
-  // Delete directly from D1 -- no localStorage
+  // Close modals immediately so UI feels responsive
+  ['spApptEditModal','spApptDetailModal'].forEach(function(id){
+    var m = document.getElementById(id); if (m) m.remove();
+  });
+  // Remove from local display cache so calendar re-renders immediately
+  try {
+    var cached = crmLoad('appointments') || [];
+    var filtered = cached.filter(function(a){ return a.id !== apptId && a.recordId !== apptId; });
+    if (filtered.length !== cached.length) crmSave('appointments', filtered);
+  } catch(e) {}
+  // Re-render calendar immediately so it disappears from view
+  if (typeof spRenderCalendar === 'function') spRenderCalendar();
+  else if (typeof renderAll === 'function') renderAll();
+  if (typeof spToast === 'function') spToast('Appointment deleted.');
+  // Delete from D1 and write tombstone so other devices sync the deletion
   fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/appointments/' + apptId, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' }
-  }).then(function(r){ return r.json(); }).then(function(d){
-    if (!d.ok) { if (typeof spToast === 'function') spToast('Delete failed: ' + (d.error || 'unknown error')); return; }
-    ['spApptEditModal','spApptDetailModal'].forEach(function(id){
-      var m = document.getElementById(id); if (m) m.remove();
-    });
-    if (typeof spToast === 'function') spToast('Appointment deleted.');
-    if (typeof spRenderCalendar === 'function') spRenderCalendar();
-    else if (typeof renderAll === 'function') renderAll();
-  }).catch(function(e){
-    if (typeof spToast === 'function') spToast('Delete error -- check connection.');
-  });
+  }).catch(function(){});
+  // Write tombstone so hydration removes it from any other device's local cache
+  fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/crm_tombstones', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+    body: JSON.stringify({
+      id: 'tomb_appt_' + apptId,
+      table_name: 'appointments',
+      record_id: apptId,
+      deleted_at: Date.now(),
+      deleted_by: (typeof _spRep !== 'undefined' && _spRep) ? _spRep.name : ''
+    })
+  }).catch(function(){});
 }
 
 // Search and link an existing opportunity to a location.
@@ -10005,6 +10021,16 @@ function spApptLinkedPill(name) {
 }
 
 // ── SEARCH: queries D1 directly, shows results as tappable rows ──
+function d1Query(sql, params) {
+  return fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/query', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+    body: JSON.stringify({ sql: sql, params: params || [] })
+  })
+  .then(function(res) { return res.json(); })
+  .catch(function(err) { return { ok: false, error: err.message }; });
+}
+
 function spApptSearchRecords(q) {
   var box = document.getElementById('spApptLinkResults');
   if (!box) return;
@@ -10038,7 +10064,7 @@ function spApptSearchRecords(q) {
       if (!r.id || seen[r.id]) return;
       seen[r.id] = 1;
       var addr = [r.address, r.city, r.state].filter(Boolean).join(', ');
-      rows.push({ id: r.id, tab: tab, name: r.name || r.business || '', address: addr, phone: r.phone || '', contact: r.contact_name || '', badge: badge });
+      rows.push({ id: r.id, tab: tab, name: r.name || r.business || '', address: addr, phone: r.phone || '', contact: r.contact_name || r.contact || '', badge: badge });
     }
 
     (res[0].ok ? res[0].results||[] : []).forEach(function(r){ addRow(r, 'Account', 'accounts'); });
@@ -10080,9 +10106,9 @@ function spApptPickRecord(id, tab, name, address, phone, contact) {
   var wrap = document.getElementById('spApptCustomerWrap');
   if (wrap) wrap.innerHTML = spApptLinkedPill(name);
 
-  // Auto-fill address
+  // Auto-fill address -- address is already combined street+city+state from search
   var locEl = document.getElementById('spApptLocation');
-  if (locEl && address) locEl.value = address;
+  if (locEl) locEl.value = address || '';
 
   // Auto-fill contact panel
   var panel = document.getElementById('spApptContactPanel');
@@ -10930,16 +10956,6 @@ function spLogActivity(id, tab) {
 // ── d1Query — parameterized D1 query helper ─────────────────────────────
 // Used by Goals & Stats and other D1-live features.
 // Sends raw SQL + params to the proxy's /db/query endpoint.
-function d1Query(sql, params) {
-  return fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/query', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
-    body: JSON.stringify({ sql: sql, params: params || [] })
-  })
-  .then(function(res) { return res.json(); })
-  .catch(function(err) { return { ok: false, error: err.message }; });
-}
-
 function spRenderGoals() {
   const el = document.getElementById('spContent');
   const repName = _spRep.name;
