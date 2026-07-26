@@ -9820,8 +9820,8 @@ var _spApptLinkedId = null, _spApptLinkedTab = null, _spApptLinkedName = '';
 // required). Task and Event can optionally link to a record. Personal never
 // links to anyone. Drive Time is just a start/end block, nothing to link.
 var SP_ENTRY_TYPES = {
-  appointment:   { label:'📅 Appointment',    color:'#1B5FA8', linkMode:'required', hasLocation:true,  hasAllDay:false, hasRecurring:false, hasTimeRange:false, saveLabel:'Save Appointment' },
-  followup_call: { label:'📞 Follow-up Call', color:'#0F6E56', linkMode:'required', hasLocation:false, hasAllDay:false, hasRecurring:false, hasTimeRange:false, saveLabel:'Save Call Reminder' },
+  appointment:   { label:'📅 Appointment',    color:'#1B5FA8', linkMode:'optional', hasLocation:true,  hasAllDay:false, hasRecurring:false, hasTimeRange:false, saveLabel:'Save Appointment' },
+  followup_call: { label:'📞 Follow-up Call', color:'#0F6E56', linkMode:'optional', hasLocation:false, hasAllDay:false, hasRecurring:false, hasTimeRange:false, saveLabel:'Save Call Reminder' },
   task:          { label:'✅ Task',           color:'#6B21A8', linkMode:'optional', hasLocation:false, hasAllDay:false, hasRecurring:true,  hasTimeRange:false, saveLabel:'Save Task' },
   event:         { label:'🗓️ Event',          color:'#D8690B', linkMode:'optional', hasLocation:false, hasAllDay:true,  hasRecurring:true,  hasTimeRange:false, saveLabel:'Save Event' },
   personal:      { label:'🌴 Personal',       color:'#374151', linkMode:'none',     hasLocation:false, hasAllDay:true,  hasRecurring:true,  hasTimeRange:false, saveLabel:'Save' },
@@ -10070,7 +10070,7 @@ function spApptSearchRecords(q) {
   });
 }
 
-// ── PICK: locks the customer, fills address + contact, no further D1 call needed ──
+// ── PICK: locks the customer, fills address + contact, pulls full D1 context ──
 function spApptPickRecord(id, tab, name, address, phone, contact) {
   _spApptLinkedId   = id;
   _spApptLinkedTab  = tab;
@@ -10094,16 +10094,97 @@ function spApptPickRecord(id, tab, name, address, phone, contact) {
     if (phoneEl) phoneEl.value = phone   || '';
   }
 
-  // If contact email missing, do one quick D1 fetch for it
-  if (id && !contact) {
-    spApptAutoFill(id, tab, function(data) {
-      var emailEl = document.getElementById('spApptContactEmail');
-      if (emailEl && data.email) emailEl.value = data.email;
-      var nameEl2 = document.getElementById('spApptContactName');
-      if (nameEl2 && data.contact && !nameEl2.value) nameEl2.value = data.contact;
-      if (panel && (data.contact || data.email || phone)) panel.style.display = 'block';
-    });
+  // Pull full customer context from D1 and render it in the modal
+  spApptLoadCustomerContext(id, tab, name, address, phone, contact);
+}
+
+// ── Pulls full customer record + open opps + notes from D1 and renders context panel ──
+function spApptLoadCustomerContext(id, tab, name, address, phone, contact) {
+  // Remove any existing context panel
+  var existing = document.getElementById('spApptContextPanel');
+  if (existing) existing.remove();
+
+  // Show loading state
+  var modal = document.getElementById('spApptModal');
+  if (!modal) return;
+  var notesEl = modal.querySelector('textarea#spApptNotes');
+  if (!notesEl) return;
+
+  var loader = document.createElement('div');
+  loader.id = 'spApptContextPanel';
+  loader.style.cssText = 'background:#F0F9FF;border:1.5px solid #BAE6FD;border-radius:8px;padding:12px;font-size:11px;color:#0369A1';
+  loader.innerHTML = '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#0369A1;margin-bottom:4px">Loading customer info...</div>';
+  notesEl.parentElement.parentElement.insertBefore(loader, notesEl.parentElement);
+
+  if (!id || typeof d1Query !== 'function') {
+    loader.remove();
+    return;
   }
+
+  // Fetch full record + open opportunities in parallel
+  var recQ = tab === 'locations'
+    ? 'SELECT id, name, address, city, state, phone, notes FROM locations WHERE id=? LIMIT 1'
+    : tab === 'accounts'
+    ? 'SELECT id, business as name, address, city, state, phone, contact_name as contact, contact_email as email, notes FROM accounts WHERE id=? LIMIT 1'
+    : 'SELECT id, business as name, address, city, state, phone, contact_name as contact, email, notes FROM leads WHERE id=? LIMIT 1';
+
+  Promise.all([
+    d1Query(recQ, [id]),
+    d1Query('SELECT id, name, stage, value, division FROM opportunities WHERE location_id=? OR account_id=? ORDER BY updated_at DESC LIMIT 5', [id, id]),
+    d1Query('SELECT id, stage, grand_total FROM allpro_quotes WHERE location_id=? ORDER BY updated_at DESC LIMIT 3', [id]),
+  ]).then(function(res) {
+    var ctx = document.getElementById('spApptContextPanel');
+    if (!ctx) return;
+
+    var r = res[0].ok && res[0].results && res[0].results[0];
+    var opps = res[1].ok ? (res[1].results || []) : [];
+    var quotes = res[2].ok ? (res[2].results || []) : [];
+
+    if (!r) { ctx.remove(); return; }
+
+    var fullAddr = [r.address, r.city, r.state].filter(Boolean).join(', ');
+    var mapsUrl = fullAddr ? 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(fullAddr) : '';
+
+    var oppsHtml = opps.length
+      ? opps.map(function(o) {
+          return '<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px dotted #BAE6FD">'
+            + '<span style="font-weight:700;color:#0369A1">' + escH(o.name || o.stage) + '</span>'
+            + '<span style="color:#0369A1">' + (o.value ? '$' + Number(o.value).toLocaleString() : o.stage) + '</span>'
+            + '</div>';
+        }).join('')
+      : '<div style="color:#64748B;font-size:10px">No open opportunities</div>';
+
+    var quotesHtml = quotes.length
+      ? quotes.map(function(q) {
+          return '<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px dotted #BAE6FD">'
+            + '<span style="font-weight:700;color:#6D28D9">' + escH(q.id) + '</span>'
+            + '<span style="color:#6D28D9">' + (q.grand_total ? '$' + Number(q.grand_total).toLocaleString() : q.stage) + '</span>'
+            + '</div>';
+        }).join('')
+      : '';
+
+    ctx.innerHTML =
+      '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#0369A1;margin-bottom:8px;border-bottom:1px solid #BAE6FD;padding-bottom:4px">Customer Info</div>'
+      + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">'
+        + '<div>'
+          + (fullAddr ? '<div style="font-size:11px;color:#333;margin-bottom:3px">&#128205; ' + escH(fullAddr) + '</div>' : '')
+          + (r.phone  ? '<div style="font-size:11px;color:#333;margin-bottom:3px">&#128222; <a href="tel:' + escH(r.phone) + '" style="color:#1B5FA8;text-decoration:none">' + escH(r.phone) + '</a></div>' : '')
+          + (r.email  ? '<div style="font-size:11px;color:#333;margin-bottom:3px">&#9993; <a href="mailto:' + escH(r.email) + '" style="color:#1B5FA8;text-decoration:none">' + escH(r.email) + '</a></div>' : '')
+          + (r.contact ? '<div style="font-size:11px;color:#333">&#128100; ' + escH(r.contact) + '</div>' : '')
+        + '</div>'
+        + '<div>'
+          + (mapsUrl ? '<a href="' + mapsUrl + '" target="_blank" style="display:inline-flex;align-items:center;gap:5px;background:#1B5FA8;color:#fff;border:none;border-radius:7px;padding:7px 10px;font-size:11px;font-weight:700;text-decoration:none;cursor:pointer;width:100%;justify-content:center">&#128205; Get Directions</a>' : '')
+        + '</div>'
+      + '</div>'
+      + (r.notes ? '<div style="background:#FFF8EC;border:1px solid #FDE68A;border-radius:6px;padding:7px 10px;font-size:11px;color:#92400E;margin-bottom:8px"><strong>Notes:</strong> ' + escH(r.notes) + '</div>' : '')
+      + (opps.length || quotes.length
+          ? '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#0369A1;margin-bottom:4px">Open Activity</div>'
+            + oppsHtml + quotesHtml
+          : '');
+  }).catch(function() {
+    var ctx = document.getElementById('spApptContextPanel');
+    if (ctx) ctx.remove();
+  });
 }
 
 // ── AUTO-FILL: fetch full record details from D1 by id+tab ──
@@ -10303,6 +10384,20 @@ function spStartVisitAction(action) {
     window.location.href = 'termac-pitch-tool.html';
 
   } else if (action === 'sitewalk') {
+    // Advance AllPro project from Intake to Survey/Plan Review in D1
+    (function() {
+      try {
+        var appt = _svApptData || {};
+        var projId = appt.allpro_project_id;
+        if (projId) {
+          fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/allpro_projects/' + projId, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+            body: JSON.stringify({ stage: 'survey_plan_review', updated_at: Date.now() })
+          }).catch(function(){});
+        }
+      } catch(e){}
+    })();
     spOpenSiteWalk();
 
   } else if (action === 'checkin') {
@@ -10548,7 +10643,7 @@ async function spSaveAppt() {
 
   if (!date) { alert('Please select a date.'); return; }
   const cfg = SP_ENTRY_TYPES[_spApptMode] || SP_ENTRY_TYPES.appointment;
-  if (cfg.linkMode === 'required' && !_spApptLinkedId) { alert('This needs to be linked to a Lead, Contact, Opportunity, or Account.'); return; }
+  // TBD appointments with no linked record are valid -- a typed name or notes-only appointment is allowed.
 
   if (!allDay && time) {
     const conflicts = await spCheckOverbooking(date, time, timeEnd);
@@ -10725,6 +10820,55 @@ async function spCommitAppt(patternKeysToClear) {
 
   document.getElementById('spApptModal')?.remove();
   spToast(cfg.saveLabel.replace('Save ', '') + ' saved' + (guests.length ? (' \u2014 ' + guests.length + ' invited') : ''));
+
+  // ── ALLPRO INTAKE: if Ted saves an appointment linked to a location/account,
+  // create an allpro_projects record at stage 'intake' so it shows immediately
+  // on the AllPro dashboard Intake column. Push directly to D1.
+  (function() {
+    try {
+      var session = JSON.parse(localStorage.getItem('termac_staff_session') || 'null');
+      var isTed = session && (session.name === 'Ted Scholl' || session.email === 'tscholl@termac.com');
+      if (!isTed || mode !== 'appointment' || !linkedId) return;
+      var locId = (linkedTab === 'locations') ? linkedId : null;
+      var acctId = (linkedTab === 'accounts') ? linkedId : null;
+      var projId = 'AP_' + Date.now();
+      var payload = {
+        id: projId,
+        intake_business_name: linkedName || '',
+        location_id: locId || '',
+        account_id: acctId || '',
+        opportunity_id: '',
+        stage: 'intake',
+        project_name: linkedName || 'New AllPro Job',
+        site_address: location || '',
+        project_manager: 'Ted Scholl',
+        priority: 'Normal',
+        created_at: Date.now(),
+        updated_at: Date.now(),
+        job_notes: 'Created from appointment scheduled ' + date + (time ? ' at ' + time : '') + (notes ? '. Notes: ' + notes : ''),
+      };
+      fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/allpro_projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+        body: JSON.stringify(payload)
+      }).then(function(r){ return r.json(); }).then(function(d){
+        if (d.ok) {
+          // Store the project ID on the appointment in D1 so Start Survey can find it
+          try {
+            var appts3 = crmLoad('appointments');
+            var ai = appts3.findIndex(function(a){ return a.id === newApptId; });
+            if (ai >= 0) {
+              appts3[ai].allpro_project_id = projId;
+              crmSave('appointments', appts3);
+              if (typeof TermacD1Sync !== 'undefined') TermacD1Sync.d1Push('appointments', appts3[ai]).catch(function(){});
+            }
+          } catch(e){}
+          spToast('\uD83D\uDCCB Added to AllPro Intake');
+        }
+      }).catch(function(){});
+    } catch(e){}
+  })();
+
   _spApptLinkedId = null; _spApptLinkedTab = null; _spApptLinkedName = '';
   if (linkedTab) spNav(linkedTab);
 }
