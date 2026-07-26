@@ -287,15 +287,29 @@ function daysSince(ts) {
 function escH(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
 // ── LOAD ──
+// D1 query helper -- matches the one in sales-portal.html
+function d1Query(sql, params) {
+  return fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/query', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+    body: JSON.stringify({ sql: sql, params: params || [] })
+  }).then(function(r){ return r.json(); })
+  .catch(function(e){ return { ok: false, error: e.message }; });
+}
+
 async function bkLoad() {
   document.getElementById('refreshTs').textContent = 'Loading…';
   if (typeof d1Query !== 'function') {
     document.getElementById('refreshTs').textContent = 'D1 unavailable';
-    bkRenderDemo(); return;
+    document.getElementById('refreshTs').textContent = 'D1 unavailable -- check connection';
+    console.warn('d1Query not available -- retrying in 5s');
+    setTimeout(bkLoad, 5000);
+    return;
   }
   try {
     var res = await d1Query(
-      'SELECT ap.*, ap.sale_price as contract_value FROM allpro_projects ap ORDER BY ap.created_at DESC LIMIT 200'
+      'SELECT ap.*, COALESCE(ap.intake_business_name, ap.location_name, ap.project_name) as customer_name, COALESCE(ap.sale_price, ap.total_quoted_value, ap.estimated_value) as contract_value FROM allpro_projects ap WHERE (ap.stage IS NULL OR ap.stage != ?) ORDER BY ap.created_at DESC LIMIT 200',
+      ['archived']
     );
     BK_PROJECTS = (res.ok && res.results) ? res.results : [];
     bkRenderAll();
@@ -525,11 +539,11 @@ async function bkSaveProject() {
 
   if (typeof d1Query === 'function') {
     if (id) {
-      await d1Query('UPDATE allpro_projects SET project_name=?,customer_name=?,project_manager=?,billing_owner=?,priority=?,stage=?,award_date=?,promised_completion=?,actual_completion=?,invoice_date=?,sale_price=?,approved_change_orders=?,amount_invoiced=?,next_action=?,updated_at=? WHERE id=?',
+      await d1Query('UPDATE allpro_projects SET project_name=?,intake_business_name=?,project_manager=?,billing_owner=?,priority=?,stage=?,award_date=?,promised_completion=?,actual_completion=?,invoice_date=?,sale_price=?,approved_change_orders=?,amount_invoiced=?,next_action=?,updated_at=? WHERE id=?',
         [data.project_name,data.customer_name,data.project_manager,data.billing_owner,data.priority,data.stage,data.award_date,data.promised_completion,data.actual_completion,data.invoice_date,data.sale_price,data.approved_change_orders,data.amount_invoiced,data.next_action,now,id]);
     } else {
       var newId = 'APS-' + String(Date.now()).slice(-6);
-      await d1Query('INSERT INTO allpro_projects (id,project_name,customer_name,project_manager,billing_owner,priority,stage,award_date,promised_completion,actual_completion,invoice_date,sale_price,approved_change_orders,amount_invoiced,next_action,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+      await d1Query('INSERT INTO allpro_projects (id,project_name,intake_business_name,project_manager,billing_owner,priority,stage,award_date,promised_completion,actual_completion,invoice_date,sale_price,approved_change_orders,amount_invoiced,next_action,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
         [newId,data.project_name,data.customer_name,data.project_manager,data.billing_owner,data.priority,data.stage,data.award_date,data.promised_completion,data.actual_completion,data.invoice_date,data.sale_price,data.approved_change_orders,data.amount_invoiced,data.next_action,now,now]);
     }
   }
