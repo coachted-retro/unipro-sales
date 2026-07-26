@@ -2307,7 +2307,7 @@ async function spPatchAgendaFromD1(dateStr) {
     });
 
     if (changed) {
-      crmSave('appointments', localAppts);
+      // Display cache update removed -- agenda reads D1 on next render
       // Re-render the agenda section in place
       var agendaEl = document.getElementById('spTodayAgendaSection');
       if (agendaEl && typeof spRenderTodayAgenda === 'function') {
@@ -3824,7 +3824,14 @@ function spCompleteStop(agendaId, accountId) {
     }
     return a;
   });
-  if (matched) crmSave('appointments', appts);
+  if (matched) {
+    // Update appointment status in D1
+    fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/appointments/' + matched.id, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+      body: JSON.stringify({ status: matched.status, done_today: 1, updated_at: Date.now() })
+    }).catch(function(){});
+  }
   if (agendaId) spMarkStopDone(agendaId);
   spToast(matched ? '✅ Marked complete' : '✅ Done for today');
   spRenderHome();
@@ -3843,7 +3850,7 @@ function spAgendaArriveSurvey(accountId, agendaId) {
     }
     return a;
   });
-  crmSave('appointments', appts);
+  // Arrival status written to D1 above
 
   // Advance lead stage to site_visit if needed
   var leads = crmLoad('leads');
@@ -4075,62 +4082,40 @@ function spSaveAppt(accountId, tab) {
     }
   }
 
-  // Save to appointments store
-  var appts = crmLoad('appointments') || [];
+  // Save appointment directly to D1
+  var newApptId = 'a_' + Date.now();
   var newAppt = {
-    id:       'a_' + Date.now(),
-    accountId: accountId || null,
-    title:    biz || 'Appointment',
+    id: newApptId,
+    record_id: accountId || null,
+    tab: tab || null,
+    title: biz || 'Appointment',
     business: biz,
-    date:     date,
-    time:     time,
-    notes:    notes,
-    rep:      _spRep.name,
-    createdAt: Date.now(),
-    type:     'appointment',
+    date: date,
+    time: time,
+    location: '',
+    notes: notes,
+    rep: _spRep.name,
+    created_by: _spRep.name,
+    type: 'appointment',
+    status: 'scheduled',
+    division: (_spRep.division || ''),
+    created_at: Date.now(),
+    updated_at: Date.now(),
   };
-  appts.push(newAppt);
-  crmSave('appointments', appts);
+  fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/appointments', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+    body: JSON.stringify(newAppt)
+  }).catch(function(){});
 
-  // Push new appointment to D1 immediately so the agenda on this and
-  // other devices sees it without waiting for the background sweep.
-  // TBD appointments (no business/account) are fully valid — no guard needed.
-  (function(appt) {
-    if (typeof TermacD1Sync !== 'undefined' && TermacD1Sync.d1Push) {
-      TermacD1Sync.d1Push('appointments', appt).catch(function(){});
-    }
-  })(newAppt);
-
-  // Push to Outlook calendar silently -- per rep, individual, no cross-population
-  (function(appt) {
-    if (typeof pushApptToOutlook === 'function') {
-      pushApptToOutlook(appt).then(function(result) {
-        if (result && result.ok) {
-          // Store outlook event ID back on the appointment so we can update it later
-          try {
-            var appts2 = crmLoad('appointments') || [];
-            var idx2 = appts2.findIndex(function(a){ return a.id === appt.id; });
-            if (idx2 >= 0) { appts2[idx2].outlookEventId = result.eventId; crmSave('appointments', appts2); }
-          } catch(e) {}
-        }
-        // Silent on failure -- calendar sync is best-effort
-      }).catch(function(){});
-    }
-  })(newAppt);
-
-  // If we have an account ID, update the lead/contact record
-  if (accountId) {
-    var data = crmLoad('leads');
-    var r = data.find(function(x){ return x.id === accountId; });
-    if (r) {
-      r.appointmentDate = date;
-      r.appointmentTime = time;
-      r.appointmentNotes = notes;
-      r.lifecycleStage = 'appointment';
-      r.activityLog = r.activityLog || [];
-      r.activityLog.push({ ts:Date.now(), type:'system', icon:'📅', title:'Appointment scheduled — ' + date + (time?' at '+time:''), who:_spRep.name });
-      crmSave('leads', data);
-    }
+  // Update the linked record in D1 if there is one
+  if (accountId && tab) {
+    var recTable = (tab === 'accounts') ? 'accounts' : 'leads';
+    fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/' + recTable + '/' + accountId, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+      body: JSON.stringify({ lifecycle_stage: 'appointment', followup_date: date, status: 'hot', updated_at: Date.now() })
+    }).catch(function(){});
   }
 
   spCloseApptModal();
@@ -4588,15 +4573,19 @@ function spWeekPlanCandidates(alreadyScheduledIds) {
 }
 
 async function spWeekPlanCommitSuggestion(candId, candTab, candTitle, candAddress, dateStr, hour) {
-  var appts = crmLoad('appointments') || [];
   var time = String(hour).padStart(2,'0') + ':00';
-  appts.push({
-    id: 'wk_' + Date.now(), recordId: candId, tab: candTab, type: 'site_visit',
-    date: dateStr, time: time, timeEnd: '', address: candAddress, notes: 'Added from Plan My Week',
-    title: candTitle, allDay: false, recurring: false, recurFreq: null,
-    isFlexStop: true, createdAt: Date.now(), createdBy: _spRep?.name || '',
-  });
-  crmSave('appointments', appts);
+  var wkAppt = {
+    id: 'wk_' + Date.now(), record_id: candId, tab: candTab, type: 'site_visit',
+    date: dateStr, time: time, time_end: '', location: candAddress, notes: 'Added from Plan My Week',
+    title: candTitle, business: candTitle, all_day: 0, recurring: 0,
+    is_flex_stop: 1, rep: _spRep?.name || '', created_by: _spRep?.name || '',
+    status: 'scheduled', created_at: Date.now(), updated_at: Date.now(),
+  };
+  fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/appointments', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+    body: JSON.stringify(wkAppt)
+  }).catch(function(){});
   spToast('✅ Added to your week');
   spRenderWeekPlanBody();
 }
@@ -4826,17 +4815,20 @@ async function spPlanDayWithAI(dateStr, dayLabel) {
 
 // Commit an AI-surfaced cold target (not yet in D1) as a new appointment stop
 async function spAddColdTargetAsStop(dateStr, bizName, address) {
-  var appts = crmLoad('appointments') || [];
-  appts.push({
+  var coldAppt = {
     id: 'ai_' + Date.now(),
-    recordId: null, tab: 'leads', type: 'site_visit',
-    date: dateStr, time: '09:00', timeEnd: '', address: address,
-    notes: 'AI-suggested cold target — add to pipeline after visit',
-    title: bizName, allDay: false, recurring: false, recurFreq: null,
-    isFlexStop: true, isAiTarget: true,
-    createdAt: Date.now(), createdBy: _spRep ? _spRep.name : '',
-  });
-  crmSave('appointments', appts);
+    record_id: null, tab: 'leads', type: 'site_visit',
+    date: dateStr, time: '09:00', time_end: '', location: address,
+    notes: 'AI-suggested cold target -- add to pipeline after visit',
+    title: bizName, business: bizName, all_day: 0, recurring: 0,
+    is_flex_stop: 1, rep: _spRep ? _spRep.name : '', created_by: _spRep ? _spRep.name : '',
+    status: 'scheduled', created_at: Date.now(), updated_at: Date.now(),
+  };
+  fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/appointments', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+    body: JSON.stringify(coldAppt)
+  }).catch(function(){});
   spToast('✅ ' + bizName + ' added to your day');
   spRenderWeekPlanBody();
 }
@@ -4886,7 +4878,14 @@ function spViewApptDetail(apptId) {
       try {
         const appts = crmLoad('appointments') || [];
         const idx = appts.findIndex(x => x.id === apptId);
-        if (idx >= 0) { appts[idx].recordId = match.id; appts[idx].tab = matchTab; crmSave('appointments', appts); }
+        if (idx >= 0) {
+      // Link appointment to record in D1
+      fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/appointments/' + apptId, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+        body: JSON.stringify({ record_id: match.id, tab: matchTab, updated_at: Date.now() })
+      }).catch(function(){});
+    }
       } catch(e) {}
     }
   }
@@ -10475,17 +10474,12 @@ async function spSaveSiteWalk() {
   var repName = _spRep ? _spRep.name : '';
 
   // 1. Update the appointment with site walk notes
-  try {
-    var appts = crmLoad('appointments') || [];
-    var idx = appts.findIndex(function(a){ return a.id === _svApptId; });
-    if (idx >= 0) {
-      appts[idx].notes = (appts[idx].notes ? appts[idx].notes + '\n\n--- SITE WALK ---\n' : '') + notes;
-      appts[idx].status = 'complete';
-      appts[idx].business = bizName || appts[idx].business;
-      appts[idx].updated_at = now;
-      crmSave('appointments', appts);
-    }
-  } catch(e) {}
+  // Update appointment with site walk notes in D1
+  fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/appointments/' + _svApptId, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+    body: JSON.stringify({ notes: notes, status: 'complete', business: bizName || '', updated_at: now })
+  }).catch(function(){});
 
   // 2. Write notes to the linked location in D1
   var locationId = appt.record_id && appt.tab === 'locations' ? appt.record_id : null;
@@ -10512,9 +10506,12 @@ async function spSaveSiteWalk() {
       });
       locationId = newLocId;
       // Update appointment to reference location
-      var appts2 = crmLoad('appointments') || [];
-      var i2 = appts2.findIndex(function(a){ return a.id === _svApptId; });
-      if (i2 >= 0) { appts2[i2].record_id = newLocId; appts2[i2].tab = 'locations'; crmSave('appointments', appts2); }
+      // Link appointment to new location in D1
+      fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/appointments/' + _svApptId, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+        body: JSON.stringify({ record_id: newLocId, tab: 'locations', updated_at: Date.now() })
+      }).catch(function(){});
     } catch(e) {}
   } else if (locationId) {
     // Append notes to existing location
@@ -10575,17 +10572,12 @@ function spSaveCloseOut() {
   var note = (document.getElementById('coNote')?.value || '').trim();
   var now = Date.now();
 
-  try {
-    var appts = crmLoad('appointments') || [];
-    var idx = appts.findIndex(function(a){ return a.id === _svApptId; });
-    if (idx >= 0) {
-      appts[idx].status = 'closed_out';
-      appts[idx].close_reason = reason;
-      appts[idx].notes = (appts[idx].notes ? appts[idx].notes + '\n\n' : '') + 'CLOSED OUT: ' + reason + (note ? ' — ' + note : '');
-      appts[idx].updated_at = now;
-      crmSave('appointments', appts);
-    }
-  } catch(e) {}
+  // Update appointment close status in D1
+  fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/appointments/' + _svApptId, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+    body: JSON.stringify({ status: 'closed_out', close_reason: reason, notes: 'CLOSED OUT: ' + reason + (note ? ' -- ' + note : ''), updated_at: now })
+  }).catch(function(){});
 
   spCloseCloseOut();
   spToast('Stop closed out.');
@@ -10741,41 +10733,75 @@ async function spCommitAppt(patternKeysToClear) {
   const dateLabel = new Date(date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
   const linkedId = _spApptLinkedId, linkedTab = _spApptLinkedTab, linkedName = _spApptLinkedName;
 
-  // Log to the linked record's activity, if there is one
-  if (linkedId) {
-    const data = crmLoad(linkedTab || 'leads');
-    const r = data.find(x => x.id === linkedId);
-    if (r) {
-      if (!r.activityLog) r.activityLog = [];
-      r.activityLog.push({ ts:Date.now(), type:'rep', icon:cfg.label.split(' ')[0], title:cfg.label.replace(/^\S+\s/,'') + ' - ' + dateLabel, note:notes||null, who:_spRep.name });
-      if (mode === 'appointment') {
-        r.followupDate = date;
-        r.status = 'hot';
-        if (!['opportunity','site_visit','appointment','active','close'].includes(r.lifecycleStage||'')) {
-          r.lifecycleStage = 'opportunity';
-          r.promoted = true;
-          r.promotedAt = Date.now();
-        }
-      }
-      r.updated = Date.now();
-      crmSave(linkedTab || 'leads', data);
-    }
-  }
-
-  // Save to the shared appointments pool the Calendar and Today's Agenda both read from
+  // Save appointment directly to D1
   const guests = spApptCollectGuests();
   const newApptId = mode + '_' + Date.now();
+  const title = linkedName || cfg.label.replace(/^\S+\s/,'');
+  const apptPayload = {
+    id: newApptId,
+    record_id: linkedId || null,
+    tab: linkedTab || null,
+    type: mode,
+    date: date,
+    time: time,
+    time_end: timeEnd,
+    location: location,
+    notes: notes,
+    title: title,
+    business: linkedName || '',
+    all_day: allDay ? 1 : 0,
+    recurring: recurring ? 1 : 0,
+    recur_freq: recurFreq || null,
+    guests: guests.length ? JSON.stringify(guests) : null,
+    contact_name: apptContactName,
+    contact_phone: apptContactPhone,
+    contact_email: apptContactEmail,
+    is_flex_stop: mode !== 'appointment' ? 1 : 0,
+    rep: _spRep.name,
+    created_by: _spRep.name,
+    division: (_spRep.division || ''),
+    status: 'scheduled',
+    created_at: Date.now(),
+    updated_at: Date.now(),
+  };
+
+  // POST appointment to D1 -- this is the authoritative save
+  let apptSaveOk = false;
   try {
-    const title = linkedName || cfg.label.replace(/^\S+\s/,'');
-    const appts = crmLoad('appointments');
-    appts.push({
-      id: newApptId,
-      recordId: linkedId, tab: linkedTab, type: mode, date, time, timeEnd, address: location, notes,
-      title, allDay, recurring, recurFreq, guests,
-      contact_name: apptContactName, contact_phone: apptContactPhone, contact_email: apptContactEmail,
-      isFlexStop: mode !== 'appointment', createdAt: Date.now(), createdBy: _spRep.name,
+    const saveRes = await fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/appointments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+      body: JSON.stringify(apptPayload)
     });
-    crmSave('appointments', appts);
+    const saveData = await saveRes.json();
+    apptSaveOk = saveData.ok;
+    if (!apptSaveOk) {
+      spToast('Save failed: ' + (saveData.error || 'unknown error'));
+      return;
+    }
+  } catch(e) {
+    spToast('Connection error saving appointment. Please try again.');
+    return;
+  }
+
+  // Update the linked record in D1 if there is one
+  if (linkedId && linkedTab) {
+    var tableMap = { leads: 'leads', accounts: 'accounts', locations: 'locations', opportunities: 'opportunities' };
+    var recTable = tableMap[linkedTab] || 'leads';
+    var recUpdate = { updated_at: Date.now() };
+    if (mode === 'appointment') {
+      recUpdate.followup_date = date;
+      recUpdate.status = 'hot';
+      recUpdate.lifecycle_stage = 'opportunity';
+    }
+    fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/' + recTable + '/' + linkedId, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+      body: JSON.stringify(recUpdate)
+    }).catch(function(){});
+  }
+
+  try {
 
     // Outlook calendar sync -- creates a matching event in the rep's real
     // Outlook calendar via Microsoft Graph. Fires in the background; any
@@ -10865,16 +10891,12 @@ async function spCommitAppt(patternKeysToClear) {
         body: JSON.stringify(payload)
       }).then(function(r){ return r.json(); }).then(function(d){
         if (d.ok) {
-          // Store the project ID on the appointment in D1 so Start Survey can find it
-          try {
-            var appts3 = crmLoad('appointments');
-            var ai = appts3.findIndex(function(a){ return a.id === newApptId; });
-            if (ai >= 0) {
-              appts3[ai].allpro_project_id = projId;
-              crmSave('appointments', appts3);
-              if (typeof TermacD1Sync !== 'undefined') TermacD1Sync.d1Push('appointments', appts3[ai]).catch(function(){});
-            }
-          } catch(e){}
+          // Store the allpro_project_id on the appointment in D1
+          fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/appointments/' + newApptId, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+            body: JSON.stringify({ allpro_project_id: projId, updated_at: Date.now() })
+          }).catch(function(){});
           spToast('\uD83D\uDCCB Added to AllPro Intake');
         }
       }).catch(function(){});
@@ -15157,16 +15179,16 @@ function svStep6(body, footer) {
     var ics='BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//Termac One//Sales//EN\nBEGIN:VEVENT\nUID:'+Date.now()+'@termac\nDTSTAMP:'+icsStamp(new Date())+'\nDTSTART:'+icsStamp(start)+'\nDTEND:'+icsStamp(end)+'\nSUMMARY:'+(title||'Termac visit')+'\nLOCATION:'+(loc||'')+'\nDESCRIPTION:'+(notes||'')+'\nEND:VEVENT\nEND:VCALENDAR';
     return 'data:text/calendar;charset=utf-8,'+encodeURIComponent(ics);
   }
-  function parseWhen(s){ var d=new Date(s); if(isNaN(d)) d=new Date(Date.now()+86400000); return d; }
+    try{ var dt=p.datetime?new Date(p.datetime).toISOString().slice(0,10):new Date(Date.now()+86400000).toISOString().slice(0,10); fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/appointments',{method:'POST',headers:{'Content-Type':'application/json','X-API-Secret':'termac2026'},body:JSON.stringify({id:'appt_'+Date.now(),record_id:null,tab:'assistant',type:'calendar',date:dt,time:p.time||'',title:p.title||'Block',notes:p.notes||'',location:p.location||'',rep:typeof _spRep!=='undefined'&&_spRep?_spRep.name:'',created_by:typeof _spRep!=='undefined'&&_spRep?_spRep.name:'',status:'scheduled',created_at:Date.now(),updated_at:Date.now()})}).catch(function(){}); }catch(e){}
   function commitCalendar(p){
     var start=parseWhen(p.datetime), end=new Date(start.getTime()+(p.minutes||60)*60000);
-    try{ var ap=crmLoad('appointments')||[]; ap.push({ id:'appt_'+Date.now(), recordId:null, tab:'assistant', type:'calendar', date:start.toISOString(), isFlexStop:false, createdAt:Date.now(), createdBy:repName(), title:p.title||'Termac visit', location:p.location||'' }); crmSave('appointments',ap); }catch(e){}
+    try{ var cal_dt=start.toISOString().slice(0,10); fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/appointments',{method:'POST',headers:{'Content-Type':'application/json','X-API-Secret':'termac2026'},body:JSON.stringify({id:'appt_'+Date.now(),record_id:null,tab:'assistant',type:'calendar',date:cal_dt,time:start.toTimeString().slice(0,5),title:p.title||'Block',notes:p.notes||'',location:p.location||'',rep:typeof _spRep!=='undefined'&&_spRep?_spRep.name:'',created_by:typeof _spRep!=='undefined'&&_spRep?_spRep.name:'',status:'scheduled',created_at:Date.now(),updated_at:Date.now()})}).catch(function(){}); }catch(e){}
     return { outlook:outlookLink(p.title,start,end,p.location,p.notes), ics:icsUri(p.title,start,end,p.location,p.notes) };
   }
   function commitAppointment(p){
     var start=parseWhen(p.datetime);
     var rec=loadAll().find(function(r){ return nameOf(r).toLowerCase().indexOf((p.account||'').toLowerCase())>=0; });
-    try{ var ap=crmLoad('appointments')||[]; ap.push({ id:'appt_'+Date.now(), recordId:rec?rec.id:null, tab:'assistant', type:p.type||'visit', date:start.toISOString(), isFlexStop:false, createdAt:Date.now(), createdBy:repName() }); crmSave('appointments',ap); }catch(e){}
+    try{ var appt_dt=start.toISOString().slice(0,10); fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/appointments',{method:'POST',headers:{'Content-Type':'application/json','X-API-Secret':'termac2026'},body:JSON.stringify({id:'appt_'+Date.now(),record_id:rec?rec.id:null,tab:'assistant',type:p.type||'visit',date:appt_dt,time:start.toTimeString().slice(0,5),title:'Appt: '+(p.account||'Customer'),business:(p.account||''),notes:p.notes||'',location:rec&&typeof addrOf==='function'?addrOf(rec):'',rep:typeof _spRep!=='undefined'&&_spRep?_spRep.name:'',created_by:typeof _spRep!=='undefined'&&_spRep?_spRep.name:'',status:'scheduled',created_at:Date.now(),updated_at:Date.now()})}).catch(function(){}); }catch(e){}
     try{ var sq=(typeof crmLoad==='function'?crmLoad('scheduler_queue'):[])||[]; sq.push({ id:rec?rec.id:'appt_'+Date.now(), business:rec?nameOf(rec):(p.account||'Customer'), contact:rec?(rec.contact||rec.name||''):'', phone:rec?(rec.phone||''):'', address:rec?addrOf(rec):'', services:rec?(rec.services||[]):[], acceptedAt:Date.now(), assignedRep:repName(), status:'needs_scheduling' }); if(typeof crmSave==='function') crmSave('scheduler_queue',sq); }catch(e){}
     var end=new Date(start.getTime()+3600000);
     return { outlook:outlookLink('Appt: '+(p.account||'Customer'),start,end,rec?addrOf(rec):'',p.type||''), ics:icsUri('Appt: '+(p.account||'Customer'),start,end,rec?addrOf(rec):'',p.type||'') };
