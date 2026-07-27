@@ -8819,7 +8819,12 @@ function processCrossSellAlerts() {
         id: xsNotif.id, recipientName: assignedRep, ts: xsNotif.ts,
         caller: account, company: account,
         notes: 'Hot cross-sell (' + (divLabels[division]||division) + ') flagged by ' + techName,
-        source: 'Cross-Sell Router', loggedBy: techName
+        source: 'Cross-Sell Router', loggedBy: techName,
+        // 2026-07-27: carry destination so the notification is clickable
+        lead_id: xsNotif.id || null,
+        record_id: xsNotif.id || null,
+        tab: 'leads',
+        dest_url: xsNotif.id ? ('sales-portal.html?tab=leads&open=' + encodeURIComponent(xsNotif.id)) : null,
       });
     } catch(e) {}
   });
@@ -10303,16 +10308,33 @@ function spToggleNotifPanel() {
 function spRenderNotifPanel() {
   var panel = document.getElementById('spNotifPanel');
   if (!panel) return;
-  if (!_spNotifCache.length) { panel.innerHTML = '<div style="padding:16px;font-size:12px;color:var(--soft);text-align:center">No invites yet.</div>'; return; }
+  if (!_spNotifCache.length) { panel.innerHTML = '<div style="padding:16px;font-size:12px;color:var(--soft);text-align:center">No notifications yet.</div>'; return; }
   panel.innerHTML = _spNotifCache.map(function(n){
     var lines = (n.message||'').split('\n');
+    // Build a destination URL from whatever the notification carries.
+    // Notifications from hot lead escalation carry record_id, tab, and lead_id.
+    // Clicking the item marks it read AND navigates directly to the record.
+    var dest = n.dest_url || null;
+    if (!dest) {
+      if (n.lead_id)    dest = 'sales-portal.html?tab=leads&open=' + encodeURIComponent(n.lead_id);
+      else if (n.record_id && n.tab) dest = 'sales-portal.html?tab=' + encodeURIComponent(n.tab) + '&open=' + encodeURIComponent(n.record_id);
+      else if (n.account_id) dest = 'sales-portal.html?tab=accounts&open=' + encodeURIComponent(n.account_id);
+    }
     var body = lines.map(function(l){
-      if (l.indexOf('Directions: ') === 0) return '<a href="' + l.replace('Directions: ','') + '" target="_blank" style="color:#1B5FA8;font-weight:700">Get directions \u2192</a>';
+      if (l.indexOf('Directions: ') === 0) return '<a href="' + l.replace('Directions: ','') + '" target="_blank" style="color:#1B5FA8;font-weight:700">Get directions &#x2192;</a>';
       return escH(l);
     }).join('<br>');
-    return '<div onclick="spMarkNotifRead(\'' + n.id + '\',this)" style="padding:10px 12px;border-bottom:1px solid #F1F5F9;cursor:pointer;background:' + (n.read_flag?'#fff':'#FFF8EC') + '">' +
-      '<div style="font-size:12px;font-weight:800;color:#1F2937">' + escH(n.title||'') + '</div>' +
-      '<div style="font-size:11px;color:#5A616B;margin-top:3px;line-height:1.5">' + body + '</div></div>';
+    // 2026-07-27: every notification is now clickable and navigates to the
+    // relevant record. A notification that goes nowhere is just noise.
+    var clickHandler = dest
+      ? 'spMarkNotifRead(\'' + n.id + '\',this);window.location.href=\'' + dest + '\';'
+      : 'spMarkNotifRead(\'' + n.id + '\',this)';
+    var navArrow = dest ? '<span style="color:#1B5FA8;font-size:12px;float:right;margin-left:8px">&#x2192;</span>' : '';
+    return '<div onclick="' + clickHandler + '" style="padding:10px 12px;border-bottom:1px solid #F1F5F9;cursor:pointer;background:' + (n.read_flag?'#fff':'#FFF8EC') + (dest?';border-left:3px solid #1B5FA8':'') + '">' +
+      '<div style="font-size:12px;font-weight:800;color:#1F2937">' + navArrow + escH(n.title||'') + '</div>' +
+      '<div style="font-size:11px;color:#5A616B;margin-top:3px;line-height:1.5">' + body + '</div>' +
+      (dest ? '<div style="font-size:10px;color:#1B5FA8;margin-top:4px;font-weight:700">Tap to open &#x2192;</div>' : '') +
+    '</div>';
   }).join('');
 }
 function spMarkNotifRead(id, el) {

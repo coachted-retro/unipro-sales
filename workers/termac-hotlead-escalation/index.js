@@ -59,6 +59,13 @@ async function notify(env, recipient, lead, minutesWaiting) {
           (lead.assigned_rep || 'Unassigned') + '. Source: ' + (lead.source || 'Unknown') + '.',
         source: 'Hot Lead Escalation',
         loggedBy: 'termac-hotlead-escalation',
+        // 2026-07-27: carry the record identity so the notification panel
+        // can navigate directly to the lead when tapped. Without this the
+        // bell icon shows the alert but clicking it goes nowhere.
+        lead_id: lead.id || null,
+        record_id: lead.id || null,
+        tab: 'leads',
+        dest_url: lead.id ? ('sales-portal.html?tab=leads&open=' + encodeURIComponent(lead.id)) : null,
       }),
     });
   } catch (e) { /* one recipient failing should never block the other or the DB update */ }
