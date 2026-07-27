@@ -1494,7 +1494,76 @@
   // existing local definitions keep winning until they are removed.
   if (typeof global.d1Query !== 'function') global.d1Query = d1Query;
 
+  // ── SHARED SIGN OUT ───────────────────────────────────────────────────────
+  // 2026-07-27: audit found that most portals had no way to sign out at all.
+  // reception-portal and dms-portal each had a fully written logout function
+  // that was never wired to a button. employee-portal (the landing page every
+  // single person hits after login), controller-portal, gm-dashboard,
+  // allpro-project-planner and termac-dish-quote had nothing whatsoever.
+  // termac-os had one hidden behind a click on the name badge with no label.
+  // Rather than adding eight separate buttons that will drift apart the same
+  // way d1Query and TECHS did, this module (which every portal already loads)
+  // injects one consistent control. A page that already has its own visible
+  // sign out is left alone.
+  function termacSignOut() {
+    if (!confirm('Sign out of Termac One?')) return;
+    ['termac_staff_session', 'termac_current_user', 'termac_staff_return_to'].forEach(function (k) {
+      try { localStorage.removeItem(k); } catch (e) {}
+      try { sessionStorage.removeItem(k); } catch (e) {}
+    });
+    window.location.href = 'staff-login.html';
+  }
+
+  function _hasOwnSignOut() {
+    if (document.getElementById('termacSignOutBtn')) return true;
+    var els = document.querySelectorAll('button, a, [onclick]');
+    for (var i = 0; i < els.length; i++) {
+      var t = (els[i].textContent || '').trim().toLowerCase();
+      if (t === 'sign out' || t === 'log out' || t === 'logout' || t === 'signout') {
+        // Only counts if the user can actually see it.
+        if (els[i].offsetParent !== null) return true;
+      }
+    }
+    return false;
+  }
+
+  function mountSignOutControl() {
+    var sess = null;
+    try { sess = JSON.parse(localStorage.getItem('termac_staff_session') || 'null'); } catch (e) {}
+    if (!sess || !sess.email) return;            // not signed in, nothing to sign out of
+    if (_hasOwnSignOut()) return;                // page already has its own
+    if (document.getElementById('termacSignOutBtn')) return;
+
+    var btn = document.createElement('button');
+    btn.id = 'termacSignOutBtn';
+    btn.type = 'button';
+    btn.textContent = 'Sign Out';
+    btn.title = 'Sign out of Termac One (' + sess.email + ')';
+    btn.onclick = termacSignOut;
+    btn.setAttribute('style', [
+      'position:fixed', 'top:10px', 'right:12px', 'z-index:2147483000',
+      'background:#C8102E', 'color:#fff', 'border:none', 'border-radius:7px',
+      'padding:9px 15px', 'font-family:Barlow Condensed,Arial,sans-serif',
+      'font-weight:700', 'font-size:13px', 'letter-spacing:.06em',
+      'text-transform:uppercase', 'cursor:pointer',
+      'box-shadow:0 2px 8px rgba(0,0,0,.28)', 'line-height:1'
+    ].join(';'));
+    document.body.appendChild(btn);
+  }
+
+  if (typeof document !== 'undefined') {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function () { setTimeout(mountSignOutControl, 400); });
+    } else {
+      setTimeout(mountSignOutControl, 400);
+    }
+  }
+
+  global.termacSignOut = termacSignOut;
+
   global.TermacD1Sync = {
+    termacSignOut: termacSignOut,
+    mountSignOutControl: mountSignOutControl,
     d1Query: d1Query,
     d1Fetch: d1Fetch,
     d1Push: d1Push,
