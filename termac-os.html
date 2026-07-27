@@ -1141,6 +1141,43 @@ button[aria-label*="AI"], button[aria-label*="Chat"] {
   window.TC_COMPACT_MODE = true;
 })();
 </script>
+<script>
+// SHARED SOURCE PRIORITY ENGINE
+// Call spSourcePriority(source) anywhere to get tag, color, bg, priority.
+// This is the single source of truth for how every lead source is
+// classified and displayed across every portal and notification panel.
+
+function spSourcePriority(source) {
+  var s = String(source || '').toLowerCase();
+
+  if (s.indexOf('reception') !== -1 || s.indexOf('receptionist') !== -1)
+    return { tag:'RECEPTION', icon:'📞', priority:1, color:'#991B1B', bg:'#FEE2E2', border:'#C8102E' };
+
+  if (s.indexOf('dms') !== -1 || s.indexOf('digital') !== -1)
+    return { tag:'DMS', icon:'💬', priority:1, color:'#991B1B', bg:'#FEE2E2', border:'#C8102E' };
+
+  if (s.indexOf('manager') !== -1 || s.indexOf('jim') !== -1 || s.indexOf('escalat') !== -1)
+    return { tag:'MANAGER', icon:'⚠️', priority:2, color:'#92400E', bg:'#FFFBEB', border:'#D97706' };
+
+  if (s.indexOf('harvest') !== -1 || s.indexOf('scrape') !== -1 || s.indexOf('violation') !== -1 || s.indexOf('fire') !== -1 || s.indexOf('safety') !== -1 || s.indexOf('inspection') !== -1)
+    return { tag:'WARM LEAD', icon:'🌡️', priority:3, color:'#1E40AF', bg:'#EFF6FF', border:'#3B82F6' };
+
+  if (s.indexOf('referral') !== -1)
+    return { tag:'REFERRAL', icon:'🤝', priority:2, color:'#166534', bg:'#F0FDF4', border:'#16A34A' };
+
+  if (s.indexOf('web') !== -1 || s.indexOf('online') !== -1 || s.indexOf('servicetrade') !== -1)
+    return { tag:'INBOUND', icon:'🌐', priority:3, color:'#374151', bg:'#F9FAFB', border:'#9CA3AF' };
+
+  return { tag:'LEAD', icon:'🎯', priority:3, color:'#374151', bg:'#F9FAFB', border:'#9CA3AF' };
+}
+
+function spSourceBadgeHtml(source) {
+  var p = spSourcePriority(source);
+  return '<span style="background:' + p.bg + ';color:' + p.color + ';border:1px solid ' + p.border + ';border-radius:4px;padding:1px 7px;font-size:9px;font-weight:800;font-family:Barlow Condensed,sans-serif;letter-spacing:.06em;white-space:nowrap">'
+    + p.icon + ' ' + p.tag + '</span>';
+}
+
+</script>
 </head>
 <body>
 
@@ -15571,13 +15608,13 @@ function renderHotLeadPanel() {
     // new_lead      = red   (new inbound -- hot)
     // other         = blue  (general notification)
     const isAcct = n.type === 'account_alert' || n.is_existing_account;
-    const isLead = n.type === 'new_lead' || (!isAcct && n.source && n.source.indexOf('Reception') !== -1);
-    const borderColor = isAcct ? '#D97706' : (isLead ? '#C8102E' : (typeColors[n.type]||'#1B5FA8'));
-    const bgColor = n.read ? '#F9FAFB' : (isAcct ? '#FFFBEB' : (isLead ? '#FEF2F2' : (typeBg[n.type]||'#DBEAFE')));
-    const badgeLabel = n.badge || (isAcct ? '⚠️ EXISTING ACCOUNT' : (isLead ? '🔥 NEW LEAD' : null));
-    const badge = badgeLabel
-      ? `<span style="background:${isAcct?'#FEF3C7':'#FEE2E2'};color:${isAcct?'#92400E':'#991B1B'};border-radius:4px;padding:1px 7px;font-size:9px;font-weight:800;font-family:Barlow Condensed,sans-serif;letter-spacing:.06em;margin-right:6px">${badgeLabel}</span>`
-      : '';
+    const _sp = (typeof spSourcePriority === 'function') ? spSourcePriority(n.source || '') : null;
+    const borderColor = isAcct ? '#D97706' : (_sp ? _sp.border : (typeColors[n.type]||'#1B5FA8'));
+    const bgColor = n.read ? '#F9FAFB' : (isAcct ? '#FFFBEB' : (_sp ? _sp.bg : (typeBg[n.type]||'#DBEAFE')));
+    const acctBadge = isAcct ? '<span style="background:#FEF3C7;color:#92400E;border-radius:4px;padding:1px 7px;font-size:9px;font-weight:800;font-family:Barlow Condensed,sans-serif;letter-spacing:.06em;margin-right:4px">⚠️ EXISTING ACCOUNT</span>' : '';
+    const srcTag = n.badge || (_sp && _sp.priority <= 2 ? (_sp.icon + ' ' + _sp.tag) : '');
+    const srcBadge = srcTag ? '<span style="background:' + (_sp?_sp.bg:'#FEE2E2') + ';color:' + (_sp?_sp.color:'#991B1B') + ';border-radius:4px;padding:1px 7px;font-size:9px;font-weight:800;font-family:Barlow Condensed,sans-serif;letter-spacing:.06em;margin-right:4px">' + srcTag + '</span>' : '';
+    const badge = acctBadge + srcBadge;
     const arrow = `<span style="font-size:10px;color:#1B5FA8;margin-left:4px">→ Open</span>`;
     return `
     <div onclick="${clickFn}" style="background:${bgColor};border-radius:8px;border-left:4px solid ${borderColor};padding:10px 12px;margin-bottom:8px;opacity:${n.read?'.65':'1'};cursor:pointer">
