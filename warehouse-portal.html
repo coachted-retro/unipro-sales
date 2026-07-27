@@ -1387,7 +1387,7 @@ function renderPartsRequests() {
 
   var requests = [];
   try {
-    var fromOfficeQ = JSON.parse(localStorage.getItem('officeQueue') || '[]')
+    var fromOfficeQ = (crmLoad('office_queue') || [])
       .filter(function(q){ return q.type === 'supply_request'; });
     var fromPartsQ  = (typeof crmLoad === 'function' ? crmLoad('parts_requests') : []) || [];
     var seen = {};
@@ -1475,9 +1475,9 @@ function fulfillPartsRequest(reqId, newStatus) {
     if (typeof crmSave === 'function') crmSave('parts_requests', partsUpdated);
   } catch(e) {}
   try {
-    const items = JSON.parse(localStorage.getItem('officeQueue') || '[]');
+    const items = (crmLoad('office_queue') || []);
     const updated = items.map(r => r.id === reqId ? Object.assign({}, r, { status: newStatus, fulfilledAt: Date.now(), fulfilledBy: localStorage.getItem('termac_current_user') || 'Warehouse' }) : r);
-    localStorage.setItem('officeQueue', JSON.stringify(updated));
+    crmSave('office_queue', updated);
   } catch(e) {}
 
   // Notify tech via intelligence feed
@@ -1485,7 +1485,7 @@ function fulfillPartsRequest(reqId, newStatus) {
     const items = (typeof crmLoad === 'function' ? crmLoad('parts_requests') : []) || [];
     const req = items.find(r => r.id === reqId);
     if (req) {
-      const notifs = JSON.parse(localStorage.getItem('termac_hotlead_notifs') || '[]');
+      const notifs = (crmLoad('hot_lead_notifs') || []);
       const icon = newStatus === 'fulfilled' ? '✅' : newStatus === 'pulled' ? '📦' : '✕';
       const label = newStatus === 'fulfilled' ? 'Parts fulfilled & sent' : newStatus === 'pulled' ? 'Parts pulled — being loaded' : 'Request cancelled by warehouse';
       notifs.unshift({
@@ -1497,7 +1497,7 @@ function fulfillPartsRequest(reqId, newStatus) {
         date: new Date().toLocaleDateString('en-US'),
         time: new Date().toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit'}),
       });
-      localStorage.setItem('termac_hotlead_notifs', JSON.stringify(notifs.slice(0, 100)));
+      crmSave('hot_lead_notifs', notifs.slice(0, 100));
     }
   } catch(e) {}
 
@@ -3490,16 +3490,16 @@ function saveAPRecord() {
   if (existingAP.length === 0) {
     // one-time migration of anything already sitting in the old raw key
     try {
-      var legacy = JSON.parse(localStorage.getItem('termac_payables') || '[]');
+      var legacy = (crmLoad('payables') || []);
       if (legacy.length > 0) { crmSave('accounts_payable', legacy); existingAP = legacy; }
     } catch(e) {}
   }
   var dupes = existingAP.filter(function(b) { return apNormName(b.vendor) === normVendor && Math.abs((Number(b.amount)||0) - total) < 0.01; });
   if (dupes.length && !confirm('A bill for ' + vendor + ' at $' + total.toFixed(2) + ' already exists in Accounts Payable. Save anyway?')) {
     try {
-      var dupLog = JSON.parse(localStorage.getItem('termac_ap_dupes_caught') || '[]');
+      var dupLog = (crmLoad('payables') || []);
       dupLog.unshift({ vendor: vendor, amount: total, at: Date.now() });
-      localStorage.setItem('termac_ap_dupes_caught', JSON.stringify(dupLog));
+      crmSave('payables', dupLog);
     } catch(e) {}
     alert('Not saved — duplicate caught.');
     return;
