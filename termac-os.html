@@ -6031,8 +6031,8 @@ body:has(#ovMgr.open) #termacMsgLauncher { display:none!important; }
 
   <!-- ══ TED'S PERFORMANCE ══ -->
   <div id="mgrPanel-ted" class="ov-body" style="display:none;padding:16px;background:var(--bg)">
-    <div id="tedPerfContent">
-      <div style="color:var(--soft);font-size:13px;padding:20px">Loading...</div>
+    <div id="tedPerfContent" style="padding:16px">
+      <div style="color:var(--soft);font-size:13px;padding:20px;text-align:center">Loading dashboard...</div>
     </div>
   </div><!-- /mgrPanel-ted -->
 
@@ -30235,345 +30235,142 @@ function csHdr(title, id, extraRight) {
    Populates dynamic KPI tiles from CRM data
 ───────────────────────────────────────────── */
 // ══════════════════════════════════════════════════════════════
-//  TED'S PERFORMANCE DASHBOARD
-//  Role: Fire Protection Specialist / Bid Manager
-//  UniPro + AllPro ops oversight · Hood design + installation sales
-//  Metrics are QUARTERLY cadence — not weekly like reps
 // ══════════════════════════════════════════════════════════════
-
-// ══════════════════════════════════════════════════════════════
-//  PERFORMANCE DASHBOARD DRILL-DOWN
-//  2026-07-13 per Ted: every KPI card should be clickable, showing the
-//  real records behind the number. One generic modal + row-renderer
-//  keyed by record kind, instead of a bespoke drill-down view built
-//  separately for each of the ~30 cards on this dashboard.
-// ══════════════════════════════════════════════════════════════
-function perfDrillOpen(title, records, kind) {
-  document.getElementById('perfDrillTitle').textContent = title + ' (' + records.length + ')';
-  var body = document.getElementById('perfDrillBody');
-  if (!records.length) {
-    body.innerHTML = '<div style="color:var(--soft);font-size:13px;padding:12px 0">No records behind this number right now.</div>';
-  } else {
-    body.innerHTML = records.map(function (r) { return perfDrillRow(r, kind); }).join('');
-  }
-  document.getElementById('perfDrillModal').classList.add('open');
-}
-function perfDrillClose() {
-  document.getElementById('perfDrillModal').classList.remove('open');
-}
-function perfDrillOpenRecord(kind, id) {
-  perfDrillClose();
-  if (kind === 'bid') { openOverlay('bids'); setTimeout(function () { bidsOpenDetail(id); }, 250); }
-  else if (kind === 'lead' || kind === 'appointment' || kind === 'deficiency_account') { viewRecord(kind === 'appointment' ? 'appointments' : 'leads', id); }
-}
-function perfDrillRow(r, kind) {
-  var rowStyle = 'background:#F8F9FA;border-radius:8px;padding:10px 12px;cursor:pointer';
-  if (kind === 'bid') {
-    return '<div style="' + rowStyle + '" onclick="perfDrillOpenRecord(\'bid\',\'' + r.id + '\')">' +
-      '<div style="font-weight:700;font-size:13px">' + escH(r.title || 'Untitled') + '</div>' +
-      '<div style="font-size:11px;color:var(--soft)">' + escH(r.agency || '') + (r.dueDate ? ' · Due ' + escH(r.dueDate) : '') + (r.estValue ? ' · $' + Number(r.estValue).toLocaleString() : '') + ' · ' + escH(r.status || '') + '</div></div>';
-  }
-  if (kind === 'lead') {
-    var lname = r.contact_name || r.name || r.business || 'Unnamed';
-    return '<div style="' + rowStyle + '" onclick="perfDrillOpenRecord(\'lead\',\'' + r.id + '\')">' +
-      '<div style="font-weight:700;font-size:13px">' + escH(lname) + '</div>' +
-      '<div style="font-size:11px;color:var(--soft)">' + escH(r.business || r.company || '') + (r.lifecycleStage ? ' · ' + escH(r.lifecycleStage) : '') + (r.source ? ' · ' + escH(r.source) : '') + '</div></div>';
-  }
-  if (kind === 'appointment') {
-    return '<div style="' + rowStyle + '" onclick="perfDrillOpenRecord(\'appointment\',\'' + r.id + '\')">' +
-      '<div style="font-weight:700;font-size:13px">' + escH(r.title || r.business || 'Appointment') + '</div>' +
-      '<div style="font-size:11px;color:var(--soft)">' + escH(r.date || '') + ' ' + escH(r.time || '') + (r.type ? ' · ' + escH(r.type) : '') + '</div></div>';
-  }
-  if (kind === 'deficiency') {
-    return '<div style="' + rowStyle + ';cursor:default">' +
-      '<div style="font-weight:700;font-size:13px">' + escH(r.equipment_type || 'Deficiency') + '</div>' +
-      '<div style="font-size:11px;color:var(--soft)">' + escH(r.description || '') + (r.severity ? ' · ' + escH(r.severity) : '') + '</div></div>';
-  }
-  if (kind === 'tech') {
-    return '<div style="' + rowStyle + ';cursor:default">' +
-      '<div style="font-weight:700;font-size:13px">' + escH(r.name || 'Tech') + '</div>' +
-      '<div style="font-size:11px;color:var(--soft)">' + escH(r.division || '') + (r.score !== undefined ? ' · Score ' + r.score : '') + '</div></div>';
-  }
-  return '<div style="' + rowStyle + ';cursor:default">' + escH(JSON.stringify(r).slice(0, 120)) + '</div>';
-}
-// Records arrays live in window._perfDrillCache, keyed by a stable
-// string, since an inline onclick attribute is evaluated later in
-// global scope and can't reach renderTedPerf()'s local variables
-// directly. Each kpiCard call that should be drillable stashes its
-// records here right before building the card.
-window._perfDrillCache = window._perfDrillCache || {};
-
+//  TED'S PERFORMANCE DASHBOARD -- rebuilt July 26 2026
+//  Account Manager + Sales + AllPro/UniPro Project Manager
+//  Targets: 6-8 appts/week, 10-15 touchpoints/day, 3-5 site walks/week, $150K-$300K/month
+// ==============================================================
 function renderTedPerf() {
   var el = document.getElementById('tedPerfContent');
   if (!el) return;
+  var PROXY = 'https://unipro-ai-proxy.termac-one.workers.dev';
+  var SECRET = 'termac2026';
+  var REP = 'Ted Scholl';
+  var TARGETS = { apptWeek:7, tpDay:12, walkWeek:4, propMonth:225000 };
+  function d1q(sql, params) { return fetch(PROXY+'/db/query',{method:'POST',headers:{'Content-Type':'application/json','X-API-Secret':SECRET},body:JSON.stringify({sql:sql,params:params||[]})}).then(function(r){return r.json();}).catch(function(){return {ok:false};}); }
+  function fmt$(n) { if(!n)return '$0'; if(n>=1000000)return '$'+(n/1000000).toFixed(1)+'M'; if(n>=1000)return '$'+(n/1000).toFixed(0)+'K'; return '$'+Number(n).toLocaleString(); }
+  function escH(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+  function setBar(id,pct,cardId){var bar=document.getElementById(id);if(!bar)return;var p=Math.min(pct,100);bar.style.width=p+'%';var c=p>=100?'#059669':p>=60?'#F59E0B':'#C8102E';bar.style.background=c;var card=cardId?document.getElementById(cardId):null;if(card)card.style.borderLeft='4px solid '+c;}
+  function setText(id,v){var e=document.getElementById(id);if(e)e.textContent=v;}
+  var card = function(id,label,valId,targetText,barId){return '<div id="'+id+'" style="background:#fff;border-radius:10px;padding:14px;border:1.5px solid #E5E7EB"><div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:#6B7280;margin-bottom:6px">'+label+'</div><div id="'+valId+'" style="font-family:Barlow Condensed,sans-serif;font-size:28px;font-weight:900;line-height:1">...</div><div style="font-size:11px;color:#6B7280;margin-top:4px" id="'+barId+'_t">'+targetText+'</div><div style="background:#F3F4F6;border-radius:4px;height:6px;margin-top:8px"><div id="'+barId+'" style="height:6px;border-radius:4px;width:0%;transition:width .4s;background:#1B5FA8"></div></div></div>';};
+  var sHdr = function(t){return '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:#C8102E;border-bottom:2px solid #C8102E;padding-bottom:4px;margin:18px 0 12px">'+t+'</div>';};
+  var grid = function(inner){return '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:4px">'+inner+'</div>';};
+  el.innerHTML =
+    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:10px">'
+      +'<div><div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:22px">Ted Scholl &mdash; Performance</div>'
+      +'<div style="font-size:12px;color:#6B7280;margin-top:2px">Account Manager &middot; Sales &middot; AllPro/UniPro Project Manager</div></div>'
+      +'<div style="display:flex;gap:8px">'
+        +'<select id="tpPeriod" onchange="window.tpLoad()" style="border:1.5px solid #D7DBE0;border-radius:7px;padding:6px 10px;font-size:12px;font-weight:700"><option value="week">This Week</option><option value="month" selected>This Month</option><option value="quarter">This Quarter</option></select>'
+        +'<button onclick="window.tpLoad()" style="background:#1B5FA8;color:#fff;border:none;border-radius:7px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer">Refresh</button>'
+      +'</div></div>'
+    +sHdr('Daily Activity')
+    +grid(
+      card('tpApptCard','Appointments','tpApptVal','Target: 6-8/week','tpApptBar')
+      +card('tpTpCard','Touch Points','tpTpVal','Target: 10-15/day','tpTpBar')
+      +card('tpWalkCard','Site Walks','tpWalkVal','Target: 3-5/week','tpWalkBar')
+      +card('tpLeadCard','New Leads','tpLeadVal','New leads this period','tpLeadBar')
+    )
+    +sHdr('Pipeline Health')
+    +grid(
+      card('tpPropCard','Proposals Written','tpPropVal','Target: $150K-$300K/mo','tpPropBar')
+      +card('tpAccCard','Proposals Accepted','tpAccVal','...','tpAccBar')
+      +card('tpConvCard','Conversion Rate','tpConvVal','Won vs sent','tpConvBar')
+      +card('tpOppCard','Open Pipeline','tpOppVal','Active opportunity value','tpOppBar')
+    )
+    +sHdr('AllPro Active Jobs')
+    +'<div id="tpJobList" style="margin-bottom:18px"><div style="color:#6B7280;font-size:13px;padding:12px 0">Loading jobs...</div></div>'
+    +sHdr('Accounts Needing Attention')
+    +'<div id="tpAtRiskList"><div style="color:#6B7280;font-size:13px;padding:12px 0">Loading...</div></div>';
 
-  // ── Pull data from platform ─────────────────────────────────
-  var leads     = crmLoad('leads') || [];
-  var bids      = JSON.parse(localStorage.getItem('termac_bids') || '[]');
-  var appts     = crmLoad('appointments') || [];
+  window.tpLoad = function() {
+    var period=(document.getElementById('tpPeriod')||{}).value||'month';
+    var now=Date.now(); var today=new Date(); var startMs;
+    if(period==='week'){var day=today.getDay(),diff=today.getDate()-day+(day===0?-6:1);startMs=new Date(new Date().setDate(diff)).setHours(0,0,0,0);}
+    else if(period==='month'){startMs=new Date(today.getFullYear(),today.getMonth(),1).getTime();}
+    else{startMs=new Date(today.getFullYear(),Math.floor(today.getMonth()/3)*3,1).getTime();}
+    var startDate=new Date(startMs).toISOString().slice(0,10);
+    var dip=Math.max(1,Math.round((now-startMs)/86400000));
+    var wip=Math.max(1,dip/7);
 
-  var now  = Date.now();
-  var qStart = (function() {
-    var d = new Date(); var q = Math.floor(d.getMonth()/3);
-    return new Date(d.getFullYear(), q*3, 1).getTime();
-  })();
-  var yStart = new Date(new Date().getFullYear(), 0, 1).getTime();
-
-  // Bid pipeline metrics
-  var activeBids     = bids.filter(function(b){ return ['open','draft','review'].includes(b.status); });
-  var submittedBids  = bids.filter(function(b){ return b.status === 'submitted'; });
-  var wonBids        = bids.filter(function(b){ return b.status === 'won' && b.outcomeDate && new Date(b.outcomeDate).getTime() >= qStart; });
-  var pipelineValue  = activeBids.reduce(function(s,b){ return s+(b.estValue||0); }, 0);
-  var wonValueQTD    = wonBids.reduce(function(s,b){ return s+(b.estValue||0); }, 0);
-  var wonValueYTD    = bids.filter(function(b){ return b.status==='won' && b.outcomeDate && new Date(b.outcomeDate).getTime() >= yStart; }).reduce(function(s,b){ return s+(b.estValue||0); },0);
-
-  // Win rate (last 12 bids resolved)
-  var resolved  = bids.filter(function(b){ return b.status==='won'||b.status==='lost'; }).slice(-12);
-  var winRate   = resolved.length ? Math.round(resolved.filter(function(b){ return b.status==='won'; }).length/resolved.length*100) : 0;
-
-  // Avg days to close
-  var closedWithDates = bids.filter(function(b){ return b.status==='won' && b.postedDate && b.outcomeDate; });
-  var avgDaysClose = closedWithDates.length
-    ? Math.round(closedWithDates.reduce(function(s,b){ return s + (new Date(b.outcomeDate)-new Date(b.postedDate))/86400000; },0) / closedWithDates.length)
-    : 0;
-
-  // Stale bids (no movement in 90+ days)
-  var stale90 = activeBids.filter(function(b){
-    var last = b.updatedAt || b.scrapedAt || 0;
-    return (now - last) > 90*86400000;
-  });
-
-  // AllPro / permit leads
-  var allproLeads = leads.filter(function(r){ return (r.services||[]).includes('allpro') || r.company==='AllPro' || r.formType==='allpro'; });
-  var permitLeads = leads.filter(function(r){ return (r.source||'').toLowerCase().includes('permit'); });
-  var allproQTD   = allproLeads.filter(function(r){ return r.created >= qStart; });
-
-  // Site walks from appointments
-  var siteWalks = appts.filter(function(a){
-    return (a.visitType==='permit_site'||a.visitType==='cold_stop'||a.type==='site_visit') && a.createdAt >= qStart;
-  });
-
-  // Open deficiencies
-  var defQueueRaw = [];
-  try { defQueueRaw = JSON.parse(localStorage.getItem('termac_deficiency_queue')||'[]'); } catch(e){}
-  var openDefs = defQueueRaw.filter(function(d){ return !d.quoteWritten && !d.resolved; });
-  var defs5Days = openDefs.filter(function(d){ return d.flaggedAt && (now-d.flaggedAt) > 5*86400000; });
-
-  // Tech performance (UniPro + AllPro)
-  var techData = [];
-  try { techData = JSON.parse(localStorage.getItem('termac_tech_scores')||'[]'); } catch(e){}
-  var myTechs = techData.filter(function(t){ return t.division==='UniPro'||t.division==='AllPro'; });
-  var avgTechScore = myTechs.length ? Math.round(myTechs.reduce(function(s,t){ return s+(t.score||0); },0)/myTechs.length) : 0;
-
-  // Permit-to-proposal speed (AllPro primary KPI)
-  var recentAllpro = allproLeads.filter(function(r){ return r.created >= qStart && r.appointment; });
-  var avgP2P = recentAllpro.length
-    ? Math.round(recentAllpro.reduce(function(s,r){ return s + ((r.appointment.setAt||r.created) - r.created)/3600000; },0) / recentAllpro.length)
-    : null;
-
-  // ── Build HTML ──────────────────────────────────────────────
-  function kpiCard(label, value, sub, color, warn, drill) {
-    // drill = { key, records, kind } -- optional. When present, caches
-    // the records under a stable global key (see window._perfDrillCache
-    // above) and makes the card clickable to open the drill-down modal
-    // showing those real records.
-    var clickable = drill && drill.records;
-    if (clickable) window._perfDrillCache[drill.key] = drill.records;
-    var clickAttr = clickable
-      ? ' onclick="perfDrillOpen(\''+escH(label).replace(/'/g,"\\'")+'\', window._perfDrillCache.'+drill.key+', \''+drill.kind+'\')" style="cursor:pointer"'
-      : '';
-    return '<div'+clickAttr+' style="background:#fff;border-radius:9px;padding:13px 14px;box-shadow:0 1px 3px rgba(26,29,33,.08);border-top:3px solid '+color+';position:relative'+(clickable?';cursor:pointer':'')+'">' +
-      (warn ? '<div style="position:absolute;top:8px;right:8px;background:#FEE2E2;color:#C8102E;border-radius:4px;padding:1px 6px;font-size:9px;font-weight:800">⚠️ '+warn+'</div>' : '') +
-      (clickable ? '<div style="position:absolute;bottom:8px;right:10px;font-size:9px;color:#BFC4CA">↗ view</div>' : '') +
-      '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:24px;color:'+color+'">'+value+'</div>' +
-      '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--soft);margin-top:2px">'+label+'</div>' +
-      (sub ? '<div style="font-size:11px;color:#6B7280;margin-top:4px">'+sub+'</div>' : '') +
-    '</div>';
-  }
-
-  function sectionHdr(icon, title, color) {
-    return '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:'+color+';margin:18px 0 10px;display:flex;align-items:center;gap:8px">'+
-      icon+' '+title+
-      '<div style="flex:1;height:1px;background:var(--line)"></div>' +
-    '</div>';
-  }
-
-  var html = '';
-
-  // ── Header ──────────────────────────────────────────────────
-  html += '<div style="background:linear-gradient(135deg,#1A1D21,#2D3748);border-radius:12px;padding:16px 20px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">' +
-    '<div>' +
-      '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:18px;color:#fff;letter-spacing:.04em">⚡ Ted Scholl — Performance Dashboard</div>' +
-      '<div style="font-size:12px;color:#8A909A;margin-top:3px">Fire Protection Specialist · Bid Manager · UniPro + AllPro Ops · Hood Design + Installation</div>' +
-    '</div>' +
-    '<div style="background:rgba(242,183,5,.15);border:1px solid rgba(242,183,5,.3);border-radius:8px;padding:6px 14px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;color:#F2B705;letter-spacing:.08em">Q' + (Math.floor(new Date().getMonth()/3)+1) + ' ' + new Date().getFullYear() + ' · QUARTERLY CADENCE</div>' +
-  '</div>';
-
-  // ── Section 1: Pipeline Health ─────────────────────────────
-  html += sectionHdr('📊', 'Pipeline Health', '#1B5FA8');
-  html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:4px">';
-  html += kpiCard('Active Bids', activeBids.length, '$'+pipelineValue.toLocaleString()+' pipeline', '#1B5FA8', activeBids.length===0?'No bids':'', {key:'activeBids', records:activeBids, kind:'bid'});
-  html += kpiCard('Submitted / Pending', submittedBids.length, 'Awaiting decision', '#5B21B6', '', {key:'submittedBids', records:submittedBids, kind:'bid'});
-  html += kpiCard('Win Rate (last 12)', winRate+'%', resolved.length+' bids resolved', winRate>=40?'#1E7B3C':winRate>=25?'#D97706':'#C8102E', winRate<25&&resolved.length>3?'Low':'', {key:'resolvedBids', records:resolved, kind:'bid'});
-  html += kpiCard('Avg Days to Close', avgDaysClose||'—', 'From posting to award', '#0D7490', '', {key:'closedWithDates', records:closedWithDates, kind:'bid'});
-  html += kpiCard('Stale >90 Days', stale90.length, 'No movement — review', stale90.length>0?'#C8102E':'#1E7B3C', stale90.length>2?stale90.length+' stale':'', {key:'stale90', records:stale90, kind:'bid'});
-  html += '</div>';
-
-  // Bid stage breakdown
-  if (bids.length) {
-    var stageCounts = {open:0,draft:0,review:0,submitted:0,won:0};
-    bids.forEach(function(b){ if(stageCounts[b.status]!==undefined) stageCounts[b.status]++; });
-    html += '<div style="background:#F8F9FA;border-radius:8px;padding:10px 14px;margin-bottom:4px;display:flex;gap:16px;flex-wrap:wrap;font-size:12px">';
-    [{key:'open',label:'New',color:'#1A1D21'},{key:'draft',label:'AI Drafting',color:'#D8690B'},{key:'review',label:'Review',color:'#1B5FA8'},{key:'submitted',label:'Submitted',color:'#5B21B6'},{key:'won',label:'Won',color:'#1E7B3C'}].forEach(function(s){
-      html += '<span><strong style="color:'+s.color+'">'+stageCounts[s.key]+'</strong> <span style="color:var(--soft)">'+s.label+'</span></span>';
+    d1q('SELECT COUNT(*) as cnt FROM appointments WHERE rep=? AND date>=? AND status!=?',[REP,startDate,'cancelled']).then(function(r){
+      var cnt=r.ok&&r.results&&r.results[0]?r.results[0].cnt:0;
+      setText('tpApptVal',cnt);
+      setBar('tpApptBar',(TARGETS.apptWeek*wip)>0?(cnt/(TARGETS.apptWeek*wip))*100:0,'tpApptCard');
     });
-    html += '</div>';
-  }
+    d1q('SELECT COUNT(*) as cnt FROM appointments WHERE rep=? AND date>=? AND (type=? OR type=?)',[REP,startDate,'site_walk','site_visit']).then(function(r){
+      var cnt=r.ok&&r.results&&r.results[0]?r.results[0].cnt:0;
+      setText('tpWalkVal',cnt);
+      setBar('tpWalkBar',(TARGETS.walkWeek*wip)>0?(cnt/(TARGETS.walkWeek*wip))*100:0,'tpWalkCard');
+    });
+    d1q('SELECT COUNT(*) as cnt FROM leads WHERE assigned_rep=? AND created_at>=?',[REP,startMs]).then(function(r){
+      var cnt=r.ok&&r.results&&r.results[0]?r.results[0].cnt:0;
+      setText('tpLeadVal',cnt);
+      setBar('tpLeadBar',Math.min((cnt/5)*100,100),'tpLeadCard');
+    });
+    setText('tpTpVal','--');
 
-  // ── Section 2: Revenue Impact ──────────────────────────────
-  html += sectionHdr('💰', 'Revenue Impact', '#1E7B3C');
-  html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:4px">';
-  html += kpiCard('Won QTD', '$'+wonValueQTD.toLocaleString(), wonBids.length+' contract'+(wonBids.length!==1?'s':''), '#1E7B3C', wonValueQTD===0&&new Date().getMonth()%3>0?'0 won this Q':'', {key:'wonBidsQTD', records:wonBids, kind:'bid'});
-  html += kpiCard('Won YTD', '$'+wonValueYTD.toLocaleString(), 'Calendar year to date', '#059669', '', {key:'wonBidsYTD', records:bids.filter(function(b){ return b.status==='won' && b.outcomeDate && new Date(b.outcomeDate).getTime() >= yStart; }), kind:'bid'});
-  html += kpiCard('Active Pipeline Value', '$'+pipelineValue.toLocaleString(), activeBids.length+' open bid'+(activeBids.length!==1?'s':''), '#1B5FA8', '', {key:'activeBids2', records:activeBids, kind:'bid'});
-  html += kpiCard('At Risk (90d stale)', stale90.reduce(function(s,b){return s+(b.estValue||0);},0)>0?'$'+stale90.reduce(function(s,b){return s+(b.estValue||0);},0).toLocaleString():'—', 'Pipeline value at risk', stale90.length?'#C8102E':'#6B7280', '', {key:'stale90b', records:stale90, kind:'bid'});
-  html += '</div>';
+    var monthTarget=period==='quarter'?TARGETS.propMonth*3:period==='week'?TARGETS.propMonth/4:TARGETS.propMonth;
+    Promise.all([
+      d1q('SELECT COALESCE(SUM(grand_total),0) as total, COUNT(*) as cnt FROM allpro_quotes WHERE created_at>=? AND status!=?',[startMs,'draft']),
+      d1q('SELECT COUNT(*) as won, COALESCE(SUM(value),0) as wonVal FROM opportunities WHERE assigned_rep=? AND resolution_status=? AND updated_at>=?',[REP,'won',startMs]),
+      d1q('SELECT COUNT(*) as cnt, COALESCE(SUM(value),0) as val FROM opportunities WHERE assigned_rep=? AND (resolution_status IS NULL OR resolution_status=?)',[REP,'open']),
+    ]).then(function(res){
+      var pt=res[0].ok&&res[0].results&&res[0].results[0]?res[0].results[0].total:0;
+      var pc=res[0].ok&&res[0].results&&res[0].results[0]?res[0].results[0].cnt:0;
+      var wc=res[1].ok&&res[1].results&&res[1].results[0]?res[1].results[0].won:0;
+      var wv=res[1].ok&&res[1].results&&res[1].results[0]?res[1].results[0].wonVal:0;
+      var oc=res[2].ok&&res[2].results&&res[2].results[0]?res[2].results[0].cnt:0;
+      var ov=res[2].ok&&res[2].results&&res[2].results[0]?res[2].results[0].val:0;
+      setText('tpPropVal',fmt$(pt));
+      var pt_el=document.getElementById('tpPropBar_t');if(pt_el)pt_el.textContent='Target: '+fmt$(monthTarget)+' this '+period;
+      setBar('tpPropBar',monthTarget>0?(pt/monthTarget)*100:0,'tpPropCard');
+      setText('tpAccVal',wc>0?wc+' ('+fmt$(wv)+')':'0');
+      var at_el=document.getElementById('tpAccBar_t');if(at_el)at_el.textContent=pc>0?pc+' proposals sent':'No proposals yet';
+      setBar('tpAccBar',pc>0?(wc/pc)*100:0,'tpAccCard');
+      var conv=pc>0?Math.round((wc/pc)*100):0;
+      setText('tpConvVal',conv+'%');
+      setBar('tpConvBar',conv,'tpConvCard');
+      setText('tpOppVal',oc>0?oc+' ('+fmt$(ov)+')':'0');
+    });
 
-  // ── Section 3: AllPro / Hood Design ───────────────────────
-  html += sectionHdr('🏗️', 'AllPro / Hood Design & Installation', '#D8690B');
-  html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:4px">';
-  html += kpiCard('Permit Leads QTD', permitLeads.filter(function(r){return r.created>=qStart;}).length, 'From permit harvester', '#D8690B', '', {key:'permitLeadsQTD', records:permitLeads.filter(function(r){return r.created>=qStart;}), kind:'lead'});
-  html += kpiCard('AllPro Contacts QTD', allproQTD.length, 'New build + reno contacts', '#1B5FA8', '', {key:'allproQTD', records:allproQTD, kind:'lead'});
-  html += kpiCard('Site Walks QTD', siteWalks.length, 'Permit + cold site visits', '#5B21B6', siteWalks.length===0?'No walks logged':'', {key:'siteWalksQTD', records:siteWalks, kind:'appointment'});
-  html += kpiCard('Permit → Proposal', avgP2P!==null ? avgP2P+'h avg' : '—', 'Target: <48 hours', avgP2P!==null&&avgP2P<=48?'#1E7B3C':avgP2P!==null?'#C8102E':'#6B7280', avgP2P!==null&&avgP2P>48?'>48h':'', {key:'recentAllpro', records:recentAllpro, kind:'lead'});
-  html += '</div>';
-
-  // ── Section 4: Operations Oversight ───────────────────────
-  html += sectionHdr('⚙️', 'UniPro + AllPro Operations Oversight', '#6B7280');
-  html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:4px">';
-  html += kpiCard('Tech Score (Avg)', avgTechScore||'—', 'UniPro + AllPro division', avgTechScore>=80?'#1E7B3C':avgTechScore>=60?'#D97706':'#C8102E', avgTechScore>0&&avgTechScore<60?'Below target':'', {key:'myTechs', records:myTechs, kind:'tech'});
-  html += kpiCard('Open Deficiencies', openDefs.length, 'Pending quotes from Lexi', openDefs.length>5?'#C8102E':openDefs.length>0?'#D97706':'#1E7B3C', '', {key:'openDefs', records:openDefs, kind:'deficiency'});
-  html += kpiCard('Defs Without Quote >5d', defs5Days.length, 'Should have a quote by now', defs5Days.length>0?'#C8102E':'#1E7B3C', defs5Days.length>0?defs5Days.length+' overdue':'', {key:'defs5Days', records:defs5Days, kind:'deficiency'});
-  html += kpiCard('Tech Division Coverage', myTechs.length||'—', 'Techs tracked in system', '#6B7280', '', {key:'myTechs2', records:myTechs, kind:'tech'});
-  html += '</div>';
-
-  // ── Section 5: Activity ────────────────────────────────────
-  html += sectionHdr('📋', 'Activity This Quarter', '#5B21B6');
-  var bidSubmissionsQTDArr = bids.filter(function(b){ return b.status==='submitted' || (b.status==='won'&&b.outcomeDate&&new Date(b.outcomeDate).getTime()>=qStart); });
-  var bidSubmissionsQTD = bidSubmissionsQTDArr.length;
-  html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:4px">';
-  var followUpTouchpointsArr = leads.filter(function(r){ return r.activityLog && r.activityLog.some(function(a){ return a.ts>=qStart && (r.services||[]).some(function(s){ return s==='allpro'||s==='unipro'; }); }); });
-  html += kpiCard('Bid Submissions QTD', bidSubmissionsQTD, 'Submitted this quarter', '#5B21B6', '', {key:'bidSubmissionsQTD', records:bidSubmissionsQTDArr, kind:'bid'});
-  html += kpiCard('Site Walks / Pop-Ins', siteWalks.length, 'Field visits logged', '#D8690B', '', {key:'siteWalks2', records:siteWalks, kind:'appointment'});
-  html += kpiCard('Follow-Up Touchpoints', followUpTouchpointsArr.length, 'On active bids', '#1B5FA8', '', {key:'followUpTouchpoints', records:followUpTouchpointsArr, kind:'lead'});
-  html += kpiCard('Total Bids in System', bids.length, 'All time in pipeline', '#6B7280', '', {key:'allBids', records:bids, kind:'bid'});
-  html += '</div>';
-
-  // ── Section 6: Revenue Forecast ──────────────────────────
-  html += sectionHdr('📈', 'Revenue Forecast — Stage 1 (Value-Based Pipeline)', '#1E7B3C');
-
-  var DEAL_LABELS = {inspection_only:'Inspection Only',hood_install:'Hood Install',full_bundle:'Full Bundle',bid_win:'Bid Win',stainless_fab:'Stainless Fab',service_contract:'Service Contract',permit_lead:'Permit Lead','':'Untagged'};
-  var DEAL_DEFAULTS = {inspection_only:8000,hood_install:35000,full_bundle:52000,bid_win:28000,stainless_fab:22000,service_contract:15000,permit_lead:5000};
-  var DEAL_3YR = {inspection_only:24000,hood_install:55000,full_bundle:58000,bid_win:42000,stainless_fab:22000,service_contract:45000,permit_lead:18000};
-
-  var activePipeline = leads.filter(function(r){ return ['lead','contacted','qualified','opportunity','site_visit','appointment','survey','proposal'].includes(r.lifecycleStage||'lead'); });
-  var byType = {};
-  activePipeline.forEach(function(r) {
-    var t = r.dealType || '';
-    if (!byType[t]) byType[t] = {count:0,value:0,value3yr:0};
-    byType[t].count++;
-    byType[t].value += r.estValue || DEAL_DEFAULTS[t] || 8000;
-    byType[t].value3yr += r.estValue ? r.estValue*3 : (DEAL_3YR[t] || 24000);
+    var SL={intake:'Intake',survey_plan_review:'Survey',proposal_submitted:'Proposal Sent',fabrication:'Fabrication',delivery_install:'Install',commissioning:'Commissioning',closeout:'Closeout'};
+    var SC={intake:'#6B7280',survey_plan_review:'#1B5FA8',proposal_submitted:'#0D9488',fabrication:'#1E7B3C',delivery_install:'#0A1628',commissioning:'#B45309',closeout:'#166534'};
+    d1q('SELECT id,project_name,intake_business_name,stage,sale_price,next_action,updated_at FROM allpro_projects WHERE project_manager=? AND stage NOT IN (?,?,?) ORDER BY updated_at DESC LIMIT 10',[REP,'won','lost','archived']).then(function(r){
+      var jobs=r.ok&&r.results?r.results:[];
+      var list=document.getElementById('tpJobList');if(!list)return;
+      if(!jobs.length){list.innerHTML='<div style="color:#6B7280;font-size:13px;padding:12px 0">No active AllPro jobs yet.</div>';return;}
+      list.innerHTML=jobs.map(function(j){
+        var nm=j.intake_business_name||j.project_name||'Unnamed';
+        var sl=SL[j.stage]||j.stage||'?';var sc=SC[j.stage]||'#6B7280';
+        var days=j.updated_at?Math.floor((Date.now()-j.updated_at)/86400000):null;
+        return '<div class="tp-drill" data-href="allpro-billing-kpi.html" style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:#F9FAFB;border-radius:8px;margin-bottom:6px;cursor:pointer">'
+          +'<div><div style="font-size:13px;font-weight:700">'+escH(nm)+(j.sale_price?' <span style="color:#059669;font-size:11px;font-weight:700">'+fmt$(j.sale_price)+'</span>':'')+'</div>'
+          +(j.next_action?'<div style="font-size:11px;color:#6B7280">'+escH(j.next_action.slice(0,70))+'</div>':'')
+          +'</div><div style="display:flex;align-items:center;gap:8px">'
+          +(days!==null&&days>7?'<span style="font-size:10px;font-weight:700;color:#C8102E">'+days+'d stale</span>':'')
+          +'<span style="font-size:10px;font-weight:800;padding:2px 8px;border-radius:4px;background:'+sc+'22;color:'+sc+'">'+sl+'</span></div></div>';
+      }).join('');
+    });
+    d1q('SELECT id,business,address,city FROM accounts WHERE assigned_rep=? AND (last_rep_visit IS NULL OR last_rep_visit<?) AND status=? ORDER BY last_rep_visit ASC LIMIT 8',[REP,Date.now()-30*86400000,'active']).then(function(r){
+      var accts=r.ok&&r.results?r.results:[];
+      var list=document.getElementById('tpAtRiskList');if(!list)return;
+      if(!accts.length){list.innerHTML='<div style="color:#059669;font-size:13px;padding:12px 0">All accounts touched in the last 30 days.</div>';return;}
+      list.innerHTML=accts.map(function(a){
+        return '<div class="tp-acct-drill" data-id="'+a.id+'" style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:#F9FAFB;border-radius:8px;margin-bottom:6px;cursor:pointer">'
+          +'<div><div style="font-size:13px;font-weight:700">'+escH(a.business||'')+'</div>'
+          +'<div style="font-size:11px;color:#6B7280">'+escH((a.address||'')+(a.city?', '+a.city:''))+'</div></div>'
+          +'<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;background:#FEE9EC;color:#C8102E">No visit 30d+</span></div>';
+      }).join('');
+    });
+  };
+  setTimeout(window.tpLoad,300);
+  // Delegated click for job and account rows
+  el.addEventListener('click',function(e){
+    var jrow=e.target.closest('.tp-drill');
+    if(jrow){var href=jrow.getAttribute('data-href');if(href)window.open(href);return;}
+    var arow=e.target.closest('.tp-acct-drill');
+    if(arow){var id=arow.getAttribute('data-id');if(id&&typeof spViewRecord==='function')spViewRecord(id,'accounts');}
   });
-  var totalPipeValue = Object.values(byType).reduce(function(s,b){return s+b.value;},0);
-  var total3yrValue = Object.values(byType).reduce(function(s,b){return s+b.value3yr;},0);
-  var taggedCount = activePipeline.filter(function(r){return r.dealType;}).length;
-  var untaggedCount = activePipeline.length - taggedCount;
-
-  html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:12px">';
-  html += kpiCard('Pipeline Leads', activePipeline.length, taggedCount+' tagged · '+untaggedCount+' untagged', '#1E7B3C', untaggedCount>10?untaggedCount+' need tags':'', {key:'activePipeline', records:activePipeline, kind:'lead'});
-  html += kpiCard('Est. 1-Yr Value', '$'+(totalPipeValue/1000).toFixed(0)+'K', 'Active pipeline', '#1B5FA8', '', {key:'activePipeline2', records:activePipeline, kind:'lead'});
-  html += kpiCard('Est. 3-Yr Value', '$'+(total3yrValue/1000).toFixed(0)+'K', 'Full account lifetime', '#5B21B6', '', {key:'activePipeline3', records:activePipeline, kind:'lead'});
-  html += kpiCard('Single Kitchen Win', '$50-60K', 'Hood+suppression+3yr bundle', '#D8690B', '');
-  html += '</div>';
-
-  if (Object.keys(byType).length > 1 || (Object.keys(byType).length===1 && Object.keys(byType)[0]!=='')) {
-    html += '<div style="background:#F8F9FA;border-radius:9px;overflow:hidden;margin-bottom:12px">';
-    html += '<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--soft);padding:8px 12px;border-bottom:1px solid var(--line)"><div>Deal Type</div><div style="text-align:right">Count</div><div style="text-align:right">1-Yr</div><div style="text-align:right">3-Yr</div></div>';
-    Object.entries(byType).sort(function(a,b){return b[1].value-a[1].value;}).forEach(function(entry){
-      var t=entry[0],d=entry[1];
-      html += '<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr;padding:8px 12px;border-bottom:1px solid var(--line);font-size:12px">';
-      html += '<div style="font-weight:600">'+(DEAL_LABELS[t]||t||'Untagged')+'</div>';
-      html += '<div style="text-align:right;color:var(--soft)">'+d.count+'</div>';
-      html += '<div style="text-align:right;font-weight:700;color:#1B5FA8">$'+(d.value/1000).toFixed(0)+'K</div>';
-      html += '<div style="text-align:right;color:#5B21B6">$'+(d.value3yr/1000).toFixed(0)+'K</div>';
-      html += '</div>';
-    });
-    html += '</div>';
-  }
-
-  html += '<div style="background:#EFF6FF;border:1.5px solid #BFDBFE;border-radius:8px;padding:10px 14px;font-size:12px;color:#1E40AF;margin-bottom:4px"><strong>Stage 2</strong> unlocks after 60-90 days of tagged data: real conversion benchmarks by deal type. <strong>Stage 3</strong>: AI flags pipeline gaps. Tag every lead now to build the dataset.</div>';
-
-  // ── Section 7: Referral Engine ─────────────────────────────
-  html += sectionHdr('🔗', 'Referral Engine', '#D8690B');
-
-  var referralLeads = leads.filter(function(r){return (r.source||'').toLowerCase().includes('referral')||r.isReferral;});
-  var referralQTD = referralLeads.filter(function(r){return r.created>=qStart;});
-  var referralConverted = referralLeads.filter(function(r){return ['active','close','onboarding','first_service'].includes(r.lifecycleStage||'');});
-  var referralValue = referralConverted.reduce(function(s,r){return s+(r.estValue||8000);},0);
-
-  html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:10px">';
-  html += kpiCard('Referral Leads QTD', referralQTD.length, 'Tagged source=Referral', referralQTD.length>0?'#1E7B3C':'#6B7280', '', {key:'referralQTD', records:referralQTD, kind:'lead'});
-  html += kpiCard('All-Time Referrals', referralLeads.length, 'Total tagged referral leads', '#D8690B', '', {key:'referralLeads', records:referralLeads, kind:'lead'});
-  html += kpiCard('Converted', referralConverted.length, 'Active accounts from referrals', '#1E7B3C', '', {key:'referralConverted', records:referralConverted, kind:'lead'});
-  html += kpiCard('Referral Revenue', referralValue>0?'$'+(referralValue/1000).toFixed(0)+'K':'--', 'Est. value converted', '#5B21B6', '', {key:'referralConverted2', records:referralConverted, kind:'lead'});
-  html += '</div>';
-
-  var recentWins = leads.filter(function(r){return ['active','close','onboarding'].includes(r.lifecycleStage||'');});
-  var zipClusters = {};
-  recentWins.forEach(function(r){var z=r.zip||'';if(!z)return;if(!zipClusters[z])zipClusters[z]={wins:0,permits:0};zipClusters[z].wins++;});
-  permitLeads.forEach(function(r){var z=r.zip||'';if(!z||!zipClusters[z])return;zipClusters[z].permits++;});
-  var hotZips = Object.entries(zipClusters).filter(function(e){return e[1].wins>0&&e[1].permits>0;}).slice(0,3);
-  if (hotZips.length) {
-    html += '<div style="background:#FEF3C7;border:1.5px solid #D97706;border-radius:8px;padding:10px 14px;font-size:12px;color:#92400E;margin-bottom:4px">';
-    html += '<strong>🗺️ AllPro Geographic Play:</strong> ';
-    hotZips.forEach(function(e){html += 'ZIP '+e[0]+' — '+e[1].wins+' win'+(e[1].wins>1?'s':'')+', '+e[1].permits+' permit lead'+(e[1].permits>1?'s':'')+'. ';});
-    html += 'Strike while credibility is local.';
-    html += '</div>';
-  }
-
-  // ── Section 8: Deadline Tracker ───────────────────────────
-  var deadlineAlerts = getBidDeadlineAlerts();
-  if (deadlineAlerts.length) {
-    html += sectionHdr('📅', 'Upcoming Bid Deadlines', '#C8102E');
-    html += '<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:4px">';
-    deadlineAlerts.forEach(function(alert) {
-      var b = alert.bid;
-      var urgColor = alert.urgency==='critical'?'#C8102E':alert.urgency==='overdue'?'#7F1D1D':alert.urgency==='high'?'#D97706':'#1B5FA8';
-      var urgBg    = alert.urgency==='critical'?'#FEE2E2':alert.urgency==='overdue'?'#FEE2E2':alert.urgency==='high'?'#FEF3C7':'#EFF6FF';
-      var urgLabel = alert.urgency==='overdue'?'OVERDUE':alert.urgency==='critical'?'CRITICAL — '+alert.daysLeft+'d':alert.urgency==='high'?alert.daysLeft+'d left':alert.daysLeft+'d left';
-      html += '<div onclick="perfDrillOpenRecord(\'bid\',\''+escH(b.id)+'\')" style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:'+urgBg+';border-radius:8px;border-left:4px solid '+urgColor+';cursor:pointer">';
-      html += '<div style="min-width:90px;font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:11px;letter-spacing:.06em;color:'+urgColor+'">'+urgLabel+'</div>';
-      html += '<div style="flex:1"><div style="font-weight:600;font-size:13px">'+escH(b.title)+'</div>';
-      html += '<div style="font-size:11px;color:#6B7280">'+escH(b.agency||'')+(b.dueDate?' · Due '+escH(b.dueDate):'')+(b.estValue?' · $'+b.estValue.toLocaleString():'')+'</div></div>';
-      html += '<div style="font-size:11px;font-weight:700;color:'+urgColor+';text-transform:uppercase">'+escH(b.status)+'</div>';
-      html += '</div>';
-    });
-    html += '</div>';
-  }
-
-  // ── Quick Links ────────────────────────────────────────────
-  html += '<div style="background:#F8F9FA;border-radius:9px;padding:12px 16px;margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">';
-  html += '<div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft);width:100%;margin-bottom:4px">Quick Actions</div>';
-  html += '<button onclick="mgrSwitchTab(\'dashboard\');setTimeout(function(){var b=document.getElementById(\'crmHarvestBtn\');if(b)b.click();},300)" style="background:#1B5FA8;color:#fff;border:none;border-radius:7px;padding:8px 14px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">📋 Open Bid Board</button>';
-  html += '<button onclick="openOverlay(\'bids\')" style="background:#1A1D21;color:#fff;border:none;border-radius:7px;padding:8px 14px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">🌾 Run Bid Harvest</button>';
-  html += '<button onclick="mgrSwitchTab(\'scorecards\')" style="background:#fff;color:var(--ink);border:1.5px solid var(--line);border-radius:7px;padding:8px 14px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">🏆 Team Scorecards</button>';
-  html += '</div>';
-
-  // ── Last updated ───────────────────────────────────────────
-  html += '<div style="font-size:11px;color:var(--soft);text-align:right;margin-top:10px;padding-bottom:8px">Last refreshed: '+new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})+'</div>';
-
-  el.innerHTML = html;
 }
 
 // ══════════════════════════════════════════════════════════════
