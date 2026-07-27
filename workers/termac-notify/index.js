@@ -135,6 +135,131 @@ async function sendReportEmail(env, recipients, subject, html) {
   }
 }
 
+async function buildLoginActivityReport(env) {
+  let rows = [];
+  try {
+    const res = await fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/staff_auth?limit=50', {
+      headers: { 'X-API-Secret': env.D1_API_SECRET || 'termac2026' }
+    });
+    const data = await res.json();
+    rows = (data.results || data || []).filter(r => r.status === 'active' && r.name !== 'Test Salesrep');
+  } catch(e) { rows = []; }
+
+  const now = Date.now();
+  const fmt = ts => ts ? new Date(ts).toLocaleString('en-US', { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', timeZone:'America/New_York' }) : 'Never';
+  const age = ts => {
+    if (!ts) return 'Never logged in';
+    const days = Math.floor((now - ts) / 86400000);
+    return days === 0 ? 'Today' : days === 1 ? 'Yesterday' : days + ' days ago';
+  };
+
+  const active   = rows.filter(r => r.last_login_at && (now - r.last_login_at) < 7 * 86400000);
+  const stale    = rows.filter(r => r.last_login_at && (now - r.last_login_at) >= 7 * 86400000);
+  const never    = rows.filter(r => !r.last_login_at);
+
+  const rowHtml = (r, bg) =>
+    `<tr style="background:${bg}">
+      <td style="padding:8px 12px;border-bottom:1px solid #E5E7EB">${r.name}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #E5E7EB;color:#6B7280;font-size:12px">${r.role}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #E5E7EB">${fmt(r.last_login_at)}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #E5E7EB;font-weight:600">${age(r.last_login_at)}</td>
+    </tr>`;
+
+  return `<div style="font-family:Arial,sans-serif;max-width:680px;margin:0 auto">
+    <div style="background:#1A1D21;color:#fff;padding:20px 24px;border-radius:8px 8px 0 0">
+      <div style="font-size:18px;font-weight:700">Termac One \u2014 Weekly Login Activity</div>
+      <div style="font-size:13px;color:#9CA3AF;margin-top:4px">Week ending ${new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div>
+    </div>
+    <div style="background:#F9FAFB;padding:16px 24px;border:1px solid #E5E7EB;border-top:none">
+      <div style="display:flex;gap:16px;margin-bottom:16px">
+        <div style="flex:1;background:#fff;border:1px solid #E5E7EB;border-radius:8px;padding:14px;text-align:center">
+          <div style="font-size:28px;font-weight:700;color:#16A34A">${active.length}</div>
+          <div style="font-size:12px;color:#6B7280">Active this week</div>
+        </div>
+        <div style="flex:1;background:#fff;border:1px solid #E5E7EB;border-radius:8px;padding:14px;text-align:center">
+          <div style="font-size:28px;font-weight:700;color:#D97706">${stale.length}</div>
+          <div style="font-size:12px;color:#6B7280">Not active this week</div>
+        </div>
+        <div style="flex:1;background:#fff;border:1px solid #E5E7EB;border-radius:8px;padding:14px;text-align:center">
+          <div style="font-size:28px;font-weight:700;color:#DC2626">${never.length}</div>
+          <div style="font-size:12px;color:#6B7280">Never logged in</div>
+        </div>
+      </div>
+      <table style="width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;border:1px solid #E5E7EB">
+        <thead><tr style="background:#F3F4F6">
+          <th style="padding:10px 12px;text-align:left;font-size:12px;font-weight:600;color:#374151">Name</th>
+          <th style="padding:10px 12px;text-align:left;font-size:12px;font-weight:600;color:#374151">Role</th>
+          <th style="padding:10px 12px;text-align:left;font-size:12px;font-weight:600;color:#374151">Last Login</th>
+          <th style="padding:10px 12px;text-align:left;font-size:12px;font-weight:600;color:#374151">Status</th>
+        </tr></thead>
+        <tbody>
+          ${active.map(r => rowHtml(r, '#F0FDF4')).join('')}
+          ${stale.map(r => rowHtml(r, '#FFFBEB')).join('')}
+          ${never.map(r => rowHtml(r, '#FEF2F2')).join('')}
+        </tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+async function buildWeeklyRepDigest(env) {
+  let opps = [], appts = [];
+  try {
+    const [or, ar] = await Promise.all([
+      fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/opportunities?limit=100', { headers: { 'X-API-Secret': env.D1_API_SECRET || 'termac2026' } }).then(r => r.json()),
+      fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/appointments?limit=200', { headers: { 'X-API-Secret': env.D1_API_SECRET || 'termac2026' } }).then(r => r.json()),
+    ]);
+    opps  = or.results || or || [];
+    appts = ar.results || ar || [];
+  } catch(e) {}
+
+  const nextFriday = new Date();
+  nextFriday.setDate(nextFriday.getDate() + (5 - nextFriday.getDay() + 7) % 7 || 7);
+  const weekEnd = nextFriday.toISOString().slice(0, 10);
+  const weekStart = new Date(nextFriday); weekStart.setDate(weekStart.getDate() - 6);
+  const ws = weekStart.toISOString().slice(0, 10);
+
+  const repAppts = {};
+  appts.filter(a => a.date >= ws && a.date <= weekEnd).forEach(a => {
+    const rep = a.rep || a.created_by || 'Unknown';
+    if (!repAppts[rep]) repAppts[rep] = [];
+    repAppts[rep].push(a);
+  });
+
+  const repOpps = {};
+  opps.filter(o => o.resolution_status === 'open' || !o.resolution_status).forEach(o => {
+    const rep = o.assigned_rep || 'Unknown';
+    if (!repOpps[rep]) repOpps[rep] = [];
+    repOpps[rep].push(o);
+  });
+
+  const reps = [...new Set([...Object.keys(repAppts), ...Object.keys(repOpps)])].filter(r => r && r !== 'Unknown').sort();
+
+  const repSection = r => {
+    const ra = repAppts[r] || [];
+    const ro = repOpps[r] || [];
+    const pipeVal = ro.reduce((s, o) => s + (parseFloat(o.value) || 0), 0);
+    return `<div style="background:#fff;border:1px solid #E5E7EB;border-radius:8px;padding:16px;margin-bottom:12px">
+      <div style="font-weight:700;font-size:15px;color:#1A1D21;margin-bottom:8px">${r}</div>
+      <div style="display:flex;gap:16px;margin-bottom:10px">
+        <span style="font-size:13px;color:#6B7280">${ra.length} stop${ra.length!==1?'s':''} scheduled</span>
+        <span style="font-size:13px;color:#6B7280">${ro.length} open opportunities \u2014 $${Math.round(pipeVal).toLocaleString()}</span>
+      </div>
+      ${ra.length ? `<ul style="margin:0;padding-left:18px;font-size:13px;color:#374151">${ra.map(a=>`<li>${a.date} ${a.time||''} \u2014 ${a.title||a.business||'Stop'} ${a.location?'('+a.location+')':''}</li>`).join('')}</ul>` : '<div style="font-size:12px;color:#9CA3AF">No stops scheduled for the week</div>'}
+    </div>`;
+  };
+
+  return `<div style="font-family:Arial,sans-serif;max-width:680px;margin:0 auto">
+    <div style="background:#1A1D21;color:#fff;padding:20px 24px;border-radius:8px 8px 0 0">
+      <div style="font-size:18px;font-weight:700">Termac One \u2014 Weekly Rep Digest</div>
+      <div style="font-size:13px;color:#9CA3AF;margin-top:4px">Week of ${ws} to ${weekEnd}</div>
+    </div>
+    <div style="background:#F9FAFB;padding:16px 24px;border:1px solid #E5E7EB;border-top:none">
+      ${reps.length ? reps.map(repSection).join('') : '<div style="padding:20px;text-align:center;color:#6B7280">No activity data for this period.</div>'}
+    </div>
+  </div>`;
+}
+
 export default {
   async fetch(request, env) {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
@@ -146,6 +271,24 @@ export default {
 
     if (path.endsWith('/send-report') && request.method === 'POST') {
       const body = await request.json();
+      const reportKey = body.report_key || '';
+
+      // ── REPORT GENERATOR: builds HTML from D1 data then sends ─────────────
+      if (reportKey === 'login_activity') {
+        const recipients = ['jkennedy@termac.com'];
+        const html = await buildLoginActivityReport(env);
+        const sent = await sendReportEmail(env, recipients, 'Termac One \u2014 Weekly Login Activity Report', html);
+        return json({ ok: sent, report: 'login_activity' });
+      }
+
+      if (reportKey === 'weekly_rep_digest') {
+        const recipients = ['jkennedy@termac.com', 'tpittakas@termac.com'];
+        const html = await buildWeeklyRepDigest(env);
+        const sent = await sendReportEmail(env, recipients, 'Termac One \u2014 Weekly Rep Activity Digest', html);
+        return json({ ok: sent, report: 'weekly_rep_digest' });
+      }
+
+      // ── DIRECT SEND: caller provides recipients + html ────────────────────
       if (!Array.isArray(body.recipients) || !body.recipients.length) {
         return json({ error: 'recipients (array) required' }, 400);
       }
