@@ -102,6 +102,11 @@ async function runEscalationCheck(env) {
 
   for (const lead of result.results) {
     if (!lead.is_hot) continue;
+    // STANDING RULE per Ted July 27: only Reception and DMS leads notify
+    // management. Harvested, scraped, and old database leads never blast anyone.
+    const NOTIFIABLE = ['reception','dms','digital message'];
+    const srcLower = (lead.source || '').toLowerCase();
+    if (!NOTIFIABLE.some(function(n){ return srcLower.indexOf(n) !== -1; })) continue;
     if (lead.source === 'Digital Business Card') continue;
 
     const ageMs   = now - (lead.created_at || now);
