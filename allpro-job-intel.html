@@ -281,10 +281,20 @@ input.field-input:focus,select.field-select:focus{outline:none;border-color:var(
     <div class="card">
       <div class="card-header">
         <span class="card-title">Job Documents</span>
-        <span style="font-size:10px;color:var(--soft)" id="docs-r2-path">—</span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:10px;color:var(--soft)" id="docs-r2-path">—</span>
+          <label class="btn btn-secondary btn-sm" style="cursor:pointer;margin:0">
+            + Add Document
+            <input type="file" accept=".pdf,.doc,.docx,.xlsx,.jpg,.jpeg,.png" multiple style="display:none" onchange="uploadDocFiles(this)">
+          </label>
+        </div>
       </div>
       <div class="card-body">
         <div class="docs-grid" id="docs-grid"></div>
+      </div>
+      <div id="uploaded-docs-section" style="margin-top:16px;display:none">
+        <div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--soft);margin-bottom:8px">Additional Documents</div>
+        <div class="docs-grid" id="uploaded-docs-grid"></div>
       </div>
     </div>
   </div>
@@ -880,6 +890,7 @@ function showTab(tab) {
   ['overview','financials','schedule','docs','photos','notes'].forEach(t => {
     document.getElementById('tab-'+t).style.display = t===tab ? '' : 'none';
   });
+  if (tab === 'docs') loadUploadedDocs();
   document.querySelectorAll('.tab').forEach((el,i) => {
     el.classList.toggle('active', ['overview','financials','schedule','docs','photos','notes'][i]===tab);
   });
@@ -898,6 +909,104 @@ function toast(msg) {
   t.classList.add('show');
   clearTimeout(_toastTimer);
   _toastTimer = setTimeout(()=>t.classList.remove('show'), 3000);
+}
+
+// ── DOCUMENT UPLOAD ─────────────────────────────────────────────
+async function uploadDocFiles(input) {
+  if (!JOB) { toast('No job loaded'); return; }
+  const files = Array.from(input.files);
+  if (!files.length) return;
+
+  for (const file of files) {
+    const label = prompt('Document label for "' + file.name + '":', file.name.replace(/\.[^.]+$/, ''));
+    if (label === null) continue; // cancelled
+
+    toast('Uploading ' + file.name + '...');
+
+    try {
+      // Convert to base64
+      const b64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+      const folder = JOB.customer_name || JOB.job_number || 'general';
+      const key = 'AllPro Jobs/' + folder + '/' + file.name;
+
+      // Upload to R2 via the photo upload Worker
+      const res = await fetch('https://termac-photo-upload.termac-one.workers.dev', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Origin': 'https://sales.mytermac.com' },
+        body: JSON.stringify({
+          bucket: 'job-docs',
+          key: key,
+          base64: b64,
+          contentType: file.type || 'application/octet-stream',
+        })
+      });
+      const result = await res.json();
+
+      if (!result.ok) throw new Error(result.error || 'Upload failed');
+
+      // Save to job_intel_photos table as a doc entry
+      const docRecord = {
+        id: 'doc_' + Date.now() + '_' + Math.random().toString(36).slice(2,6),
+        job_intel_id: JOB.id,
+        r2_url: result.url,
+        caption: label || file.name,
+        phase: 'document',
+        uploaded_by: 'Ted Scholl',
+        taken_at: new Date().toISOString().slice(0,10),
+        created_at: Date.now(),
+      };
+
+      await fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/job_intel_photos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+        body: JSON.stringify(docRecord)
+      });
+
+      PHOTOS.push(docRecord);
+      toast('✅ Uploaded: ' + (label || file.name));
+    } catch(e) {
+      toast('❌ Upload failed: ' + e.message);
+    }
+  }
+
+  input.value = '';
+  loadUploadedDocs();
+}
+
+async function loadUploadedDocs() {
+  if (!JOB) return;
+  try {
+    const res = await fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+      body: JSON.stringify({ sql: 'SELECT * FROM job_intel_photos WHERE job_intel_id = ? AND phase = ? ORDER BY created_at DESC', params: [JOB.id, 'document'] })
+    });
+    const data = await res.json();
+    const docs = (data.ok && data.results) ? data.results : [];
+    const section = document.getElementById('uploaded-docs-section');
+    const grid = document.getElementById('uploaded-docs-grid');
+    if (!section || !grid) return;
+
+    if (docs.length === 0) { section.style.display = 'none'; return; }
+    section.style.display = '';
+
+    grid.innerHTML = docs.map(d => {
+      const isPdf = d.r2_url && d.r2_url.toLowerCase().endsWith('.pdf');
+      const isImg = d.r2_url && /\.(jpg|jpeg|png|gif|webp)$/i.test(d.r2_url);
+      const icon = isPdf ? '📄' : isImg ? '🖼️' : '📎';
+      return '<a href="' + d.r2_url + '" target="_blank" class="doc-tile">'
+        + '<div class="doc-icon">' + icon + '</div>'
+        + '<div class="doc-name">' + (d.caption || 'Document') + '</div>'
+        + '<div class="doc-type">' + (d.taken_at || '') + '</div>'
+        + '</a>';
+    }).join('');
+  } catch(e) {}
 }
 
 // Note task toggle
