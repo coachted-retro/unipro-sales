@@ -147,18 +147,54 @@ function d1Query(sql, params) {
         '&body=' + encodeURIComponent(body);
       window.open(mailto, opts.target || '_blank');
     }
+    // 2026-07-27: reception leads were not reaching anyone. The old chain was
+    // Graph, then straight to window.open('mailto:'). When Graph failed for any
+    // reason the fallback opened a draft that the person at the desk had to
+    // notice and manually send, or that the popup blocker swallowed entirely.
+    // Either way the lead silently went nowhere and nothing said so.
+    // termac-notify's /send-report endpoint sends server-side through Resend
+    // with no user token and no browser involvement, so it cannot fail for any
+    // of the reasons Graph can. It now sits between the two as a real send.
+    function sendServerSide(htmlBody) {
+      return fetch('https://termac-notify.termac-one.workers.dev/send-report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ recipients: allRecipients, subject: subject, html: htmlBody })
+      })
+      .then(function (r) { return r.json(); })
+      .then(function (d) { return !!(d && d.ok); })
+      .catch(function () { return false; });
+    }
+    function notify(msg) {
+      var toastFn = global.spToast || global.rcpToast || global.toast || global.showToast;
+      if (typeof toastFn === 'function') toastFn(msg);
+    }
     if (!toList.length) { fallbackMailto(); return; }
     var htmlBody = String(body || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g, '<br>');
     var allRecipients = opts.cc ? toList.concat(String(opts.cc).split(',').map(function(s){ return s.trim(); }).filter(Boolean)) : toList;
     sendMailAsMe(allRecipients, subject, htmlBody).then(function(result) {
       if (result && result.ok) {
-        var toastFn = global.spToast || global.toast || global.showToast;
-        if (typeof toastFn === 'function') toastFn('\u2709\ufe0f Email sent to ' + toList.join(', '));
-      } else {
-        fallbackMailto();
+        notify('\u2709\ufe0f Email sent to ' + toList.join(', '));
+        return;
       }
+      // Graph failed. Send it server-side rather than handing the user a draft.
+      return sendServerSide(htmlBody).then(function (sent) {
+        if (sent) {
+          notify('\u2709\ufe0f Email sent to ' + toList.join(', '));
+        } else {
+          notify('\u26A0\uFE0F Email did NOT send. Opening a draft -- please press Send.');
+          fallbackMailto();
+        }
+      });
     }).catch(function() {
-      fallbackMailto();
+      return sendServerSide(htmlBody).then(function (sent) {
+        if (sent) {
+          notify('\u2709\ufe0f Email sent to ' + toList.join(', '));
+        } else {
+          notify('\u26A0\uFE0F Email did NOT send. Opening a draft -- please press Send.');
+          fallbackMailto();
+        }
+      });
     });
   }
 
