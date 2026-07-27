@@ -202,6 +202,63 @@ async function buildLoginActivityReport(env) {
   </div>`;
 }
 
+async function buildProposalDigest(env) {
+  // Only send if there was activity today
+  const today = new Date().toISOString().slice(0,10);
+  const todayStart = new Date(today).getTime();
+  let rows = [];
+  try {
+    const res = await fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/proposal_approvals?limit=50', {
+      headers: { 'X-API-Secret': env.D1_API_SECRET || 'termac2026' }
+    });
+    const data = await res.json();
+    rows = (data.results || data || []).filter(function(r) {
+      return r.submitted_at && r.submitted_at >= todayStart;
+    });
+  } catch(e) { return null; }
+  if (!rows.length) return null;
+
+  const base = 'https://sales.mytermac.com/allpro-quote-builder.html?quote_id=';
+  const statusLabel = { pending:'Pending Dan review', approved:'Approved', rejected:'Sent back to Ted' };
+  const statusColor = { pending:'#D97706', approved:'#16A34A', rejected:'#C8102E' };
+
+  const rows_html = rows.map(function(r) {
+    var link = base + encodeURIComponent(r.quote_id);
+    var status = statusLabel[r.status] || r.status;
+    var color = statusColor[r.status] || '#374151';
+    var val = r.quote_value ? '$' + Math.round(r.quote_value).toLocaleString() : '-';
+    return '<tr style="border-bottom:1px solid #E5E7EB">'
+      + '<td style="padding:10px 12px"><a href="' + link + '" style="color:#1B5FA8;font-weight:700;text-decoration:none">' + (r.business_name||'Unknown') + '</a></td>'
+      + '<td style="padding:10px 12px;font-weight:700">' + val + '</td>'
+      + '<td style="padding:10px 12px;color:' + color + ';font-weight:700">' + status + '</td>'
+      + '<td style="padding:10px 12px;color:#6B7280;font-size:12px">' + r.submitted_by + '</td>'
+      + '</tr>';
+  }).join('');
+
+  var total = rows.reduce(function(s,r){ return s + (r.quote_value||0); }, 0);
+
+  return '<div style="font-family:Arial,sans-serif;max-width:680px">'
+    + '<div style="background:#1A1D21;color:#fff;padding:20px 24px;border-radius:8px 8px 0 0">'
+    + '<div style="font-size:18px;font-weight:700">AllPro Proposal Activity</div>'
+    + '<div style="font-size:13px;color:#9CA3AF;margin-top:4px">' + new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'}) + '</div></div>'
+    + '<div style="background:#F9FAFB;border:1px solid #E5E7EB;border-top:none;padding:16px;border-radius:0 0 8px 8px">'
+    + '<div style="display:flex;gap:16px;margin-bottom:16px">'
+    + '<div style="flex:1;background:#fff;border:1px solid #E5E7EB;border-radius:8px;padding:14px;text-align:center">'
+    + '<div style="font-size:28px;font-weight:700">' + rows.length + '</div><div style="font-size:12px;color:#6B7280">Proposals today</div></div>'
+    + '<div style="flex:1;background:#fff;border:1px solid #E5E7EB;border-radius:8px;padding:14px;text-align:center">'
+    + '<div style="font-size:24px;font-weight:700;color:#16A34A">$' + Math.round(total).toLocaleString() + '</div><div style="font-size:12px;color:#6B7280">Total value</div></div>'
+    + '</div>'
+    + '<table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #E5E7EB;border-radius:8px;overflow:hidden">'
+    + '<thead><tr style="background:#F3F4F6"><th style="padding:10px 12px;text-align:left;font-size:12px;color:#374151">Customer</th>'
+    + '<th style="padding:10px 12px;text-align:left;font-size:12px;color:#374151">Value</th>'
+    + '<th style="padding:10px 12px;text-align:left;font-size:12px;color:#374151">Status</th>'
+    + '<th style="padding:10px 12px;text-align:left;font-size:12px;color:#374151">By</th></tr></thead>'
+    + '<tbody>' + rows_html + '</tbody></table>'
+    + '<div style="text-align:center;margin-top:16px">'
+    + '<a href="https://sales.mytermac.com/termac-os.html" style="color:#1B5FA8;font-size:13px;text-decoration:none">View full AllPro dashboard</a></div>'
+    + '</div></div>';
+}
+
 async function buildWeeklyRepDigest(env) {
   let opps = [], appts = [];
   try {
@@ -279,6 +336,14 @@ export default {
         const html = await buildLoginActivityReport(env);
         const sent = await sendReportEmail(env, recipients, 'Termac One \u2014 Weekly Login Activity Report', html);
         return json({ ok: sent, report: 'login_activity' });
+      }
+
+      if (reportKey === 'proposal_digest') {
+        const recipients = ['jkennedy@termac.com', 'soreilly@termac.com'];
+        const html = await buildProposalDigest(env);
+        if (!html) return json({ ok: true, skipped: 'no activity today' });
+        const sent = await sendReportEmail(env, recipients, 'Termac One - AllPro Proposal Activity', html);
+        return json({ ok: sent, report: 'proposal_digest' });
       }
 
       if (reportKey === 'weekly_rep_digest') {

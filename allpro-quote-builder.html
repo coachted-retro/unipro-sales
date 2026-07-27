@@ -312,7 +312,8 @@ button[aria-label*="AI"], button[aria-label*="Chat"] {
     <div class="trn-spacer" style="flex:1"></div>
     <button class="btn btn-ghost btn-sm" onclick="qbSaveDraft(false)">Save Draft</button>
     <button class="btn btn-green btn-sm" id="qbGenPdfBtn" onclick="qbGeneratePdf()">Generate PDF</button>
-    <button class="btn btn-blue btn-sm" id="qbSendBtn" onclick="qbSendQuote()">Send to Customer</button>
+    <button class="btn btn-sm" id="qbApproveBtn" onclick="qbSubmitForApproval()" style="background:#16A34A;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-weight:700;cursor:pointer;font-family:inherit">Submit for Approval</button>
+    <button class="btn btn-blue btn-sm" id="qbSendBtn" onclick="qbSendQuote()" style="font-size:11px;opacity:.7">Send Direct</button>
   </div>
 
   <div class="qb-layout">
@@ -692,7 +693,8 @@ button[aria-label*="AI"], button[aria-label*="Chat"] {
           <div style="margin-top:14px;display:flex;flex-direction:column;gap:8px">
             <button class="btn btn-gold" style="width:100%" onclick="qbSaveDraft(false)">Save Draft</button>
             <button class="btn btn-green" style="width:100%" onclick="qbGeneratePdf()">Generate PDF</button>
-            <button class="btn btn-blue" style="width:100%" onclick="qbSendQuote()">Send to Customer</button>
+            <button class="btn" style="width:100%;background:#16A34A;color:#fff;border:none;border-radius:7px;padding:11px;font-weight:800;cursor:pointer;margin-bottom:8px;font-family:inherit" onclick="qbSubmitForApproval()">Submit for Approval</button>
+            <button class="btn btn-blue" style="width:100%;font-size:12px;opacity:.7" onclick="qbSendQuote()">Send Direct</button>
           </div>
           <div id="pdfLink" style="display:none;margin-top:10px;text-align:center">
             <a id="pdfLinkA" href="#" target="_blank" style="font-size:12px;color:var(--blue);font-weight:700">Open Generated PDF</a>
@@ -2046,6 +2048,61 @@ function qbCallPdfWorker() {
 }
 
 // ============================================================
+// PROPOSAL APPROVAL WORKFLOW
+// ============================================================
+function qbSubmitForApproval() {
+  if (!_quoteId) { qbToast('Save the quote first'); return; }
+  var biz = ((document.getElementById('fBizName')||{}).value) || ((document.getElementById('fCustName')||{}).value) || 'Customer';
+  var gtEl = document.getElementById('grandTotal');
+  var val = parseFloat((gtEl ? gtEl.textContent : '0').replace(/[^0-9.]/g,'')) || 0;
+  var sess = null; try { sess = JSON.parse(localStorage.getItem('termac_staff_session')||'null'); } catch(e) {}
+  var btn = document.getElementById('qbApproveBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Submitting...'; }
+  var apprId = 'APPR-' + Date.now();
+  var submitter = (sess && sess.name) || 'Ted Scholl';
+  qbSaveDraft(true).then(function() {
+    return fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/proposal_approvals', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+      body: JSON.stringify({ id: apprId, quote_id: _quoteId, business_name: biz, quote_value: val,
+        submitted_by: submitter, submitted_at: Date.now(), status: 'pending',
+        created_at: Date.now(), updated_at: Date.now() })
+    });
+  }).then(function() {
+    return fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/allpro_quotes/' + encodeURIComponent(_quoteId), {
+      method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+      body: JSON.stringify({ approval_status: 'pending_approval', status: 'pending_approval',
+        approval_id: apprId, updated_at: Date.now() })
+    });
+  }).then(function() {
+    var link = 'https://sales.mytermac.com/allpro-quote-builder.html?quote_id=' + encodeURIComponent(_quoteId);
+    var html = '<div style="font-family:Arial,sans-serif;max-width:600px">'
+      + '<div style="background:#1A1D21;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">'
+      + '<div style="font-size:16px;font-weight:700">Proposal Ready for Review</div></div>'
+      + '<div style="background:#F9FAFB;padding:20px;border:1px solid #E5E7EB;border-radius:0 0 8px 8px">'
+      + '<p style="margin:0 0 12px">Ted has submitted a proposal for your review.</p>'
+      + '<p style="margin:0 0 16px"><strong>Customer:</strong> ' + biz
+      + '<br><strong>Value:</strong> $' + Math.round(val).toLocaleString() + '</p>'
+      + '<a href="' + link + '" style="display:inline-block;background:#1B5FA8;color:#fff;'
+      + 'padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700">Review Proposal</a>'
+      + '<p style="font-size:12px;color:#6B7280;margin-top:12px">'
+      + 'Approve, edit and approve, or send back with notes.</p></div></div>';
+    return fetch('https://termac-notify.termac-one.workers.dev/send-report', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipients: ['drini@termac.com'],
+        subject: 'Proposal Needs Review - ' + biz, html: html })
+    });
+  }).then(function() {
+    var badge = document.getElementById('qbStatusBadge');
+    if (badge) { badge.textContent = 'Pending Approval'; badge.className = 'badge';
+      badge.style.background = '#FEF3C7'; badge.style.color = '#92400E'; }
+    if (btn) { btn.disabled = true; btn.textContent = 'Submitted'; }
+    qbToast('Submitted to Dan for approval - email sent');
+  }).catch(function() {
+    if (btn) { btn.disabled = false; btn.textContent = 'Submit for Approval'; }
+    qbToast('Error submitting - try again');
+  });
+}
+
 // SEND QUOTE
 // ============================================================
 function qbSendQuote() {
