@@ -156,12 +156,21 @@ async function handleSsoExchange(request, env) {
   }
 
   const tokenUrl = 'https://login.microsoftonline.com/' + env.SSO_TENANT_ID + '/oauth2/v2.0/token';
+  // Accept the redirect URI from the browser so any registered mytermac.com
+  // subdomain works without a Worker secret change. Validate it is one of
+  // our known domains before sending to Azure.
+  const ALLOWED_REDIRECT_ORIGINS = ['https://sales.mytermac.com', 'https://my.mytermac.com', 'https://unipro-sales.pages.dev'];
+  let redirectUri = (body.redirect_uri || '').trim();
+  const originOk = ALLOWED_REDIRECT_ORIGINS.some(o => redirectUri.startsWith(o));
+  if (!redirectUri || !originOk) {
+    redirectUri = env.SSO_REDIRECT_URI;
+  }
   const params = new URLSearchParams({
     client_id: env.SSO_CLIENT_ID,
     client_secret: env.SSO_CLIENT_SECRET,
     grant_type: 'authorization_code',
     code: code,
-    redirect_uri: env.SSO_REDIRECT_URI,
+    redirect_uri: redirectUri,
     scope: 'openid profile email offline_access https://graph.microsoft.com/Mail.Send',
   });
 
