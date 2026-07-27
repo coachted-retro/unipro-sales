@@ -1911,10 +1911,15 @@ function spRenderWeekBanner() {
   return '<div style="background:linear-gradient(135deg,' + visitColor + 'dd,' + visitColor + '99);border-radius:10px;padding:12px 16px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">'
     + '<div>'
       + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:18px;color:#fff;letter-spacing:.04em">'
-        + info.visitLabel.toUpperCase() + ' — YOUR VISIT WEEK'
+        // 2026-07-26 per Tom Pittakas: the headline used to lead with the VISIT
+        // letter ("D WEEK -- YOUR VISIT WEEK"), which read as though the current
+        // week was D. Reps identify the week by the tech cycle and say "it's C
+        // week," so everyone had to mentally translate. Lead with the current
+        // week, then state the action.
+        + info.techLabel.toUpperCase() + ' — VISIT ' + info.visitLetter + ' ACCOUNTS'
       + '</div>'
       + '<div style="font-size:11px;color:rgba(255,255,255,.9);margin-top:2px">'
-        + 'This week: visit <b>' + info.visitLabel + '</b> accounts &nbsp;·&nbsp; Tech services <b>' + info.techLabel + '</b> accounts this week'
+        + 'Techs are servicing <b>' + info.techLabel + '</b> accounts now. You visit <b>' + info.visitLabel + '</b> accounts to stay a week ahead.'
       + '</div>'
     + '</div>'
     + '<div style="display:flex;gap:6px">'
@@ -1924,9 +1929,16 @@ function spRenderWeekBanner() {
           var bg = isVisit ? '#fff' : 'rgba(255,255,255,.2)';
           var fg = isVisit ? SP_WEEK_COLORS[l] : '#fff';
           var border = isTech ? '2px dashed rgba(255,255,255,.7)' : 'none';
-          return '<div style="width:30px;height:30px;border-radius:6px;background:' + bg + ';border:' + border + ';display:flex;align-items:center;justify-content:center;font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:14px;color:' + fg + '">'
-            + l
-            + '</div>';
+          // 2026-07-26: chips were solid for VISIT and dashed for TECH with no
+          // legend, which reinforced the same misread as the old headline (the
+          // solid one looks like "you are here"). Label them instead.
+          var tag = isVisit ? 'YOU' : (isTech ? 'NOW' : '');
+          return '<div style="display:flex;flex-direction:column;align-items:center;gap:2px">'
+            + '<div style="width:30px;height:30px;border-radius:6px;background:' + bg + ';border:' + border + ';display:flex;align-items:center;justify-content:center;font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:14px;color:' + fg + '">'
+              + l
+            + '</div>'
+            + '<div style="font-size:8px;font-weight:700;letter-spacing:.06em;color:rgba(255,255,255,.85);height:10px">' + tag + '</div>'
+          + '</div>';
         }).join('')
     + '</div>'
   + '</div>';
@@ -4870,13 +4882,39 @@ function spColdTargetAdd(btn) {
   spAddColdTargetAsStop(btn.dataset.date, btn.dataset.name, btn.dataset.addr);
 }
 
+// 2026-07-26: raw SELECT * against D1 returns snake_case column names, which
+// bypasses the FIELD_MAP hydration every other read path goes through. The
+// renderer below reads camelCase (a.recordId, a.locationId, a.contactName), so
+// every multi-word column silently came back undefined. That is why an
+// appointment created FROM a Location still offered "Create Lead / Location for
+// this stop" (a.recordId was undefined so linkedId was null), why the contact
+// never displayed (the renderer read a.contact, and the column is contact_name),
+// and why the AllPro intake auto-create never fired (it guards on !linkedId).
+// Single-word columns happened to line up, which is why the modal looked half
+// correct. Normalize here so the renderer gets what it expects.
+function spNormalizeApptRow(row) {
+  if (!row) return row;
+  var out = {};
+  Object.keys(row).forEach(function (k) {
+    out[k] = row[k];
+    var camel = k.replace(/_([a-z])/g, function (m, c) { return c.toUpperCase(); });
+    if (camel !== k) out[camel] = row[k];
+  });
+  // The renderer reads a.contact and a.phone; the columns are contact_name and
+  // contact_phone. Alias rather than rename so nothing else that reads the raw
+  // column breaks.
+  if (out.contact === undefined) out.contact = row.contact_name || '';
+  if (out.phone === undefined) out.phone = row.contact_phone || '';
+  return out;
+}
+
 function spViewApptDetail(apptId) {
   // Fetch appointment from D1 -- it is never in localStorage
   d1Query('SELECT * FROM appointments WHERE id=? LIMIT 1', [apptId])
   .then(function(res) {
     var a = res.ok && res.results && res.results[0];
     if (!a) { spToast('Appointment not found.'); return; }
-    _spViewApptDetailRender(apptId, a);
+    _spViewApptDetailRender(apptId, spNormalizeApptRow(a));
   });
 }
 function _spViewApptDetailRender(apptId, a) {
@@ -4888,10 +4926,25 @@ function _spViewApptDetailRender(apptId, a) {
   // (via record_id) to surface who to actually ask for on site.
   const accountsPool = crmLoad('accounts') || [];
   const leadsPool = crmLoad('leads') || [];
-  let linked = a.recordId
-    ? accountsPool.concat(leadsPool).find(function(r){ return r.id === a.recordId; })
+  // 2026-07-26: locations was never searched here, only accounts and leads. A
+  // Location-parented appointment therefore could not resolve even with a good
+  // record_id, which is the second half of the "Create Lead / Location" bug.
+  // Locations became a real entity on 2026-07-16 and this lookup was never
+  // updated to match the lifecycle model.
+  const locationsPool = crmLoad('locations') || [];
+  const searchPool = accountsPool.concat(leadsPool).concat(locationsPool);
+  // Prefer the typed FK, fall back to the legacy generic record_id. Existing
+  // rows only have the legacy pair, so the fallback has to stay until the
+  // backfill runs.
+  const linkKey = a.locationId || a.recordId || null;
+  let linked = linkKey
+    ? searchPool.find(function(r){ return r.id === linkKey; })
     : null;
-  let resolvedTab = a.recordId ? (a.tab || (accountsPool.some(r => r.id === a.recordId) ? 'accounts' : 'leads')) : null;
+  let resolvedTab = linkKey
+    ? (a.locationId ? 'locations'
+       : (a.tab || (accountsPool.some(r => r.id === a.recordId) ? 'accounts'
+                    : (locationsPool.some(r => r.id === a.recordId) ? 'locations' : 'leads'))))
+    : null;
 
   // Fix, added 2026-07-14 per Ted -- a lot of calendar stops (especially
   // ones surfaced from route/AI suggestions rather than booked directly
@@ -4930,7 +4983,7 @@ function _spViewApptDetailRender(apptId, a) {
   const location     = a.location || a.address || (linked && linked.address) || '';
   const business      = a.business || (linked && (linked.name || linked.business)) || '';
   const division      = a.division || (linked && linked.division) || '';
-  const linkedId       = a.recordId || (linked && linked.id) || null;
+  const linkedId       = a.locationId || a.recordId || (linked && linked.id) || null;
 
   var old = document.getElementById('spApptDetailModal');
   if (old) old.remove();
@@ -5166,6 +5219,25 @@ function spMoveAppt(apptId) {
   document.body.appendChild(wrap);
 }
 
+// 2026-07-26: helpers added because spSaveApptEdit and spDeleteAppt were both
+// calling spRenderCalendar() and spShowDayPanel(), neither of which is defined
+// anywhere in this file. Behind typeof guards they failed silently, so the
+// calendar never refreshed after a save or a delete.
+function spCloseApptEditModal() {
+  var m = document.getElementById('spApptEditModal');
+  if (m) m.remove();
+  var d = document.getElementById('spApptDetailModal');
+  if (d) d.remove();
+}
+
+function spRefreshCalendarView() {
+  if (typeof spRenderCalendarModalBody === 'function' && document.getElementById('spCalendarModal')) {
+    spRenderCalendarModalBody();
+  }
+  // Home agenda reflects the same appointments, so keep it in step.
+  if (typeof spBuildAgenda === 'function') { try { spBuildAgenda(); } catch (e) {} }
+}
+
 function spSaveApptEdit(apptId) {
   var newDate  = (document.getElementById('apptEditDate') || {}).value || '';
   var newTime  = (document.getElementById('apptEditTime') || {}).value || '';
@@ -5185,15 +5257,16 @@ function spSaveApptEdit(apptId) {
     body: JSON.stringify(updatePayload)
   }).then(function(r){ return r.json(); }).then(function(d){
     if (!d.ok) { if (typeof spToast === 'function') spToast('Save failed: ' + (d.error || 'unknown')); return; }
-      if (typeof spToast === 'function') spToast('Appointment updated.');
-    if (typeof spRenderCalendar === 'function') spRenderCalendar();
-    var selDay = document.querySelector('.sp-cal-day.sp-cal-selected, .sp-cal-day[data-selected]');
-    if (selDay && selDay.dataset.date && typeof spShowDayPanel === 'function') {
-      spShowDayPanel(selDay.dataset.date);
-    } else {
-      var todayCell = document.querySelector('.sp-cal-day.sp-cal-today, [data-today]');
-      if (todayCell && typeof spShowDayPanel === 'function') spShowDayPanel(todayCell.dataset.date || newDate);
-    }
+    // 2026-07-26: the write to D1 was always succeeding, but this handler never
+    // closed the modal and called spRenderCalendar()/spShowDayPanel(), NEITHER
+    // OF WHICH EXISTS ANYWHERE IN THIS FILE. Both calls were wrapped in typeof
+    // guards, so they failed silently. Result: the modal stayed open over a
+    // stale calendar and the toast fired behind the overlay, so a save that
+    // worked perfectly looked completely dead. The real renderer is
+    // spRenderCalendarModalBody().
+    spCloseApptEditModal();
+    if (typeof spToast === 'function') spToast('Appointment updated.');
+    spRefreshCalendarView();
   }).catch(function(){ if (typeof spToast === 'function') spToast('Save error -- check connection.'); });
 }
 
@@ -5209,9 +5282,11 @@ function spDeleteAppt(apptId) {
     var filtered = cached.filter(function(a){ return a.id !== apptId && a.recordId !== apptId; });
     if (filtered.length !== cached.length) crmSave('appointments', filtered);
   } catch(e) {}
-  // Re-render calendar immediately so it disappears from view
-  if (typeof spRenderCalendar === 'function') spRenderCalendar();
-  else if (typeof renderAll === 'function') renderAll();
+  // Re-render calendar immediately so it disappears from view.
+  // 2026-07-26: was calling the nonexistent spRenderCalendar() behind a typeof
+  // guard, so deletes never refreshed the calendar either.
+  spCloseApptEditModal();
+  spRefreshCalendarView();
   if (typeof spToast === 'function') spToast('Appointment deleted.');
   // Delete from D1 and write tombstone so other devices sync the deletion
   fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/appointments/' + apptId, {
@@ -11318,6 +11393,16 @@ async function spCommitAppt(patternKeysToClear) {
     id: newApptId,
     record_id: linkedId || null,
     tab: linkedTab || null,
+    // 2026-07-26: only the generic record_id/tab pair was ever written. Every
+    // read path (appointment detail modal, AllPro intake auto-create, anything
+    // tracing an appointment back to its site) looks for the typed FK, so zero
+    // of the 39 appointments in D1 had one and none of them could resolve.
+    // Write both: typed for readers, legacy pair for backward compatibility.
+    location_id:    linkedTab === 'locations'     ? (linkedId || null) : null,
+    lead_id:        linkedTab === 'leads'         ? (linkedId || null) : null,
+    contact_id:     linkedTab === 'contacts'      ? (linkedId || null) : null,
+    opportunity_id: linkedTab === 'opportunities' ? (linkedId || null) : null,
+    account_id:     linkedTab === 'accounts'      ? (linkedId || null) : null,
     type: mode,
     date: date,
     time: time,
@@ -11399,7 +11484,7 @@ async function spCommitAppt(patternKeysToClear) {
         (linkedId?'<button onclick="document.getElementById(\'spApptConfirm\').remove();spViewRecord(\''+linkedId+'\',\''+linkedTab+'\');" style="width:100%;background:none;border:1.5px solid #E5E7EB;color:#374151;border-radius:10px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;cursor:pointer">View This Location \u2192</button>':'') +
       '</div>' +
     '</div></div>');
-  if (typeof spRenderCalendar === 'function') spRenderCalendar();
+  spRefreshCalendarView();
   if (typeof spRenderHome === 'function') setTimeout(spRenderHome, 100);
 
   // Outlook calendar sync -- fully detached, cannot block save
@@ -11453,8 +11538,20 @@ async function spCommitAppt(patternKeysToClear) {
     try {
       var session = null;
       try { session = JSON.parse(localStorage.getItem('termac_staff_session') || 'null'); } catch(e){}
-      var isTed = session && (session.name === 'Ted Scholl' || session.email === 'tscholl@termac.com');
-      if (!isTed || mode !== 'appointment' || !linkedId) return;
+      // 2026-07-26: this block is the standing rule that an appointment creates
+      // an AllPro intake record. It has never fired. Three separate reasons:
+      //  1. !linkedId -- linkedId was null on Location-parented appointments
+      //     because the typed FK was never written (fixed in the payload above).
+      //  2. !isTed -- gated to one hardcoded person, read out of localStorage.
+      //     A stale or missing session silently disabled it, and nobody else on
+      //     the team could ever generate an intake.
+      //  3. No division check at all, so a UniPro-tagged appointment would file
+      //     into the AllPro board anyway.
+      // Now: anyone can trigger it, and it only fires for AllPro work.
+      var apptDivision = String(_spRep.division || '').toLowerCase();
+      var isAllProWork = apptDivision === 'allpro' || linkedTab === 'locations';
+      if (mode !== 'appointment' || !linkedId) return;
+      if (!isAllProWork) return;
       // Dedup: check if intake already exists for this linked record
       d1Query('SELECT id FROM allpro_projects WHERE (location_id=? OR account_id=?) AND stage=? LIMIT 1', [linkedId, linkedId, 'intake'])
       .then(function(existing) {
@@ -11465,7 +11562,12 @@ async function spCommitAppt(patternKeysToClear) {
       var payload = {
         id: projId,
         intake_business_name: linkedName || '',
-        location_id: locId || '',
+        // 2026-07-26: this read `locId`, which is not defined anywhere in this
+        // scope. Because the payload is built inside a .then() callback, the
+        // ReferenceError became an unhandled rejection rather than hitting the
+        // outer try/catch, so it would have failed silently even if the guards
+        // above had passed. Fourth independent reason this rule never worked.
+        location_id: (linkedTab === 'locations' ? linkedId : '') || '',
         account_id: acctId || '',
         opportunity_id: '',
         stage: 'intake',

@@ -1467,7 +1467,30 @@
   }
   repairLeadStageCache();
 
+  // 2026-07-26: d1Query lived as four separate local copies (sales-portal,
+  // gm-dashboard, allpro-billing-kpi, allpro-quote-builder) and did not exist
+  // here at all. termac-pipeline.html loads this file and calls d1Query six
+  // times, so its `typeof d1Query !== 'function'` guard always fired and the
+  // page showed "D1 not connected" with every panel stuck on its placeholder.
+  // It had never worked. Canonical copy now lives here; the local copies
+  // should be deleted so the four cannot drift apart.
+  function d1Query(sql, params) {
+    return fetch(D1_API_URL + '/db/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Secret': D1_API_SECRET },
+      body: JSON.stringify({ sql: sql, params: params || [] })
+    })
+    .then(function (res) { return res.json(); })
+    .catch(function (err) { return { ok: false, error: err.message }; });
+  }
+
+  // Pages call a bare d1Query(...), not TermacD1Sync.d1Query(...). Only define
+  // the global if the page has not already declared its own copy, so the four
+  // existing local definitions keep winning until they are removed.
+  if (typeof global.d1Query !== 'function') global.d1Query = d1Query;
+
   global.TermacD1Sync = {
+    d1Query: d1Query,
     d1Fetch: d1Fetch,
     d1Push: d1Push,
     d1PushBatch: d1PushBatch,
