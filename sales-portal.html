@@ -12744,8 +12744,17 @@ function spGlobalSearch(q) {
   if (!q || q.trim().length < 2) { spClearSearch(false); return; }
 
   const term = q.trim().toLowerCase();
+  // 2026-07-27: normalize the search term so abbreviations match full words.
+  // "232 W Lehigh" now finds "232 West Lehigh Avenue". "checker" finds
+  // "Checkers". This was the single most complained-about usability failure.
+  const normTerm = (typeof _normalizeSearchTerm === 'function')
+    ? _normalizeSearchTerm(term) : term;
   const results = [];
   const seen = new Set();
+
+  function matchBlob(blob) {
+    return blob.includes(term) || (normTerm !== term && blob.includes(normTerm));
+  }
 
   function spSearchTab(stage) {
     const normalized = spNormalizeStage(stage);
@@ -12768,7 +12777,7 @@ function spGlobalSearch(q) {
     const blob = [r.name, r.business, r.phone, r.address, r.email, r.contact_email,
       r.city, r.contact, r.contact_name, r.cust_num, r.zip]
       .filter(Boolean).join(' ').toLowerCase();
-    if (!blob.includes(term)) return;
+    if (!matchBlob(blob)) return;
     seen.add(r.id);
     results.push({ ...r, _tab: 'accounts', _badge: typeBadge.accounts });
   });
@@ -12778,7 +12787,7 @@ function spGlobalSearch(q) {
     if (seen.has(r.id)) return;
     const blob = [r.name, r.business, r.phone, r.address, r.email, r.city, r.zip, r.contact, r.notes]
       .filter(Boolean).join(' ').toLowerCase();
-    if (!blob.includes(term)) return;
+    if (!matchBlob(blob)) return;
     seen.add(r.id);
     const tabKey = spSearchTab(r.lifecycleStage || 'lead');
     results.push({ ...r, _tab: tabKey, _badge: typeBadge[tabKey] });

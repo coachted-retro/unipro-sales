@@ -294,12 +294,52 @@ function d1Query(sql, params) {
   // replacement for scanning a local copy of the whole table. Caller
   // is responsible for debouncing (same reasoning as the top search
   // bar fix -- this shouldn't fire on every keystroke either).
+  // Normalize a search term so abbreviations, punctuation, and spacing
+  // differences do not cause misses. "232 W Lehigh" finds "232 West Lehigh
+  // Avenue". "St" finds "Street". "checker" finds "Checkers Drive-In".
+  function _normalizeSearchTerm(term) {
+    var s = String(term || '').trim().toLowerCase();
+    // Street abbreviations
+    s = s.replace(/\bw\b/g, 'west').replace(/\be\b/g, 'east').replace(/\bn\b/g, 'north').replace(/\bs\b/g, 'south');
+    s = s.replace(/\bst\b/g, 'street').replace(/\bave\b/g, 'avenue').replace(/\brd\b/g, 'road');
+    s = s.replace(/\bblvd\b/g, 'boulevard').replace(/\bdr\b/g, 'drive').replace(/\bln\b/g, 'lane');
+    s = s.replace(/\bct\b/g, 'court').replace(/\bpl\b/g, 'place').replace(/\bpkwy\b/g, 'parkway');
+    return s.replace(/\s+/g, ' ').trim();
+  }
+
   async function d1SearchAccounts(term, limit) {
-    var like = '%' + String(term || '').trim() + '%';
-    return d1RawQuery(
-      'SELECT * FROM accounts WHERE name LIKE ? OR business LIKE ? OR phone LIKE ? OR address LIKE ? OR zip LIKE ? ORDER BY updated_at DESC LIMIT ?',
-      [like, like, like, like, like, limit || 50]
-    );
+    var raw = String(term || '').trim();
+    if (!raw) return [];
+    // Build two search strings: the original term AND the normalized one.
+    // This way "232 W" matches both "232 W Lehigh" (direct) and
+    // "232 West Lehigh" (normalized), and "checker" matches "Checkers".
+    var norm = _normalizeSearchTerm(raw);
+    var likeRaw  = '%' + raw  + '%';
+    var likeNorm = '%' + norm + '%';
+    // If normalized and raw are the same, one query is enough.
+    if (likeRaw.toLowerCase() === likeNorm.toLowerCase()) {
+      return d1RawQuery(
+        'SELECT * FROM accounts WHERE name LIKE ? OR business LIKE ? OR phone LIKE ? OR address LIKE ? OR zip LIKE ? ORDER BY updated_at DESC LIMIT ?',
+        [likeRaw, likeRaw, likeRaw, likeRaw, likeRaw, limit || 50]
+      );
+    }
+    // Otherwise run both and deduplicate by id.
+    var [r1, r2] = await Promise.all([
+      d1RawQuery(
+        'SELECT * FROM accounts WHERE name LIKE ? OR business LIKE ? OR phone LIKE ? OR address LIKE ? OR zip LIKE ? ORDER BY updated_at DESC LIMIT ?',
+        [likeRaw, likeRaw, likeRaw, likeRaw, likeRaw, limit || 50]
+      ),
+      d1RawQuery(
+        'SELECT * FROM accounts WHERE name LIKE ? OR business LIKE ? OR phone LIKE ? OR address LIKE ? OR zip LIKE ? ORDER BY updated_at DESC LIMIT ?',
+        [likeNorm, likeNorm, likeNorm, likeNorm, likeNorm, limit || 50]
+      )
+    ]);
+    var seen = new Set();
+    var combined = [];
+    [].concat(r1, r2).forEach(function(row) {
+      if (!seen.has(row.id)) { seen.add(row.id); combined.push(row); }
+    });
+    return combined.slice(0, limit || 50);
   }
 
   // Live phone-duplicate check against accounts specifically (leads/
@@ -1665,6 +1705,7 @@ function d1Query(sql, params) {
   }
 
   global.termacAddressAutocomplete = termacAddressAutocomplete;
+  global._normalizeSearchTerm = _normalizeSearchTerm;
 
   global.TermacD1Sync = {
     d1Fetch: d1Fetch,
