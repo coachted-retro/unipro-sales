@@ -2796,18 +2796,29 @@ function spRenderAccountsToWatch() {
 // reengageAfter), same shared account data, just surfaced here too instead
 // of only being visible in the Manager Portal.
 // ── DISH MACHINE TILE ──────────────────────────────────────────────────────
-// Shown for all reps — anyone can spot a dish machine opportunity.
-// Shows recent dish quotes for the current rep, plus a New Quote button
-// that opens the standalone termac-dish-quote.html builder.
-// Tom Pittakas additionally sees a Manager Portal back button in the nav
-// (wired below in spInitManagerControls).
+// 2026-07-26 per Ted: this used to render for every rep. Dish machine quoting
+// is Tom Pittakas's tool, so it now renders only for people whose staff_auth
+// portals array contains "dish_quotes". Driven by data, not a hardcoded name
+// list, so adding or removing someone is a staff_auth edit and not a deploy.
+function spCanQuoteDishMachines() {
+  var sess = null;
+  try { sess = JSON.parse(localStorage.getItem('termac_staff_session') || 'null'); } catch (e) {}
+  var portals = (sess && sess.portals) || [];
+  if (typeof portals === 'string') { try { portals = JSON.parse(portals); } catch (e) { portals = []; } }
+  return Array.isArray(portals) && portals.indexOf('dish_quotes') !== -1;
+}
+
 function spRenderDishMachineTile() {
+  if (!spCanQuoteDishMachines()) return '';
   // Load recent dish quotes for this rep from D1 — async, patches in after render
   setTimeout(function() {
     var container = document.getElementById('spDishRecentList');
     if (!container) return;
     var repEmail = (_spRep && _spRep.email) ? _spRep.email : '';
-    fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/termac_dish_quotes?limit=5', {
+    // 2026-07-26: this fetched every dish quote in the table with no filter at
+    // all. repEmail and repName were declared and never used, so any rep who
+    // saw the tile saw everyone else's quotes. Scope it to the logged-in rep.
+    fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/termac_dish_quotes?limit=5&rep_email=' + encodeURIComponent(repEmail), {
       headers: { 'X-API-Secret': 'termac2026' }
     }).then(function(r) { return r.json(); }).then(function(res) {
       if (!res.ok || !res.records || !res.records.length) {
