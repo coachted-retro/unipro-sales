@@ -102,11 +102,19 @@ async function runEscalationCheck(env) {
 
   for (const lead of result.results) {
     if (!lead.is_hot) continue;
-    // STANDING RULE per Ted July 27: only Reception and DMS leads notify
-    // management. Harvested, scraped, and old database leads never blast anyone.
-    const NOTIFIABLE = ['reception','dms','digital message'];
+    // STANDING RULE per Ted July 27 -- FINAL:
+    // Management is only looped in when a lead is ACTIVELY ROUTED to a
+    // salesperson by Kate (reception) or by DMS staff. That is the trigger.
+    // Harvested leads, scraped leads, anything that just populates a bucket
+    // for a rep to work through later -- those NEVER notify management.
+    // Nobody needs to know a bucket got filled. They need to know when a
+    // real human called or emailed and needs a rep to follow up NOW.
+    // The signal is assigned_rep being set AND source being reception/DMS.
     const srcLower = (lead.source || '').toLowerCase();
-    if (!NOTIFIABLE.some(function(n){ return srcLower.indexOf(n) !== -1; })) continue;
+    const isRoutedReception = srcLower.indexOf('reception') !== -1;
+    const isRoutedDMS = srcLower.indexOf('dms') !== -1 || srcLower.indexOf('digital message') !== -1;
+    const wasRouted = (isRoutedReception || isRoutedDMS) && !!(lead.assigned_rep);
+    if (!wasRouted) continue;
     if (lead.source === 'Digital Business Card') continue;
 
     const ageMs   = now - (lead.created_at || now);
