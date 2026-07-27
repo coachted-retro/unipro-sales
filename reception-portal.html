@@ -769,7 +769,9 @@ var RCP_REP_EMAILS = {
   'Dan Rini':      'drini@termac.com',
   'Joe McDonnell': 'jmcdonnell@termac.com',
   'Matt Belz':     'mbelz@termac.com',
-  "TJ O'Reilly":   'toreilly@termac.com',
+  // 2026-07-27: TJ O'Reilly (nephew, P2 territory) had toreilly@termac.com
+  // which is Terence O'Reilly (uncle, owner). Fixed to tjorielly@termac.com.
+  "TJ O'Reilly":   'tjorielly@termac.com',
   'Ted Scholl':    'tscholl@termac.com',
   'Todd Grill':    'tgrill@termac.com',
   'Tom Jordan':    'tjordan@termac.com',
@@ -786,35 +788,86 @@ var RCP_PAUL_BLOCK_TYPES = [
   'AllPro — Hood / Fabrication Inquiry', 'AllPro — New Build / Construction',
   'Fire Extinguisher — Sales / Inspection',
 ];
+// 2026-07-27 per Ted: every lead gets these 5 recipients -- the territory
+// rep (added dynamically) plus these 4 fixed escalation addresses.
+// Sean O'Reilly, Terence O'Reilly, Jim Kennedy, Tom Pittakas.
 var RCP_ESCALATION_EMAILS = ['jkennedy@termac.com', 'tpittakas@termac.com', 'soreilly@termac.com', 'toreilly@termac.com'];
 
 // Send an immediate email to the routed rep and queue a 1-hour escalation
 // to Jim + Tom P if no one marks the call as reached.
 function rcpEmailRepOnCall(call) {
   var repEmail = RCP_REP_EMAILS[call.routeTo];
-  if (!repEmail || typeof sendOrMailto !== 'function') return;
+  if (!repEmail) { rcpToast('\u26A0\uFE0F No email address for ' + (call.routeTo||'rep') + ' -- lead logged but NOT emailed.'); return; }
   // Paul Brahan is UniPro GM -- only gets ops/service calls, not sales leads.
   if (call.routeTo === 'Paul Brahan' && RCP_PAUL_BLOCK_TYPES.indexOf(call.callType) !== -1) return;
 
-  // Management always CC'd immediately on every routed call
-  var mgmtCC = RCP_ESCALATION_EMAILS.filter(function(e){ return e !== repEmail; });
-  var allRecipients = [repEmail].concat(mgmtCC);
+  // Per Ted July 27: 5 recipients on every lead.
+  // 1. The territory rep. 2. Jim Kennedy. 3. Tom Pittakas. 4. Terence O'Reilly. 5. Sean O'Reilly.
+  // RCP_ESCALATION_EMAILS already holds Jim, Tom P, Terence, Sean.
+  // Deduplicate in case the territory rep IS one of the escalation addresses.
+  var allRecipients = [repEmail].concat(
+    RCP_ESCALATION_EMAILS.filter(function(e){ return e !== repEmail; })
+  );
 
   var callerLine = [call.callerName, call.company].filter(Boolean).join(' / ');
-  var subject = '\uD83D\uDCDE Call Routed to ' + (call.routeTo||'Rep') + ' \u2014 ' + (callerLine || 'Unknown Caller');
-  var body = 'A call has been routed to you from Reception.\n\n'
+  var subject = '\uD83D\uDCDE New Lead \u2014 ' + (call.routeTo||'Rep') + ' \u2014 ' + (callerLine || 'Unknown Caller');
+  var bodyPlain = 'New lead from Reception.\n\n'
     + 'Caller: ' + (call.callerName || '\u2014') + '\n'
     + 'Company: ' + (call.company || '\u2014') + '\n'
     + 'Phone: ' + (call.phone || '\u2014') + '\n'
     + 'Address: ' + (call.address || '\u2014') + '\n'
     + 'Call Type: ' + (call.callType || '\u2014') + '\n'
     + 'Urgency: ' + (call.urgency || 'Normal') + '\n'
+    + 'Routed to: ' + (call.routeTo || '\u2014') + '\n'
     + 'Logged by: ' + (call.loggedBy || 'Reception') + '\n'
     + 'Time: ' + new Date(call.ts).toLocaleString('en-US', {weekday:'short',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) + '\n\n'
     + 'Notes:\n' + (call.notes || '(none)') + '\n\n'
-    + 'Log in to Termac One to view the full record: https://sales.mytermac.com';
+    + 'Log in to Termac One: https://sales.mytermac.com';
 
-  sendOrMailto(allRecipients, subject, body);
+  var bodyHtml = bodyPlain.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+
+  // Try Graph (sends as Kate), then Resend server-side, then tell Kate it failed.
+  // Kate must ALWAYS know the outcome. No silent failures.
+  function tryResend() {
+    return fetch('https://termac-notify.termac-one.workers.dev/send-report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipients: allRecipients, subject: subject, html: bodyHtml })
+    }).then(function(r){ return r.json(); }).then(function(d){ return !!(d && d.ok); }).catch(function(){ return false; });
+  }
+
+  if (typeof sendMailAsMe === 'function') {
+    sendMailAsMe(allRecipients, subject, bodyHtml).then(function(result) {
+      if (result && result.ok) {
+        rcpToast('\u2709\uFE0F Lead emailed to ' + allRecipients.length + ' recipients');
+        return;
+      }
+      return tryResend().then(function(sent) {
+        if (sent) {
+          rcpToast('\u2709\uFE0F Lead emailed to ' + allRecipients.length + ' recipients');
+        } else {
+          rcpToast('\u26A0\uFE0F Email FAILED -- call Ted or Jim immediately. Lead is saved in the log.');
+        }
+      });
+    }).catch(function() {
+      tryResend().then(function(sent) {
+        if (sent) {
+          rcpToast('\u2709\uFE0F Lead emailed to ' + allRecipients.length + ' recipients');
+        } else {
+          rcpToast('\u26A0\uFE0F Email FAILED -- call Ted or Jim immediately. Lead is saved in the log.');
+        }
+      });
+    });
+  } else {
+    // sendMailAsMe not loaded yet -- go straight to Resend
+    tryResend().then(function(sent) {
+      if (sent) {
+        rcpToast('\u2709\uFE0F Lead emailed to ' + allRecipients.length + ' recipients');
+      } else {
+        rcpToast('\u26A0\uFE0F Email FAILED -- call Ted or Jim immediately. Lead is saved in the log.');
+      }
+    });
+  }
 }
 
 function rcpLogCall(){
@@ -1571,13 +1624,13 @@ var RCP_TERRITORY_MAP = [
   // Tom Jordan -- P1 (Philadelphia, Termac division only)
   { prefix: '191', rep: "Tom Jordan",    priority: 3 },
 
-  // Tom Pittakas -- S1 (Southern Lehigh / Bucks / border NJ)
+  // Tom Pittakas -- S1 (Bucks County / Southern Lehigh border / NJ border)
+  // 2026-07-27: removed 180/183 (Brad Fickes S2 primaries) and 085/088
+  // (Joe McDonnell/Dan Rini NJ primaries) -- territory must not overlap.
+  // Tom is secondary on 189 (Bucks/Matt Belz P3 primary) and primary on
+  // the NJ border strip 078 where no other rep holds primary coverage.
   { prefix: '189', rep: "Tom Pittakas",  priority: 2 },
-  { prefix: '180', rep: "Tom Pittakas",  priority: 2 },
-  { prefix: '183', rep: "Tom Pittakas",  priority: 3 },
-  { prefix: '085', rep: "Tom Pittakas",  priority: 3 },
-  { prefix: '088', rep: "Tom Pittakas",  priority: 3 },
-  { prefix: '078', rep: "Tom Pittakas",  priority: 3 },
+  { prefix: '078', rep: "Tom Pittakas",  priority: 2 },
 ];
 
 // Returns array of { rep, priority } for a given zip, sorted by priority asc.
