@@ -203,7 +203,7 @@ const NOTIF_STAFF = {
     "email": "tjordan@termac.com"
   },
   "TJ O'Reilly": {
-    "email": "tjoreilly@termac.com"
+    "email": "tjorielly@termac.com"
   }
 };
 
