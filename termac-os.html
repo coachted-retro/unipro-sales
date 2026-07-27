@@ -15561,28 +15561,34 @@ function renderHotLeadPanel() {
       </div>
     </div>` +
   notifs.slice(0, 20).map(n => {
-    // 2026-07-27: every notification tap navigates to the linked record.
-    // If it has a dest_url, go there. If it has record_id + tab, build
-    // the URL. If neither, go to the sales dashboard leads tab.
-    // No more silent home-page redirects.
     const dest = n.dest_url ||
       (n.record_id && n.tab ? 'sales-portal.html?tab=' + n.tab + '&open=' + encodeURIComponent(n.record_id) : null) ||
       (n.lead_id ? 'sales-portal.html?tab=leads&open=' + encodeURIComponent(n.lead_id) : null) ||
       'sales-portal.html?tab=leads';
     const clickFn = `markNotifRead('${n.id}');window.location.href='${dest}';`;
-    const arrow = `<span style="font-size:10px;color:#1B5FA8;margin-left:6px">→ Open</span>`;
+    // Visual treatment by type:
+    // account_alert = amber (existing customer with issue -- high urgency)
+    // new_lead      = red   (new inbound -- hot)
+    // other         = blue  (general notification)
+    const isAcct = n.type === 'account_alert' || n.is_existing_account;
+    const isLead = n.type === 'new_lead' || (!isAcct && n.source && n.source.indexOf('Reception') !== -1);
+    const borderColor = isAcct ? '#D97706' : (isLead ? '#C8102E' : (typeColors[n.type]||'#1B5FA8'));
+    const bgColor = n.read ? '#F9FAFB' : (isAcct ? '#FFFBEB' : (isLead ? '#FEF2F2' : (typeBg[n.type]||'#DBEAFE')));
+    const badgeLabel = n.badge || (isAcct ? '⚠️ EXISTING ACCOUNT' : (isLead ? '🔥 NEW LEAD' : null));
+    const badge = badgeLabel
+      ? `<span style="background:${isAcct?'#FEF3C7':'#FEE2E2'};color:${isAcct?'#92400E':'#991B1B'};border-radius:4px;padding:1px 7px;font-size:9px;font-weight:800;font-family:Barlow Condensed,sans-serif;letter-spacing:.06em;margin-right:6px">${badgeLabel}</span>`
+      : '';
+    const arrow = `<span style="font-size:10px;color:#1B5FA8;margin-left:4px">→ Open</span>`;
     return `
-    <div onclick="${clickFn}" style="background:${n.read ? '#F9FAFB' : (typeBg[n.type]||'#FEF2F2')};border-radius:8px;border-left:3px solid ${typeColors[n.type]||'#C8102E'};padding:10px 12px;margin-bottom:8px;opacity:${n.read?'.65':'1'};cursor:pointer">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px">${n.icon||'🔔'} ${n.title||n.caller||'Reception Call'} ${arrow}</div>
-        <div style="display:flex;gap:6px;align-items:center">
-          <span style="font-size:10px;color:#6B7280">${n.date||''} ${n.time||''}</span>
-          ${!n.read ? '<span style="background:#C8102E;color:#fff;border-radius:99px;padding:0 6px;font-size:9px;font-weight:800">NEW</span>' : ''}
-        </div>
+    <div onclick="${clickFn}" style="background:${bgColor};border-radius:8px;border-left:4px solid ${borderColor};padding:10px 12px;margin-bottom:8px;opacity:${n.read?'.65':'1'};cursor:pointer">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:4px">
+        <div style="font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px">${badge}${n.title||n.caller||n.company||'Reception Call'} ${arrow}</div>
+        ${!n.read ? '<span style="background:#C8102E;color:#fff;border-radius:99px;padding:0 6px;font-size:9px;font-weight:800;flex-shrink:0;margin-left:4px">NEW</span>' : ''}
       </div>
-      <div style="font-size:11px;color:#6B7280;margin-bottom:3px">→ ${n.recipient||n.routeTo||'—'}</div>
+      <div style="font-size:11px;color:#6B7280;margin-bottom:3px">Routed to: ${n.recipient||n.routeTo||n.recipientName||'—'} &nbsp;·&nbsp; via ${n.loggedBy||'Reception'}</div>
+      ${n.phone ? `<div style="font-size:11px;color:#374151;margin-bottom:2px">📞 ${n.phone}</div>` : ''}
       <div style="font-size:12px;color:#374151">${n.body||n.notes||''}</div>
-      ${n.email ? `<div style="font-size:10px;color:#1B5FA8;margin-top:4px">📧 ${n.email}</div>` : ''}
+      <div style="font-size:10px;color:#9CA3AF;margin-top:4px">${new Date(n.ts||Date.now()).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}</div>
     </div>`;
   }).join('') +
   (notifs.length > 20 ? `<div style="font-size:11px;color:var(--soft);text-align:center;padding:6px">${notifs.length - 20} older records not shown</div>` : '');

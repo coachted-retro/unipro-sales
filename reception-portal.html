@@ -933,11 +933,16 @@ function rcpLogCall(){
   // not just ones that also create a new lead.
   if (routeTo && typeof _notifStore_get === 'function' && typeof _notifStore_set === 'function') {
     var notifs = _notifStore_get();
-    // 2026-07-27: every notification must carry a dest_url so tapping it
-    // navigates directly to the linked record. If this call was matched to
-    // an existing account/lead/contact by phone, link there. If not, link
-    // to the sales portal leads tab so at minimum the rep sees the pipeline.
-    // No more silent home-page redirects.
+    // Determine if this is an existing account/contact/lead or a brand new caller.
+    // This drives the notification type, priority badge, and routing urgency.
+    // Existing account = ACCOUNT ALERT (customer care, high urgency).
+    // No match = NEW LEAD (new business, hot).
+    var _isExistingAccount = !!(call.matchedRecordId && (call.matchedPool === 'accounts' || call.matchedPool === 'contacts'));
+    var _isExistingLead    = !!(call.matchedRecordId && call.matchedPool === 'leads');
+    var _notifType  = _isExistingAccount ? 'account_alert' : (_isExistingLead ? 'lead_followup' : 'new_lead');
+    var _notifBadge = _isExistingAccount ? '⚠️ EXISTING ACCOUNT' : '🔥 NEW LEAD';
+    var _notifColor = _isExistingAccount ? '#D97706' : '#C8102E';
+    var _notifPriority = _isExistingAccount ? 'urgent' : 'hot';
     var _notifTab = call.matchedPool || 'leads';
     var _notifRecordId = call.matchedRecordId || call.id;
     var _notifDest = call.matchedRecordId
@@ -949,11 +954,16 @@ function rcpLogCall(){
       caller: name || company,
       company: company,
       phone: phone,
-      notes: notes,
-      source: 'Reception — ' + (type || 'Inbound'),
+      notes: (_isExistingAccount ? '⚠️ EXISTING CUSTOMER — ' : '🔥 NEW LEAD — ') + (notes || 'No notes'),
+      source: _notifBadge + ' via Reception',
       loggedBy: (_rcpUser && _rcpUser.name) || 'Reception',
       ts: Date.now(),
       read: false,
+      type: _notifType,
+      priority: _notifPriority,
+      badge: _notifBadge,
+      badgeColor: _notifColor,
+      is_existing_account: _isExistingAccount,
       lead_id: call.matchedRecordId || null,
       record_id: _notifRecordId,
       tab: _notifTab,
