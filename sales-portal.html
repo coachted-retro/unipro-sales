@@ -4955,13 +4955,18 @@ function spNeedsAttention() {
   const now = Date.now();
   const day = 86400000;
   const alerts = [];
+  // 2026-07-27: when _spRep.coveringFor is set, include the absent rep's
+  // records in activity alerts. Ownership stays under the absent rep's name.
+  const _coverFor = _spRep && _spRep.coveringFor;
   const myAccounts = crmLoad('leads').filter(r => {
     const s = r.lifecycleStage || '';
+    const owner = r.ownedBy || r.assignedRep || '';
     return ['active','close','onboarding','first_service','renewal'].includes(s) &&
-      (!r.ownedBy || r.ownedBy === _spRep.name || !r.ownedBy);
-  }).concat(crmLoad('accounts').filter(r =>
-    (!r.ownedBy || r.ownedBy === _spRep.name || !r.ownedBy) && r.status === 'active' && r.confirmationStatus !== 'unconfirmed'
-  ));
+      (!owner || owner === _spRep.name || (_coverFor && owner === _coverFor) || !owner);
+  }).concat(crmLoad('accounts').filter(r => {
+    const owner = r.ownedBy || r.assignedRep || r.assigned_rep || '';
+    return (!owner || owner === _spRep.name || (_coverFor && owner === _coverFor) || !owner) && r.status === 'active' && r.confirmationStatus !== 'unconfirmed';
+  }));
 
   myAccounts.forEach(r => {
     const lastContact = r.lastContactDate ? new Date(r.lastContactDate).getTime() : (r.updated || r.created || 0);
@@ -7005,7 +7010,7 @@ async function spRenderAccountsTab(view) {
     document.getElementById('spAcctResults').innerHTML = '<div style="grid-column:1/-1;font-size:13px;color:var(--soft);padding:20px 0">Enter a ZIP code above to filter your accounts. Add a service to narrow further.</div>';
     return;
   } else if (activeView === 'mine') {
-    const rows = await d1MyAccounts(_spRep.name, 100);
+    const rows = await d1MyAccounts(_spRep.name, _spRep.coveringFor ? 200 : 100, _spRep.coveringFor);
     spRenderAcctResults(rows, 'No accounts assigned to you yet. Try Search All to find a specific one.');
   } else if (activeView === 'recent') {
     const rv = JSON.parse(sessionStorage.getItem('sp_recently_viewed') || '[]');
@@ -11386,6 +11391,9 @@ document.addEventListener('DOMContentLoaded', () => {
   _spRep = SP_REPS[loggedInName]
     ? { ...SP_REPS[loggedInName], name: loggedInName }
     : { initials: loggedInName.split(' ').map(function(w){return w[0]||'';}).join('').slice(0,2).toUpperCase(), territory: [], division: session.division || '', name: loggedInName };
+  // Carry the coverage flag from staff_auth into the rep object so any
+  // filter that checks _spRep can include the absent rep's records.
+  if (session.coveringFor) _spRep.coveringFor = session.coveringFor;
   // Keep the platform-wide name in sync for the other helpers in this file
   // that still read termac_current_user as a fallback.
   try { localStorage.setItem('termac_current_user', loggedInName); } catch(e) {}

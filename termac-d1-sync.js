@@ -272,10 +272,21 @@ function d1Query(sql, params) {
   // matches the same ownership rule the rest of the app already uses
   // for leads/contacts/locations, just asked of D1 directly instead of
   // filtering a giant local array that can no longer exist.
-  async function d1MyAccounts(repName, limit) {
+  async function d1MyAccounts(repName, limit, coveringFor) {
+    // 2026-07-27: when a rep is covering for an absent rep (e.g. Tom Pittakas
+    // covering for Chris Carzo), they need to see both their own accounts and
+    // the absent rep's accounts. Records stay attributed to the original rep --
+    // only visibility changes, not ownership. coveringFor is the absent rep's
+    // name, passed from _spRep.coveringFor on the session object.
+    if (coveringFor) {
+      return d1RawQuery(
+        "SELECT * FROM accounts WHERE (assigned_rep = ? OR assigned_rep = ?) AND (status IS NULL OR status != 'archived') ORDER BY updated_at DESC LIMIT ?",
+        [repName, coveringFor, limit || 200]
+      );
+    }
     return d1RawQuery(
       "SELECT * FROM accounts WHERE assigned_rep = ? AND (status IS NULL OR status != 'archived') ORDER BY updated_at DESC LIMIT ?",
-            [repName, limit || 100]
+      [repName, limit || 100]
     );
   }
 
