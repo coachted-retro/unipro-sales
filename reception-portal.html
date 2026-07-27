@@ -1691,148 +1691,21 @@ var _rcpAcSession = null;
 function rcpAttachAddressAutocomplete(){
   var input = document.getElementById('rcpCallerAddress');
   if (!input || input.dataset.acAttached) return;
-  input.dataset.acAttached = '1';
-
-  var box = document.createElement('div');
-  box.style.cssText = 'position:relative;width:100%';
-  input.parentNode.insertBefore(box, input);
-  box.appendChild(input);
-
-  var dropdown = document.createElement('div');
-  dropdown.style.cssText = 'position:absolute;top:100%;left:0;right:0;background:#fff;'
-    + 'border:1.5px solid var(--line,#D7DBE0);border-radius:8px;margin-top:2px;'
-    + 'box-shadow:0 4px 14px rgba(0,0,0,.15);z-index:9000;display:none;max-height:260px;overflow-y:auto';
-  box.appendChild(dropdown);
-
-  function showItems(items) {
-    if (!items.length) { dropdown.style.display = 'none'; return; }
-    dropdown.innerHTML = '';
-    items.forEach(function(it){
-      var row = document.createElement('div');
-      row.style.cssText = 'display:flex;align-items:flex-start;gap:8px;padding:10px 12px;'
-        + 'font-size:13px;color:#1A1D21;cursor:pointer;border-bottom:1px solid #F1F2F4';
-      var icon = document.createElement('span');
-      icon.textContent = it.isPlace ? '\uD83C\uDFE2' : '\uD83D\uDCCD';
-      icon.style.cssText = 'font-size:14px;flex-shrink:0;margin-top:1px';
-      var text = document.createElement('div');
-      var main = document.createElement('div');
-      main.style.fontWeight = '600';
-      main.textContent = it.main;
-      var sub = document.createElement('div');
-      sub.style.cssText = 'font-size:11px;color:#6B7280;margin-top:2px';
-      sub.textContent = it.secondary;
-      text.appendChild(main);
-      if (it.secondary) text.appendChild(sub);
-      row.appendChild(icon);
-      row.appendChild(text);
-      row.onmouseover = function(){ row.style.background = '#F5F6F8'; };
-      row.onmouseout  = function(){ row.style.background = '#fff'; };
-      row.onclick = function(){
-        // Fill what we know immediately
-        input.value = it.street || it.main;
-        var companyEl = document.getElementById('rcpCallerCompany');
-        if (companyEl && !companyEl.value && it.isPlace) companyEl.value = it.main;
-        dropdown.style.display = 'none';
-        // Fetch full place details to get the ZIP for territory resolution
-        if (it.placeId && RCP_GOOGLE_PLACES_KEY !== 'REPLACE_WITH_GOOGLE_PLACES_API_KEY') {
-          fetch('https://maps.googleapis.com/maps/api/place/details/json'
-            + '?place_id=' + it.placeId
-            + '&fields=address_components,formatted_address'
-            + '&key=' + RCP_GOOGLE_PLACES_KEY)
-          .then(function(r){ return r.json(); })
-          .then(function(d){
-            var comps = (d.result && d.result.address_components) || [];
-            var zip = '';
-            var street = '';
-            comps.forEach(function(c){
-              if (c.types.indexOf('postal_code') !== -1) zip = c.long_name;
-              if (c.types.indexOf('street_number') !== -1) street = c.long_name;
-              if (c.types.indexOf('route') !== -1) street += (street ? ' ' : '') + c.long_name;
-            });
-            if (street) input.value = street;
-            var zipEl = document.getElementById('rcpCallerZip');
-            if (zipEl && zip) { zipEl.value = zip; rcpResolveTerritory(zip); }
-          }).catch(function(){});
-        } else if (it.zip) {
-          var zipEl = document.getElementById('rcpCallerZip');
-          if (zipEl) { zipEl.value = it.zip; rcpResolveTerritory(it.zip); }
-        }
-      };
-      dropdown.appendChild(row);
+  // 2026-07-27: replaced the bespoke Google Places implementation with the
+  // shared termacAddressAutocomplete function from termac-d1-sync.js.
+  // The API key now lives in a Cloudflare Worker secret (GOOGLE_MAPS_KEY on
+  // unipro-ai-proxy) and never appears in browser source. All address fields
+  // across the platform use the same function, so any update fixes everywhere.
+  if (typeof termacAddressAutocomplete === 'function') {
+    termacAddressAutocomplete(input, {
+      fillZip: 'rcpCallerZip',
+      fillCompany: 'rcpCallerCompany',
+      fillPhone: 'rcpCallerPhone',
+      onSelect: function(result) {
+        if (result.zip) rcpResolveTerritory(result.zip);
+      }
     });
-    // Google attribution required by ToS
-    if (RCP_GOOGLE_PLACES_KEY !== 'REPLACE_WITH_GOOGLE_PLACES_API_KEY') {
-      var attr = document.createElement('div');
-      attr.style.cssText = 'padding:6px 12px;text-align:right';
-      attr.innerHTML = '<img src="https://maps.gstatic.com/mapfiles/api-3/images/powered-by-google-on-white3.png" style="height:14px" alt="Powered by Google">';
-      dropdown.appendChild(attr);
-    }
-    dropdown.style.display = 'block';
   }
-
-  function fetchGooglePlaces(text) {
-    if (RCP_GOOGLE_PLACES_KEY === 'REPLACE_WITH_GOOGLE_PLACES_API_KEY') {
-      // Key not set -- fall back to ORS so nothing breaks
-      fetchORS(text);
-      return;
-    }
-    // New session token per Places billing best practice
-    if (!_rcpAcSession) _rcpAcSession = Math.random().toString(36).slice(2);
-    fetch('https://maps.googleapis.com/maps/api/place/autocomplete/json'
-      + '?input=' + encodeURIComponent(text)
-      + '&types=establishment|geocode'
-      + '&components=country:us'
-      + '&location=40.0,-75.2&radius=80000'
-      + '&sessiontoken=' + _rcpAcSession
-      + '&key=' + RCP_GOOGLE_PLACES_KEY)
-    .then(function(r){ return r.json(); })
-    .then(function(data){
-      var preds = data.predictions || [];
-      if (!preds.length) { fetchORS(text); return; }
-      var items = preds.slice(0, 6).map(function(p){
-        var isPlace = p.types && p.types.indexOf('establishment') !== -1;
-        return {
-          main: p.structured_formatting.main_text,
-          secondary: p.structured_formatting.secondary_text || '',
-          street: '',
-          zip: '',
-          placeId: p.place_id,
-          isPlace: isPlace
-        };
-      });
-      showItems(items);
-    })
-    .catch(function(){ fetchORS(text); });
-  }
-
-  function fetchORS(text) {
-    fetch('https://ors-route-proxy.termac-one.workers.dev/autocomplete', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: text })
-    }).then(function(r){ return r.json(); }).then(function(data){
-      var suggestions = (data && data.suggestions) || [];
-      var items = suggestions.map(function(s){
-        return { main: (s.label||'').split(',')[0], secondary: (s.label||'').split(',').slice(1).join(',').trim(), street: s.street||'', zip: s.zip||'', placeId: null, isPlace: false };
-      });
-      showItems(items);
-    }).catch(function(){ dropdown.style.display = 'none'; });
-  }
-
-  input.addEventListener('input', function(){
-    var text = input.value.trim();
-    clearTimeout(_rcpAcTimer);
-    if (text.length < 3) { dropdown.style.display = 'none'; return; }
-    _rcpAcTimer = setTimeout(function(){ fetchGooglePlaces(text); }, 280);
-  });
-
-  input.addEventListener('focus', function(){
-    // New session token each time the field is focused (Google ToS)
-    _rcpAcSession = Math.random().toString(36).slice(2);
-  });
-
-  document.addEventListener('click', function(e){
-    if (!box.contains(e.target)) dropdown.style.display = 'none';
-  });
 }
 
 function rcpToast(msg,dur=2800){

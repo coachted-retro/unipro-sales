@@ -8367,7 +8367,12 @@ function generateAccountNumber(division){
 
 // ── ADDRESS AUTOCOMPLETE (reuses the existing ors-route-proxy Worker / ORS account,
 // same key already used for route optimization, no new signup needed) ──
-const ADDR_AUTOCOMPLETE_PROXY = 'https://ors-route-proxy.termac-one.workers.dev';
+// 2026-07-27: switched address autocomplete from ORS geocoder to the
+// Google Places proxy on unipro-ai-proxy. API key lives in a Worker secret.
+// The shared termacAddressAutocomplete() function in termac-d1-sync.js is
+// the canonical implementation; these wrappers stay for backward compatibility
+// with the split-field and business-name forms that have their own wiring.
+const ADDR_AUTOCOMPLETE_PROXY = 'https://unipro-ai-proxy.termac-one.workers.dev';
 let _addrAcTimer = null;
 function attachAddressAutocomplete(inputId){
   const input = document.getElementById(inputId);
@@ -8396,12 +8401,9 @@ function attachAddressAutocomplete(inputId){
 }
 async function fetchAddressSuggestions(text, dropdown, input){
   try {
-    const res = await fetch(ADDR_AUTOCOMPLETE_PROXY + '/autocomplete', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text })
-    });
+    const res = await fetch(ADDR_AUTOCOMPLETE_PROXY + '/maps/autocomplete?q=' + encodeURIComponent(text));
     const data = await res.json();
-    const suggestions = data.suggestions || [];
+    const suggestions = (data.predictions || []).map(function(p){ return { label: p.main + (p.secondary ? ', ' + p.secondary : ''), city:'', state:'', zip:'', placeId: p.placeId }; });
     if (!suggestions.length) { dropdown.style.display = 'none'; return; }
     dropdown.innerHTML = suggestions.map((s, i) =>
       '<div data-i="' + i + '" style="padding:9px 12px;font-size:13px;cursor:pointer;border-bottom:1px solid #F1F2F4" '
@@ -8456,12 +8458,9 @@ function attachBusinessNameAutocomplete(inputId, addrId, cityId, stateId, zipId)
 }
 async function fetchBusinessSuggestions(text, dropdown, input, addrId, cityId, stateId, zipId){
   try {
-    const res = await fetch(ADDR_AUTOCOMPLETE_PROXY + '/autocomplete', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text })
-    });
+    const res = await fetch(ADDR_AUTOCOMPLETE_PROXY + '/maps/autocomplete?q=' + encodeURIComponent(text));
     const data = await res.json();
-    const suggestions = data.suggestions || [];
+    const suggestions = (data.predictions || []).map(function(p){ return { label: p.main + (p.secondary ? ', ' + p.secondary : ''), city:'', state:'', zip:'', placeId: p.placeId }; });
     if (!suggestions.length) { dropdown.style.display = 'none'; return; }
     dropdown.innerHTML = suggestions.map((s, i) =>
       '<div data-i="' + i + '" style="padding:9px 12px;font-size:13px;cursor:pointer;border-bottom:1px solid #F1F2F4" '
@@ -8515,12 +8514,9 @@ function attachAddressAutocompleteSplit(inputId, cityId, stateId, zipId){
 }
 async function fetchAddressSuggestionsSplit(text, dropdown, input, cityId, stateId, zipId){
   try {
-    const res = await fetch(ADDR_AUTOCOMPLETE_PROXY + '/autocomplete', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text })
-    });
+    const res = await fetch(ADDR_AUTOCOMPLETE_PROXY + '/maps/autocomplete?q=' + encodeURIComponent(text));
     const data = await res.json();
-    const suggestions = data.suggestions || [];
+    const suggestions = (data.predictions || []).map(function(p){ return { label: p.main + (p.secondary ? ', ' + p.secondary : ''), city:'', state:'', zip:'', placeId: p.placeId }; });
     if (!suggestions.length) { dropdown.style.display = 'none'; return; }
     dropdown.innerHTML = suggestions.map((s, i) =>
       '<div data-i="' + i + '" style="padding:9px 12px;font-size:13px;cursor:pointer;border-bottom:1px solid #F1F2F4" '

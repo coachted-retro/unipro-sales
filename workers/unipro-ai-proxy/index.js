@@ -377,6 +377,77 @@ export default {
       return handleDB(request, env, origin, pathParts.slice(1), method);
     }
 
+    // Google Places autocomplete proxy -- keeps the API key server-side so
+    // it never appears in browser source. Accepts GET with ?q=<search term>
+    // and optionally &lat=&lng= for location bias. Returns Places predictions
+    // in a consistent shape regardless of Google API version changes.
+    if (pathParts[0] === 'maps' && pathParts[1] === 'autocomplete') {
+      if (!env.GOOGLE_MAPS_KEY) return json({ ok: false, error: 'Maps not configured' }, 503, origin);
+      const q = url.searchParams.get('q') || '';
+      if (q.length < 2) return json({ ok: true, predictions: [] }, 200, origin);
+      const lat  = url.searchParams.get('lat') || '40.0';
+      const lng  = url.searchParams.get('lng') || '-75.2';
+      const radius = url.searchParams.get('radius') || '80000';
+      const gUrl = 'https://maps.googleapis.com/maps/api/place/autocomplete/json'
+        + '?input=' + encodeURIComponent(q)
+        + '&types=establishment|geocode'
+        + '&components=country:us'
+        + '&location=' + lat + ',' + lng
+        + '&radius=' + radius
+        + '&key=' + env.GOOGLE_MAPS_KEY;
+      try {
+        const gr = await fetch(gUrl);
+        const gd = await gr.json();
+        const predictions = (gd.predictions || []).slice(0, 6).map(function(p) {
+          return {
+            placeId:   p.place_id,
+            main:      p.structured_formatting.main_text,
+            secondary: p.structured_formatting.secondary_text || '',
+            isPlace:   p.types && p.types.indexOf('establishment') !== -1,
+          };
+        });
+        return json({ ok: true, predictions: predictions }, 200, origin);
+      } catch (e) {
+        return json({ ok: false, error: 'Places lookup failed' }, 502, origin);
+      }
+    }
+
+    // Google Places detail -- resolves a placeId to full address + ZIP
+    if (pathParts[0] === 'maps' && pathParts[1] === 'detail') {
+      if (!env.GOOGLE_MAPS_KEY) return json({ ok: false, error: 'Maps not configured' }, 503, origin);
+      const placeId = url.searchParams.get('place_id') || '';
+      if (!placeId) return json({ ok: false, error: 'place_id required' }, 400, origin);
+      const gUrl = 'https://maps.googleapis.com/maps/api/place/details/json'
+        + '?place_id=' + encodeURIComponent(placeId)
+        + '&fields=address_components,formatted_address,name,formatted_phone_number,geometry'
+        + '&key=' + env.GOOGLE_MAPS_KEY;
+      try {
+        const gr = await fetch(gUrl);
+        const gd = await gr.json();
+        const comps = (gd.result && gd.result.address_components) || [];
+        const get = function(type) {
+          var c = comps.find(function(x){ return x.types && x.types.indexOf(type) !== -1; });
+          return c ? c.long_name : '';
+        };
+        return json({
+          ok: true,
+          name:             (gd.result && gd.result.name) || '',
+          formatted:        (gd.result && gd.result.formatted_address) || '',
+          phone:            (gd.result && gd.result.formatted_phone_number) || '',
+          street_number:    get('street_number'),
+          route:            get('route'),
+          city:             get('locality') || get('sublocality'),
+          state:            get('administrative_area_level_1'),
+          zip:              get('postal_code'),
+          country:          get('country'),
+          lat:              gd.result && gd.result.geometry && gd.result.geometry.location.lat || null,
+          lng:              gd.result && gd.result.geometry && gd.result.geometry.location.lng || null,
+        }, 200, origin);
+      } catch (e) {
+        return json({ ok: false, error: 'Place detail lookup failed' }, 502, origin);
+      }
+    }
+
     // Public campaign unsubscribe link, GET only, no auth
     if (pathParts[0] === 'campaign' && pathParts[1] === 'unsubscribe' && method === 'GET') {
       return handleCampaignUnsubscribe(request, env, origin);

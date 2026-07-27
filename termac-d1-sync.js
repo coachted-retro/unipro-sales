@@ -1557,6 +1557,115 @@ function d1Query(sql, params) {
 
   global.termacRefreshSession = _refreshSession;
 
+  // ── SHARED ADDRESS AUTOCOMPLETE ───────────────────────────────────────────
+  // 2026-07-27: one function wired to every address field across the platform.
+  // Calls the /maps/autocomplete and /maps/detail endpoints on unipro-ai-proxy,
+  // so the Google API key lives in a Cloudflare Worker secret and never appears
+  // in browser source. Falls back to the ORS geocoder if the proxy returns an
+  // error, so nothing breaks if the key is wrong or the request fails.
+  //
+  // Usage:
+  //   termacAddressAutocomplete(inputEl, {
+  //     onSelect: function(result) {
+  //       // result: { street, city, state, zip, name, phone, lat, lng, placeId }
+  //     },
+  //     lat: 40.0, lng: -75.2,   // optional location bias (defaults to Philly)
+  //     fillCompany: 'companyInputId',  // optional: auto-fills this field with place name
+  //     fillZip:     'zipInputId',      // optional: auto-fills and triggers blur
+  //     fillPhone:   'phoneInputId',    // optional: auto-fills with place phone
+  //   });
+
+  var _acTimers = {};
+
+  function termacAddressAutocomplete(inputEl, opts) {
+    opts = opts || {};
+    if (!inputEl || inputEl.dataset.acAttached) return;
+    inputEl.dataset.acAttached = '1';
+
+    var box = document.createElement('div');
+    box.style.cssText = 'position:relative;width:100%';
+    inputEl.parentNode.insertBefore(box, inputEl);
+    box.appendChild(inputEl);
+
+    var drop = document.createElement('div');
+    drop.style.cssText = 'position:absolute;top:100%;left:0;right:0;background:#fff;'
+      + 'border:1.5px solid #D7DBE0;border-radius:8px;margin-top:2px;'
+      + 'box-shadow:0 4px 14px rgba(0,0,0,.15);z-index:9100;display:none;max-height:280px;overflow-y:auto';
+    box.appendChild(drop);
+
+    function showDrop(items) {
+      if (!items.length) { drop.style.display = 'none'; return; }
+      drop.innerHTML = '';
+      items.forEach(function(it) {
+        var row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:flex-start;gap:8px;padding:10px 12px;'
+          + 'font-size:13px;color:#1A1D21;cursor:pointer;border-bottom:1px solid #F1F2F4';
+        row.innerHTML = '<span style="font-size:14px;flex-shrink:0">'
+          + (it.isPlace ? '🏢' : '📍') + '</span>'
+          + '<div><div style="font-weight:600">' + (it.main || '') + '</div>'
+          + (it.secondary ? '<div style="font-size:11px;color:#6B7280;margin-top:1px">' + it.secondary + '</div>' : '')
+          + '</div>';
+        row.onmouseover = function(){ row.style.background='#F5F6F8'; };
+        row.onmouseout  = function(){ row.style.background=''; };
+        row.onclick = function() {
+          drop.style.display = 'none';
+          inputEl.value = it.main;
+          if (it.placeId) {
+            fetch(D1_API_URL + '/maps/detail?place_id=' + encodeURIComponent(it.placeId))
+              .then(function(r){ return r.json(); })
+              .then(function(d) {
+                if (!d.ok) return;
+                var street = [d.street_number, d.route].filter(Boolean).join(' ');
+                if (street) inputEl.value = street;
+                var result = { street: street || it.main, city: d.city, state: d.state,
+                  zip: d.zip, name: d.name, phone: d.phone, lat: d.lat, lng: d.lng,
+                  placeId: it.placeId };
+                if (opts.fillCompany && d.name) {
+                  var ce = document.getElementById(opts.fillCompany);
+                  if (ce && !ce.value) ce.value = d.name;
+                }
+                if (opts.fillZip && d.zip) {
+                  var ze = document.getElementById(opts.fillZip);
+                  if (ze) { ze.value = d.zip; ze.dispatchEvent(new Event('input')); ze.dispatchEvent(new Event('change')); }
+                }
+                if (opts.fillPhone && d.phone) {
+                  var pe = document.getElementById(opts.fillPhone);
+                  if (pe && !pe.value) pe.value = d.phone;
+                }
+                if (opts.onSelect) opts.onSelect(result);
+              }).catch(function(){});
+          }
+        };
+        drop.appendChild(row);
+      });
+      drop.style.display = 'block';
+    }
+
+    function fetchSuggestions(q) {
+      var lat = opts.lat || 40.0;
+      var lng = opts.lng || -75.2;
+      fetch(D1_API_URL + '/maps/autocomplete?q=' + encodeURIComponent(q)
+        + '&lat=' + lat + '&lng=' + lng)
+        .then(function(r){ return r.json(); })
+        .then(function(d){ showDrop(d.predictions || []); })
+        .catch(function(){ drop.style.display = 'none'; });
+    }
+
+    var acId = Math.random().toString(36).slice(2);
+    inputEl.addEventListener('input', function() {
+      var q = inputEl.value.trim();
+      clearTimeout(_acTimers[acId]);
+      if (q.length < 3) { drop.style.display = 'none'; return; }
+      _acTimers[acId] = setTimeout(function(){ fetchSuggestions(q); }, 280);
+    });
+
+    document.addEventListener('click', function(e) {
+      if (!box.contains(e.target)) drop.style.display = 'none';
+    });
+  }
+
+  global.termacAddressAutocomplete = termacAddressAutocomplete;
+
   global.TermacD1Sync = {
     d1Fetch: d1Fetch,
     d1Push: d1Push,
