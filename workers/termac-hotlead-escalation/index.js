@@ -1,38 +1,57 @@
 /**
  * termac-hotlead-escalation — Termac One
- * Deployed: 2026-07-10
+ * Updated: 2026-07-27 per Ted Scholl
  *
- * Purpose: if a hot inbound lead (Digital Business Card, harvester, DMS,
- * eventually website) sits unaddressed for too long, Jim Kennedy and Tom
- * Pittakas get notified so a rep isn't silently sitting on a real
- * opportunity. Per Ted: 60-minute threshold, both get notified.
+ * TWO-PHASE NOTIFICATION MODEL:
  *
- * "Unaddressed" = is_hot = 1 AND is_new_lead = 1. is_new_lead gets
- * cleared automatically the moment a rep actually opens the lead in
- * sales-portal.html (see spViewRecord) -- so this reuses that existing
- * signal rather than inventing a new one.
+ * Phase 1 -- IMMEDIATE (fires on first cron cycle after lead arrives):
+ *   Rep + Jim Kennedy + Tom Pittakas + Sean O'Reilly + Terence O'Reilly.
+ *   Everyone sees it right away. Only the rep is responsible for responding.
  *
- * Runs on a Cloudflare Cron Trigger (see wrangler.toml, every 15 minutes)
- * so this fires even if nobody has the app open — a closed browser
- * should never be the reason an escalation doesn't happen. Also exposes
- * a GET /run route for manual testing without waiting for the schedule.
+ * Phase 2 -- ESCALATION (30 minutes later if rep has not acted):
+ *   Management only: Jim, Tom, Sean, Terence.
+ *   Rep does NOT get a second blast -- they already know.
  *
- * Talks to termac-notify over a Service Binding (env.NOTIFY_SERVICE), not
- * a raw fetch to its public *.workers.dev URL — same reason as
- * termac-booking-api: Cloudflare blocks worker-to-worker fetch() to
- * public workers.dev URLs (error 1042, not JSON). Do not revert this to
- * a plain fetch(...) call.
+ * Grace periods after rep action stop the clock:
+ *   Spoke / Acknowledged -> never escalate again
+ *   Lead viewed          -> 4 hours
+ *   Left voicemail       -> 24 hours
+ *   No answer            -> 2 hours
+ *
+ * Cron runs every 15 min. 30-min threshold fires on the second cycle.
  */
 
-const ESCALATION_THRESHOLD_MS = 60 * 60 * 1000; // 60 minutes, per Ted
-// 2026-07-12: Jim + Tom pulled off lead notifications for now per Ted, while
-// DMS gets populated with a large batch of new leads (would otherwise spam
-// them). Cron still runs and still marks leads escalated, it just has
-// nobody to notify. Restore by uncommenting the two lines below.
-const ESCALATION_RECIPIENTS = [
-  // { name: 'Jim Kennedy', email: 'jkennedy@termac.com' },
-  // { name: 'Tom Pittakas', email: 'tpittakas@termac.com' },
+const ESCALATION_THRESHOLD_MS = 30 * 60 * 1000;
+
+const ACTION_GRACE_MS = {
+  'Spoke with customer':  Infinity,
+  'Acknowledged':         Infinity,
+  'Lead viewed':          4 * 60 * 60 * 1000,
+  'Left voicemail':       24 * 60 * 60 * 1000,
+  'No answer':            2 * 60 * 60 * 1000,
+};
+const DEFAULT_GRACE_MS = 2 * 60 * 60 * 1000;
+
+const MANAGEMENT = [
+  { name: 'Jim Kennedy',      email: 'jkennedy@termac.com'  },
+  { name: 'Tom Pittakas',     email: 'tpittakas@termac.com' },
+  { name: "Sean O'Reilly",    email: 'soreilly@termac.com'  },
+  { name: "Terence O'Reilly", email: 'toreilly@termac.com'  },
 ];
+
+const REP_EMAILS = {
+  'Ted Scholl':    'tscholl@termac.com',
+  'Brad Fickes':   'bfickes@termac.com',
+  'Chris Carzo':   'ccarzo@termac.com',
+  'Dan Rini':      'drini@termac.com',
+  'Joe McDonnell': 'jmcdonnell@termac.com',
+  'Matt Belz':     'mbelz@termac.com',
+  "TJ O'Reilly":   'tjorielly@termac.com',
+  'Todd Grill':    'tgrill@termac.com',
+  'Tom Jordan':    'tjordan@termac.com',
+  'Tom Pittakas':  'tpittakas@termac.com',
+  'Paul Brahan':   'pbrahan@termac.com',
+};
 
 async function d1Fetch(env, method, path, body) {
   const opts = {
@@ -40,67 +59,110 @@ async function d1Fetch(env, method, path, body) {
     headers: { 'Content-Type': 'application/json', 'X-API-Secret': env.D1_API_SECRET },
   };
   if (body) opts.body = JSON.stringify(body);
-  const res = await env.D1_SERVICE.fetch('https://unipro-ai-proxy.termac-one.workers.dev' + path.replace('/api/', '/db/'), opts);
+  const res = await env.D1_SERVICE.fetch(
+    'https://unipro-ai-proxy.termac-one.workers.dev' + path.replace('/api/', '/db/'), opts
+  );
   return await res.json();
 }
 
-async function notify(env, recipient, lead, minutesWaiting) {
+async function sendNotif(env, recipientName, recipientEmail, lead, subject, notesText) {
   try {
     await env.NOTIFY_SERVICE.fetch('https://termac-notify.termac-one.workers.dev/notify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        recipientName: recipient.name,
-        recipientEmail: recipient.email,
-        caller: lead.contact_name || lead.business || 'Unknown',
-        company: lead.business || '',
-        phone: lead.phone || '',
-        notes: '⏰ Hot lead sitting unaddressed for ' + minutesWaiting + ' min. Assigned to: ' +
-          (lead.assigned_rep || 'Unassigned') + '. Source: ' + (lead.source || 'Unknown') + '.',
-        source: 'Hot Lead Escalation',
+        recipientName:  recipientName,
+        recipientEmail: recipientEmail,
+        caller:   lead.contact_name || lead.business || 'Unknown',
+        company:  lead.business || '',
+        phone:    lead.phone || '',
+        notes:    notesText,
+        source:   subject,
         loggedBy: 'termac-hotlead-escalation',
-        // 2026-07-27: carry the record identity so the notification panel
-        // can navigate directly to the lead when tapped. Without this the
-        // bell icon shows the alert but clicking it goes nowhere.
-        lead_id: lead.id || null,
-        record_id: lead.id || null,
-        tab: 'leads',
-        dest_url: lead.id ? ('sales-portal.html?tab=leads&open=' + encodeURIComponent(lead.id)) : null,
+        lead_id:    lead.id || null,
+        record_id:  lead.id || null,
+        tab:        'leads',
+        dest_url:   lead.id
+          ? ('sales-portal.html?tab=leads&open=' + encodeURIComponent(lead.id))
+          : null,
       }),
     });
-  } catch (e) { /* one recipient failing should never block the other or the DB update */ }
+  } catch (e) { /* one recipient failing never blocks others */ }
 }
 
 async function runEscalationCheck(env) {
-  const cutoff = Date.now() - ESCALATION_THRESHOLD_MS;
+  const now = Date.now();
   const result = await d1Fetch(env, 'GET', '/api/leads?limit=500');
   if (!result.ok || !Array.isArray(result.results)) {
-    return { checked: 0, escalated: 0, error: result.error || 'D1 query failed' };
+    return { checked: 0, phase1: 0, phase2: 0, error: result.error || 'D1 query failed' };
   }
 
-  const stale = result.results.filter(lead =>
-    lead.is_hot &&
-    lead.is_new_lead &&
-    !lead.escalated &&
-    (lead.created_at || 0) < cutoff &&
-    // 2026-07-12, per Ted: a Digital Business Card booking is a rep's own
-    // self-harvested lead, not a corporate/DMS-sourced lead management
-    // needs oversight on. This is a permanent exclusion, not part of the
-    // "Jim/Tom paused for now" change above -- even once recipients are
-    // restored, these should never escalate to managers.
-    lead.source !== 'Digital Business Card'
-  );
+  let phase1Count = 0;
+  let phase2Count = 0;
 
-  for (const lead of stale) {
-    const minutesWaiting = Math.round((Date.now() - (lead.created_at || Date.now())) / 60000);
-    for (const recipient of ESCALATION_RECIPIENTS) {
-      await notify(env, recipient, lead, minutesWaiting);
+  for (const lead of result.results) {
+    if (!lead.is_hot) continue;
+    if (lead.source === 'Digital Business Card') continue;
+
+    const ageMs   = now - (lead.created_at || now);
+    const repName = lead.assigned_rep || '';
+    const repEmail = REP_EMAILS[repName] || null;
+    const sentTo  = new Set();
+
+    // ── PHASE 1: immediate, fires once per lead ─────────────────────────
+    if (lead.is_new_lead && !lead.notified_phase1) {
+      const subject  = '🔥 Hot Lead — ' + (lead.business || lead.contact_name || 'New Lead');
+      const notesText = '🔥 New hot lead just came in.' +
+        ' Assigned to: ' + (repName || 'Unassigned') +
+        '. Source: ' + (lead.source || 'Unknown') +
+        '. Address: ' + (lead.address || '—') + '.';
+
+      if (repEmail) {
+        await sendNotif(env, repName, repEmail, lead, subject, notesText);
+        sentTo.add(repEmail);
+      }
+      for (const m of MANAGEMENT) {
+        if (!sentTo.has(m.email)) {
+          await sendNotif(env, m.name, m.email, lead, subject, notesText);
+          sentTo.add(m.email);
+        }
+      }
+
+      await d1Fetch(env, 'PUT', '/api/leads/' + lead.id, { notified_phase1: 1 });
+      phase1Count++;
     }
-    // Mark escalated so this doesn't re-fire every 15 minutes forever.
-    await d1Fetch(env, 'PUT', '/api/leads/' + lead.id, { escalated: 1 });
+
+    // ── PHASE 2: escalation if rep hasn't acted within 30 min ──────────
+    if (!lead.notified_phase1) continue;
+    if (lead.notified_phase2)  continue;
+    if (ageMs < ESCALATION_THRESHOLD_MS) continue;
+
+    // Check grace period if rep has acted
+    if (lead.rep_action_at) {
+      const grace = ACTION_GRACE_MS[lead.rep_action] !== undefined
+        ? ACTION_GRACE_MS[lead.rep_action]
+        : DEFAULT_GRACE_MS;
+      if (grace === Infinity) continue;
+      if ((now - lead.rep_action_at) < grace) continue;
+    }
+
+    const minutesWaiting = Math.round(ageMs / 60000);
+    const escalateSubject = '⚠️ No Response — ' + (lead.business || lead.contact_name || 'Hot Lead');
+    const escalateText = '⏰ ' + minutesWaiting + ' minutes and no response from ' +
+      (repName || 'Unassigned') +
+      '. Lead: ' + (lead.business || lead.contact_name || 'Unknown') +
+      '. Phone: ' + (lead.phone || '—') +
+      '. Source: ' + (lead.source || 'Unknown') + '.';
+
+    for (const m of MANAGEMENT) {
+      await sendNotif(env, m.name, m.email, lead, escalateSubject, escalateText);
+    }
+
+    await d1Fetch(env, 'PUT', '/api/leads/' + lead.id, { notified_phase2: 1, escalated: 1 });
+    phase2Count++;
   }
 
-  return { checked: result.results.length, escalated: stale.length };
+  return { checked: result.results.length, phase1: phase1Count, phase2: phase2Count };
 }
 
 export default {
@@ -113,8 +175,9 @@ export default {
       const result = await runEscalationCheck(env);
       return new Response(JSON.stringify(result), { headers: { 'Content-Type': 'application/json' } });
     }
-    return new Response(JSON.stringify({ ok: true, note: 'GET /run to manually trigger a check' }), {
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return new Response(
+      JSON.stringify({ ok: true, note: 'GET /run to trigger manually' }),
+      { headers: { 'Content-Type': 'application/json' } }
+    );
   },
 };
