@@ -147,54 +147,18 @@ function d1Query(sql, params) {
         '&body=' + encodeURIComponent(body);
       window.open(mailto, opts.target || '_blank');
     }
-    // 2026-07-27: reception leads were not reaching anyone. The old chain was
-    // Graph, then straight to window.open('mailto:'). When Graph failed for any
-    // reason the fallback opened a draft that the person at the desk had to
-    // notice and manually send, or that the popup blocker swallowed entirely.
-    // Either way the lead silently went nowhere and nothing said so.
-    // termac-notify's /send-report endpoint sends server-side through Resend
-    // with no user token and no browser involvement, so it cannot fail for any
-    // of the reasons Graph can. It now sits between the two as a real send.
-    function sendServerSide(htmlBody) {
-      return fetch('https://termac-notify.termac-one.workers.dev/send-report', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ recipients: allRecipients, subject: subject, html: htmlBody })
-      })
-      .then(function (r) { return r.json(); })
-      .then(function (d) { return !!(d && d.ok); })
-      .catch(function () { return false; });
-    }
-    function notify(msg) {
-      var toastFn = global.spToast || global.rcpToast || global.toast || global.showToast;
-      if (typeof toastFn === 'function') toastFn(msg);
-    }
     if (!toList.length) { fallbackMailto(); return; }
     var htmlBody = String(body || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g, '<br>');
     var allRecipients = opts.cc ? toList.concat(String(opts.cc).split(',').map(function(s){ return s.trim(); }).filter(Boolean)) : toList;
     sendMailAsMe(allRecipients, subject, htmlBody).then(function(result) {
       if (result && result.ok) {
-        notify('\u2709\ufe0f Email sent to ' + toList.join(', '));
-        return;
+        var toastFn = global.spToast || global.toast || global.showToast;
+        if (typeof toastFn === 'function') toastFn('\u2709\ufe0f Email sent to ' + toList.join(', '));
+      } else {
+        fallbackMailto();
       }
-      // Graph failed. Send it server-side rather than handing the user a draft.
-      return sendServerSide(htmlBody).then(function (sent) {
-        if (sent) {
-          notify('\u2709\ufe0f Email sent to ' + toList.join(', '));
-        } else {
-          notify('\u26A0\uFE0F Email did NOT send. Opening a draft -- please press Send.');
-          fallbackMailto();
-        }
-      });
     }).catch(function() {
-      return sendServerSide(htmlBody).then(function (sent) {
-        if (sent) {
-          notify('\u2709\ufe0f Email sent to ' + toList.join(', '));
-        } else {
-          notify('\u26A0\uFE0F Email did NOT send. Opening a draft -- please press Send.');
-          fallbackMailto();
-        }
-      });
+      fallbackMailto();
     });
   }
 
@@ -1517,74 +1481,7 @@ function d1Query(sql, params) {
   }
   repairLeadStageCache();
 
-  // ── SHARED SIGN OUT ───────────────────────────────────────────────────────
-  // 2026-07-27: audit found that most portals had no way to sign out at all.
-  // reception-portal and dms-portal each had a fully written logout function
-  // that was never wired to a button. employee-portal (the landing page every
-  // single person hits after login), controller-portal, gm-dashboard,
-  // allpro-project-planner and termac-dish-quote had nothing whatsoever.
-  // termac-os had one hidden behind a click on the name badge with no label.
-  // Rather than adding eight separate buttons that will drift apart, this
-  // module (which every portal already loads) injects one consistent control.
-  // A page that already has its own visible sign out is left alone.
-  function termacSignOut() {
-    if (!confirm('Sign out of Termac One?')) return;
-    ['termac_staff_session', 'termac_current_user', 'termac_staff_return_to'].forEach(function (k) {
-      try { localStorage.removeItem(k); } catch (e) {}
-      try { sessionStorage.removeItem(k); } catch (e) {}
-    });
-    window.location.href = 'staff-login.html';
-  }
-
-  function _hasOwnSignOut() {
-    if (document.getElementById('termacSignOutBtn')) return true;
-    var els = document.querySelectorAll('button, a, [onclick]');
-    for (var i = 0; i < els.length; i++) {
-      var t = (els[i].textContent || '').trim().toLowerCase();
-      if (t === 'sign out' || t === 'log out' || t === 'logout' || t === 'signout') {
-        if (els[i].offsetParent !== null) return true;
-      }
-    }
-    return false;
-  }
-
-  function mountSignOutControl() {
-    var sess = null;
-    try { sess = JSON.parse(localStorage.getItem('termac_staff_session') || 'null'); } catch (e) {}
-    if (!sess || !sess.email) return;
-    if (_hasOwnSignOut()) return;
-    if (document.getElementById('termacSignOutBtn')) return;
-
-    var btn = document.createElement('button');
-    btn.id = 'termacSignOutBtn';
-    btn.type = 'button';
-    btn.textContent = 'Sign Out';
-    btn.title = 'Sign out of Termac One (' + sess.email + ')';
-    btn.onclick = termacSignOut;
-    btn.setAttribute('style', [
-      'position:fixed', 'top:10px', 'right:12px', 'z-index:2147483000',
-      'background:#C8102E', 'color:#fff', 'border:none', 'border-radius:7px',
-      'padding:9px 15px', 'font-family:Barlow Condensed,Arial,sans-serif',
-      'font-weight:700', 'font-size:13px', 'letter-spacing:.06em',
-      'text-transform:uppercase', 'cursor:pointer',
-      'box-shadow:0 2px 8px rgba(0,0,0,.28)', 'line-height:1'
-    ].join(';'));
-    document.body.appendChild(btn);
-  }
-
-  if (typeof document !== 'undefined') {
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', function () { setTimeout(mountSignOutControl, 400); });
-    } else {
-      setTimeout(mountSignOutControl, 400);
-    }
-  }
-
-  global.termacSignOut = termacSignOut;
-
   global.TermacD1Sync = {
-    termacSignOut: termacSignOut,
-    mountSignOutControl: mountSignOutControl,
     d1Fetch: d1Fetch,
     d1Push: d1Push,
     d1PushBatch: d1PushBatch,
