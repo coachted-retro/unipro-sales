@@ -454,6 +454,17 @@ async function syncOneLocation(env, authToken, loc, log) {
   const stId = String(loc.id);
   const acctId = "ST-" + stId;
   const locName = sv(loc.name) || "";
+  // 2026-07-27: ServiceTrade's location object carries its parent company, and
+  // this sync never read it. Every location arrived as a standalone account
+  // with the parent link discarded, which is why multi-site customers like
+  // Cintas and Oliver Fire Protection show up flat instead of as one parent
+  // with many child sites. Capturing it here means the Account -> Locations
+  // hierarchy comes straight from ServiceTrade rather than being guessed from
+  // name and phone matching, which would wrongly merge independent franchisees
+  // that share a brand name.
+  const company = (loc.company && typeof loc.company === "object") ? loc.company : {};
+  const stCompanyId = company.id != null ? String(company.id) : "";
+  const stCompanyName = sv(company.name) || "";
   const addr = (loc.address && typeof loc.address === "object") ? loc.address : {};
   const locStreet = sv(addr.street) || "";
   const locCity = sv(addr.city) || "";
@@ -482,17 +493,17 @@ async function syncOneLocation(env, authToken, loc, log) {
 
   if (existing) {
     await env.DB.prepare(
-      `UPDATE accounts SET business=?, name=?, address=?, city=?, state=?, zip=?, phone=?, services=?, st_location_id=?, updated_at=? WHERE id=?`
-    ).bind(locName, locName, locStreet, locCity, locState, locZip, sv(loc.phone) || "", servicesJson, stId, now, existing.id).run();
+      `UPDATE accounts SET business=?, name=?, address=?, city=?, state=?, zip=?, phone=?, services=?, st_location_id=?, st_company_id=?, st_company_name=?, updated_at=? WHERE id=?`
+    ).bind(locName, locName, locStreet, locCity, locState, locZip, sv(loc.phone) || "", servicesJson, stId, stCompanyId, stCompanyName, now, existing.id).run();
     log.updated = (log.updated || 0) + 1;
   } else {
     await env.DB.prepare(
-      `INSERT INTO accounts (id, name, business, status, services, address, city, state, zip, phone, division, cust_num, st_location_id, source, activity_log, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      `INSERT INTO accounts (id, name, business, status, services, address, city, state, zip, phone, division, cust_num, st_location_id, st_company_id, st_company_name, source, activity_log, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     ).bind(
       acctId, locName, locName, "active", servicesJson,
       locStreet, locCity, locState, locZip, sv(loc.phone) || "",
       division.toUpperCase() === "GTO" ? "GTO" : division.toUpperCase() === "FILTERMAN" ? "Filter Man" : "UniPro",
-      stId, stId, "ServiceTrade Sync",
+      stId, stId, stCompanyId, stCompanyName, "ServiceTrade Sync",
       JSON.stringify([{ ts: now, type: "system", icon: "\u{1F504}", title: "Synced from ServiceTrade", note: noteLines, who: "ServiceTrade Sync" }]),
       now, now
     ).run();

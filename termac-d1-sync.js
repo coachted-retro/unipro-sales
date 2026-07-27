@@ -364,6 +364,11 @@
       lastCheckin: 'last_checkin', certStatus: 'cert_status',
       statusFlag: 'status_flag', lastStatusCheckAt: 'last_status_check_at',
       confirmationStatus: 'confirmation_status',
+      // 2026-07-27: ServiceTrade parent company, captured by the sync so the
+      // Account -> Locations hierarchy comes from ServiceTrade rather than
+      // being inferred from name matching.
+      stLocationId: 'st_location_id', stCompanyId: 'st_company_id',
+      stCompanyName: 'st_company_name',
       activityLog: 'activity_log',
     },
     contacts: {
