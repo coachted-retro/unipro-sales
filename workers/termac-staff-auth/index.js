@@ -494,6 +494,38 @@ async function handleCalendarPull(request, env) {
   } catch(e) { return jsonResponse({ ok: true, events: [] }); }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SESSION REFRESH -- called every 5 minutes by termac-d1-sync.js
+// Returns the current authoritative session state from D1. No localStorage.
+// Any change made in D1 (coverage, portals, role, status) surfaces within
+// 5 minutes to every active user without them touching anything.
+// ─────────────────────────────────────────────────────────────────────────────
+async function handleSessionRefresh(request, env) {
+  const url = new URL(request.url);
+  const email = (url.searchParams.get('email') || '').trim().toLowerCase();
+  if (!email) return jsonResponse({ ok: false, error: 'email required' }, 400);
+
+  const user = await env.DB.prepare(
+    'SELECT id, email, name, role, division, portals, status, covering_for FROM staff_auth WHERE email = ?'
+  ).bind(email).first();
+
+  if (!user) return jsonResponse({ ok: false, error: 'not_found' });
+  if (user.status !== 'active') return jsonResponse({ ok: false, error: 'suspended', active: false });
+
+  let portals = [];
+  try { portals = JSON.parse(user.portals || '[]'); } catch (e) {}
+
+  return jsonResponse({
+    ok: true,
+    active: true,
+    name: user.name,
+    role: user.role || 'employee',
+    division: user.division || '',
+    portals: portals,
+    coveringFor: user.covering_for || null,
+  });
+}
+
 async function handleMyAccess(request, env) {
   const url = new URL(request.url);
   const email = (url.searchParams.get('email') || '').trim().toLowerCase();
@@ -1159,7 +1191,7 @@ export default {
         },
       });
     }
-    if (request.method !== 'POST' && request.url.indexOf('/list') === -1 && request.url.indexOf('/my-access') === -1) {
+    if (request.method !== 'POST' && request.url.indexOf('/list') === -1 && request.url.indexOf('/my-access') === -1 && request.url.indexOf('/session-refresh') === -1) {
       return jsonResponse({ ok: false, error: 'POST only' }, 405);
     }
 
@@ -1174,6 +1206,7 @@ export default {
         case '/revoke-by-email': return await handleRevokeByEmail(request, env);
         case '/update-access': return await handleUpdateAccess(request, env);
         case '/resend-invite': return await handleResendInvite(request, env);
+        case '/session-refresh': return await handleSessionRefresh(request, env);
         case '/my-access': return await handleMyAccess(request, env);
         case '/send-mail': return await handleSendMail(request, env);
         case '/calendar-push': return await handleCalendarPush(request, env);

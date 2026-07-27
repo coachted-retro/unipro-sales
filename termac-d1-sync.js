@@ -1492,6 +1492,71 @@ function d1Query(sql, params) {
   }
   repairLeadStageCache();
 
+  // ── LIVE SESSION SYNC ──────────────────────────────────────────────────────
+  // 2026-07-27 per Ted's standing rule: NOTHING lives in localStorage alone.
+  // The old model wrote a session snapshot at login and never touched it again.
+  // Any D1 change (coverage, portals, role, suspension) was invisible until the
+  // user logged out and back in. That ends here.
+  //
+  // Every 5 minutes this polls /session-refresh on termac-staff-auth, gets the
+  // authoritative state from D1, and applies changes silently. Suspended
+  // accounts are signed out immediately. Coverage or permission changes trigger
+  // a silent page reload so the dashboard reflects the new state within 5
+  // minutes, with no action from the user.
+  var _sessionPollTimer = null;
+
+  async function _refreshSession() {
+    var session = null;
+    try { session = JSON.parse(localStorage.getItem('termac_staff_session') || 'null'); } catch (e) {}
+    if (!session || !session.email) return;
+    try {
+      var res = await fetch(STAFF_AUTH_URL + '/session-refresh?email=' + encodeURIComponent(session.email));
+      var data = await res.json();
+      if (!data.ok) {
+        if (data.error === 'suspended' || data.error === 'not_found') {
+          ['termac_staff_session','termac_current_user'].forEach(function(k){
+            try { localStorage.removeItem(k); } catch(e) {}
+          });
+          window.location.href = 'staff-login.html';
+        }
+        return;
+      }
+      var coveringChanged = (data.coveringFor || null) !== (session.coveringFor || null);
+      var portalsChanged  = JSON.stringify(data.portals) !== JSON.stringify(session.portals || []);
+      var roleChanged     = data.role !== session.role;
+      var updated = Object.assign({}, session, {
+        name: data.name || session.name,
+        role: data.role || session.role,
+        division: data.division || session.division,
+        portals: data.portals || session.portals || [],
+        coveringFor: data.coveringFor || null,
+        sessionRefreshedAt: Date.now(),
+      });
+      try { localStorage.setItem('termac_staff_session', JSON.stringify(updated)); } catch(e) {}
+      if (coveringChanged || portalsChanged || roleChanged) {
+        window.location.reload();
+      }
+    } catch (e) { /* network error -- retry next cycle */ }
+  }
+
+  function _startSessionPoll() {
+    if (_sessionPollTimer) return;
+    setTimeout(function() {
+      _refreshSession();
+      _sessionPollTimer = setInterval(_refreshSession, 5 * 60 * 1000);
+    }, 30000);
+  }
+
+  if (typeof document !== 'undefined') {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', _startSessionPoll);
+    } else {
+      _startSessionPoll();
+    }
+  }
+
+  global.termacRefreshSession = _refreshSession;
+
   global.TermacD1Sync = {
     d1Fetch: d1Fetch,
     d1Push: d1Push,
