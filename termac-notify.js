@@ -115,6 +115,8 @@ function _fireInAppAlertBanner(opts){
     +'<div class="hl-detail">'+caller+(phone?' · '+phone:'')+(notes?' · '+notes:'')+'</div>'
     +'<div class="hl-source">via '+source+(loggedBy?' · '+loggedBy:'')+' · '+new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})+'</div>'
     +'</div>'
+    +'<button class="hl-dismiss" id="_hlOnItBtn">On It</button>'
+    +'<button class="hl-dismiss" id="_hlOutcomeBtn">Log Outcome</button>'
     +'<button class="hl-dismiss" id="_hlDismissBtn">× Dismiss</button>'
     +'</div>';
   var _nav=document.querySelector('nav,.trn,.mgr-nav') || document.body.firstElementChild;
@@ -123,17 +125,28 @@ function _fireInAppAlertBanner(opts){
   } else {
     document.body.insertBefore(b,document.body.firstChild);
   }
-  document.getElementById('_hlOnItBtn').onclick=function(){
+  // 2026-07-27: markup only had _hlDismissBtn; code wired three ids.
+  // _hlOnItBtn was null, .onclick threw, Dismiss handler never attached,
+  // 60s auto-remove never set. Banner stuck permanently.
+  var _hlAutoDismiss = null;
+  function _hlClose() {
+    var el = document.getElementById('_hotleadBanner');
+    if (el) el.remove();
+    if (_hlAutoDismiss) { clearTimeout(_hlAutoDismiss); _hlAutoDismiss = null; }
+  }
+  function _hlWire(id, fn) {
+    var el = document.getElementById(id);
+    if (el) el.onclick = fn;
+  }
+  _hlWire('_hlOnItBtn', function(){
     _notifAcknowledge(_notifId, opts, 'acknowledged', '');
-    var el=document.getElementById('_hotleadBanner'); if(el) el.remove();
-  };
-  document.getElementById('_hlOutcomeBtn').onclick=function(){
+    _hlClose();
+  });
+  _hlWire('_hlOutcomeBtn', function(){
     _notifOpenOutcomeModal(_notifId, opts);
-  };
-  document.getElementById('_hlDismissBtn').onclick=function(){
-    var el=document.getElementById('_hotleadBanner'); if(el) el.remove();
-  };
-  setTimeout(function(){var el=document.getElementById('_hotleadBanner');if(el)el.remove();},60000);
+  });
+  _hlWire('_hlDismissBtn', _hlClose);
+  _hlAutoDismiss = setTimeout(_hlClose, 60000);
 }
 
 function _updateNotifBadges(){
