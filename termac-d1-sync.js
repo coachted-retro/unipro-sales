@@ -1920,4 +1920,4 @@ function d1Query(sql, params) {
 
   global.termacSignOut = termacSignOut;
 
-})(window);
+})(typeof globalThis !== 'undefined' ? globalThis : typeof self !== 'undefined' ? self : typeof window !== 'undefined' ? window : {});
