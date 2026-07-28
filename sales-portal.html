@@ -5,6 +5,7 @@
 <script src="termac-intelligence.js"></script>
 <script src="termac-invoices.js"></script>
 <script src="termac-d1-sync.js"></script>
+<script src="termac-appointment.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Termac One — Sales Portal</title>
@@ -9937,109 +9938,24 @@ function spApptTypeChanged(newType) {
   spOpenApptModal(_spApptId, _spApptTab, newType, keepDate, keepNotes);
 }
 
-function spOpenApptModal(id, tab, mode, presetDate, keepNotes) {
-  _spApptId = id;
-  _spApptTab = tab;
-  _spApptMode = mode || 'appointment';
-  _spApptPresetDate = presetDate || _spApptPresetDate || null;
-  _spApptGuestChips = [];
-
-  const data = crmLoad('leads');
-  const r = data.find(x => x.id === id) || {};
-  const addr = r.address || r.addr || '';
-
-  // If opened from a specific record's page, that record starts pre-linked.
-  if (id && !_spApptLinkedId) {
-    _spApptLinkedId = id; _spApptLinkedTab = tab || 'leads'; _spApptLinkedName = r.business || r.name || r.contact || '';
-  }
-
-  const cfg = SP_ENTRY_TYPES[_spApptMode] || SP_ENTRY_TYPES.appointment;
-  if (cfg.linkMode === 'none') { _spApptLinkedId = null; _spApptLinkedTab = null; _spApptLinkedName = ''; }
-  const defaultDate = _spApptPresetDate || new Date(Date.now() + 86400000).toISOString().split('T')[0];
-
-  const typeDropdown = '<select onchange="spApptTypeChanged(this.value)" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:9px 10px;font-size:13px;font-weight:700;background:#fff">' +
-    Object.keys(SP_ENTRY_TYPES).map(function(k) {
-      return '<option value="' + k + '" ' + (k === _spApptMode ? 'selected' : '') + '>' + SP_ENTRY_TYPES[k].label + '</option>';
-    }).join('') + '</select>';
-
-  let linkFieldHtml = '';
-  if (cfg.linkMode !== 'none') {
-    linkFieldHtml = '<div>' +
-      '<label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Business Name (optional)' + '</label>' +
-      '<div data-role="link-field">' +
-      (_spApptLinkedId
-        ? '<div style="display:flex;align-items:center;justify-content:space-between;background:#F1F5F9;border-radius:7px;padding:8px 10px;font-size:13px"><span>&#128279; ' + escH(_spApptLinkedName) + '</span><button type="button" onclick="spApptClearLink()" style="background:none;border:none;color:#C8102E;font-size:12px;cursor:pointer;font-weight:700">Change</button></div>'
-        : '<div style="position:relative">' +
-            '<input type="text" id="spApptLinkSearch" oninput="spApptSearchRecords(this.value)" onblur="setTimeout(function(){var b=document.getElementById(\'spApptLinkResults\');if(b)b.style.display=\'none\';},150)" placeholder="Type the business name..." style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px">' +
-            '<div id="spApptLinkResults" style="display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:#fff;border:1.5px solid #D7DBE0;border-radius:8px;box-shadow:0 8px 20px rgba(0,0,0,.12);z-index:10;max-height:200px;overflow-y:auto"></div>' +
-          '</div>') +
-      '</div>' +
-    '</div>';
-  }
-
-  let dateTimeHtml;
-  if (cfg.hasTimeRange) {
-    dateTimeHtml = '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">' +
-      '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Date *</label><input type="date" id="spApptDate" value="' + defaultDate + '" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px"></div>' +
-      '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Leave By</label><input type="time" id="spApptTime" value="09:00" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px"></div>' +
-      '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Arrive By</label><input type="time" id="spApptTimeEnd" value="10:00" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px"></div>' +
-    '</div>';
-  } else {
-    dateTimeHtml = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' +
-      '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Date *</label><input type="date" id="spApptDate" value="' + defaultDate + '" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px"></div>' +
-      '<div id="spApptTimeWrap">'  + '<label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Time</label>'  + '<div style="display:flex;gap:6px;align-items:center">'    + '<input type="time" id="spApptTime" value="09:00" style="flex:1;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px">'    + '<label style="display:flex;align-items:center;gap:5px;font-size:11px;color:#6B7280;white-space:nowrap;cursor:pointer">'      + '<input type="checkbox" id="spApptFlexTime" onchange="document.getElementById(\'spApptTime\').disabled=this.checked;document.getElementById(\'spApptTime\').style.opacity=this.checked?\'0.4\':\'1\';"> Flexible'    + '</label>'  + '</div>'+ '</div>' +
-    '</div>';
-  }
-
-  let allDayRecurHtml = '';
-  if (cfg.hasAllDay || cfg.hasRecurring) {
-    allDayRecurHtml = '<div style="display:flex;gap:16px;align-items:center">' +
-      (cfg.hasAllDay ? '<label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer"><input type="checkbox" id="spApptAllDay" onchange="spApptToggleAllDay(this.checked)"> All-day</label>' : '') +
-      (cfg.hasRecurring ? '<label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer"><input type="checkbox" id="spApptRecurring" onchange="document.getElementById(\'spApptRecurFreq\').style.display=this.checked?\'block\':\'none\'"> Repeats</label>' : '') +
-    '</div>' +
-    (cfg.hasRecurring ? '<select id="spApptRecurFreq" style="display:none;width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px"><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="yearly">Yearly</option></select>' : '');
-  }
-
-  const locationHtml = cfg.hasLocation
-    ? '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Location</label><input type="text" id="spApptLocation" value="' + addr.replace(/"/g,'&quot;') + '" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px" placeholder="Business address"></div>'
-    : '';
-
-  // 2026-07-28: rep invite chips and the free-text guest field removed from the
-  // appointment modal. An appointment carries date, time, location and contact.
-  // Inviting other reps was never wanted here.
-  const guestsHtml = '';
-
-  const brevoNote = _spApptMode === 'appointment'
-    ? '<div style="background:#EBF2FD;border-radius:8px;padding:9px 12px;font-size:11px;color:#1B5FA8">📧 Customer confirmation fires via Brevo when wired. Promotes Lead/Contact to Opportunity.</div>'
-    : '';
-
-  const modalHTML = '<div id="spApptModal" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9700;display:flex;align-items:center;justify-content:center;padding:16px">' +
-    '<div style="background:#fff;border-radius:12px;width:min(480px,96vw);max-height:88vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.3)">' +
-      '<div style="background:' + cfg.color + ';border-radius:12px 12px 0 0;padding:14px 18px;display:flex;align-items:center;justify-content:space-between">' +
-        '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:16px;color:#fff;letter-spacing:.04em">' + cfg.label + '</div>' +
-        '<button onclick="spCloseApptModal()" style="background:none;border:none;color:rgba(255,255,255,.7);font-size:20px;cursor:pointer;line-height:1">✕</button>' +
-      '</div>' +
-      '<div style="padding:18px;display:flex;flex-direction:column;gap:12px">' +
-        typeDropdown +
-        dateTimeHtml +
-        allDayRecurHtml +
-        linkFieldHtml +
-        locationHtml +
-        guestsHtml +
-        brevoNote +
-        '<div><label style="font-size:11px;font-weight:700;color:#5A616B;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px">Notes <span style="font-weight:400;text-transform:none">(optional)</span></label>' +
-        '<textarea id="spApptNotes" rows="2" style="width:100%;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 10px;font-size:13px" placeholder="What is the plan?">' + (keepNotes||'') + '</textarea></div>' +
-        '<div style="display:flex;gap:8px;justify-content:flex-end">' +
-          '<button onclick="spCloseApptModal()" style="background:none;border:1.5px solid #D7DBE0;border-radius:7px;padding:8px 16px;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px">Cancel</button>' +
-          '<button onclick="spSaveAppt()" style="background:' + cfg.color + ';color:#fff;border:none;border-radius:7px;padding:8px 18px;cursor:pointer;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;letter-spacing:.04em;text-transform:uppercase">' + cfg.saveLabel + '</button>' +
-        '</div>' +
-      '</div>' +
-    '</div>' +
-  '</div>';
-
-  var existing = document.getElementById('spApptModal');
-  if (existing) existing.remove();
-  document.body.insertAdjacentHTML('beforeend', modalHTML);
+function spOpenApptModal(recordId, tab, mode, presetDate, presetNotes) {
+  // 2026-07-28: replaced by the ONE shared appointment card in
+  // termac-appointment.js. Thin adapter so all existing call sites are
+  // unchanged. There is no second implementation of this card anywhere.
+  var rec = null;
+  try { if (recordId && tab && typeof crmLoad === 'function') rec = (crmLoad(tab) || []).find(function (x) { return x.id === recordId; }); } catch (e) {}
+  termacOpenAppointment({
+    mode: mode || 'appointment',
+    recordId: recordId || null,
+    recordTab: tab || null,
+    recordName: rec ? (rec.business || rec.name || rec.contact || '') : '',
+    address: rec ? (rec.address || rec.addr || '') : '',
+    date: presetDate || null,
+    onSaved: function () {
+      if (typeof spRenderHome === 'function') setTimeout(spRenderHome, 120);
+      if (typeof spRenderTab === 'function' && tab) setTimeout(function () { spRenderTab(tab); }, 120);
+    }
+  });
 }
 
 // ── Search-and-link widget: real records, not free-text ──
