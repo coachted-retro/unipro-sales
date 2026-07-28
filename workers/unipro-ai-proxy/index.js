@@ -406,9 +406,13 @@ export default {
             isPlace:   p.types && p.types.indexOf('establishment') !== -1,
           };
         });
+        // If Google returns no predictions, include the status so we can diagnose
+        if (predictions.length === 0) {
+          return json({ ok: true, predictions: [], status: gd.status || 'UNKNOWN', error_message: gd.error_message || '' }, 200, origin);
+        }
         return json({ ok: true, predictions: predictions }, 200, origin);
       } catch (e) {
-        return json({ ok: false, error: 'Places lookup failed' }, 502, origin);
+        return json({ ok: false, error: 'Places lookup failed: ' + e.message }, 502, origin);
       }
     }
 
