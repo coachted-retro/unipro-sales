@@ -47,6 +47,7 @@
   var _searchTimer = null;
   var _placesTimer = null;
   var _lastTerm   = '';
+  var _placesSearched = false;
 
   // ── Time slots for the tap grid ────────────────────────────────────────
   var SLOTS = [
@@ -126,7 +127,7 @@
         + '</div>'
 
         // ── Selected details (hidden until a record is picked) ────────
-        + '<div id="taDetails" style="display:none;flex-direction:column;gap:12px">'
+        + '<div id="taDetails" style="display:flex;flex-direction:column;gap:12px">'
           + taField('Business Name', 'taBiz', 'text', 'Business name')
           + taField('Location / Address', 'taAddr', 'text', 'Full address')
           + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'
@@ -256,6 +257,7 @@
   function taOnSearch(val) {
     var term = (val || '').trim();
     _lastTerm = term;
+    _placesSearched = false;
     clearTimeout(_searchTimer); clearTimeout(_placesTimer);
 
     var drop = document.getElementById('taDropdown');
@@ -308,15 +310,20 @@
 
   function taSearchPlaces(term) {
     if (term !== _lastTerm) return;
+    _placesSearched = false;
     fetch(PROXY + '/maps/autocomplete?q=' + encodeURIComponent(term) + '&lat=40.0&lng=-75.2')
       .then(function (r) { return r.json(); })
       .then(function (d) {
         if (term !== _lastTerm) return;
+        _placesSearched = true;
         _placesResults = (d.predictions || []).map(function (p) {
           return { placeId: p.placeId, name: p.main || '', secondary: p.secondary || '', isPlace: p.isPlace };
         });
         taRenderDropdown();
-      }).catch(function () {});
+      }).catch(function () {
+        _placesSearched = true; // mark done even on error so 'no results' can show
+        taRenderDropdown();
+      });
   }
 
   function taRenderDropdown() {
@@ -365,7 +372,10 @@
     }
 
     if (!html && _lastTerm.length >= 2) {
-      html = '<div style="padding:14px;font-size:13px;color:#6B7280;text-align:center">No matches yet…</div>';
+      // Only show 'no results' if Google Places has already responded
+      html = _placesSearched
+        ? '<div style="padding:14px;font-size:13px;color:#6B7280;text-align:center">No matches found. Try a shorter term.</div>'
+        : '<div style="padding:14px;font-size:13px;color:#6B7280;text-align:center">Searching Google Places…</div>';
     }
 
     drop.innerHTML = html;
