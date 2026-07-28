@@ -216,10 +216,17 @@ function spApptWireLookups() {
     var loc = document.getElementById('spApptLocation');
     if (!loc) return;
     if (typeof termacAddressAutocomplete === 'function') {
+      // Let termacAddressAutocomplete handle the value directly.
+      // It sets inputEl.value to the resolved street address on selection.
+      // Passing a minimal onSelect so the business name field also
+      // gets filled when the user picks from suggestions.
       termacAddressAutocomplete(loc, {
+        fillCompany: 'spApptLinkSearch',
         onSelect: function (r) {
+          // Build the complete address string and set it so the field
+          // shows the full address, not just the street fragment.
           var full = [r.street, r.city, r.state, r.zip].filter(Boolean).join(', ');
-          if (full) loc.value = full;
+          if (full) { loc.value = full; }
         }
       });
     } else if (_acRetries++ < 20) {
