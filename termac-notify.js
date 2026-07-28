@@ -260,13 +260,51 @@ function _repSubmitOutcome(notifId, optsEnc) {
   var outcome = sel.dataset.outcome;
   var notes = (document.getElementById('_repOutcomeNotes')||{}).value||'';
   var opts = {}; try { opts = JSON.parse(decodeURIComponent(optsEnc)); } catch(e){}
+
+  // Labels matching the four tiles
+  var labels = {
+    'phone':      '📞 Phone Call',
+    'email':      '✉️ Email',
+    'text':       '💬 Text',
+    'stopped-in': '🚗 Stopped In'
+  };
+  var label = labels[outcome] || outcome;
+  var now = new Date();
+  var ts = (now.getMonth()+1)+'/'+now.getDate()+'/'+now.getFullYear()+' '
+    +now.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true});
+
+  // Write to D1
   _notifAcknowledge(notifId, opts, outcome, notes);
+
+  // Close the modal and banner
   var m = document.getElementById('_repOutcomeModal'); if (m) m.remove();
   var el = document.getElementById('_hotleadBanner'); if (el) el.remove();
-  var t = document.createElement('div');
-  t.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#16A34A;color:#fff;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:700;z-index:10001;font-family:Barlow,sans-serif;white-space:nowrap';
-  t.textContent = {spoke:'Spoke \u2014 logged \u2713',voicemail:'Voicemail logged \u2714',  'no-answer':'No answer logged \u2713'}[outcome]||'Outcome logged \u2713';
-  document.body.appendChild(t); setTimeout(function(){ t.remove(); },3000);
+
+  // Show a persistent green confirmation card -- stays until rep closes it
+  var card = document.createElement('div');
+  card.id = '_repCompleteCard';
+  card.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);'
+    +'background:#fff;border:2.5px solid #16A34A;border-radius:14px;padding:20px 24px;'
+    +'min-width:300px;max-width:420px;box-shadow:0 8px 32px rgba(0,0,0,.18);'
+    +'z-index:10001;font-family:Barlow,system-ui,sans-serif;text-align:center';
+  card.innerHTML = '<div style="font-size:36px;margin-bottom:8px">✅</div>'
+    +'<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:18px;'
+    +'color:#15803D;letter-spacing:.04em;text-transform:uppercase;margin-bottom:4px">Task Completed</div>'
+    +'<div style="font-size:15px;font-weight:700;color:#1A1D21;margin-bottom:4px">'+label+'</div>'
+    +'<div style="font-size:12px;color:#6B7280;margin-bottom:'+(notes?'8px':'14px')+'">'+ts+'</div>'
+    +(notes ? '<div style="font-size:13px;color:#374151;background:#F0FDF4;border-radius:8px;'
+      +'padding:8px 12px;margin-bottom:14px;text-align:left">'+notes+'</div>' : '')
+    +'<button onclick="_repCloseCompleteCard()" '
+    +'style="background:#16A34A;color:#fff;border:none;border-radius:8px;padding:10px 28px;'
+    +'font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:14px;'
+    +'letter-spacing:.06em;text-transform:uppercase;cursor:pointer">Got It</button>';
+  document.body.appendChild(card);
+}
+
+
+function _repCloseCompleteCard() {
+  var c = document.getElementById('_repCompleteCard');
+  if (c) c.remove();
 }
 
 if(typeof window!=='undefined'){
