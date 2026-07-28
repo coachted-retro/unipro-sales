@@ -891,7 +891,7 @@ function rcpLogCall(){
     else if (!zip) { rcpToast('Enter a ZIP so the territory rep can be identified'); return; }
   }
 
-  const call = {id: 'RCP' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2,6), ts:Date.now(), callerName:name, company, phone, address, zip, callType:type, routeTo, urgency, notes, loggedBy:_rcpUser?.name||'Reception'};
+  const call = {id: 'RCP' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2,6), ts:Date.now(), callerName:name, company, phone, address, zip, callType:type, routeTo, urgency, notes, loggedBy:_rcpUser?.name||'Reception', is_hot:1, is_new_lead:1, source:'Reception Call'};
   const log = (typeof crmLoad === 'function') ? crmLoad('rcp_calls') : JSON.parse(localStorage.getItem('termac_crm_rcp_calls')||'[]');
   log.push(call);
   // 2026-07-13 per Ted: was raw localStorage only, no D1 path at all --
@@ -998,6 +998,34 @@ function rcpLogCall(){
     // Immediate email to the assigned rep so they catch it even off-platform.
     rcpEmailRepOnCall(call);
   }
+  // Write to D1 leads table so the escalation worker can find it.
+  // Without this the call only exists in rcp_calls and nobody outside
+  // the reception portal ever sees it. is_hot=1 and is_new_lead=1
+  // are required for the escalation worker to send the emails.
+  try {
+    fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/leads', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+      body: JSON.stringify({
+        id: call.id,
+        contact_name: call.callerName || '',
+        business: call.company || '',
+        phone: call.phone || '',
+        address: call.address || '',
+        zip: call.zip || '',
+        notes: call.notes || '',
+        source: 'Reception Call',
+        assigned_rep: call.routeTo || '',
+        is_hot: 1,
+        is_new_lead: 1,
+        notified_phase1: 0,
+        notified_phase2: 0,
+        created_at: call.ts,
+        updated_at: call.ts
+      })
+    }).catch(function(){});
+  } catch(e) {}
+
   rcpToast('Call logged ✓');
   rcpClearForm();
   rcpRenderCallLog(document.getElementById('rcpPanel-incoming')||document.getElementById('rcpContent'));
