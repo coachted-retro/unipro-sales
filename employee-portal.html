@@ -459,7 +459,21 @@ async function epLoadWorkPortals(email) {
   try {
     var res = await fetch('https://termac-staff-auth.termac-one.workers.dev/my-access?email=' + encodeURIComponent(email));
     var data = await res.json();
-    if (!data.ok || !data.active || !data.portals || !data.portals.length) return; // card stays hidden
+    // 2026-07-26: this used to `return` on any failure, which left the entire
+    // Work Portals card hidden with no message. Managers signed in fine, landed
+    // on a page with no navigation at all, and reported it as a login failure.
+    // A transient worker error or a flaky connection produced the same silent
+    // blank. Never hide the card now -- say what went wrong and offer a retry.
+    if (!data.ok || !data.active) {
+      epShowPortalError(data.error === 'not_found'
+        ? 'Your account is not set up yet. Contact your admin to get access.'
+        : 'Could not load your portals right now.');
+      return;
+    }
+    if (!data.portals || !data.portals.length) {
+      epShowPortalError('No portals are assigned to your account yet. Contact your admin.');
+      return;
+    }
 
     // Admin means full access, not "one more tile equal to manager" --
     // this was the actual bug locking Ted out of everything except
@@ -490,7 +504,37 @@ async function epLoadWorkPortals(email) {
         + '</a>';
     }).join('');
     card.style.display = 'block';
-  } catch (e) { /* card stays hidden if the access check fails -- fail closed, not open */ }
+  } catch (e) {
+    // Fail closed on ACCESS (no tiles rendered) but never fail silent. The old
+    // empty catch is what made a dropped request look identical to "you have no
+    // portals," which is what people were reporting as a login problem.
+    epShowPortalError('Could not reach Termac One to load your portals.');
+  }
+}
+
+// Shows the Work Portals card with an error and a Retry button instead of
+// leaving the user on a page with no navigation and no explanation.
+function epShowPortalError(msg) {
+  var card = document.getElementById('epWorkPortalsCard');
+  var tilesEl = document.getElementById('epWorkPortalsTiles');
+  if (!card || !tilesEl) return;
+  card.style.display = '';
+  tilesEl.innerHTML =
+    '<div style="padding:14px 16px;background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;color:#991B1B;font-size:13px;line-height:1.5">'
+    + '<div style="font-weight:700;margin-bottom:6px">Portals unavailable</div>'
+    + '<div>' + msg + '</div>'
+    + '<button onclick="epRetryWorkPortals()" style="margin-top:10px;background:#991B1B;color:#fff;border:none;border-radius:6px;padding:8px 14px;font-size:12px;font-weight:700;cursor:pointer">Retry</button>'
+    + '</div>';
+}
+
+function epRetryWorkPortals() {
+  var session = null;
+  try { session = JSON.parse(localStorage.getItem('termac_staff_session') || 'null'); } catch (e) {}
+  if (session && session.email) {
+    var tilesEl = document.getElementById('epWorkPortalsTiles');
+    if (tilesEl) tilesEl.innerHTML = '<div style="padding:14px 16px;color:#6B7280;font-size:13px">Loading your portals...</div>';
+    epLoadWorkPortals(session.email);
+  }
 }
 
 function epSetReturnLabel() {

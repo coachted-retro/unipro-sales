@@ -12917,7 +12917,26 @@ function getTechTier(score){ return score>=90?'platinum':score>=80?'gold':score>
 
 // ── MANAGER TECH SCORECARD ──
 function renderManagerScorecard() {
-  if(!document.getElementById('scorecardGrid')) return;
+  var gridEl = document.getElementById('scorecardGrid');
+  if(!gridEl) return;
+  // 2026-07-26 per Ted: the TECHS array is hardcoded demo data from the
+  // original build (Marcus Williams, Dana Kowalski and others who do not work
+  // here). There is no techs table in D1 and no real source to drive this yet,
+  // so showing invented employees on a manager-facing board makes every other
+  // number on the screen suspect. Show an honest empty state until real tech
+  // performance data exists. The TECHS array itself is left in place because
+  // other code still references it; those call sites need auditing separately.
+  if (typeof TECHS === 'undefined' || !TECHS.length || TECHS._isDemoData !== false) {
+    gridEl.innerHTML =
+      '<div style="grid-column:1/-1;padding:22px;background:var(--panel,#fff);border:1px dashed #CBD5E1;border-radius:10px;text-align:center">'
+      + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:16px;letter-spacing:.04em;text-transform:uppercase;color:#334155;margin-bottom:6px">Tech Scorecard Not Yet Live</div>'
+      + '<div style="font-size:13px;color:#64748B;line-height:1.5;max-width:520px;margin:0 auto">'
+      + 'Technician performance tracking is not connected to live data yet. This board will populate once tech job completion and quality data is flowing from the field.'
+      + '</div></div>';
+    var blank = function(id){ var e=document.getElementById(id); if(e) e.textContent='—'; };
+    ['sc_avg','sc_platinum','sc_gold','sc_atrisk','sc_bonuses','sc_satisfaction'].forEach(blank);
+    return;
+  }
   var avatarColors = ['#7C3AED','#1B5FA8','#C8102E','#0D7490','#D8690B','#1E7B3C'];
   var sorted = TECHS.slice().sort(function(a,b){return b.score-a.score;});
 
@@ -13225,35 +13244,65 @@ var SALES_REPS = [
 // else here depends on what it's set to.
 var COMMISSION_RATE_PLACEHOLDER = 0.05; // Jim to finalize - flat rate on actual $ sold, not quota-based
 
-function computeRealRepMetrics(repName) {
+// 2026-07-26: two structural faults fixed here.
+//  1. Rep matching was exact-string against the display name, so rows stored as
+//     an email address ($75,080.06 worth) never matched anyone.
+//  2. Won/lost was read from o.stage === 'closed_won'. That value does not
+//     exist anywhere in the data. Real opportunity stages are 'proposal',
+//     'opportunity' and 'Survey'; won/lost/archived live in resolution_status.
+//     Every sales metric on this board was therefore structurally zero
+//     regardless of actual performance.
+function _repKeys(repName, repId) {
+  var keys = [];
+  if (repName) keys.push(String(repName).trim().toLowerCase());
+  if (repId)   keys.push(String(repId).trim().toLowerCase());
+  return keys;
+}
+function _matchesRep(row, keys) {
+  var v = String(row.assignedRep || row.ownedBy || row.createdBy || '').trim().toLowerCase();
+  if (!v) return false;
+  // Rows are stored inconsistently: some hold a display name ("Ted Scholl"),
+  // some hold an email ("tscholl@termac.com"). Compare the email local-part
+  // against the rep id so both shapes resolve to the same person.
+  if (v.indexOf('@') !== -1) v = v.split('@')[0];
+  return keys.indexOf(v) !== -1;
+}
+
+function computeRealRepMetrics(repName, repId) {
   var now = Date.now();
   var qStart = new Date(); qStart.setMonth(Math.floor(qStart.getMonth()/3)*3, 1); qStart.setHours(0,0,0,0);
   var weekStart = new Date(); weekStart.setDate(weekStart.getDate() - weekStart.getDay()); weekStart.setHours(0,0,0,0);
+  var keys = _repKeys(repName, repId);
 
   var leads = (typeof crmLoad === 'function' ? crmLoad('leads') : []).filter(function(r){
-    return (r.assignedRep||r.ownedBy||r.createdBy||'') === repName;
+    return _matchesRep(r, keys);
   });
   var opps = (typeof crmLoad === 'function' ? crmLoad('opportunities') : []).filter(function(r){
-    return (r.assignedRep||r.ownedBy||'') === repName;
+    return _matchesRep(r, keys);
   });
   var appts = (typeof crmLoad === 'function' ? crmLoad('appointments') : []).filter(function(a){
-    return a.createdBy === repName;
+    return _matchesRep(a, keys);
   });
 
   var wonLeads = leads.filter(function(r){ return r.lifecycleStage === 'closed_won' || r.status === 'won'; });
   var lostLeads = leads.filter(function(r){ return r.lifecycleStage === 'closed_lost' || r.status === 'lost'; });
   var wonQtr = wonLeads.filter(function(r){ return (r.convertedAt||r.updated||0) >= qStart.getTime(); });
 
-  var openOpps = opps.filter(function(o){ return !['closed_won','closed_lost'].includes(o.stage||''); });
-  var wonOpps = opps.filter(function(o){ return o.stage === 'closed_won'; });
-  var wonOppsQtr = wonOpps.filter(function(o){ return (o.closedAt||o.updated||0) >= qStart.getTime(); });
+  function res(o){ return String(o.resolutionStatus || o.resolution_status || 'open').toLowerCase(); }
+  var openOpps = opps.filter(function(o){ var s = res(o); return s === 'open' || s === 'pending'; });
+  var wonOpps  = opps.filter(function(o){ return res(o) === 'won'; });
+  var lostOpps = opps.filter(function(o){ return res(o) === 'lost'; });
+  var wonOppsQtr = wonOpps.filter(function(o){ return (o.closedAt||o.updated||o.updated_at||0) >= qStart.getTime(); });
 
   var actualSalesQtr = wonOppsQtr.reduce(function(s,o){ return s + (Number(o.value)||0); }, 0);
   var pipelineValue = openOpps.reduce(function(s,o){ return s + (Number(o.value)||0); }, 0);
   var dealsClosedQtr = Math.max(wonQtr.length, wonOppsQtr.length);
   var avgDealSize = dealsClosedQtr ? Math.round(actualSalesQtr / dealsClosedQtr) : 0;
-  var totalDecided = wonLeads.length + lostLeads.length;
-  var winRate = totalDecided ? Math.round((wonLeads.length / totalDecided) * 100) : 0;
+  // Win rate now counts decided OPPORTUNITIES as well as decided leads, since
+  // the opportunity is the real object under the current lifecycle model.
+  var totalDecided = wonLeads.length + lostLeads.length + wonOpps.length + lostOpps.length;
+  var totalWon = wonLeads.length + wonOpps.length;
+  var winRate = totalDecided ? Math.round((totalWon / totalDecided) * 100) : 0;
   var visitsThisWeek = appts.filter(function(a){
     var d = new Date(a.date + 'T12:00:00').getTime();
     return d >= weekStart.getTime() && (a.type === 'site_visit' || a.type === 'appointment');
@@ -13270,18 +13319,24 @@ function computeRealRepMetrics(repName) {
   };
 }
 
-SALES_REPS.forEach(function(r){
-  var m = computeRealRepMetrics(r.name);
-  r.actualSalesQtr = m.actualSalesQtr; r.commissionEarnedQtr = m.commissionEarnedQtr;
-  r.dealsClosedQtr = m.dealsClosedQtr; r.pipelineValue = m.pipelineValue;
-  r.avgDealSize = m.avgDealSize; r.winRate = m.winRate; r.visitsThisWeek = m.visitsThisWeek;
-  // Score stays a simple, real, relative ranking signal (not tied to a
-  // quota), weighted toward what actually matters under a flat-commission
-  // model: real dollars closed, plus deal velocity and activity pace.
-  r.score = Math.min(100, Math.round((m.actualSalesQtr/1000) + (m.dealsClosedQtr*8) + (m.winRate*0.3) + (m.visitsThisWeek*2)));
-  r.tier = getTechTier(r.score); r.badges = []; r.quarterBonus = m.dealsClosedQtr >= 3;
-  r.trend = [0,0,0,0,0];
-});
+// 2026-07-26: this block used to run at SCRIPT PARSE TIME, before D1 had
+// returned anything. crmLoad came back empty, every rep got zeros baked in
+// permanently, and nothing ever recomputed once the real data arrived. It is
+// now a function called from the render, so the numbers reflect loaded data.
+function refreshSalesRepMetrics() {
+  SALES_REPS.forEach(function(r){
+    var m = computeRealRepMetrics(r.name, r.id);
+    r.actualSalesQtr = m.actualSalesQtr; r.commissionEarnedQtr = m.commissionEarnedQtr;
+    r.dealsClosedQtr = m.dealsClosedQtr; r.pipelineValue = m.pipelineValue;
+    r.avgDealSize = m.avgDealSize; r.winRate = m.winRate; r.visitsThisWeek = m.visitsThisWeek;
+    // Score stays a simple, real, relative ranking signal (not tied to a
+    // quota), weighted toward what actually matters under a flat-commission
+    // model: real dollars closed, plus deal velocity and activity pace.
+    r.score = Math.min(100, Math.round((m.actualSalesQtr/1000) + (m.dealsClosedQtr*8) + (m.winRate*0.3) + (m.visitsThisWeek*2)));
+    r.tier = getTechTier(r.score); r.badges = []; r.quarterBonus = m.dealsClosedQtr >= 3;
+    r.trend = [0,0,0,0,0];
+  });
+}
 
 function renderSalesScorecard() {
   if (!document.getElementById('salesScorecardGrid')) return;
@@ -13380,10 +13435,38 @@ function renderSalesScorecard() {
 
 function _initScorecardCharts() {
   if (_mgrInited.sc) return;
-  _mgrInited.sc = true;
-  renderManagerScorecard();
-  renderDmsScorecard();
-  renderSalesScorecard();
+  // 2026-07-26: the guard flag used to be set to true BEFORE the three renders
+  // ran. renderManagerScorecard calls new Chart() with an annotation plugin
+  // config; if that threw, the flag was already set, so the DMS and Sales
+  // scorecards never ran and never retried for the rest of the session. One
+  // error blanked Jim's entire board. Each render is now isolated, and the
+  // flag is only set if at least one succeeded, so a transient failure can
+  // still recover on the next tab switch.
+  var ok = 0;
+  refreshSalesRepMetrics();
+  [
+    ['Tech Scorecard', renderManagerScorecard],
+    ['DMS Scorecard', renderDmsScorecard],
+    ['Sales Scorecard', renderSalesScorecard]
+  ].forEach(function (pair) {
+    try { pair[1](); ok++; }
+    catch (e) {
+      console.error('[scorecard] ' + pair[0] + ' failed to render:', e);
+      _scorecardRenderError(pair[0], e);
+    }
+  });
+  if (ok > 0) _mgrInited.sc = true;
+}
+
+// Never leave a panel silently blank. If a scorecard cannot render, say so on
+// screen rather than looking like nobody built it.
+function _scorecardRenderError(label, err) {
+  var ids = { 'DMS Scorecard': 'dmsScorecardGrid', 'Sales Scorecard': 'salesScorecardGrid' };
+  var el = document.getElementById(ids[label] || '');
+  if (!el) return;
+  el.innerHTML = '<div style="grid-column:1/-1;padding:14px 16px;background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;color:#991B1B;font-size:13px">'
+    + '<b>' + label + ' could not load.</b><br>' + String(err && err.message ? err.message : err)
+    + '</div>';
 }
 
 

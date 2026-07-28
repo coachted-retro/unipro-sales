@@ -1976,10 +1976,15 @@ function spRenderWeekBanner() {
   return '<div style="background:linear-gradient(135deg,' + visitColor + 'dd,' + visitColor + '99);border-radius:10px;padding:12px 16px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">'
     + '<div>'
       + '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:18px;color:#fff;letter-spacing:.04em">'
-        + info.visitLabel.toUpperCase() + ' — YOUR VISIT WEEK'
+        // 2026-07-26 per Tom Pittakas: the headline used to lead with the VISIT
+        // letter ("D WEEK -- YOUR VISIT WEEK"), which read as though the current
+        // week was D. Reps identify the week by the tech cycle and say "it's C
+        // week," so everyone had to mentally translate. Lead with the current
+        // week, then state the action.
+        + info.techLabel.toUpperCase() + ' — VISIT ' + info.visitLetter + ' ACCOUNTS'
       + '</div>'
       + '<div style="font-size:11px;color:rgba(255,255,255,.9);margin-top:2px">'
-        + 'This week: visit <b>' + info.visitLabel + '</b> accounts &nbsp;·&nbsp; Tech services <b>' + info.techLabel + '</b> accounts this week'
+        + 'Techs are servicing <b>' + info.techLabel + '</b> accounts now. You visit <b>' + info.visitLabel + '</b> accounts to stay a week ahead.'
       + '</div>'
     + '</div>'
     + '<div style="display:flex;gap:6px">'
@@ -1989,9 +1994,16 @@ function spRenderWeekBanner() {
           var bg = isVisit ? '#fff' : 'rgba(255,255,255,.2)';
           var fg = isVisit ? SP_WEEK_COLORS[l] : '#fff';
           var border = isTech ? '2px dashed rgba(255,255,255,.7)' : 'none';
-          return '<div style="width:30px;height:30px;border-radius:6px;background:' + bg + ';border:' + border + ';display:flex;align-items:center;justify-content:center;font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:14px;color:' + fg + '">'
-            + l
-            + '</div>';
+          // 2026-07-26: chips were solid for VISIT and dashed for TECH with no
+          // legend, which reinforced the same misread as the old headline (the
+          // solid one looks like "you are here"). Label them instead.
+          var tag = isVisit ? 'YOU' : (isTech ? 'NOW' : '');
+          return '<div style="display:flex;flex-direction:column;align-items:center;gap:2px">'
+            + '<div style="width:30px;height:30px;border-radius:6px;background:' + bg + ';border:' + border + ';display:flex;align-items:center;justify-content:center;font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:14px;color:' + fg + '">'
+              + l
+            + '</div>'
+            + '<div style="font-size:8px;font-weight:700;letter-spacing:.06em;color:rgba(255,255,255,.85);height:10px">' + tag + '</div>'
+          + '</div>';
         }).join('')
     + '</div>'
   + '</div>';
@@ -2849,18 +2861,29 @@ function spRenderAccountsToWatch() {
 // reengageAfter), same shared account data, just surfaced here too instead
 // of only being visible in the Manager Portal.
 // ── DISH MACHINE TILE ──────────────────────────────────────────────────────
-// Shown for all reps — anyone can spot a dish machine opportunity.
-// Shows recent dish quotes for the current rep, plus a New Quote button
-// that opens the standalone termac-dish-quote.html builder.
-// Tom Pittakas additionally sees a Manager Portal back button in the nav
-// (wired below in spInitManagerControls).
+// 2026-07-26 per Ted: this used to render for every rep. Dish machine quoting
+// is Tom Pittakas's tool, so it now renders only for people whose staff_auth
+// portals array contains "dish_quotes". Driven by data, not a hardcoded name
+// list, so adding or removing someone is a staff_auth edit and not a deploy.
+function spCanQuoteDishMachines() {
+  var sess = null;
+  try { sess = JSON.parse(localStorage.getItem('termac_staff_session') || 'null'); } catch (e) {}
+  var portals = (sess && sess.portals) || [];
+  if (typeof portals === 'string') { try { portals = JSON.parse(portals); } catch (e) { portals = []; } }
+  return Array.isArray(portals) && portals.indexOf('dish_quotes') !== -1;
+}
+
 function spRenderDishMachineTile() {
+  if (!spCanQuoteDishMachines()) return '';
   // Load recent dish quotes for this rep from D1 — async, patches in after render
   setTimeout(function() {
     var container = document.getElementById('spDishRecentList');
     if (!container) return;
     var repEmail = (_spRep && _spRep.email) ? _spRep.email : '';
-    fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/termac_dish_quotes?limit=5', {
+    // 2026-07-26: this fetched every dish quote in the table with no filter at
+    // all. repEmail and repName were declared and never used, so any rep who
+    // saw the tile saw everyone else's quotes. Scope it to the logged-in rep.
+    fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/termac_dish_quotes?limit=5&rep_email=' + encodeURIComponent(repEmail), {
       headers: { 'X-API-Secret': 'termac2026' }
     }).then(function(r) { return r.json(); }).then(function(res) {
       if (!res.ok || !res.records || !res.records.length) {
@@ -4918,9 +4941,42 @@ function spColdTargetAdd(btn) {
   spAddColdTargetAsStop(btn.dataset.date, btn.dataset.name, btn.dataset.addr);
 }
 
+// 2026-07-26: raw SELECT * against D1 returns snake_case column names, which
+// bypasses the FIELD_MAP hydration every other read path goes through. The
+// renderer below reads camelCase (a.recordId, a.locationId, a.contactName), so
+// every multi-word column silently came back undefined. That is why an
+// appointment created FROM a Location still offered "Create Lead / Location for
+// this stop" (a.recordId was undefined so linkedId was null), why the contact
+// never displayed (the renderer read a.contact, and the column is contact_name),
+// and why the AllPro intake auto-create never fired (it guards on !linkedId).
+// Single-word columns happened to line up, which is why the modal looked half
+// correct. Normalize here so the renderer gets what it expects.
+function spNormalizeApptRow(row) {
+  if (!row) return row;
+  var out = {};
+  Object.keys(row).forEach(function (k) {
+    out[k] = row[k];
+    var camel = k.replace(/_([a-z])/g, function (m, c) { return c.toUpperCase(); });
+    if (camel !== k) out[camel] = row[k];
+  });
+  // The renderer reads a.contact and a.phone; the columns are contact_name and
+  // contact_phone. Alias rather than rename so nothing else that reads the raw
+  // column breaks.
+  if (out.contact === undefined) out.contact = row.contact_name || '';
+  if (out.phone === undefined) out.phone = row.contact_phone || '';
+  return out;
+}
+
 function spViewApptDetail(apptId) {
-  const a = (crmLoad('appointments') || []).find(function(x){ return x.id === apptId; });
-  if (!a) return;
+  // Fetch appointment from D1 -- it is never in localStorage
+  d1Query('SELECT * FROM appointments WHERE id=? LIMIT 1', [apptId])
+  .then(function(res) {
+    var a = res.ok && res.results && res.results[0];
+    if (!a) { spToast('Appointment not found.'); return; }
+    _spViewApptDetailRender(apptId, spNormalizeApptRow(a));
+  });
+}
+function _spViewApptDetailRender(apptId, a) {
   const typeLabel = a.type === 'appointment' ? '📅 Appointment' : '🗺️ Site Visit';
   const dateLabel = a.date ? new Date(a.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'}) : '';
 
@@ -4929,10 +4985,25 @@ function spViewApptDetail(apptId) {
   // (via record_id) to surface who to actually ask for on site.
   const accountsPool = crmLoad('accounts') || [];
   const leadsPool = crmLoad('leads') || [];
-  let linked = a.recordId
-    ? accountsPool.concat(leadsPool).find(function(r){ return r.id === a.recordId; })
+  // 2026-07-26: locations was never searched here, only accounts and leads. A
+  // Location-parented appointment therefore could not resolve even with a good
+  // record_id, which is the second half of the "Create Lead / Location" bug.
+  // Locations became a real entity on 2026-07-16 and this lookup was never
+  // updated to match the lifecycle model.
+  const locationsPool = crmLoad('locations') || [];
+  const searchPool = accountsPool.concat(leadsPool).concat(locationsPool);
+  // Prefer the typed FK, fall back to the legacy generic record_id. Existing
+  // rows only have the legacy pair, so the fallback has to stay until the
+  // backfill runs.
+  const linkKey = a.locationId || a.recordId || null;
+  let linked = linkKey
+    ? searchPool.find(function(r){ return r.id === linkKey; })
     : null;
-  let resolvedTab = a.recordId ? (a.tab || (accountsPool.some(r => r.id === a.recordId) ? 'accounts' : 'leads')) : null;
+  let resolvedTab = linkKey
+    ? (a.locationId ? 'locations'
+       : (a.tab || (accountsPool.some(r => r.id === a.recordId) ? 'accounts'
+                    : (locationsPool.some(r => r.id === a.recordId) ? 'locations' : 'leads'))))
+    : null;
 
   // Fix, added 2026-07-14 per Ted -- a lot of calendar stops (especially
   // ones surfaced from route/AI suggestions rather than booked directly
@@ -4964,7 +5035,7 @@ function spViewApptDetail(apptId) {
   const location     = a.location || a.address || (linked && linked.address) || '';
   const business      = a.business || (linked && (linked.name || linked.business)) || '';
   const division      = a.division || (linked && linked.division) || '';
-  const linkedId       = a.recordId || (linked && linked.id) || null;
+  const linkedId       = a.locationId || a.recordId || (linked && linked.id) || null;
 
   var old = document.getElementById('spApptDetailModal');
   if (old) old.remove();
@@ -5192,6 +5263,25 @@ function spMoveAppt(apptId) {
   document.body.appendChild(wrap);
 }
 
+// 2026-07-26: helpers added because spSaveApptEdit and spDeleteAppt were both
+// calling spRenderCalendar() and spShowDayPanel(), neither of which is defined
+// anywhere in this file. Behind typeof guards they failed silently, so the
+// calendar never refreshed after a save or a delete.
+function spCloseApptEditModal() {
+  var m = document.getElementById('spApptEditModal');
+  if (m) m.remove();
+  var d = document.getElementById('spApptDetailModal');
+  if (d) d.remove();
+}
+
+function spRefreshCalendarView() {
+  if (typeof spRenderCalendarModalBody === 'function' && document.getElementById('spCalendarModal')) {
+    spRenderCalendarModalBody();
+  }
+  // Home agenda reflects the same appointments, so keep it in step.
+  if (typeof spBuildAgenda === 'function') { try { spBuildAgenda(); } catch (e) {} }
+}
+
 function spSaveApptEdit(apptId) {
   var newDate  = (document.getElementById('apptEditDate') || {}).value || '';
   var newTime  = (document.getElementById('apptEditTime') || {}).value || '';
@@ -5200,52 +5290,65 @@ function spSaveApptEdit(apptId) {
   var newType  = (document.getElementById('apptEditType') || {}).value || 'appointment';
   if (!newDate) { if (typeof spToast === 'function') spToast('Date is required.'); return; }
 
-  var appts = crmLoad('appointments') || [];
-  var idx = appts.findIndex(function(x){ return x.id === apptId; });
-  if (idx < 0) { if (typeof spToast === 'function') spToast('Appointment not found.'); return; }
-
-  appts[idx].date    = newDate;
-  appts[idx].time    = newTime;
-  appts[idx].title   = newTitle;
-  appts[idx].notes   = newNotes;
-  appts[idx].type    = newType;
-  appts[idx].updated = Date.now();
-  crmSave('appointments', appts);
-
-  // Push edit to D1 immediately so other devices and the agenda see the
-  // updated date without waiting for the background sweep. This also
-  // means a moved appointment shows up on the new date right away
-  // instead of still appearing on the old date until the next hydration.
-  (function(updatedAppt) {
-    if (typeof TermacD1Sync !== 'undefined' && TermacD1Sync.d1Push) {
-      TermacD1Sync.d1Push('appointments', updatedAppt).catch(function(){});
-    }
-  })(appts[idx]);
-
-  document.getElementById('spApptEditModal').remove();
-  if (typeof spToast === 'function') spToast('Appointment updated.');
-  // Refresh the calendar view — both the grid dots and the right-panel day list
-  if (typeof spRenderCalendar === 'function') spRenderCalendar();
-  // Also refresh the selected-day panel if it's visible
-  var selDay = document.querySelector('.sp-cal-day.sp-cal-selected, .sp-cal-day[data-selected]');
-  if (selDay && selDay.dataset.date && typeof spShowDayPanel === 'function') {
-    spShowDayPanel(selDay.dataset.date);
-  } else {
-    // Fallback: re-click today's date cell to force the right panel to update
-    var todayCell = document.querySelector('.sp-cal-day.sp-cal-today, [data-today]');
-    if (todayCell && typeof spShowDayPanel === 'function') spShowDayPanel(todayCell.dataset.date || newDate);
-  }
+  // Update directly in D1 -- no localStorage
+  var updatePayload = {
+    date: newDate, time: newTime, title: newTitle,
+    notes: newNotes, type: newType, updated_at: Date.now()
+  };
+  fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/appointments/' + apptId, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+    body: JSON.stringify(updatePayload)
+  }).then(function(r){ return r.json(); }).then(function(d){
+    if (!d.ok) { if (typeof spToast === 'function') spToast('Save failed: ' + (d.error || 'unknown')); return; }
+    // 2026-07-26: the write to D1 was always succeeding, but this handler never
+    // closed the modal and called spRenderCalendar()/spShowDayPanel(), NEITHER
+    // OF WHICH EXISTS ANYWHERE IN THIS FILE. Both calls were wrapped in typeof
+    // guards, so they failed silently. Result: the modal stayed open over a
+    // stale calendar and the toast fired behind the overlay, so a save that
+    // worked perfectly looked completely dead. The real renderer is
+    // spRenderCalendarModalBody().
+    spCloseApptEditModal();
+    if (typeof spToast === 'function') spToast('Appointment updated.');
+    spRefreshCalendarView();
+  }).catch(function(){ if (typeof spToast === 'function') spToast('Save error -- check connection.'); });
 }
 
 function spDeleteAppt(apptId) {
   if (!confirm('Delete this appointment? This cannot be undone.')) return;
-  var appts = (crmLoad('appointments') || []).filter(function(x){ return x.id !== apptId; });
-  crmSave('appointments', appts);
-  var m = document.getElementById('spApptEditModal');
-  if (m) m.remove();
+  // Close modals immediately so UI feels responsive
+  ['spApptEditModal','spApptDetailModal'].forEach(function(id){
+    var m = document.getElementById(id); if (m) m.remove();
+  });
+  // Remove from local display cache so calendar re-renders immediately
+  try {
+    var cached = crmLoad('appointments') || [];
+    var filtered = cached.filter(function(a){ return a.id !== apptId && a.recordId !== apptId; });
+    if (filtered.length !== cached.length) crmSave('appointments', filtered);
+  } catch(e) {}
+  // Re-render calendar immediately so it disappears from view.
+  // 2026-07-26: was calling the nonexistent spRenderCalendar() behind a typeof
+  // guard, so deletes never refreshed the calendar either.
+  spCloseApptEditModal();
+  spRefreshCalendarView();
   if (typeof spToast === 'function') spToast('Appointment deleted.');
-  if (typeof spRenderCalendar === 'function') spRenderCalendar();
-  else if (typeof renderAll === 'function') renderAll();
+  // Delete from D1 and write tombstone so other devices sync the deletion
+  fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/appointments/' + apptId, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' }
+  }).catch(function(){});
+  // Write tombstone so hydration removes it from any other device's local cache
+  fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/crm_tombstones', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+    body: JSON.stringify({
+      id: 'tomb_appt_' + apptId,
+      table_name: 'appointments',
+      record_id: apptId,
+      deleted_at: Date.now(),
+      deleted_by: (typeof _spRep !== 'undefined' && _spRep) ? _spRep.name : ''
+    })
+  }).catch(function(){});
 }
 
 // Search and link an existing opportunity to a location.
@@ -10643,6 +10746,47 @@ async function spCommitAppt(patternKeysToClear) {
   // Save to the shared appointments pool the Calendar and Today's Agenda both read from
   const guests = spApptCollectGuests();
   const newApptId = mode + '_' + Date.now();
+  const title = linkedName || cfg.label.replace(/^\S+\s/,'');
+  const apptPayload = {
+    id: newApptId,
+    record_id: linkedId || null,
+    tab: linkedTab || null,
+    // 2026-07-26: only the generic record_id/tab pair was ever written. Every
+    // read path (appointment detail modal, AllPro intake auto-create, anything
+    // tracing an appointment back to its site) looks for the typed FK, so zero
+    // of the 39 appointments in D1 had one and none of them could resolve.
+    // Write both: typed for readers, legacy pair for backward compatibility.
+    location_id:    linkedTab === 'locations'     ? (linkedId || null) : null,
+    lead_id:        linkedTab === 'leads'         ? (linkedId || null) : null,
+    contact_id:     linkedTab === 'contacts'      ? (linkedId || null) : null,
+    opportunity_id: linkedTab === 'opportunities' ? (linkedId || null) : null,
+    account_id:     linkedTab === 'accounts'      ? (linkedId || null) : null,
+    type: mode,
+    date: date,
+    time: time,
+    time_end: timeEnd,
+    location: location,
+    notes: notes,
+    title: title,
+    business: linkedName || '',
+    all_day: allDay ? 1 : 0,
+    recurring: recurring ? 1 : 0,
+    recur_freq: recurFreq || null,
+    guests: guests.length ? JSON.stringify(guests) : null,
+    contact_name: apptContactName,
+    contact_phone: apptContactPhone,
+    contact_email: apptContactEmail,
+    is_flex_stop: mode !== 'appointment' ? 1 : 0,
+    rep: _spRep.name,
+    created_by: _spRep.name,
+    division: (_spRep.division || ''),
+    status: 'scheduled',
+    created_at: Date.now(),
+    updated_at: Date.now(),
+  };
+
+  // POST appointment to D1 -- this is the authoritative save
+  let apptSaveOk = false;
   try {
     const title = linkedName || cfg.label.replace(/^\S+\s/,'');
     const appts = crmLoad('appointments');
@@ -10687,7 +10831,55 @@ async function spCommitAppt(patternKeysToClear) {
     })();
   } catch(e){}
 
-  // Notify anyone invited along - directions link included so they don't
+  // ── Close modal and show full-screen confirmation ──
+  document.getElementById('spApptModal')?.remove();
+  var _tz = date ? new Date(date+'T12:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'}) : '';
+  var _tv = time ? (function(t){var p=t.split(':'),h=parseInt(p[0]),m=p[1],ap=h>=12?'PM':'AM';h=h%12||12;return h+':'+m+' '+ap;})(time) : '';
+  var _loc = (typeof location !== 'undefined' && typeof location === 'string') ? location : (document.getElementById('spApptLocation') ? document.getElementById('spApptLocation').value : '');
+  document.body.insertAdjacentHTML('beforeend',
+    '<div id="spApptConfirm" style="position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9800;display:flex;align-items:center;justify-content:center;padding:16px">' +
+    '<div style="background:#fff;border-radius:14px;width:min(400px,96vw);overflow:hidden;box-shadow:0 24px 70px rgba(0,0,0,.35)">' +
+      '<div style="background:#16A34A;padding:22px 20px;text-align:center">' +
+        '<div style="font-size:44px;margin-bottom:6px">\u2713</div>' +
+        '<div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:22px;color:#fff;letter-spacing:.04em">Appointment Set!</div>' +
+      '</div>' +
+      '<div style="padding:18px;text-align:center">' +
+        '<div style="font-size:16px;font-weight:700;color:#111318;margin-bottom:4px">' + escH(linkedName||'Appointment') + '</div>' +
+        '<div style="font-size:13px;color:#374151;margin-bottom:4px">\uD83D\uDCC5 ' + escH(_tz) + (_tv?' at '+escH(_tv):'') + '</div>' +
+        (_loc?'<div style="font-size:12px;color:#6B7280;margin-bottom:14px">\uD83D\uDCCD '+escH(_loc)+'</div>':'<div style="margin-bottom:14px"></div>') +
+        '<div style="font-size:11px;color:#16A34A;background:#F0FDF4;border-radius:6px;padding:6px;margin-bottom:14px">Added to your agenda</div>' +
+        '<button onclick="document.getElementById(\'spApptConfirm\').remove()" style="width:100%;background:#1B5FA8;color:#fff;border:none;border-radius:10px;padding:13px;font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:14px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;margin-bottom:8px">Got it \u2014 Back to Dashboard</button>' +
+        (linkedId?'<button onclick="document.getElementById(\'spApptConfirm\').remove();spViewRecord(\''+linkedId+'\',\''+linkedTab+'\');" style="width:100%;background:none;border:1.5px solid #E5E7EB;color:#374151;border-radius:10px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;cursor:pointer">View This Location \u2192</button>':'') +
+      '</div>' +
+    '</div></div>');
+  spRefreshCalendarView();
+  if (typeof spRenderHome === 'function') setTimeout(spRenderHome, 100);
+
+  // Outlook calendar sync -- fully detached, cannot block save
+  setTimeout(function() {
+    try {
+      var session = null;
+      try { session = JSON.parse(localStorage.getItem('termac_staff_session') || 'null'); } catch(e){}
+      if (!session || !session.email) return;
+      var startDt = date + 'T' + (time || '08:00') + ':00';
+      var endDt = date + 'T' + (timeEnd || (time ? time.replace(/(\d+):(\d+)/, function(_,h,m){ var eh=parseInt(h)+1; return String(eh).padStart(2,'0')+':'+m; }) : '09:00')) + ':00';
+      fetch('https://termac-staff-auth.termac-one.workers.dev/calendar-push', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          from_email: session.email,
+          event: {
+            subject: (linkedName ? linkedName + ' - ' : '') + (notes || 'Termac One Appointment'),
+            start: startDt, end: endDt,
+            location: location || '', body: (notes || '') + (location ? '\n\n' + location : '')
+          }
+        })
+      }).catch(function(){});
+    } catch(e){}
+  }, 0);
+
+  // Notify anyone invited
+  // along -- directions link included so they don't have to ask where to meet.
   // have to ask where to meet.
   if (guests.length && typeof TermacD1Sync !== 'undefined') {
     const dateLabel2 = new Date(date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
@@ -10707,8 +10899,73 @@ async function spCommitAppt(patternKeysToClear) {
     });
   }
 
-  document.getElementById('spApptModal')?.remove();
-  spToast(cfg.saveLabel.replace('Save ', '') + ' saved' + (guests.length ? (' \u2014 ' + guests.length + ' invited') : ''));
+  // Modal already closed above
+
+  // ── ALLPRO INTAKE: create intake record -- dedup check first to prevent duplicates
+  (function() {
+    try {
+      var session = null;
+      try { session = JSON.parse(localStorage.getItem('termac_staff_session') || 'null'); } catch(e){}
+      // 2026-07-26: this block is the standing rule that an appointment creates
+      // an AllPro intake record. It has never fired. Three separate reasons:
+      //  1. !linkedId -- linkedId was null on Location-parented appointments
+      //     because the typed FK was never written (fixed in the payload above).
+      //  2. !isTed -- gated to one hardcoded person, read out of localStorage.
+      //     A stale or missing session silently disabled it, and nobody else on
+      //     the team could ever generate an intake.
+      //  3. No division check at all, so a UniPro-tagged appointment would file
+      //     into the AllPro board anyway.
+      // Now: anyone can trigger it, and it only fires for AllPro work.
+      var apptDivision = String(_spRep.division || '').toLowerCase();
+      var isAllProWork = apptDivision === 'allpro' || linkedTab === 'locations';
+      if (mode !== 'appointment' || !linkedId) return;
+      if (!isAllProWork) return;
+      // Dedup: check if intake already exists for this linked record
+      d1Query('SELECT id FROM allpro_projects WHERE (location_id=? OR account_id=?) AND stage=? LIMIT 1', [linkedId, linkedId, 'intake'])
+      .then(function(existing) {
+        if (existing.ok && existing.results && existing.results.length > 0) return; // Already exists
+        // No existing intake -- create one
+      var acctId = (linkedTab === 'accounts') ? linkedId : null;
+      var projId = 'AP_' + Date.now();
+      var payload = {
+        id: projId,
+        intake_business_name: linkedName || '',
+        // 2026-07-26: this read `locId`, which is not defined anywhere in this
+        // scope. Because the payload is built inside a .then() callback, the
+        // ReferenceError became an unhandled rejection rather than hitting the
+        // outer try/catch, so it would have failed silently even if the guards
+        // above had passed. Fourth independent reason this rule never worked.
+        location_id: (linkedTab === 'locations' ? linkedId : '') || '',
+        account_id: acctId || '',
+        opportunity_id: '',
+        stage: 'intake',
+        project_name: linkedName || 'New AllPro Job',
+        site_address: location || '',
+        project_manager: 'Ted Scholl',
+        priority: 'Normal',
+        created_at: Date.now(),
+        updated_at: Date.now(),
+        job_notes: 'Created from appointment scheduled ' + date + (time ? ' at ' + time : '') + (notes ? '. Notes: ' + notes : ''),
+      };
+      fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/allpro_projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+        body: JSON.stringify(payload)
+      }).then(function(r){ return r.json(); }).then(function(d){
+        if (d.ok) {
+          // Store the allpro_project_id on the appointment in D1
+          fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/appointments/' + newApptId, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+            body: JSON.stringify({ allpro_project_id: projId, updated_at: Date.now() })
+          }).catch(function(){});
+          spToast('\uD83D\uDCCB Added to AllPro Intake');
+        }
+      }).catch(function(){});
+    }).catch(function(){});
+    } catch(e){}
+  })();
+
   _spApptLinkedId = null; _spApptLinkedTab = null; _spApptLinkedName = '';
   if (linkedTab) spNav(linkedTab);
 }
