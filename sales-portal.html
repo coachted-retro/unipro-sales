@@ -7118,6 +7118,76 @@ function spOpenAdd(tab) {
 }
 
 // ══════════════════════════════════════════════════════
+
+// ══════════════════════════════════════════════════════════════════════════
+//  MISSING FUNCTIONS -- four calls that caused silent failures in demos.
+//  2026-07-28 audit fix.
+// ══════════════════════════════════════════════════════════════════════════
+
+function spEditRecord(id, tab) {
+  var tbl = tab==='leads'?'leads':tab==='contacts'?'contacts':tab==='accounts'?'accounts':'locations';
+  d1Query('SELECT * FROM '+tbl+' WHERE id=? LIMIT 1',[id]).then(function(res){
+    var rec = res && res.results && res.results[0];
+    if (!rec) { spToast('Record not found.'); return; }
+    var formHtml = spBuildForm(tab, rec);
+    var panel = document.getElementById('spSlidePanel');
+    var body  = document.getElementById('spSlidePanelBody');
+    if (!panel || !body) { spToast('Edit panel not available.'); return; }
+    var title = tab==='leads'?'Edit Lead':tab==='contacts'?'Edit Contact':tab==='accounts'?'Edit Account':'Edit Location';
+    var btnSave   = document.createElement('button');
+    btnSave.textContent = 'Save Changes';
+    btnSave.setAttribute('style','flex:1;background:#C8102E;color:#fff;border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:15px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer');
+    btnSave.onclick = function() { spSaveFormById(id, tab); };
+    var btnCancel = document.createElement('button');
+    btnCancel.textContent = 'Cancel';
+    btnCancel.setAttribute('style','flex:0 0 80px;background:#fff;border:1.5px solid var(--line);border-radius:8px;padding:11px;font-size:14px;cursor:pointer');
+    btnCancel.onclick = function() { panel.classList.remove('open'); };
+    var btnRow = document.createElement('div');
+    btnRow.setAttribute('style','display:flex;gap:10px;margin-top:16px');
+    btnRow.appendChild(btnSave); btnRow.appendChild(btnCancel);
+    body.innerHTML = '<h2 style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:18px;margin:0 0 14px">✏️ ' + title + '</h2>' + formHtml;
+    body.appendChild(btnRow);
+    panel.classList.add('open');
+    try { spWireEditFormListeners(tab); } catch(e) {}
+  }).catch(function() { spToast('Could not load record.'); });
+}
+
+function spSaveFormById(id, tab) {
+  // delegate to the existing spSaveForm if it exists, else a safe fallback
+  if (typeof spSaveForm === 'function') { spSaveForm(id, tab); }
+  else { spToast('Save not yet implemented for this record type.'); }
+}
+
+function spOpenMarkLostModal(id, tab) {
+  if(tab==='opportunities'){spOpenResolveModal(id,'lost');return;}
+  if(!confirm('Mark this record as lost / inactive?'))return;
+  var tbl=tab==='leads'?'leads':tab==='contacts'?'contacts':tab==='accounts'?'accounts':'locations';
+  var now=Date.now();
+  d1Query('UPDATE '+tbl+' SET status=?,lifecycle_stage=?,updated_at=? WHERE id=?',['inactive','lost',now,id])
+    .then(function(){spToast('Record marked as lost.');spRenderCRM(_spTab);})
+    .catch(function(){spToast('Could not update record.');});
+}
+
+function spToggleDictation(targetId, btnId) {
+  var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  var btn=document.getElementById(btnId);
+  var target=document.getElementById(targetId);
+  if(!SR){spToast('Voice input not supported in this browser.');return;}
+  if(window._spDictating){
+    try{window._spDictating.stop();}catch(e){}
+    window._spDictating=null;
+    if(btn)btn.style.color='';return;
+  }
+  var rec=new SR();
+  rec.continuous=true;rec.interimResults=false;rec.lang='en-US';
+  rec.onresult=function(e){
+    var txt=Array.from(e.results).slice(e.resultIndex).map(function(r){return r[0].transcript;}).join(' ');
+    if(target)target.value=(target.value?target.value+' ':'')+txt.trim();
+  };
+  rec.onerror=rec.onend=function(){window._spDictating=null;if(btn)btn.style.color='';};
+  window._spDictating=rec;rec.start();if(btn)btn.style.color='#C8102E';
+}
+
 //  WIN-BACK / MARK LOST — ported faithfully from termac-os.html's
 //  openMarkLostModal/markAccountLost. Same reason list, same field names
 //  (lostReason, lostDate, lostNotes, reengageAfter), same 90-day window,
