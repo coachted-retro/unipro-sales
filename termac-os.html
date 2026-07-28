@@ -37352,6 +37352,26 @@ var _TERMAC_CAT_ICON = {
 };
 
 function _termacMapProductRow(r) {
+  var price = r.price == null ? 0 : Number(r.price);
+  var unit = r.unit || 'Each';
+  var sizes = [{ unit: unit, price: price }];
+  // Derive per-gallon / per-unit price for case packs so reps can see both.
+  // Pack sizes extracted from unit label: "Case (4x1gal)" -> 4 gal, etc.
+  var caseMatch = unit.match(/\((\d+)\s*[xX\u00d7]\s*(\d+(?:\.\d+)?)/);
+  var altMatch  = unit.match(/(\d+)\s*[xX\u00d7]\s*(\d+(?:\.\d+)?)/);
+  var pack = caseMatch ? (parseFloat(caseMatch[1]) * parseFloat(caseMatch[2]))
+           : altMatch  ? (parseFloat(altMatch[1])  * parseFloat(altMatch[2]))
+           : null;
+  if (!pack) {
+    // Try "4 gal" or "5 gal" at start of unit
+    var galMatch = unit.match(/^(\d+(?:\.\d+)?)\s*gal/i);
+    if (galMatch) pack = parseFloat(galMatch[1]);
+  }
+  if (pack && pack > 1 && price > 0) {
+    var perUnit = price / pack;
+    var perLabel = unit.toLowerCase().includes('gal') ? '1 gal' : '1 unit';
+    sizes.push({ unit: perLabel + ' (from case)', price: Math.round(perUnit * 100) / 100 });
+  }
   return {
     id: 'cat_' + (r.id || r.sku),
     name: r.description || r.sku || '',
@@ -37360,7 +37380,7 @@ function _termacMapProductRow(r) {
     division: r.division || '',
     entity: r.entity || '',
     image: _TERMAC_CAT_ICON[r.category_label] || '\u{1F4E6}',
-    sizes: [{ unit: r.unit || 'Each', price: (r.price == null ? 0 : Number(r.price)) }],
+    sizes: sizes,
     dilution: '',
     competitors: [],
     description: ''
@@ -37370,8 +37390,17 @@ function _termacMapProductRow(r) {
 function termacLoadProducts(force) {
   if (_termacProductLoaded && !force) return Promise.resolve(_termacProductCache);
   if (_termacProductLoading) return _termacProductLoading;
-  if (typeof d1Query !== 'function') return Promise.resolve([]);
-  _termacProductLoading = d1Query(
+  // termac-os.html does not load termac-d1-sync.js so d1Query may not exist.
+  // Use a self-contained proxy fetch so the catalog always loads.
+  var _q = typeof d1Query === 'function' ? d1Query : function(sql, params) {
+    return fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+      body: JSON.stringify({ sql: sql, params: params || [] })
+    }).then(function(r){ return r.json(); })
+      .catch(function(){ return { results: [] }; });
+  };
+  _termacProductLoading = _q(
     'SELECT id, sku, description, category, category_label, division, entity, unit, price ' +
     'FROM service_pricing_catalog WHERE active = 1 ORDER BY division, category_label, description',
     []
