@@ -1390,6 +1390,18 @@ async function spRenderOpportunitiesTab() {
   }, { once: true });
 }
 
+// ── VIEW MODE: cards vs list, persisted per browser ──────────────────────
+var _spViewMode = (function(){ try { return localStorage.getItem('sp_view_mode')||'cards'; } catch(e){ return 'cards'; } })();
+function spSetViewMode(mode) {
+  _spViewMode = mode;
+  try { localStorage.setItem('sp_view_mode', mode); } catch(e){}
+  ['cards','list'].forEach(function(m){
+    var b=document.getElementById('spViewBtn_'+m);
+    if(b){b.style.background=(m===mode)?'#C8102E':'#fff';b.style.color=(m===mode)?'#fff':'var(--ink)';}
+  });
+  spRenderCRM(_spTab);
+}
+
 function spRenderCRM(tab) {
   if (tab === 'opportunities') { spRenderOpportunitiesTab(); return Promise.resolve(); }
   const el = document.getElementById('spContent');
@@ -1522,6 +1534,10 @@ function spRenderCRM(tab) {
     </select>
     ${tab === 'accounts' ? '' : `<button class="sp-btn sp-btn-red" onclick="spOpenAdd('${tab}')">+ Add New</button>
     <button class="sp-btn" onclick="spOpenAllProForm()" style="background:#1A1D21;color:#fff;border-color:#1A1D21">🏗️ AllPro / Hood</button>`}
+    <div style="margin-left:auto;display:flex;gap:3px;align-items:center">
+      <button id="spViewBtn_cards" onclick="spSetViewMode('cards')" title="Card view" style="border:1.5px solid var(--line);border-radius:7px;padding:5px 10px;font-size:14px;cursor:pointer;line-height:1;background:${_spViewMode==='cards'?'#C8102E':'#fff'};color:${_spViewMode==='cards'?'#fff':'var(--ink)'}">⊞</button>
+      <button id="spViewBtn_list"  onclick="spSetViewMode('list')"  title="List view"  style="border:1.5px solid var(--line);border-radius:7px;padding:5px 10px;font-size:14px;cursor:pointer;line-height:1;background:${_spViewMode==='list'?'#C8102E':'#fff'};color:${_spViewMode==='list'?'#fff':'var(--ink)'}">☰</button>
+    </div>
   </div>
   <!-- 2026-07-15 per Ted: no manual "add account" entry point, anywhere.
        An Account only ever gets created one way -- winning an Opportunity
@@ -1531,23 +1547,41 @@ function spRenderCRM(tab) {
        the same real business with no link between them. If a business
        needs to be worked, it starts as a Lead. -->
   ${tab === 'accounts' ? `<div style="font-size:11px;color:var(--soft);margin:-4px 0 12px;padding:8px 12px;background:#F8F9FA;border-radius:7px">Accounts are created automatically when an Opportunity is marked Won \u2014 there's no manual add here on purpose, to keep one account per real business.</div>` : ''}
-  <div class="sp-record-grid" id="spRecGrid">`;
+  ${_spViewMode === 'list' ? '<table style="width:100%;border-collapse:collapse" id="spRecGrid">' : '<div class="sp-record-grid" id="spRecGrid">'}`;
 
   if (!data.length) {
-    html += `<div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--soft);font-size:14px">
-      <div style="font-size:32px;margin-bottom:10px">📭</div>
-      No ${tab} in your territory yet. Click <strong>+ Add New</strong> to get started.
-    </div>`;
+    html += _spViewMode === 'list'
+      ? `<tr><td colspan="6" style="text-align:center;padding:40px;color:var(--soft);font-size:14px">No ${tab} yet.</td></tr>`
+      : `<div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--soft);font-size:14px"><div style="font-size:32px;margin-bottom:10px">📭</div>No ${tab} in your territory yet. Click <strong>+ Add New</strong> to get started.</div>`;
   } else {
-    // 2026-07-20 per Ted: service tags on account cards, built once per
-    // render instead of per-card -- jobs + account_assets run into the
-    // tens of thousands of rows combined, scanning that per card in a
-    // grid of dozens would be needlessly slow.
     if (tab === 'accounts') spBuildServiceTagIndex();
-    html += data.map(r => spRecordCard(r, tab)).join('');
+    if (_spViewMode === 'list') {
+      html += `<thead><tr style="background:#F1F5F9;font-family:Barlow Condensed,sans-serif;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--soft)">
+        <th style="padding:8px 12px;text-align:left">Business</th>
+        <th style="padding:8px 12px;text-align:left">Contact</th>
+        <th style="padding:8px 12px;text-align:left">Phone</th>
+        <th style="padding:8px 12px;text-align:left">ZIP</th>
+        <th style="padding:8px 12px;text-align:left">Stage</th>
+        <th style="padding:8px 12px;text-align:left">Edit</th>
+      </tr></thead><tbody>`;
+      html += data.map(function(r) {
+        var stage = spGetStageConfig(spNormalizeStage(r.lifecycleStage), tab);
+        return `<tr style="border-bottom:1px solid var(--line);cursor:pointer" onclick="spViewRecord('${r.id}','${tab}')">
+          <td style="padding:9px 12px;font-weight:700;font-size:13px">${escH(r.business||r.name||'—')}</td>
+          <td style="padding:9px 12px;font-size:13px;color:var(--soft)">${escH(r.contact||'—')}</td>
+          <td style="padding:9px 12px;font-size:13px">${escH(r.phone||'—')}</td>
+          <td style="padding:9px 12px;font-size:13px">${escH(r.zip||r.city||'—')}</td>
+          <td style="padding:9px 12px"><span class="sp-stage-pill" style="background:${stage.bg};color:${stage.color}">${stage.label}</span></td>
+          <td style="padding:9px 12px" onclick="event.stopPropagation()"><button onclick="spEditRecord('${r.id}','${tab}')" class="sp-rec-btn">Edit</button></td>
+        </tr>`;
+      }).join('');
+      html += '</tbody>';
+    } else {
+      html += data.map(r => spRecordCard(r, tab)).join('');
+    }
   }
 
-  html += `</div>`;
+  html += _spViewMode === 'list' ? '</table>' : '</div>';
   el.innerHTML = html;
 
   // Restore filter values
@@ -7153,9 +7187,30 @@ function spEditRecord(id, tab) {
 }
 
 function spSaveFormById(id, tab) {
-  // delegate to the existing spSaveForm if it exists, else a safe fallback
-  if (typeof spSaveForm === 'function') { spSaveForm(id, tab); }
-  else { spToast('Save not yet implemented for this record type.'); }
+  var get = function(elId) { var e = document.getElementById(elId); return e ? (e.value||'').trim() : ''; };
+  var biz     = get('spf_business');
+  var contact = get('spf_contact');
+  var phone   = get('spf_phone');
+  var email   = get('spf_email');
+  var addr    = get('spf_address');
+  var city    = get('spf_city');
+  var state_  = get('spf_state');
+  var zip     = get('spf_zip');
+  var div     = get('spf_division');
+  var rep     = get('spf_assignedRep');
+  var notes   = get('spf_notes');
+  var fullAddr = [addr, city, state_, zip].filter(Boolean).join(', ');
+  var now = Date.now();
+  var tbl = tab==='leads'?'leads':tab==='contacts'?'contacts':tab==='accounts'?'accounts':'locations';
+  d1Query(
+    'UPDATE '+tbl+' SET name=?, business=?, contact=?, phone=?, email=?, address=?, city=?, state=?, zip=?, division=?, assigned_rep=?, notes=?, updated_at=? WHERE id=?',
+    [biz||contact||fullAddr||'Record', biz, contact, phone, email, fullAddr||addr, city, state_, zip, div, rep, notes, now, id]
+  ).then(function() {
+    spToast('Saved.');
+    var panel = document.getElementById('spSlidePanel');
+    if (panel) panel.classList.remove('open');
+    spRenderCRM(_spTab);
+  }).catch(function() { spToast('Save failed.'); });
 }
 
 function spOpenMarkLostModal(id, tab) {
