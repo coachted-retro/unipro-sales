@@ -5017,11 +5017,45 @@ function spNormalizeApptRow(row) {
 }
 
 function spViewApptDetail(apptId) {
-  // Fetch appointment from D1 -- it is never in localStorage
+  // Try D1 first; fall back to localStorage for appointments saved before the D1-write fix
   d1Query('SELECT * FROM appointments WHERE id=? LIMIT 1', [apptId])
   .then(function(res) {
     var a = res.ok && res.results && res.results[0];
-    if (!a) { spToast('Appointment not found.'); return; }
+    if (!a) {
+      // Not in D1 yet -- read from localStorage cache and backfill D1 in the background
+      var localAppts = crmLoad('appointments') || [];
+      var local = localAppts.find(function(x){ return x.id === apptId; });
+      if (!local) { spToast('Appointment not found.'); return; }
+      // Backfill this row to D1 so future taps resolve correctly
+      var payload = {
+        id: local.id,
+        record_id: local.recordId || null,
+        tab: local.tab || null,
+        location_id: local.tab === 'locations' ? (local.recordId || null) : null,
+        lead_id: local.tab === 'leads' ? (local.recordId || null) : null,
+        account_id: local.tab === 'accounts' ? (local.recordId || null) : null,
+        type: local.type || 'appointment',
+        date: local.date || null,
+        time: local.time || null,
+        location: local.address || local.location || null,
+        notes: local.notes || null,
+        title: local.title || null,
+        business: local.business || local.title || null,
+        all_day: local.allDay ? 1 : 0,
+        rep: local.createdBy || null,
+        created_by: local.createdBy || null,
+        status: 'scheduled',
+        created_at: local.createdAt || Date.now(),
+        updated_at: Date.now(),
+      };
+      fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/appointments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+        body: JSON.stringify(payload)
+      }).catch(function(){});
+      _spViewApptDetailRender(apptId, spNormalizeApptRow(local));
+      return;
+    }
     _spViewApptDetailRender(apptId, spNormalizeApptRow(a));
   });
 }
@@ -10738,6 +10772,13 @@ async function spCommitAppt(patternKeysToClear) {
       isFlexStop: mode !== 'appointment', createdAt: Date.now(), createdBy: _spRep.name,
     });
     crmSave('appointments', appts);
+
+    // Write to D1 so spViewApptDetail can fetch it back and View Location works
+    fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/appointments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+      body: JSON.stringify(apptPayload)
+    }).catch(function(){});
 
     // Outlook calendar sync -- creates a matching event in the rep's real
     // Outlook calendar via Microsoft Graph. Fires in the background; any
