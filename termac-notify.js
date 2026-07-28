@@ -206,6 +206,7 @@ function _notifAcknowledge(notifId, opts, outcome, notes) {
           rep_action: actionLabels[outcome] || outcome,
           rep_action_by: ackedBy,
           rep_action_at: Date.now(),
+          first_contacted_at: Date.now(),
           is_new_lead: 0,
           updated_at: Date.now()
         })
@@ -220,9 +221,10 @@ function _notifOpenOutcomeModal(notifId, opts) {
   m.id = '_repOutcomeModal';
   m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px;font-family:Barlow,system-ui,sans-serif';
   var tiles = [
-    {val:'spoke',    label:'Spoke with Someone', icon:'💬', color:'#16A34A'},
-    {val:'voicemail',label:'Left Voicemail',     icon:'📲', color:'#2563EB'},
-    {val:'no-answer',label:'No Answer',          icon:'🔇', color:'#D97706'},
+    {val:'phone',    label:'Phone Call',  icon:'📞', color:'#16A34A'},
+    {val:'email',    label:'Email',       icon:'✉️',  color:'#2563EB'},
+    {val:'text',     label:'Text',        icon:'💬', color:'#7C3AED'},
+    {val:'stopped-in',label:'Stopped In', icon:'🚗', color:'#D97706'},
   ].map(function(o){
     return '<button data-outcome="'+o.val+'" onclick="_repSelectOutcome(this)" '
       +'style="border:2px solid #E5E7EB;border-radius:10px;padding:12px 8px;text-align:center;cursor:pointer;background:#fff;font-family:inherit">'
@@ -239,7 +241,7 @@ function _notifOpenOutcomeModal(notifId, opts) {
     +'style="width:100%;border:1.5px solid #E5E7EB;border-radius:8px;padding:10px;font-size:13px;font-family:inherit;height:80px;resize:vertical;margin-bottom:12px;box-sizing:border-box"></textarea>'
     +'<div style="display:flex;gap:8px">'
     +'<button onclick="_repSubmitOutcome(\''+notifId+'\',\''+optsEnc+'\')" '
-    +'style="flex:1;background:#1B5FA8;color:#fff;border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">Save Outcome</button>'
+    +'style="flex:1;background:#1B5FA8;color:#fff;border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:13px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer">Complete</button>'
     +'<button onclick="document.getElementById(\'_repOutcomeModal\').remove()" '
     +'style="background:#F3F4F6;border:none;border-radius:8px;padding:11px 16px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:12px;cursor:pointer;color:#374151">Cancel</button>'
     +'</div></div>';
