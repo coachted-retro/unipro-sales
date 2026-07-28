@@ -367,22 +367,19 @@
       html += '<div style="padding:6px 12px;font-size:10px;font-weight:800;color:#1B5FA8;'
         + 'text-transform:uppercase;letter-spacing:.08em;background:#EBF2FD"'
         + (html ? '' : ';border-radius:8px 8px 0 0') + '>📍 Google Places</div>';
-      html += _placesResults.map(function (p, idx) {
-        return '<div onmousedown="event.preventDefault();taPickPlaceByIndex(' + idx + ')" '
-          + 'ontouchend="event.preventDefault();taPickPlaceByIndex(' + idx + ')" '
-          + 'onclick="taPickPlaceByIndex(' + idx + ')" '
-          + 'style="padding:11px 14px;cursor:pointer;border-bottom:1px solid #F1F5F9;min-height:48px;'
-          + 'display:flex;flex-direction:column;justify-content:center"'
-          + ' onmouseover="this.style.background=\'#EBF2FD\'" onmouseout="this.style.background=\'\'">'
-          + '<div style="display:flex;justify-content:space-between;align-items:center">'
-            + '<span style="font-weight:700;font-size:14px">' + escH(p.name) + '</span>'
-            + '<span style="font-size:10px;font-weight:700;color:#1B5FA8;background:#DBEAFE;'
-            + 'border-radius:4px;padding:2px 7px;flex-shrink:0">Google</span>'
-          + '</div>'
-          + (p.secondary ? '<div style="font-size:12px;color:#6B7280;margin-top:2px">📍 ' + escH(p.secondary) + '</div>' : '')
-        + '</div>';
-      }).join('');
-    }
+            html += _placesResults.map(function (p, idx) {
+        return '<div data-ta-pidx="' + idx + '" ' +
+          'style="padding:11px 14px;cursor:pointer;border-bottom:1px solid #F1F5F9;min-height:48px;' +
+          'display:flex;flex-direction:column;justify-content:center;-webkit-tap-highlight-color:transparent"' +
+         '>'+ 
+          '<div style="display:flex;justify-content:space-between;align-items:center;pointer-events:none">' +
+            '<span style="font-weight:700;font-size:14px">' + escH(p.name) + '</span>' +
+            '<span style="font-size:10px;font-weight:700;color:#1B5FA8;background:#DBEAFE;' +
+            'border-radius:4px;padding:2px 7px;flex-shrink:0">Google</span>' +
+          '</div>' +
+          (p.secondary ? '<div style="font-size:12px;color:#6B7280;margin-top:2px;pointer-events:none">📍 ' + escH(p.secondary) + '</div>' : '') +
+        '</div>';
+      }).join('');    }
 
     if (!html && _lastTerm.length >= 2) {
       // Only show 'no results' if Google Places has already responded
@@ -393,6 +390,16 @@
 
     drop.innerHTML = html;
     drop.style.display = html ? 'block' : 'none';
+
+    drop.onclick = drop.ontouchend = function(e) {
+      var row = e.target && e.target.closest ? e.target.closest('[data-ta-pidx],[data-ta-iidx]') : null;
+      if (!row) return;
+      e.preventDefault(); e.stopPropagation();
+      var pi = row.getAttribute('data-ta-pidx');
+      var ii = row.getAttribute('data-ta-iidx');
+      if (pi !== null) taPickPlaceByIndex(parseInt(pi, 10));
+      else if (ii !== null) taPickInternalByIndex(parseInt(ii, 10));
+    };
   }
 
   // ── Picking a result ──────────────────────────────────────────────────
