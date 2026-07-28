@@ -141,7 +141,7 @@ async function runEscalationCheck(env) {
         }
       }
 
-      await d1Fetch(env, 'PUT', '/api/leads/' + lead.id, { notified_phase1: 1 });
+      await d1Fetch(env, 'POST', '/db/query', { sql: 'UPDATE leads SET notified_phase1=1, is_new_lead=0 WHERE id=?', params: [lead.id] });
       phase1Count++;
     }
 
@@ -171,7 +171,7 @@ async function runEscalationCheck(env) {
       await sendNotif(env, m.name, m.email, lead, escalateSubject, escalateText);
     }
 
-    await d1Fetch(env, 'PUT', '/api/leads/' + lead.id, { notified_phase2: 1, escalated: 1 });
+    await d1Fetch(env, 'POST', '/db/query', { sql: 'UPDATE leads SET notified_phase2=1, escalated=1 WHERE id=?', params: [lead.id] });
     phase2Count++;
   }
 
