@@ -692,10 +692,9 @@ function dmsRenderCallSheet(el){
   <!-- Filter bar -->
   <div class="dms-filter-bar">
     <button onclick="dmsOpenAddLead()" style="background:#C8102E;color:#fff;border:none;border-radius:7px;padding:8px 14px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer;white-space:nowrap">+ Add New Lead</button>
-    ${_dmsUser && _dmsUser.name === 'Chrystal Bush' ? `
     <button onclick="dmsOpenImport('csv')" style="background:#1E7B3C;color:#fff;border:none;border-radius:7px;padding:8px 14px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer;white-space:nowrap">⬆ Import CSV</button>
-    <button onclick="dmsOpenImport('pdf')" style="background:#1B5FA8;color:#fff;border:none;border-radius:7px;padding:8px 14px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer;white-space:nowrap">⬆ Import PDF</button>
-    ` : ''}
+    <button onclick="dmsOpenImport('xlsx')" style="background:#1B5FA8;color:#fff;border:none;border-radius:7px;padding:8px 14px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer;white-space:nowrap">⬆ Import Excel</button>
+    <button onclick="dmsOpenImport('pdf')" style="background:#6B46C1;color:#fff;border:none;border-radius:7px;padding:8px 14px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer;white-space:nowrap">⬆ Import PDF</button>
     <input class="dms-search" id="dmsSearchInput" placeholder="Search business, city, zip…" oninput="dmsRender('leads')" value="${escH(q)}">
     <select class="dms-filter-sel" id="dmsStatusFilter" onchange="dmsRender('leads')">
       <option value="">All Statuses</option>
@@ -1284,14 +1283,71 @@ var _dmsImportRows = [];
 function dmsOpenImport(kind){
   var input = document.createElement('input');
   input.type = 'file';
-  input.accept = kind === 'csv' ? '.csv' : '.pdf';
+  input.accept = kind === 'csv' ? '.csv' : kind === 'xlsx' ? '.xlsx,.xls' : '.pdf';
   input.onchange = function(){
     var file = input.files[0];
     if (!file) return;
     if (kind === 'csv') dmsParseCSVFile(file);
+    else if (kind === 'xlsx') dmsParseXLSXFile(file);
     else dmsParsePDFFile(file);
   };
   input.click();
+}
+
+
+function dmsParseXLSXFile(file) {
+  dmsToast('Reading Excel file…');
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      var XLSX = window.XLSX;
+      if (!XLSX) {
+        // Load SheetJS from CDN if not already loaded
+        var script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+        script.onload = function() { dmsParseXLSXFile(file); };
+        document.head.appendChild(script);
+        return;
+      }
+      var data = new Uint8Array(e.target.result);
+      var wb = XLSX.read(data, { type: 'array' });
+      var ws = wb.Sheets[wb.SheetNames[0]];
+      var rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+      if (!rows.length) { dmsToast('No data found in Excel file.'); return; }
+      // Map columns -- try common header names
+      var leads = rows.map(function(r) {
+        var keys = Object.keys(r);
+        var get = function(names) {
+          for (var i = 0; i < names.length; i++) {
+            for (var j = 0; j < keys.length; j++) {
+              if (keys[j].toLowerCase().indexOf(names[i]) >= 0) return String(r[keys[j]] || '').trim();
+            }
+          }
+          return '';
+        };
+        return {
+          id: 'dms_' + Date.now() + '_' + Math.random().toString(36).slice(2,5),
+          business: get(['business','company','name','account']),
+          contact:  get(['contact','person','first']),
+          phone:    get(['phone','tel','mobile','cell']),
+          address:  get(['address','street','addr']),
+          city:     get(['city','town']),
+          state:    get(['state','st','province']),
+          zip:      get(['zip','postal','post']),
+          notes:    get(['note','comment','remark']),
+          source:   'Excel Import',
+          status:   'new',
+          created_at: Date.now()
+        };
+      }).filter(function(l) { return l.business || l.phone || l.address; });
+      if (!leads.length) { dmsToast('Could not find business, phone, or address columns.'); return; }
+      _dmsImportRows = leads;
+      dmsConfirmImport();
+    } catch(err) {
+      dmsToast('Excel parse error: ' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(file);
 }
 
 function dmsParseCSVField(row){
