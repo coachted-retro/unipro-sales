@@ -205,6 +205,17 @@
     + '</div>';
   }
 
+
+  function taPickPlaceByIndex(idx) {
+    var p = _placesResults[idx];
+    if (p) taPickPlace(p);
+  }
+
+  function taPickInternalByIndex(idx) {
+    var r = _internalResults[idx];
+    if (r) taPickInternal(r);
+  }
+
   // ── Open / close ──────────────────────────────────────────────────────
   function taOpen(opts) {
     opts = opts || {};
@@ -334,9 +345,10 @@
     if (_internalResults.length) {
       html += '<div style="padding:6px 12px;font-size:10px;font-weight:800;color:#166534;'
         + 'text-transform:uppercase;letter-spacing:.08em;background:#F0FDF4;border-radius:8px 8px 0 0">🏢 System Records</div>';
-      html += _internalResults.map(function (r) {
-        return '<div onmousedown="event.preventDefault();taPickInternal(' + JSON.stringify(r) + ')" '
-          + 'ontouchend="event.preventDefault();taPickInternal(' + JSON.stringify(r) + ')" '
+      html += _internalResults.map(function (r, idx) {
+        return '<div onmousedown="event.preventDefault();taPickInternalByIndex(' + idx + ')" '
+          + 'ontouchend="event.preventDefault();taPickInternalByIndex(' + idx + ')" '
+          + 'onclick="taPickInternalByIndex(' + idx + ')" '
           + 'style="padding:11px 14px;cursor:pointer;border-bottom:1px solid #F1F5F9;min-height:48px;'
           + 'display:flex;flex-direction:column;justify-content:center"'
           + ' onmouseover="this.style.background=\'#F0FDF4\'" onmouseout="this.style.background=\'\'">'
@@ -355,9 +367,10 @@
       html += '<div style="padding:6px 12px;font-size:10px;font-weight:800;color:#1B5FA8;'
         + 'text-transform:uppercase;letter-spacing:.08em;background:#EBF2FD"'
         + (html ? '' : ';border-radius:8px 8px 0 0') + '>📍 Google Places</div>';
-      html += _placesResults.map(function (p) {
-        return '<div onmousedown="event.preventDefault();taPickPlace(' + JSON.stringify(p) + ')" '
-          + 'ontouchend="event.preventDefault();taPickPlace(' + JSON.stringify(p) + ')" '
+      html += _placesResults.map(function (p, idx) {
+        return '<div onmousedown="event.preventDefault();taPickPlaceByIndex(' + idx + ')" '
+          + 'ontouchend="event.preventDefault();taPickPlaceByIndex(' + idx + ')" '
+          + 'onclick="taPickPlaceByIndex(' + idx + ')" '
           + 'style="padding:11px 14px;cursor:pointer;border-bottom:1px solid #F1F5F9;min-height:48px;'
           + 'display:flex;flex-direction:column;justify-content:center"'
           + ' onmouseover="this.style.background=\'#EBF2FD\'" onmouseout="this.style.background=\'\'">'
@@ -633,6 +646,8 @@
   global.taOnSearch   = taOnSearch;
   global.taPickInternal = taPickInternal;
   global.taPickPlace  = taPickPlace;
+  global.taPickPlaceByIndex    = taPickPlaceByIndex;
+  global.taPickInternalByIndex = taPickInternalByIndex;
   global.taUnlink     = taUnlink;
   global.taPickSlot   = taPickSlot;
   global.taShowOther  = taShowOther;
