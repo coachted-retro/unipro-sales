@@ -311,20 +311,16 @@
   function taSearchPlaces(term) {
     if (term !== _lastTerm) return;
     _placesSearched = false;
-    var url = PROXY + '/maps/autocomplete?q=' + encodeURIComponent(term) + '&lat=40.0&lng=-75.2';
-    console.log('[TERMAC] Places fetch:', url);
-    fetch(url)
+    fetch(PROXY + '/maps/autocomplete?q=' + encodeURIComponent(term) + '&lat=40.0&lng=-75.2')
       .then(function (r) { return r.json(); })
       .then(function (d) {
-        console.log('[TERMAC] Places response:', JSON.stringify(d));
         if (term !== _lastTerm) return;
         _placesSearched = true;
         _placesResults = (d.predictions || []).map(function (p) {
           return { placeId: p.placeId, name: p.main || '', secondary: p.secondary || '', isPlace: p.isPlace };
         });
         taRenderDropdown();
-      }).catch(function (e) {
-        console.log('[TERMAC] Places error:', e && e.message);
+      }).catch(function () {
         _placesSearched = true;
         taRenderDropdown();
       });
