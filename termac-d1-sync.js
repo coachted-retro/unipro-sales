@@ -1649,14 +1649,17 @@ function d1Query(sql, params) {
         row.onmouseout  = function(){ row.style.background=''; };
         row.onclick = function() {
           drop.style.display = 'none';
-          inputEl.value = it.main;
+          // Show the full suggestion text immediately while the detail resolves
+          var displayFull = [it.main, it.secondary].filter(Boolean).join(', ');
+          inputEl.value = displayFull;
           if (it.placeId) {
             fetch(D1_API_URL + '/maps/detail?place_id=' + encodeURIComponent(it.placeId))
               .then(function(r){ return r.json(); })
               .then(function(d) {
-                if (!d.ok) return;
                 var street = [d.street_number, d.route].filter(Boolean).join(' ');
-                if (street) inputEl.value = street;
+                // Build full address from detail; fall back to what we already showed
+                var fullAddr = [street || it.main, d.city, d.state, d.zip].filter(Boolean).join(', ');
+                if (fullAddr) inputEl.value = fullAddr;
                 var result = { street: street || it.main, city: d.city, state: d.state,
                   zip: d.zip, name: d.name, phone: d.phone, lat: d.lat, lng: d.lng,
                   placeId: it.placeId };
