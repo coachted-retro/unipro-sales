@@ -1399,7 +1399,9 @@ function spSetViewMode(mode) {
     var b=document.getElementById('spViewBtn_'+m);
     if(b){b.style.background=(m===mode)?'#C8102E':'#fff';b.style.color=(m===mode)?'#fff':'var(--ink)';}
   });
-  spRenderCRM(_spTab);
+  // Re-render whichever tab is active
+  if (_spTab === 'locations') { spRenderLocationsTab(); }
+  else { spRenderCRM(_spTab); }
 }
 
 function spRenderCRM(tab) {
@@ -7533,8 +7535,12 @@ function spRenderLocationsTab() {
   <div class="sp-filter-bar">
     <input class="sp-search" id="spCrmSearch" placeholder="Search by name, address, or parent company…" oninput="spDebouncedLocationsSearch()" value="${escH(q)}">
     <button class="sp-btn sp-btn-red" onclick="spOpenAddLocationModal()">+ Add Location</button>
+    <div style="margin-left:auto;display:flex;gap:3px;align-items:center">
+      <button id="spViewBtn_cards" onclick="spSetViewMode('cards')" title="Card view" style="border:1.5px solid var(--line);border-radius:7px;padding:5px 10px;font-size:14px;cursor:pointer;line-height:1;background:${_spViewMode==='cards'?'#C8102E':'#fff'};color:${_spViewMode==='cards'?'#fff':'var(--ink)'}">⊞</button>
+      <button id="spViewBtn_list"  onclick="spSetViewMode('list')"  title="List view"  style="border:1.5px solid var(--line);border-radius:7px;padding:5px 10px;font-size:14px;cursor:pointer;line-height:1;background:${_spViewMode==='list'?'#C8102E':'#fff'};color:${_spViewMode==='list'?'#fff':'var(--ink)'}">☰</button>
+    </div>
   </div>
-  <div class="sp-record-grid" id="spRecGrid">`;
+  ${_spViewMode === 'list' ? '<table style="width:100%;border-collapse:collapse" id="spRecGrid">' : '<div class="sp-record-grid" id="spRecGrid">'}`;
 
   if (!data.length) {
     html += `<div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--soft);font-size:14px">
@@ -7543,9 +7549,33 @@ function spRenderLocationsTab() {
     </div>`;
   } else {
     spBuildServiceTagIndex();
-    html += data.map(spLocationCard).join('');
+    if (_spViewMode === 'list') {
+      html += `<thead><tr style="background:#F1F5F9;font-family:Barlow Condensed,sans-serif;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--soft)">
+        <th style="padding:8px 12px;text-align:left">Name</th>
+        <th style="padding:8px 12px;text-align:left">Address</th>
+        <th style="padding:8px 12px;text-align:left">City</th>
+        <th style="padding:8px 12px;text-align:left">Contacts</th>
+        <th style="padding:8px 12px;text-align:left">Actions</th>
+      </tr></thead><tbody>`;
+      html += data.map(function(loc) {
+        var cc = (crmLoad('contacts')||[]).filter(function(c){return c.locationId===loc.id;}).length;
+        var oc = (crmLoad('opportunities')||[]).filter(function(o){return o.locationId===loc.id;}).length;
+        return `<tr style="border-bottom:1px solid var(--line);cursor:pointer" onclick="spViewRecord('${loc.id}','locations')">
+          <td style="padding:9px 12px;font-weight:700;font-size:13px">📍 ${escH(loc.name||'Unnamed')}</td>
+          <td style="padding:9px 12px;font-size:13px;color:var(--soft)">${escH(loc.address||'—')}</td>
+          <td style="padding:9px 12px;font-size:13px">${escH(loc.city||'—')}</td>
+          <td style="padding:9px 12px;font-size:13px">${cc} · ${oc} opp</td>
+          <td style="padding:9px 12px" onclick="event.stopPropagation()">
+            <button onclick="spEditRecord('${loc.id}','locations')" class="sp-rec-btn">Edit</button>
+          </td>
+        </tr>`;
+      }).join('');
+      html += '</tbody>';
+    } else {
+      html += data.map(spLocationCard).join('');
+    }
   }
-  html += `</div>`;
+  html += _spViewMode === 'list' ? '</table>' : '</div>';
   el.innerHTML = html;
   if (q) document.getElementById('spCrmSearch').value = q;
 }
