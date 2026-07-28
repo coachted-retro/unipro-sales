@@ -186,6 +186,32 @@ function _notifAcknowledge(notifId, opts, outcome, notes) {
     localStorage.setItem('termac_callback_queue', JSON.stringify(cbq.slice(0,200)));
   } catch(e){}
   try { fetch('https://termac-notify.termac-one.workers.dev/acknowledge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:notifId,outcome:outcome,notes:notes||'',ackedAt:Date.now(),ackedBy:ackedBy})}).catch(function(){}); } catch(e){}
+
+  // Write rep_action_at to D1 so the escalation worker stops the clock.
+  // Without this the worker never knows the rep acted and keeps sending
+  // management emails even after On It or Log Outcome is clicked.
+  var leadId = (opts && opts.lead_id) || (opts && opts.record_id) || notifId;
+  if (leadId) {
+    var actionLabels = {
+      spoke: 'Spoke with customer',
+      voicemail: 'Left voicemail',
+      'no-answer': 'No answer',
+      acknowledged: 'Acknowledged'
+    };
+    try {
+      fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/leads/' + encodeURIComponent(leadId), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+        body: JSON.stringify({
+          rep_action: actionLabels[outcome] || outcome,
+          rep_action_by: ackedBy,
+          rep_action_at: Date.now(),
+          is_new_lead: 0,
+          updated_at: Date.now()
+        })
+      }).catch(function(){});
+    } catch(e2) {}
+  }
 }
 
 function _notifOpenOutcomeModal(notifId, opts) {
