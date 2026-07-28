@@ -9367,21 +9367,9 @@ function spFillIfEmpty(id, val) {
 //  AI PRODUCT INVENTORY + SMART REORDER + DATA ENRICHMENT
 // ══════════════════════════════════════════════════════════════
 
-// ── PRODUCT CATALOG ────────────────────────────────────────────────────────
-var TERMAC_PRODUCTS = [
-  { sku:'TRM-DET-1G',  name:'Termac Detergent',        category:'dish',     unit:'1 gal',  dilution:'1:128', cogsPerUnit:8.50  },
-  { sku:'TRM-DET-5G',  name:'Termac Detergent',        category:'dish',     unit:'5 gal',  dilution:'1:128', cogsPerUnit:32.00 },
-  { sku:'TRM-SAN-1G',  name:'Termac Sanitizer',        category:'dish',     unit:'1 gal',  dilution:'1:512', cogsPerUnit:9.00  },
-  { sku:'TRM-DEG-1G',  name:'Termac Degreaser',        category:'chemical', unit:'1 gal',  dilution:'1:64',  cogsPerUnit:10.50 },
-  { sku:'TRM-DEG-5G',  name:'Termac Degreaser',        category:'chemical', unit:'5 gal',  dilution:'1:64',  cogsPerUnit:38.00 },
-  { sku:'TRM-GLS-1G',  name:'Termac Glass Cleaner',    category:'chemical', unit:'1 gal',  dilution:'1:32',  cogsPerUnit:7.00  },
-  { sku:'TRM-FLR-1G',  name:'Termac Floor Cleaner',    category:'chemical', unit:'1 gal',  dilution:'1:32',  cogsPerUnit:8.00  },
-  { sku:'TRM-PPR-CS',  name:'Paper Towels',            category:'paper',    unit:'case',   dilution:null,    cogsPerUnit:28.00 },
-  { sku:'TRM-TIS-CS',  name:'Facial Tissue',           category:'paper',    unit:'case',   dilution:null,    cogsPerUnit:22.00 },
-  { sku:'TRM-NAP-CS',  name:'Napkins',                 category:'paper',    unit:'case',   dilution:null,    cogsPerUnit:18.00 },
-  { sku:'TRM-GLS-BX',  name:'Disposable Gloves',       category:'paper',    unit:'box',    dilution:null,    cogsPerUnit:14.00 },
-  { sku:'TRM-BSK-CS',  name:'Dish Machine Baskets',    category:'dish',     unit:'case',   dilution:null,    cogsPerUnit:45.00 },
-];
+// NOTE 2026-07-28: removed TERMAC_PRODUCTS, a hardcoded list of fabricated
+// products with invented COGS. It was dead code (zero references) but sat in
+// the file looking authoritative. Real product data lives in D1.
 
 // ── INVENTORY SCAN ─────────────────────────────────────────────────────────
 var _spInvParsed = null;
@@ -12701,15 +12689,22 @@ function spVoiceCreateLead() {
 }
 
 /* ══════════════════════════════════════
-   PRODUCT CATALOG — card grid with real dilution + competitor pricing
-   Pulls from PRODUCT_CATALOG (defined in termac-os.html, synced into
-   localStorage.termac_product_catalog) via svGetProducts(). Falls back to
-   svGetProducts()'s bare-bones list only if that sync hasn't run yet.
+   PRODUCT CATALOG — card grid
+   Pulls live from the service_pricing_catalog table in D1 via
+   termacLoadProducts() / svGetProducts(). No hardcoded products, no
+   localStorage copy. Prices are maintained by the owning division.
 ══════════════════════════════════════ */
 function spOpenCatalogInline() {
   var existing = document.getElementById('spCatalogOverlay');
   if (existing) { existing.style.display = 'flex'; return; }
   var products = (typeof svGetProducts === 'function') ? (svGetProducts() || []) : [];
+  if (!products.length && typeof termacLoadProducts === 'function') {
+    termacLoadProducts().then(function () {
+      var ex = document.getElementById('spCatalogOverlay');
+      if (ex) { ex.remove(); }
+      spOpenCatalogInline();
+    });
+  }
   var ov = document.createElement('div');
   ov.id = 'spCatalogOverlay';
   ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:100000;display:flex;align-items:flex-start;justify-content:center;padding:20px;overflow:auto;font-family:-apple-system,Segoe UI,Roboto,sans-serif';
@@ -14010,27 +14005,68 @@ function svRenderStepBar() {
 function svGetAccounts() {
   try { return JSON.parse(localStorage.getItem('termac_crm_accounts')||localStorage.getItem('termac_crm_accounts')||'[]'); } catch(e){return[];}
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+//  PRODUCT CATALOG -- D1 BACKED
+//  Source of truth is the service_pricing_catalog table in D1. There is no
+//  hardcoded product list and no localStorage copy. Prices are maintained by
+//  the division that owns them, not in code.
+// ══════════════════════════════════════════════════════════════════════════
+var _termacProductCache = [];
+var _termacProductLoaded = false;
+var _termacProductLoading = null;
+
+var _TERMAC_CAT_ICON = {
+  'Chemicals': '\u{1F9F4}', 'Dish Machines': '\u{1F6BF}', 'Booster Heaters': '\u{1F525}',
+  'Machine Rental': '\u{1F4E6}', 'Grease Trap': '\u{1F6E2}', 'Fire Extinguisher': '\u{1F9EF}',
+  'Kitchen Suppression': '\u{1F692}', 'Emergency Lighting': '\u{1F4A1}', 'Dish Tables': '\u{1F37D}',
+  'Wall Shelf': '\u{1F4CF}', 'Single Over Shelf': '\u{1F4CF}', 'Double Over Shelf': '\u{1F4CF}',
+  'Slant Shelf': '\u{1F4CF}', 'Sheets of SS & components': '\u{1FA9E}', 'Stainless Fabrication': '\u{1F527}'
+};
+
+function _termacMapProductRow(r) {
+  return {
+    id: 'cat_' + (r.id || r.sku),
+    name: r.description || r.sku || '',
+    category: r.category_label || r.category || 'Other',
+    sku: r.sku || '',
+    division: r.division || '',
+    entity: r.entity || '',
+    image: _TERMAC_CAT_ICON[r.category_label] || '\u{1F4E6}',
+    sizes: [{ unit: r.unit || 'Each', price: (r.price == null ? 0 : Number(r.price)) }],
+    dilution: '',
+    competitors: [],
+    description: ''
+  };
+}
+
+function termacLoadProducts(force) {
+  if (_termacProductLoaded && !force) return Promise.resolve(_termacProductCache);
+  if (_termacProductLoading) return _termacProductLoading;
+  if (typeof d1Query !== 'function') return Promise.resolve([]);
+  _termacProductLoading = d1Query(
+    'SELECT id, sku, description, category, category_label, division, entity, unit, price ' +
+    'FROM service_pricing_catalog WHERE active = 1 ORDER BY division, category_label, description',
+    []
+  ).then(function (res) {
+    var rows = (res && (res.results || res.rows)) || [];
+    _termacProductCache = rows.map(_termacMapProductRow);
+    _termacProductLoaded = true;
+    _termacProductLoading = null;
+    return _termacProductCache;
+  }).catch(function () {
+    _termacProductLoading = null;
+    return _termacProductCache;
+  });
+  return _termacProductLoading;
+}
+
+try { termacLoadProducts(); } catch (e) {}
+
 function svGetProducts() {
-  // Pull from main OS PRODUCT_CATALOG via localStorage cache or fallback
-  try {
-    const pc = JSON.parse(localStorage.getItem('termac_product_catalog')||'null');
-    if (pc && pc.length) return pc;
-  } catch(e){}
-  // Fallback — basic Termac chemical/supply products
-  return [
-    {id:'chem_001',name:'Termac Degreaser',sizes:[{unit:'1 gal',price:18.50},{unit:'5 gal',price:72.00}]},
-    {id:'chem_002',name:'Termac Dish Detergent',sizes:[{unit:'1 gal',price:14.00},{unit:'5 gal',price:58.00}]},
-    {id:'chem_003',name:'Termac Sanitizer',sizes:[{unit:'1 gal',price:16.00},{unit:'5 gal',price:62.00}]},
-    {id:'chem_004',name:'Rinse Aid',sizes:[{unit:'1 gal',price:22.00},{unit:'5 gal',price:84.00}]},
-    {id:'chem_005',name:'Pot & Pan Soap',sizes:[{unit:'1 gal',price:13.00},{unit:'5 gal',price:50.00}]},
-    {id:'sup_001',name:'Scrub Pads (case)',sizes:[{unit:'case/24',price:38.00}]},
-    {id:'sup_002',name:'Chemical Gloves (dozen)',sizes:[{unit:'dozen',price:12.00}]},
-    {id:'ext_001',name:'ABC Fire Extinguisher 5lb',sizes:[{unit:'each',price:65.00}]},
-    {id:'ext_002',name:'ABC Fire Extinguisher 10lb',sizes:[{unit:'each',price:95.00}]},
-    {id:'ext_003',name:'K-Class Fire Extinguisher 6L',sizes:[{unit:'each',price:145.00}]},
-    {id:'filter_001',name:'Hood Filter (standard)',sizes:[{unit:'each',price:28.00},{unit:'case/6',price:154.00}]},
-    {id:'filter_002',name:'Hood Filter (baffle)',sizes:[{unit:'each',price:42.00},{unit:'case/6',price:235.00}]},
-  ];
+  // Synchronous read of the D1-backed cache. Populated by termacLoadProducts()
+  // on load. No localStorage, no hardcoded fallback.
+  return _termacProductCache;
 }
 
 function svEscH(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
