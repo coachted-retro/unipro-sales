@@ -7166,26 +7166,32 @@ function spEditRecord(id, tab) {
   d1Query('SELECT * FROM '+tbl+' WHERE id=? LIMIT 1',[id]).then(function(res){
     var rec = res && res.results && res.results[0];
     if (!rec) { spToast('Record not found.'); return; }
-    var formHtml = spBuildForm(tab, rec);
-    var panel = document.getElementById('spSlidePanel');
-    var body  = document.getElementById('spSlidePanelBody');
-    if (!panel || !body) { spToast('Edit panel not available.'); return; }
-    var title = tab==='leads'?'Edit Lead':tab==='contacts'?'Edit Contact':tab==='accounts'?'Edit Account':'Edit Location';
-    var btnSave   = document.createElement('button');
-    btnSave.textContent = 'Save Changes';
-    btnSave.setAttribute('style','flex:1;background:#C8102E;color:#fff;border:none;border-radius:8px;padding:11px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:15px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer');
-    btnSave.onclick = function() { spSaveFormById(id, tab); };
-    var btnCancel = document.createElement('button');
-    btnCancel.textContent = 'Cancel';
-    btnCancel.setAttribute('style','flex:0 0 80px;background:#fff;border:1.5px solid var(--line);border-radius:8px;padding:11px;font-size:14px;cursor:pointer');
-    btnCancel.onclick = function() { panel.classList.remove('open'); };
-    var btnRow = document.createElement('div');
-    btnRow.setAttribute('style','display:flex;gap:10px;margin-top:16px');
-    btnRow.appendChild(btnSave); btnRow.appendChild(btnCancel);
-    body.innerHTML = '<h2 style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:18px;margin:0 0 14px">✏️ ' + title + '</h2>' + formHtml;
-    body.appendChild(btnRow);
-    panel.classList.add('open');
+    // Use the existing modal (spModalBg / spModalBody / spModalTitle)
+    var titleEl = document.getElementById('spModalTitle');
+    var bodyEl  = document.getElementById('spModalBody');
+    var modal   = document.getElementById('spModalBg');
+    if (!titleEl || !bodyEl || !modal) { spToast('Edit panel not available.'); return; }
+    var titles = {leads:'Edit Lead',contacts:'Edit Contact',accounts:'Edit Account',locations:'Edit Location'};
+    titleEl.textContent = titles[tab] || 'Edit Record';
+    bodyEl.innerHTML = spBuildForm(tab, rec);
+    // Override the modal footer Save button to save with the record id
+    var saveBtn = modal.querySelector('.sp-btn-red');
+    if (saveBtn) {
+      saveBtn.onclick = function() { spSaveFormById(id, tab); };
+      saveBtn.textContent = 'Save Changes';
+    }
+    modal.classList.add('open');
     try { spWireEditFormListeners(tab); } catch(e) {}
+    // Wire address autocomplete
+    setTimeout(function() {
+      var el = document.getElementById('spf_address');
+      if (el && typeof termacAddressAutocomplete === 'function') {
+        termacAddressAutocomplete(el, { onSelect: function(r) {
+          var g = function(id,v){var e=document.getElementById(id);if(e&&v)e.value=v;};
+          g('spf_address',r.street);g('spf_city',r.city);g('spf_state',r.state);g('spf_zip',r.zip);
+        }});
+      }
+    }, 50);
   }).catch(function() { spToast('Could not load record.'); });
 }
 
@@ -7210,9 +7216,9 @@ function spSaveFormById(id, tab) {
     [biz||contact||fullAddr||'Record', biz, contact, phone, email, fullAddr||addr, city, state_, zip, div, rep, notes, now, id]
   ).then(function() {
     spToast('Saved.');
-    var panel = document.getElementById('spSlidePanel');
-    if (panel) panel.classList.remove('open');
-    spRenderCRM(_spTab);
+    var modal = document.getElementById('spModalBg');
+    if (modal) modal.classList.remove('open');
+    spRender(_spTab);
   }).catch(function() { spToast('Save failed.'); });
 }
 
