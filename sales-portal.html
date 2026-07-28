@@ -10378,28 +10378,36 @@ function spToggleNotifPanel() {
 function spRenderNotifPanel() {
   var panel = document.getElementById('spNotifPanel');
   if (!panel) return;
-  if (!_spNotifCache.length) { panel.innerHTML = '<div style="padding:16px;font-size:12px;color:var(--soft);text-align:center">No notifications yet.</div>'; return; }
-  panel.innerHTML = _spNotifCache.map(function(n){
-    var lines = (n.message||'').split('\n');
-    // Build a destination URL from whatever the notification carries.
-    // Notifications from hot lead escalation carry record_id, tab, and lead_id.
-    // Clicking the item marks it read AND navigates directly to the record.
+
+  // Header row with Clear All button
+  var unread = _spNotifCache.filter(function(n){ return !n.read_flag; }).length;
+  var header = '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1.5px solid #F1F5F9;position:sticky;top:0;background:#fff;z-index:1">'
+    + '<div style="font-size:12px;font-weight:800;color:#1A1D21">Notifications' + (unread ? ' <span style="background:#C8102E;color:#fff;border-radius:99px;padding:1px 7px;font-size:10px">' + unread + '</span>' : '') + '</div>'
+    + '<div style="display:flex;gap:8px">'
+    + (unread ? '<button onclick="spClearAllNotifs()" style="font-size:11px;color:#6B7280;background:none;border:none;cursor:pointer;padding:2px 6px;border-radius:4px;font-family:inherit">Clear All</button>' : '')
+    + '<a href="#" onclick="spShowNotifHistory(event)" style="font-size:11px;color:#1B5FA8;text-decoration:none">History</a>'
+    + '</div></div>';
+
+  if (!_spNotifCache.length) {
+    panel.innerHTML = header + '<div style="padding:20px;font-size:12px;color:var(--soft);text-align:center">No notifications.</div>';
+    return;
+  }
+
+  var items = _spNotifCache.map(function(n, idx) {
     var dest = n.dest_url || null;
     if (!dest) {
-      if (n.lead_id)    dest = 'sales-portal.html?tab=leads&open=' + encodeURIComponent(n.lead_id);
+      if (n.lead_id) dest = 'sales-portal.html?tab=leads&open=' + encodeURIComponent(n.lead_id);
       else if (n.record_id && n.tab) dest = 'sales-portal.html?tab=' + encodeURIComponent(n.tab) + '&open=' + encodeURIComponent(n.record_id);
       else if (n.account_id) dest = 'sales-portal.html?tab=accounts&open=' + encodeURIComponent(n.account_id);
     }
+    var lines = (n.message||'').split('\n');
     var body = lines.map(function(l){
       if (l.indexOf('Directions: ') === 0) return '<a href="' + l.replace('Directions: ','') + '" target="_blank" style="color:#1B5FA8;font-weight:700">Get directions &#x2192;</a>';
       return escH(l);
     }).join('<br>');
-    // 2026-07-27: every notification is now clickable and navigates to the
-    // relevant record. A notification that goes nowhere is just noise.
     var clickHandler = dest
       ? 'spMarkNotifRead(\'' + n.id + '\',this);window.location.href=\'' + dest + '\';'
       : 'spMarkNotifRead(\'' + n.id + '\',this)';
-    var navArrow = dest ? '<span style="color:#1B5FA8;font-size:12px;float:right;margin-left:8px">&#x2192;</span>' : '';
     var isAcct = n.type === 'account_alert' || n.is_existing_account;
     var isLead = n.type === 'new_lead' || (!isAcct && (n.source||'').indexOf('Reception') !== -1 && !n.record_id);
     var leftBorder = isAcct ? '4px solid #D97706' : (isLead ? '4px solid #C8102E' : (dest ? '3px solid #1B5FA8' : 'none'));
@@ -10407,14 +10415,67 @@ function spRenderNotifPanel() {
     var badge = n.badge
       ? '<span style="background:' + (isAcct?'#FEF3C7':'#FEE2E2') + ';color:' + (isAcct?'#92400E':'#991B1B') + ';border-radius:4px;padding:1px 6px;font-size:9px;font-weight:800;margin-right:5px;font-family:Barlow Condensed,sans-serif">' + escH(n.badge) + '</span>'
       : '';
-    return '<div onclick="' + clickHandler + '" style="padding:10px 12px;border-bottom:1px solid #F1F5F9;cursor:pointer;background:' + bgColor + ';border-left:' + leftBorder + '">' +
-      '<div style="font-size:12px;font-weight:800;color:#1F2937">' + badge + navArrow + escH(n.title||n.caller||n.company||'') + '</div>' +
-      (n.phone ? '<div style="font-size:11px;color:#5A616B;margin-top:2px">📞 ' + escH(n.phone) + '</div>' : '') +
-      '<div style="font-size:11px;color:#5A616B;margin-top:3px;line-height:1.5">' + body + '</div>' +
-      (dest ? '<div style="font-size:10px;color:#1B5FA8;margin-top:4px;font-weight:700">Tap to open &#x2192;</div>' : '') +
-    '</div>';
+    var navArrow = dest ? '<span style="color:#1B5FA8;font-size:12px;float:right;margin-left:8px">&#x2192;</span>' : '';
+    // Swipe wrapper -- the inner content slides left revealing the dismiss button
+    return '<div class="notif-swipe-wrap" data-notif-id="' + escH(n.id) + '" style="position:relative;overflow:hidden">'
+      + '<div class="notif-dismiss-bg" style="position:absolute;top:0;right:0;bottom:0;width:72px;background:#C8102E;display:flex;align-items:center;justify-content:center;cursor:pointer" onclick="spDismissNotif(\'' + escH(n.id) + '\')">'
+      + '<span style="color:#fff;font-size:11px;font-weight:800;font-family:Barlow Condensed,sans-serif;letter-spacing:.06em">DISMISS</span></div>'
+      + '<div class="notif-swipe-inner" onclick="' + clickHandler + '" style="position:relative;background:' + bgColor + ';border-left:' + leftBorder + ';border-bottom:1px solid #F1F5F9;padding:10px 12px;cursor:pointer;transition:transform .2s ease">'
+      + '<div style="font-size:12px;font-weight:800;color:#1F2937">' + badge + navArrow + escH(n.title||n.caller||n.company||'') + '</div>'
+      + (n.phone ? '<div style="font-size:11px;color:#5A616B;margin-top:2px">\uD83D\uDCDE ' + escH(n.phone) + '</div>' : '')
+      + '<div style="font-size:11px;color:#5A616B;margin-top:3px;line-height:1.5">' + body + '</div>'
+      + (dest ? '<div style="font-size:10px;color:#1B5FA8;margin-top:4px;font-weight:700">Tap to open &#x2192;</div>' : '')
+      + '</div></div>';
   }).join('');
+
+  panel.innerHTML = header + items;
+
+  // Wire swipe-to-dismiss on touch devices
+  panel.querySelectorAll('.notif-swipe-wrap').forEach(function(wrap) {
+    var inner = wrap.querySelector('.notif-swipe-inner');
+    var startX = 0;
+    inner.addEventListener('touchstart', function(e) { startX = e.touches[0].clientX; }, { passive: true });
+    inner.addEventListener('touchmove', function(e) {
+      var dx = e.touches[0].clientX - startX;
+      if (dx < 0) inner.style.transform = 'translateX(' + Math.max(dx, -72) + 'px)';
+    }, { passive: true });
+    inner.addEventListener('touchend', function(e) {
+      var dx = e.changedTouches[0].clientX - startX;
+      if (dx < -40) {
+        spDismissNotif(wrap.dataset.notifId);
+      } else {
+        inner.style.transform = '';
+      }
+    });
+  });
 }
+
+function spDismissNotif(id) {
+  _spNotifCache = _spNotifCache.filter(function(n){ return n.id !== id; });
+  // Archive the dismissed notification in D1 (mark as dismissed, not deleted)
+  try {
+    fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/notifications/' + encodeURIComponent(id), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+      body: JSON.stringify({ read_flag: 1, dismissed: 1, dismissed_at: Date.now() })
+    }).catch(function(){});
+  } catch(e) {}
+  spRenderNotifPanel();
+  var unread = _spNotifCache.filter(function(x){ return !x.read_flag; }).length;
+  var badge = document.getElementById('spNotifBadge');
+  if (badge) { badge.style.display = unread ? 'block' : 'none'; badge.textContent = unread; }
+}
+
+function spClearAllNotifs() {
+  var ids = _spNotifCache.filter(function(n){ return !n.read_flag; }).map(function(n){ return n.id; });
+  ids.forEach(function(id) { spDismissNotif(id); });
+}
+
+function spShowNotifHistory(e) {
+  e.preventDefault();
+  spToast('Notification history coming soon -- all dismissed notifications are archived in D1.');
+}
+
 function spMarkNotifRead(id, el) {
   var n = _spNotifCache.find(function(x){ return x.id === id; });
   if (n && !n.read_flag) {
