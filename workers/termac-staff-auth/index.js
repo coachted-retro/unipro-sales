@@ -171,7 +171,7 @@ async function handleSsoExchange(request, env) {
     grant_type: 'authorization_code',
     code: code,
     redirect_uri: redirectUri,
-    scope: 'openid profile email offline_access https://graph.microsoft.com/Mail.Send',
+    scope: 'openid profile email offline_access https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/Calendars.ReadWrite',
   });
 
   let tokenData;
@@ -281,7 +281,7 @@ async function handleSendMail(request, env) {
       client_secret: env.SSO_CLIENT_SECRET,
       grant_type: 'refresh_token',
       refresh_token: tokenRow.refresh_token,
-      scope: 'openid profile email offline_access https://graph.microsoft.com/Mail.Send',
+      scope: 'openid profile email offline_access https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/Calendars.ReadWrite',
     });
     let refreshData;
     try {
@@ -970,7 +970,7 @@ async function handleAllProProposalSend(request, env) {
             body: new URLSearchParams({
               grant_type:'refresh_token', client_id: env.SSO_CLIENT_ID,
               client_secret: env.SSO_CLIENT_SECRET, refresh_token: tokenRow.refresh_token,
-              scope:'openid profile email Mail.Send offline_access'
+              scope:'openid profile email Mail.Send Calendars.ReadWrite offline_access'
             })
           });
           var refreshJson = await refreshRes.json();
@@ -1166,7 +1166,7 @@ async function handleTermacDishProposalSend(request, env) {
         try {
           var refreshRes = await fetch('https://login.microsoftonline.com/' + env.SSO_TENANT_ID + '/oauth2/v2.0/token', {
             method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
-            body: new URLSearchParams({ grant_type:'refresh_token', client_id:env.SSO_CLIENT_ID, client_secret:env.SSO_CLIENT_SECRET, refresh_token:tokenRow.refresh_token, scope:'openid profile email Mail.Send offline_access' })
+            body: new URLSearchParams({ grant_type:'refresh_token', client_id:env.SSO_CLIENT_ID, client_secret:env.SSO_CLIENT_SECRET, refresh_token:tokenRow.refresh_token, scope:'openid profile email Mail.Send Calendars.ReadWrite offline_access' })
           });
           var refreshJson = await refreshRes.json();
           if (refreshJson.access_token) {
@@ -1302,7 +1302,7 @@ async function sendAllProMilestoneEmail(env, { customerEmail, customerName, subj
     try {
       var refreshRes = await fetch('https://login.microsoftonline.com/' + env.SSO_TENANT_ID + '/oauth2/v2.0/token', {
         method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ grant_type: 'refresh_token', client_id: env.SSO_CLIENT_ID, client_secret: env.SSO_CLIENT_SECRET, refresh_token: tokenRow.refresh_token, scope: 'openid profile email Mail.Send offline_access' })
+        body: new URLSearchParams({ grant_type: 'refresh_token', client_id: env.SSO_CLIENT_ID, client_secret: env.SSO_CLIENT_SECRET, refresh_token: tokenRow.refresh_token, scope: 'openid profile email Mail.Send Calendars.ReadWrite offline_access' })
       });
       var rj = await refreshRes.json();
       if (rj.access_token) { await env.DB.prepare('UPDATE staff_graph_tokens SET access_token=?,expires_at=?,updated_at=? WHERE staff_email=?').bind(rj.access_token, Date.now() + (rj.expires_in || 3600) * 1000, Date.now(), senderEmail).run(); tokenRow.access_token = rj.access_token; }
@@ -1582,7 +1582,7 @@ async function notifyTed(env, { subject, body }) {
     try {
       var r = await fetch('https://login.microsoftonline.com/' + env.SSO_TENANT_ID + '/oauth2/v2.0/token', {
         method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
-        body: new URLSearchParams({ grant_type:'refresh_token', client_id:env.SSO_CLIENT_ID, client_secret:env.SSO_CLIENT_SECRET, refresh_token:tokenRow.refresh_token, scope:'openid profile email Mail.Send offline_access' })
+        body: new URLSearchParams({ grant_type:'refresh_token', client_id:env.SSO_CLIENT_ID, client_secret:env.SSO_CLIENT_SECRET, refresh_token:tokenRow.refresh_token, scope:'openid profile email Mail.Send Calendars.ReadWrite offline_access' })
       });
       var rj = await r.json();
       if (rj.access_token) { await env.DB.prepare('UPDATE staff_graph_tokens SET access_token=?,expires_at=?,updated_at=? WHERE staff_email=?').bind(rj.access_token, Date.now()+(rj.expires_in||3600)*1000, Date.now(), tedEmail).run(); tokenRow.access_token = rj.access_token; }
