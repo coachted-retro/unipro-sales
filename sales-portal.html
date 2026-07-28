@@ -4551,6 +4551,47 @@ function spOpenCalendarModal() {
   + '</div>';
   document.body.appendChild(wrap);
   spRenderCalendarModalBody();
+  // Backfill any appointments that only exist in localStorage into D1
+  spBackfillLocalApptsToD1();
+}
+function spBackfillLocalApptsToD1() {
+  try {
+    var localAppts = crmLoad('appointments') || [];
+    if (!localAppts.length) return;
+    localAppts.forEach(function(local) {
+      if (!local.id || !local.date) return;
+      // Check D1 first; only insert if missing
+      d1Query('SELECT id FROM appointments WHERE id=? LIMIT 1', [local.id]).then(function(res) {
+        if (res.ok && res.results && res.results.length > 0) return; // already in D1
+        var payload = {
+          id: local.id,
+          record_id: local.recordId || null,
+          tab: local.tab || null,
+          location_id: local.tab === 'locations' ? (local.recordId || null) : null,
+          lead_id: local.tab === 'leads' ? (local.recordId || null) : null,
+          account_id: local.tab === 'accounts' ? (local.recordId || null) : null,
+          type: local.type || 'appointment',
+          date: local.date,
+          time: local.time || null,
+          location: local.address || local.location || null,
+          notes: local.notes || null,
+          title: local.title || null,
+          business: local.business || local.title || null,
+          all_day: local.allDay ? 1 : 0,
+          rep: local.createdBy || (_spRep ? _spRep.name : null),
+          created_by: local.createdBy || (_spRep ? _spRep.name : null),
+          status: 'scheduled',
+          created_at: local.createdAt || Date.now(),
+          updated_at: Date.now(),
+        };
+        fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/appointments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+          body: JSON.stringify(payload)
+        }).catch(function(){});
+      }).catch(function(){});
+    });
+  } catch(e) {}
 }
 function spCloseCalendarModal() {
   var m = document.getElementById('spCalendarModal');
@@ -4567,7 +4608,8 @@ function spCalSelectDay(d) {
   _spCalSelectedDay = d;
   spRenderCalendarModalBody();
 }
-function spRenderCalendarModalBody() {
+var _spCalApptCache = null; // D1-loaded appointments cache for the calendar modal
+async function spRenderCalendarModalBody() {
   const body = document.getElementById('spCalModalBody');
   if (!body) return;
   const yr = _spCalViewYear, mo = _spCalViewMonth;
@@ -4575,7 +4617,14 @@ function spRenderCalendarModalBody() {
   const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   const firstDay = new Date(yr, mo, 1).getDay();
   const daysInMonth = new Date(yr, mo+1, 0).getDate();
-  const appts = crmLoad('appointments') || [];
+  // Always read from D1 -- localStorage is not the source of truth for appointments
+  try {
+    const res = await d1Query('SELECT id, title, business, date, time, location, address, tab, record_id, location_id, account_id, contact_name, type, notes FROM appointments WHERE rep=? ORDER BY date, time', [_spRep ? _spRep.name : '']);
+    _spCalApptCache = (res.ok && res.results) ? res.results.map(spNormalizeApptRow) : (crmLoad('appointments') || []);
+  } catch(e) {
+    _spCalApptCache = crmLoad('appointments') || [];
+  }
+  const appts = _spCalApptCache;
   const dayMap = {};
   appts.forEach(a => {
     if (!a.date) return;
@@ -4617,7 +4666,7 @@ function spRenderCalDayPanel() {
   const yr = _spCalViewYear, mo = _spCalViewMonth, d = _spCalSelectedDay;
   const dateStr = yr + '-' + String(mo+1).padStart(2,'0') + '-' + String(d).padStart(2,'0');
   const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-  const dayAppts = (crmLoad('appointments') || []).filter(function(a){ return a.date === dateStr; });
+  const dayAppts = (_spCalApptCache || crmLoad('appointments') || []).filter(function(a){ return a.date === dateStr; });
   // Merge in any Outlook events for this day (stored in _spOutlookEvents cache)
   const outlookForDay = (_spOutlookEvents || []).filter(function(ev){ return ev.date === dateStr; });
   const allDayItems = dayAppts.concat(outlookForDay);
