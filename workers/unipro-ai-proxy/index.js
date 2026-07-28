@@ -390,7 +390,7 @@ export default {
       const radius = url.searchParams.get('radius') || '80000';
       const gUrl = 'https://maps.googleapis.com/maps/api/place/autocomplete/json'
         + '?input=' + encodeURIComponent(q)
-        + '&types=establishment|geocode'
+        + '&types=geocode'
         + '&components=country:us'
         + '&location=' + lat + ',' + lng
         + '&radius=' + radius
