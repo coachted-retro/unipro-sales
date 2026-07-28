@@ -210,17 +210,23 @@ function spApptToggleFlex(cb) {
 //  address resolves as it is typed instead of being keyed by hand.
 // ══════════════════════════════════════════════════════════════════════════
 function spApptWireLookups() {
-  setTimeout(function () {
+  // Retry with backoff so termac-d1-sync.js is guaranteed loaded
+  var _acRetries = 0;
+  function _tryWireAC() {
     var loc = document.getElementById('spApptLocation');
-    if (loc && typeof termacAddressAutocomplete === 'function') {
+    if (!loc) return;
+    if (typeof termacAddressAutocomplete === 'function') {
       termacAddressAutocomplete(loc, {
         onSelect: function (r) {
           var full = [r.street, r.city, r.state, r.zip].filter(Boolean).join(', ');
           if (full) loc.value = full;
         }
       });
+    } else if (_acRetries++ < 20) {
+      setTimeout(_tryWireAC, 200);
     }
-  }, 60);
+  }
+  _tryWireAC();
 }
 
 function spApptSearchRecords(query) {
