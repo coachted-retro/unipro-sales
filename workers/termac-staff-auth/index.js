@@ -82,7 +82,11 @@ function buildLoginUrl(role, division, portals) {
 async function jsonResponse(body, status) {
   return new Response(JSON.stringify(body), {
     status: status || 200,
-    headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+    headers: {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': (request && request.headers && ['https://v2.mytermac.com','https://sales.mytermac.com','https://termac-one-v2.pages.dev'].includes(request.headers.get('Origin'))) ? request.headers.get('Origin') : 'https://sales.mytermac.com',
+      'Access-Control-Allow-Credentials': 'true'
+    },
   });
 }
 
