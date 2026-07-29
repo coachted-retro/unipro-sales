@@ -12,6 +12,9 @@ const ALLOWED_ORIGINS = [
   'https://my.termac.com',
   'https://sales.mytermac.com',
   'https://coachted-retro.github.io',
+  'https://v2.mytermac.com',
+  'https://termac-one-v2.pages.dev',
+  'https://termac-one.github.io',
 ];
 
 const ALLOWED_TABLES = new Set([
@@ -163,7 +166,10 @@ const ALLOWED_TABLES = new Set([
   'tech_referrals',     // tech-to-sales lead referrals
   'hot_lead_notifs',    // hot lead alert log
   'payables',           // accounts payable (supplements accounts_payable)
-  'hr_announcements',   // HR announcements board
+  'hr_announcements',
+  // v2 Termac One tables
+  'dishwasher_quotes','job_payment_milestones','allpro_job_bundles',
+  'settings','allpro_materials','notifications','appointments',   // HR announcements board
 ]);
 
 const TABLE_PREFIX = {
