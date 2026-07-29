@@ -16,13 +16,15 @@
     response would be meaningless).
 */
 
-const CACHE_VERSION = 'termac-one-v1';
+const CACHE_VERSION = 'termac-one-v2';
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const LIB_CACHE = `${CACHE_VERSION}-libs`;
 
 const SHELL_URLS = [
   'termac-os.html',
   'staff-login.html',
+  'rep-portal.html',
+  'sbx-login.html',
   'tech-portal.html',
   'office-portal.html',
   'scheduler-unipro.html',
