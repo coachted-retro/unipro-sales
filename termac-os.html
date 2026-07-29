@@ -27792,7 +27792,7 @@ document.addEventListener('keydown', e => {
     </div>
     <div class="act-modal-footer">
       <button class="act-cancel-btn" onclick="closeActModal('actLogModal')">Cancel</button>
-      <button class="act-save-btn" onclick="saveActivity()">Save Activity</button>
+      <button class="act-save-btn" onclick="saveActivity()" style="background:#1E7B3C;color:#fff;border:none;border-radius:8px;padding:12px 24px;font-family:Barlow Condensed,sans-serif;font-weight:800;font-size:15px;letter-spacing:.05em;text-transform:uppercase;cursor:pointer;">✅ Complete</button>
     </div>
   </div>
 </div>
@@ -28811,6 +28811,41 @@ function saveActivity() {
   }
 
   crmSave(_actRecordTab, data);
+
+  // Write activity to D1 -- D1 is the source of truth
+  (function() {
+    try {
+      var logEntry = {
+        id: 'act_' + Date.now() + '_' + Math.random().toString(36).slice(2,6),
+        entity_type: _actRecordTab,
+        entity_id: _actRecordId,
+        account_id: _actRecordTab === 'accounts' ? _actRecordId : (r.accountId || null),
+        action: type,
+        outcome: outcome,
+        direction: direction,
+        notes: notes || null,
+        followup_date: fuDate || null,
+        who: _currentUser?.name || 'Rep',
+        first_contacted_at: (!r.first_contacted_at) ? Date.now() : null,
+        created_at: Date.now()
+      };
+      // Write to activity_log
+      fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/activity_log', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json','X-API-Secret':'termac2026'},
+        body: JSON.stringify(logEntry)
+      }).catch(function(){});
+      // If first contact, mark it on the record
+      if (!r.first_contacted_at) {
+        fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/' + _actRecordTab + '/' + _actRecordId, {
+          method: 'PUT',
+          headers: {'Content-Type':'application/json','X-API-Secret':'termac2026'},
+          body: JSON.stringify({first_contacted_at: Date.now(), updated_at: Date.now()})
+        }).catch(function(){});
+      }
+    } catch(e) {}
+  })();
+
   closeActModal('actLogModal');
   renderCRMView();
 
@@ -28823,6 +28858,27 @@ function saveActivity() {
   }
 
   buildActionQueue();
+
+  // Green confirmation banner
+  var existing = document.getElementById('actCompleteConfirm');
+  if (existing) existing.remove();
+  var banner = document.createElement('div');
+  banner.id = 'actCompleteConfirm';
+  var biz = r.name || r.business || 'this record';
+  var outcomeText = outcome ? ' — ' + outcome : '';
+  banner.style.cssText = 'position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:9999;background:#1E7B3C;color:#fff;border-radius:12px;padding:16px 24px;box-shadow:0 8px 32px rgba(0,0,0,.3);display:flex;align-items:center;gap:14px;font-family:Barlow Condensed,sans-serif;min-width:320px;max-width:90vw';
+  var closeBtn = document.createElement('button');
+  closeBtn.textContent = '✕';
+  closeBtn.style.cssText = 'margin-left:auto;background:rgba(255,255,255,.2);border:none;border-radius:6px;color:#fff;padding:6px 10px;font-size:14px;cursor:pointer;font-weight:700';
+  closeBtn.onclick = function(){ var b=document.getElementById('actCompleteConfirm'); if(b) b.remove(); };
+  banner.innerHTML = '<div style="font-size:28px">✅</div>' +
+    '<div>' +
+      '<div style="font-weight:900;font-size:17px;letter-spacing:.04em">Activity Logged' + outcomeText + '</div>' +
+      '<div style="font-size:13px;opacity:.85;margin-top:2px">' + esc(biz) + (fuDate ? ' · Follow-up: ' + fuDate : '') + '</div>' +
+    '</div>';
+  banner.appendChild(closeBtn);
+  document.body.appendChild(banner);
+  setTimeout(function() { var b = document.getElementById('actCompleteConfirm'); if (b) b.remove(); }, 6000);
 }
 
 /* ── SAVE APPOINTMENT ── */
