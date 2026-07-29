@@ -46,7 +46,7 @@ const REP_EMAILS = {
   'Dan Rini':      'drini@termac.com',
   'Joe McDonnell': 'jmcdonnell@termac.com',
   'Matt Belz':     'mbelz@termac.com',
-  "TJ O'Reilly":   'tjorielly@termac.com',
+  "TJ O'Reilly":   'tjoreilly@termac.com',
   'Todd Grill':    'tgrill@termac.com',
   'Tom Jordan':    'tjordan@termac.com',
   'Tom Pittakas':  'tpittakas@termac.com',
