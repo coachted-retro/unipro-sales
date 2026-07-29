@@ -69,11 +69,7 @@ function _notifPollCrossDevice(){
           _updateNotifBadges();
           // Banner for the newest one only — a stack of six banners helps no one
           var newest = fresh[0];
-          _fireInAppAlertBanner({
-            recipientName: newest.recipientName, caller: newest.caller,
-            company: newest.company, phone: newest.phone, notes: newest.notes,
-            source: newest.source, loggedBy: newest.loggedBy
-          });
+          // banner removed per Ted
         }
         try { localStorage.setItem('termac_notif_last_poll', String(Date.now())); } catch(e){}
       })
