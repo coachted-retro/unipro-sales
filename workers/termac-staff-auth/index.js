@@ -152,11 +152,27 @@ async function handleProvision(request, env) {
 // Microsoft confirms (upn falls back to email/preferred_username across
 // tenant configs).
 async function handleSsoExchange(request, env) {
+  // Extract origin for CORS -- must match what browser sends
+  const reqOrigin = request.headers.get('Origin') || '';
+  const allowedOrigins = ['https://sales.mytermac.com','https://v2.mytermac.com','https://my.mytermac.com','https://termac-one-v2.pages.dev','https://unipro-sales.pages.dev','https://sbx.unipro-sales.pages.dev'];
+  const corsOrigin = allowedOrigins.includes(reqOrigin) ? reqOrigin : 'https://sales.mytermac.com';
+
+  function ssoJson(body, status) {
+    return new Response(JSON.stringify(body), {
+      status: status || 200,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': corsOrigin,
+        'Access-Control-Allow-Credentials': 'true',
+      }
+    });
+  }
+
   const body = await request.json();
   const code = (body.code || '').trim();
-  if (!code) return jsonResponse({ ok: false, error: 'Missing authorization code.' }, 400);
+  if (!code) return ssoJson({ ok: false, error: 'Missing authorization code.' }, 400);
   if (!env.SSO_CLIENT_SECRET) {
-    return jsonResponse({ ok: false, error: 'SSO is not fully configured yet. Contact your admin.' }, 500);
+    return ssoJson({ ok: false, error: 'SSO is not fully configured yet. Contact your admin.' }, 500);
   }
 
   const tokenUrl = 'https://login.microsoftonline.com/' + env.SSO_TENANT_ID + '/oauth2/v2.0/token';
@@ -187,25 +203,25 @@ async function handleSsoExchange(request, env) {
     });
     tokenData = await tokenRes.json();
     if (!tokenRes.ok || !tokenData.id_token) {
-      return jsonResponse({ ok: false, error: tokenData.error_description || 'Microsoft sign-in failed.' }, 401);
+      return ssoJson({ ok: false, error: tokenData.error_description || 'Microsoft sign-in failed.' }, 401);
     }
   } catch (e) {
-    return jsonResponse({ ok: false, error: 'Could not reach Microsoft to complete sign-in.' }, 502);
+    return ssoJson({ ok: false, error: 'Could not reach Microsoft to complete sign-in.' }, 502);
   }
 
   let claims;
   try {
     claims = decodeJwtPayload(tokenData.id_token);
   } catch (e) {
-    return jsonResponse({ ok: false, error: 'Could not read Microsoft sign-in response.' }, 502);
+    return ssoJson({ ok: false, error: 'Could not read Microsoft sign-in response.' }, 502);
   }
 
   const email = String(claims.email || claims.preferred_username || claims.upn || '').trim().toLowerCase();
-  if (!email) return jsonResponse({ ok: false, error: 'Microsoft did not return an email for this account.' }, 401);
+  if (!email) return ssoJson({ ok: false, error: 'Microsoft did not return an email for this account.' }, 401);
 
   const user = await env.DB.prepare('SELECT * FROM staff_auth WHERE email = ?').bind(email).first();
   if (!user || user.status !== 'active') {
-    return jsonResponse({ ok: false, error: 'No active Termac One account for ' + email + '. Contact your admin.' }, 403);
+    return ssoJson({ ok: false, error: 'No active Termac One account for ' + email + '. Contact your admin.' }, 403);
   }
 
   await env.DB.prepare('UPDATE staff_auth SET last_login_at = ? WHERE id = ?').bind(Date.now(), user.id).run();
@@ -239,7 +255,7 @@ async function handleSsoExchange(request, env) {
   try { portals = JSON.parse(user.portals || '[]'); } catch (e) {}
   const dest = resolveDestinationUrl(user.role, user.division, portals);
 
-  return jsonResponse({
+  return ssoJson({
     ok: true,
     id: user.id,
     name: user.name,
@@ -1196,11 +1212,15 @@ async function handleTermacDishProposalSend(request, env) {
 export default {
   async fetch(request, env) {
     if (request.method === 'OPTIONS') {
+      const reqOrigin = request.headers.get('Origin') || '';
+      const allowedOrigins = ['https://sales.mytermac.com','https://v2.mytermac.com','https://my.mytermac.com','https://termac-one-v2.pages.dev','https://unipro-sales.pages.dev','https://sbx.unipro-sales.pages.dev'];
+      const corsOrigin = allowedOrigins.includes(reqOrigin) ? reqOrigin : 'https://sales.mytermac.com';
       return new Response(null, {
         headers: {
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'POST, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type',
+          'Access-Control-Allow-Origin': corsOrigin,
+          'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+          'Access-Control-Allow-Credentials': 'true',
         },
       });
     }
