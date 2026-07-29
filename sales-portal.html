@@ -1676,6 +1676,14 @@ function spRecordCard(r, tab) {
     <div class="sp-rec-chips">${svcs}</div>
     ${tab === 'accounts' ? spServiceTagPills(r.id) : ''}
       ${(function(){ try { var cs = r.completionScore || calcCompletionScore(r); var cc = cs>=80?'#1E7B3C':cs>=60?'#D97706':'#C8102E'; return cs<100 ? '<div style="font-size:9px;font-weight:700;color:'+cc+';margin-top:2px">📊 Data: '+cs+'%</div>' : ''; } catch(e){return '';} })()}
+    ${(function(){
+      var logs = r.activityLog || [];
+      if (!logs.length) return '';
+      var last = logs.slice().sort(function(a,b){return (b.ts||0)-(a.ts||0);})[0];
+      var when = last.ts ? new Date(last.ts).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '';
+      var what = last.type==='call'?'📞 Called':last.type==='email'?'✉️ Emailed':last.type==='text'?'💬 Texted':last.type==='visit'?'🏢 Visited':'📝 Noted';
+      return '<div style="background:#F0FDF4;border:1px solid #BBF7D0;border-radius:6px;padding:4px 8px;margin-bottom:8px;font-size:11px;color:#166534;font-weight:700">✅ ' + what + ' · ' + when + '</div>';
+    })()}
     <div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px">
       <span class="sp-stage-pill" style="background:${stage.bg};color:${stage.color}">${stage.label}</span>
       <div class="sp-actions" onclick="event.stopPropagation()">
@@ -16084,24 +16092,26 @@ function spOpenNotifPanel(){
 // (via the OS deep link) when one can be found by company/account name;
 // otherwise expand the row in place with every detail on the notification.
 function spNotifDrillById(id) {
-  // Find notification by ID from D1 notifications table -- D1 is the only source of truth
+  // The notification already has lead_id embedded -- use it directly.
+  // No async D1 call needed. Instant response on mobile.
+  var notifs = [];
+  try { notifs = JSON.parse(localStorage.getItem('termac_hotlead_notifs')||'[]'); } catch(e) {}
+  var n = notifs.find(function(x){ return x.id === id; });
+  if (n && (n.lead_id || n.record_id)) {
+    var inlineId = n.lead_id || n.record_id;
+    var inlineTab = n.tab || 'leads';
+    spCloseNotifPanel();
+    spViewRecord(inlineId, inlineTab);
+    return;
+  }
+  // If not in local cache, fetch from D1 as fallback
   d1Query('SELECT lead_id, record_id, tab FROM notifications WHERE id=? LIMIT 1', [id])
   .then(function(res) {
-    var n = res.ok && res.results && res.results[0];
-    // Fall back to localStorage notif cache only if D1 has nothing
-    if (!n) {
-      try {
-        var local = JSON.parse(localStorage.getItem('termac_hotlead_notifs')||'[]');
-        n = local.find(function(x){ return x.id === id; });
-      } catch(e) {}
-    }
-    if (!n) return;
-    var inlineId = n.lead_id || n.record_id || null;
-    var inlineTab = n.tab || 'leads';
-    if (inlineId) {
-      spCloseNotifPanel();
-      spViewRecord(inlineId, inlineTab);
-    }
+    var row = res.ok && res.results && res.results[0];
+    if (!row) return;
+    var inlineId = row.lead_id || row.record_id || null;
+    var inlineTab = row.tab || 'leads';
+    if (inlineId) { spCloseNotifPanel(); spViewRecord(inlineId, inlineTab); }
   });
 }
 
