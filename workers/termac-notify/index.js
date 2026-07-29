@@ -120,19 +120,41 @@ function escapeHtml(s) {
 // unipro-ai-proxy's hourly cron when a report's configured send time
 // matches the current hour.
 async function sendReportEmail(env, recipients, subject, html) {
-  if (!env.RESEND_API_KEY) return false;
   if (!Array.isArray(recipients) || !recipients.length) return false;
-  const payload = { from: FROM_ADDRESS, to: recipients, subject, html };
-  try {
-    const res = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + env.RESEND_API_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    return res.ok;
-  } catch (e) {
-    return false;
+
+  // Path 1: Resend (primary)
+  if (env.RESEND_API_KEY) {
+    try {
+      const payload = { from: FROM_ADDRESS, to: recipients, subject, html };
+      const res = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + env.RESEND_API_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) return true;
+    } catch (e) { /* fall through to path 2 */ }
   }
+
+  // Path 2: Microsoft Graph via termac-staff-auth /send-mail (fallback)
+  // Uses Kate Clark's session token -- always available since reception is always logged in.
+  try {
+    const res = await fetch('https://termac-staff-auth.termac-one.workers.dev/send-mail', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from_email: 'receptionist@termac.com',
+        to: recipients,
+        subject: subject,
+        html: html,
+      }),
+    });
+    if (res.ok) {
+      const d = await res.json();
+      if (d.ok) return true;
+    }
+  } catch (e) { /* both paths failed */ }
+
+  return false;
 }
 
 async function buildLoginActivityReport(env) {
