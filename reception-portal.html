@@ -770,7 +770,7 @@ var RCP_REP_EMAILS = {
   'Joe McDonnell': 'jmcdonnell@termac.com',
   'Matt Belz':     'mbelz@termac.com',
   // 2026-07-27: TJ O'Reilly (nephew, P2 territory) had toreilly@termac.com
-  // which is Terence O'Reilly (uncle, owner). Fixed to tjoreilly@termac.com.
+  // which is Terence O'Reilly (uncle, owner). Fixed to tjorielly@termac.com.
   "TJ O'Reilly":   'tjoreilly@termac.com',
   'Ted Scholl':    'tscholl@termac.com',
   'Todd Grill':    'tgrill@termac.com',
@@ -796,58 +796,78 @@ var RCP_ESCALATION_EMAILS = ['jkennedy@termac.com', 'tpittakas@termac.com', 'sor
 // Send an immediate email to the routed rep and queue a 1-hour escalation
 // to Jim + Tom P if no one marks the call as reached.
 function rcpEmailRepOnCall(call) {
-  // SINGLE SOURCE OF TRUTH: all emails from D1 staff_auth only.
-  // To change any email -- update D1. Nothing else. Ever.
-  fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/query', {
-    method: 'POST',
-    headers: {'Content-Type':'application/json','X-API-Secret':'termac2026'},
-    body: JSON.stringify({sql:"SELECT name, email, role, lead_escalation_cc FROM staff_auth WHERE email IS NOT NULL AND email != ''",params:[]})
-  }).then(function(r){return r.json();}).then(function(res) {
-    if (!res.ok || !res.results) { rcpToast('Could not load staff emails -- lead saved, email not sent'); return; }
-    var staffMap = {};
-    res.results.forEach(function(s){ staffMap[s.name] = s.email; });
-    // Only the four named people get CC'd on every lead -- set in D1 staff_auth.lead_escalation_cc
-    // Sean O'Reilly, Terence O'Reilly, Tom Pittakas, Jim Kennedy. Nobody else. Ever.
-    var mgmtEmails = res.results
-      .filter(function(s){ return s.lead_escalation_cc == 1; })
-      .map(function(s){ return s.email; });
-    var repEmail = staffMap[call.routeTo] || null;
-    if (!repEmail) { rcpToast('No email in system for ' + (call.routeTo||'rep') + ' -- lead saved but NOT emailed. Call Ted.'); return; }
-    var allRecipients = [repEmail].concat(mgmtEmails.filter(function(e){ return e !== repEmail; }));
-    var callerLine = [call.callerName, call.company].filter(Boolean).join(' / ');
-    var subject = 'New Lead - ' + (call.routeTo||'Rep') + ' - ' + (callerLine||'Unknown Caller');
-    var body = 'New lead from Reception.\n\n'
-      + 'Caller: ' + (call.callerName||'-') + '\n'
-      + 'Company: ' + (call.company||'-') + '\n'
-      + 'Phone: ' + (call.phone||'-') + '\n'
-      + 'Address: ' + (call.address||'-') + '\n'
-      + 'Call Type: ' + (call.callType||'-') + '\n'
-      + 'Urgency: ' + (call.urgency||'Normal') + '\n'
-      + 'Routed to: ' + (call.routeTo||'-') + '\n'
-      + 'Logged by: ' + (call.loggedBy||'Reception') + '\n'
-      + 'Time: ' + new Date(call.ts).toLocaleString('en-US',{weekday:'short',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) + '\n\n'
-      + 'Notes:\n' + (call.notes||'(none)') + '\n\n'
-      + 'Log in: https://sales.mytermac.com';
-    var bodyHtml = body.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
-    function tryResend() {
-      return fetch('https://termac-notify.termac-one.workers.dev/send-report',{
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({recipients:allRecipients,subject:subject,html:bodyHtml})
-      }).then(function(r){return r.json();}).then(function(d){return !!(d&&d.ok);}).catch(function(){return false;});
-    }
-    function done(sent) {
-      rcpToast(sent
-        ? 'Lead emailed to ' + allRecipients.length + ' people instantly'
-        : 'WARNING: Email FAILED -- lead is saved. Call Ted or Jim immediately.');
-    }
-    if (typeof sendMailAsMe === 'function') {
-      sendMailAsMe(allRecipients, subject, bodyHtml)
-        .then(function(r){ if(r&&r.ok){done(true);}else{return tryResend().then(done);} })
-        .catch(function(){ tryResend().then(done); });
-    } else {
-      tryResend().then(done);
-    }
-  }).catch(function(){ rcpToast('WARNING: Email FAILED -- could not reach server. Lead is saved.'); });
+  var repEmail = RCP_REP_EMAILS[call.routeTo];
+  if (!repEmail) { rcpToast('\u26A0\uFE0F No email address for ' + (call.routeTo||'rep') + ' -- lead logged but NOT emailed.'); return; }
+  // Paul Brahan is UniPro GM -- only gets ops/service calls, not sales leads.
+  if (call.routeTo === 'Paul Brahan' && RCP_PAUL_BLOCK_TYPES.indexOf(call.callType) !== -1) return;
+
+  // Per Ted July 27: 5 recipients on every lead.
+  // 1. The territory rep. 2. Jim Kennedy. 3. Tom Pittakas. 4. Terence O'Reilly. 5. Sean O'Reilly.
+  // RCP_ESCALATION_EMAILS already holds Jim, Tom P, Terence, Sean.
+  // Deduplicate in case the territory rep IS one of the escalation addresses.
+  var allRecipients = [repEmail].concat(
+    RCP_ESCALATION_EMAILS.filter(function(e){ return e !== repEmail; })
+  );
+
+  var callerLine = [call.callerName, call.company].filter(Boolean).join(' / ');
+  var subject = '\uD83D\uDCDE New Lead \u2014 ' + (call.routeTo||'Rep') + ' \u2014 ' + (callerLine || 'Unknown Caller');
+  var bodyPlain = 'New lead from Reception.\n\n'
+    + 'Caller: ' + (call.callerName || '\u2014') + '\n'
+    + 'Company: ' + (call.company || '\u2014') + '\n'
+    + 'Phone: ' + (call.phone || '\u2014') + '\n'
+    + 'Address: ' + (call.address || '\u2014') + '\n'
+    + 'Call Type: ' + (call.callType || '\u2014') + '\n'
+    + 'Urgency: ' + (call.urgency || 'Normal') + '\n'
+    + 'Routed to: ' + (call.routeTo || '\u2014') + '\n'
+    + 'Logged by: ' + (call.loggedBy || 'Reception') + '\n'
+    + 'Time: ' + new Date(call.ts).toLocaleString('en-US', {weekday:'short',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) + '\n\n'
+    + 'Notes:\n' + (call.notes || '(none)') + '\n\n'
+    + 'Log in to Termac One: https://sales.mytermac.com';
+
+  var bodyHtml = bodyPlain.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+
+  // Try Graph (sends as Kate), then Resend server-side, then tell Kate it failed.
+  // Kate must ALWAYS know the outcome. No silent failures.
+  function tryResend() {
+    return fetch('https://termac-notify.termac-one.workers.dev/send-report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipients: allRecipients, subject: subject, html: bodyHtml })
+    }).then(function(r){ return r.json(); }).then(function(d){ return !!(d && d.ok); }).catch(function(){ return false; });
+  }
+
+  if (typeof sendMailAsMe === 'function') {
+    sendMailAsMe(allRecipients, subject, bodyHtml).then(function(result) {
+      if (result && result.ok) {
+        rcpToast('\u2709\uFE0F Lead emailed to ' + allRecipients.length + ' recipients');
+        return;
+      }
+      return tryResend().then(function(sent) {
+        if (sent) {
+          rcpToast('\u2709\uFE0F Lead emailed to ' + allRecipients.length + ' recipients');
+        } else {
+          rcpToast('\u26A0\uFE0F Email FAILED -- call Ted or Jim immediately. Lead is saved in the log.');
+        }
+      });
+    }).catch(function() {
+      tryResend().then(function(sent) {
+        if (sent) {
+          rcpToast('\u2709\uFE0F Lead emailed to ' + allRecipients.length + ' recipients');
+        } else {
+          rcpToast('\u26A0\uFE0F Email FAILED -- call Ted or Jim immediately. Lead is saved in the log.');
+        }
+      });
+    });
+  } else {
+    // sendMailAsMe not loaded yet -- go straight to Resend
+    tryResend().then(function(sent) {
+      if (sent) {
+        rcpToast('\u2709\uFE0F Lead emailed to ' + allRecipients.length + ' recipients');
+      } else {
+        rcpToast('\u26A0\uFE0F Email FAILED -- call Ted or Jim immediately. Lead is saved in the log.');
+      }
+    });
+  }
 }
 
 function rcpLogCall(){
@@ -968,11 +988,43 @@ function rcpLogCall(){
     // Cross-device: also push to the notification bridge so it reaches
     // the recipient's own device, not just this one.
     if (typeof notifySendCrossDevice === 'function') notifySendCrossDevice(_routedNotif);
-    // Banner removed per Ted
-    // NOTE: email to rep fires from rcpLogAndCreateLead only, not here.
-    // Log Call is just a log. Log + Create Lead is what notifies the rep.
+    if (typeof _fireInAppAlertBanner === 'function') {
+      _fireInAppAlertBanner({
+        recipientName: routeTo, caller: name || company, company: company,
+        phone: phone, notes: notes, source: 'Reception',
+        loggedBy: (_rcpUser && _rcpUser.name) || 'Reception'
+      });
+    }
+    // Only email when called from Log + Create Lead, not plain Log Call
+    if (window._rcpSendLeadEmail) { rcpEmailRepOnCall(call); window._rcpSendLeadEmail = false; }
   }
-  // Log Call only saves to rcp_calls. No lead, no email, no rep notification.
+  // Write to D1 leads table so the escalation worker can find it.
+  // Without this the call only exists in rcp_calls and nobody outside
+  // the reception portal ever sees it. is_hot=1 and is_new_lead=1
+  // are required for the escalation worker to send the emails.
+  try {
+    fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/leads', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+      body: JSON.stringify({
+        id: call.id,
+        contact_name: call.callerName || '',
+        business: call.company || '',
+        phone: call.phone || '',
+        address: call.address || '',
+        zip: call.zip || '',
+        notes: call.notes || '',
+        source: 'Reception Call',
+        assigned_rep: call.routeTo || '',
+        is_hot: 1,
+        is_new_lead: 1,
+        notified_phase1: 0,
+        notified_phase2: 0,
+        created_at: call.ts,
+        updated_at: call.ts
+      })
+    }).catch(function(){});
+  } catch(e) {}
 
   rcpToast('Call logged ✓');
   rcpClearForm();
@@ -1011,6 +1063,7 @@ function rcpLogAndCreateLead(){
   const fullNotes = [notes, territoryNote].filter(Boolean).join('\n');
 
   if(!company&&!name){rcpToast('Enter at least a name or company to create a lead');return;}
+  window._rcpSendLeadEmail = true;
   rcpLogCall();
   const lead = {
     id: 'RCP' + Date.now() + '_' + Math.random().toString(36).slice(2,5),
@@ -1039,58 +1092,6 @@ function rcpLogAndCreateLead(){
       note: fullNotes, who: (_rcpUser && _rcpUser.name) || 'Reception',
     });
   }
-  // Write to D1 as hot lead so escalation worker can find it
-  fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/leads', {
-    method: 'POST',
-    headers: {'Content-Type':'application/json','X-API-Secret':'termac2026'},
-    body: JSON.stringify({
-      id: lead.id,
-      contact_name: name || '',
-      business: company || name || '',
-      phone: phone || '',
-      address: address || '',
-      zip: zip || '',
-      notes: fullNotes || '',
-      source: 'Reception Call',
-      assigned_rep: assignedRep,
-      is_hot: 1,
-      is_new_lead: 1,
-      notified_phase1: 0,
-      notified_phase2: 0,
-      created_at: lead.created,
-      updated_at: lead.updated
-    })
-  }).catch(function(){});
-
-  // Fire email -- synchronous, no async D1 lookup, no failure points
-  // Rep email from local map. CC: Sean, Terence, Tom Pittakas, Jim Kennedy. Always.
-  (function() {
-    var repEmail = RCP_REP_EMAILS[assignedRep] || null;
-    if (!repEmail) { rcpToast('WARNING: No email for ' + assignedRep + '. Lead saved. Call Ted.'); return; }
-    var ccEmails = ['soreilly@termac.com','toreilly@termac.com','tpittakas@termac.com','jkennedy@termac.com'];
-    var allRecipients = [repEmail].concat(ccEmails.filter(function(e){ return e !== repEmail; }));
-    var callerLine = [name, company].filter(Boolean).join(' / ');
-    var subject = 'New Lead - ' + assignedRep + ' - ' + (callerLine || 'Unknown Caller');
-    var bodyHtml = '<p><strong>New lead from Reception</strong></p>'
-      + '<p>Caller: ' + (name||'-') + '</p>'
-      + '<p>Company: ' + (company||'-') + '</p>'
-      + '<p>Phone: ' + (phone||'-') + '</p>'
-      + '<p>Address: ' + (address||'-') + '</p>'
-      + '<p>Call Type: ' + (type||'-') + '</p>'
-      + '<p>Routed to: ' + assignedRep + '</p>'
-      + '<p>Logged by: ' + ((_rcpUser&&_rcpUser.name)||'Reception') + '</p>'
-      + '<p>Notes: ' + (fullNotes||'(none)') + '</p>'
-      + '<p><a href="https://sales.mytermac.com">Log in to Termac One</a></p>';
-    fetch('https://termac-notify.termac-one.workers.dev/send-report', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({recipients: allRecipients, subject: subject, html: bodyHtml}),
-      keepalive: true
-    }).then(function(r){return r.json();}).then(function(d){
-      rcpToast(d && d.ok ? 'Lead emailed to ' + allRecipients.length + ' people' : 'WARNING: Email FAILED -- lead saved. Call Ted or Jim.');
-    }).catch(function(){ rcpToast('WARNING: Email FAILED. Lead saved. Call Ted or Jim.'); });
-  })();
-
   rcpToast('Lead created \u2192 ' + assignedRep);
   rcpNav('leads');
 }
