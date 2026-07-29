@@ -16092,11 +16092,19 @@ function spOpenNotifPanel(){
 // (via the OS deep link) when one can be found by company/account name;
 // otherwise expand the row in place with every detail on the notification.
 function spNotifDrillById(id) {
-  // The notification already has lead_id embedded -- use it directly.
-  // No async D1 call needed. Instant response on mobile.
-  var notifs = [];
-  try { notifs = JSON.parse(localStorage.getItem('termac_hotlead_notifs')||'[]'); } catch(e) {}
-  var n = notifs.find(function(x){ return x.id === id; });
+  // 1. Check _spNotifList -- already in memory, exactly what rendered the panel
+  var n = null;
+  if (window._spNotifList) {
+    n = window._spNotifList.find(function(x){ return x.id === id; });
+  }
+  // 2. Check localStorage as fallback
+  if (!n) {
+    try {
+      var notifs = JSON.parse(localStorage.getItem('termac_hotlead_notifs')||'[]');
+      n = notifs.find(function(x){ return x.id === id; });
+    } catch(e) {}
+  }
+  // 3. If we have the notification, open the lead directly
   if (n && (n.lead_id || n.record_id)) {
     var inlineId = n.lead_id || n.record_id;
     var inlineTab = n.tab || 'leads';
@@ -16104,7 +16112,7 @@ function spNotifDrillById(id) {
     spViewRecord(inlineId, inlineTab);
     return;
   }
-  // If not in local cache, fetch from D1 as fallback
+  // 4. Last resort -- fetch from D1 notifications table
   d1Query('SELECT lead_id, record_id, tab FROM notifications WHERE id=? LIMIT 1', [id])
   .then(function(res) {
     var row = res.ok && res.results && res.results[0];
