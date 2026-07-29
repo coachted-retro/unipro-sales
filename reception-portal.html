@@ -796,52 +796,1762 @@ var RCP_ESCALATION_EMAILS = ['jkennedy@termac.com', 'tpittakas@termac.com', 'sor
 // Send an immediate email to the routed rep and queue a 1-hour escalation
 // to Jim + Tom P if no one marks the call as reached.
 function rcpEmailRepOnCall(call) {
-  // SINGLE SOURCE OF TRUTH: all emails read from D1 staff_auth.
-  // Never hardcoded. Change an email in D1, it takes effect everywhere immediately.
+  // SINGLE SOURCE OF TRUTH: all emails from D1 staff_auth only.
+  // To change any email -- update D1. Nothing else. Ever.
   fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/query', {
     method: 'POST',
     headers: {'Content-Type':'application/json','X-API-Secret':'termac2026'},
     body: JSON.stringify({sql:"SELECT name, email, role FROM staff_auth WHERE email IS NOT NULL AND email != ''",params:[]})
   }).then(function(r){return r.json();}).then(function(res) {
-    if (!res.ok || !res.results) { rcpToast('\u26a0\ufe0f Could not load staff emails from D1'); return; }
+    if (!res.ok || !res.results) { rcpToast('Could not load staff emails -- lead saved, email not sent'); return; }
     var staffMap = {};
     res.results.forEach(function(s){ staffMap[s.name] = s.email; });
     var mgmtEmails = res.results
       .filter(function(s){ return ['owner','admin','manager'].indexOf(s.role) !== -1; })
       .map(function(s){ return s.email; });
     var repEmail = staffMap[call.routeTo] || null;
-    if (!repEmail) { rcpToast('\u26a0\ufe0f No email in D1 for ' + (call.routeTo||'rep') + ' -- lead saved but NOT emailed.'); return; }
+    if (!repEmail) { rcpToast('No email in system for ' + (call.routeTo||'rep') + ' -- lead saved but NOT emailed. Call Ted.'); return; }
     var allRecipients = [repEmail].concat(mgmtEmails.filter(function(e){ return e !== repEmail; }));
     var callerLine = [call.callerName, call.company].filter(Boolean).join(' / ');
     var subject = 'New Lead - ' + (call.routeTo||'Rep') + ' - ' + (callerLine||'Unknown Caller');
-    var bodyPlain = 'New lead from Reception.\n\nCaller: ' + (call.callerName||'-')
-      + '\nCompany: ' + (call.company||'-')
-      + '\nPhone: ' + (call.phone||'-')
-      + '\nAddress: ' + (call.address||'-')
-      + '\nCall Type: ' + (call.callType||'-')
-      + '\nUrgency: ' + (call.urgency||'Normal')
-      + '\nRouted to: ' + (call.routeTo||'-')
-      + '\nLogged by: ' + (call.loggedBy||'Reception')
-      + '\nTime: ' + new Date(call.ts).toLocaleString('en-US',{weekday:'short',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})
-      + '\n\nNotes:\n' + (call.notes||'(none)')
-      + '\n\nLog in: https://sales.mytermac.com';
-    var bodyHtml = bodyPlain.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+    var body = 'New lead from Reception.\n\n'
+      + 'Caller: ' + (call.callerName||'-') + '\n'
+      + 'Company: ' + (call.company||'-') + '\n'
+      + 'Phone: ' + (call.phone||'-') + '\n'
+      + 'Address: ' + (call.address||'-') + '\n'
+      + 'Call Type: ' + (call.callType||'-') + '\n'
+      + 'Urgency: ' + (call.urgency||'Normal') + '\n'
+      + 'Routed to: ' + (call.routeTo||'-') + '\n'
+      + 'Logged by: ' + (call.loggedBy||'Reception') + '\n'
+      + 'Time: ' + new Date(call.ts).toLocaleString('en-US',{weekday:'short',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) + '\n\n'
+      + 'Notes:\n' + (call.notes||'(none)') + '\n\n'
+      + 'Log in: https://sales.mytermac.com';
+    var bodyHtml = body.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
     function tryResend() {
       return fetch('https://termac-notify.termac-one.workers.dev/send-report',{
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({recipients:allRecipients,subject:subject,html:bodyHtml})
+        body:JSON.stringify({recipients:allRecipients,subject:subject,html:bodyHtml})
       }).then(function(r){return r.json();}).then(function(d){return !!(d&&d.ok);}).catch(function(){return false;});
     }
-    function toast(sent) {
-      rcpToast(sent ? 'Lead emailed to ' + allRecipients.length + ' recipients'
-                    : 'WARNING: Email FAILED -- call Ted or Jim. Lead is saved in the log.');
+    function done(sent) {
+      rcpToast(sent
+        ? 'Lead emailed to ' + allRecipients.length + ' people instantly'
+        : 'WARNING: Email FAILED -- lead is saved. Call Ted or Jim immediately.');
     }
     if (typeof sendMailAsMe === 'function') {
       sendMailAsMe(allRecipients, subject, bodyHtml)
-        .then(function(r){ if(r&&r.ok){toast(true);}else{return tryResend().then(toast);} })
-        .catch(function(){ tryResend().then(toast); });
+        .then(function(r){ if(r&&r.ok){done(true);}else{return tryResend().then(done);} })
+        .catch(function(){ tryResend().then(done); });
     } else {
-      tryResend().then(toast);
+      tryResend().then(done);
     }
-  }).catch(function(){ rcpToast('WARNING: Email FAILED -- could not reach D1. Lead is saved.'); });
+  }).catch(function(){ rcpToast('WARNING: Email FAILED -- could not reach server. Lead is saved.'); });
 }
+
+function rcpLogCall(){
+  const name    = document.getElementById('rcpCallerName').value.trim();
+  const company = document.getElementById('rcpCallerCompany').value.trim();
+  const phone   = document.getElementById('rcpCallerPhone').value.trim();
+  const address = document.getElementById('rcpCallerAddress')?.value.trim() || '';
+  const zip     = document.getElementById('rcpCallerZip')?.value.trim() || '';
+  const type    = document.getElementById('rcpCallType').value;
+  let routeTo = document.getElementById('rcpRouteTo').value;
+  const urgency = document.getElementById('rcpUrgency').value;
+  const notes   = document.getElementById('rcpNotes').value.trim();
+  if(!name&&!company&&!phone){rcpToast('Enter at least caller name, company, or phone');return;}
+
+  // Resolve the generic territory placeholder to the actual rep from the
+  // ZIP. Without a ZIP it stays generic and won't reach anyone's device,
+  // so nudge for one.
+  if (routeTo === 'Sales Rep (Territory)') {
+    const rep = rcpTerritoryRep(zip);
+    if (rep) { routeTo = rep; }
+    else if (!zip) { rcpToast('Enter a ZIP so the territory rep can be identified'); return; }
+  }
+
+  const call = {id: 'RCP' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2,6), ts:Date.now(), callerName:name, company, phone, address, zip, callType:type, routeTo, urgency, notes, loggedBy:_rcpUser?.name||'Reception', is_hot:1, is_new_lead:1, source:'Reception Call'};
+  const log = (typeof crmLoad === 'function') ? crmLoad('rcp_calls') : JSON.parse(localStorage.getItem('termac_crm_rcp_calls')||'[]');
+  log.push(call);
+  // 2026-07-13 per Ted: was raw localStorage only, no D1 path at all --
+  // any call that didn't happen to match an existing lead/contact by
+  // phone was invisible outside this one device. crmSave here reaches
+  // the real rcp_calls table regardless of whether a match is found
+  // below; the match (if any) is recorded on the call itself too.
+  if (typeof crmSave === 'function') { crmSave('rcp_calls', log); }
+  else { localStorage.setItem('termac_crm_rcp_calls', JSON.stringify(log)); }
+
+  // Match this call to an existing lead or contact by phone, so it lands
+  // as real history on that record — not just in Reception's own
+  // isolated call log, invisible to whoever actually owns that account.
+  if (phone && typeof TermacD1Sync !== 'undefined') {
+    var matched = rcpFindRecordByPhone(phone);
+    if (matched) {
+      TermacD1Sync.logTouchpoint(matched.pool, matched.record.id, {
+        type: 'call', icon: '📞',
+        title: 'Reception Call — ' + (type || 'Inbound'),
+        note: notes || (urgency ? 'Urgency: ' + urgency : ''),
+        who: (_rcpUser && _rcpUser.name) || 'Reception',
+      });
+      call.matchedRecordId = matched.record.id;
+      call.matchedPool = matched.pool;
+      if (typeof crmSave === 'function') { crmSave('rcp_calls', log); }
+      else { localStorage.setItem('termac_crm_rcp_calls', JSON.stringify(log)); }
+    }
+  }
+
+  // complaint escalation email
+  if(type==='Complaint'){
+    const subj = `COMPLAINT \u2014 ${company||name} \u2014 ${new Date().toLocaleString()}`;
+    const body = `Termac One Reception Alert\n\nCaller: ${name}\nCompany: ${company}\nPhone: ${phone}\nType: ${type}\nUrgency: ${urgency}\nRouted to: ${routeTo}\nLogged by: ${_rcpUser.name}\n\nNotes:\n${notes}`;
+    sendOrMailto(['jkennedy@termac.com', 'tpittakas@termac.com'], subj, body);
+  }
+
+  // Notify whoever this call was routed to — a routed call with no
+  // notification is a silent drop, so this fires for every logged call,
+  // not just ones that also create a new lead.
+  if (routeTo && typeof _notifStore_get === 'function' && typeof _notifStore_set === 'function') {
+    var notifs = _notifStore_get();
+    // Determine if this is an existing account/contact/lead or a brand new caller.
+    // This drives the notification type, priority badge, and routing urgency.
+    // Existing account = ACCOUNT ALERT (customer care, high urgency).
+    // No match = NEW LEAD (new business, hot).
+    var _isExistingAccount = !!(call.matchedRecordId && (call.matchedPool === 'accounts' || call.matchedPool === 'contacts'));
+    var _isExistingLead    = !!(call.matchedRecordId && call.matchedPool === 'leads');
+    var _notifType  = _isExistingAccount ? 'account_alert' : (_isExistingLead ? 'lead_followup' : 'new_lead');
+    var _notifBadge = _isExistingAccount ? '⚠️ EXISTING ACCOUNT' : '🔥 NEW LEAD';
+    var _notifColor = _isExistingAccount ? '#D97706' : '#C8102E';
+    var _notifPriority = _isExistingAccount ? 'urgent' : 'hot';
+    var _notifTab = call.matchedPool || 'leads';
+    var _notifRecordId = call.matchedRecordId || call.id;
+    var _notifDest = call.matchedRecordId
+      ? ('sales-portal.html?tab=' + _notifTab + '&open=' + encodeURIComponent(call.matchedRecordId))
+      : ('sales-portal.html?tab=leads');
+    var _routedNotif = {
+      id: 'HL' + Date.now(),
+      recipientName: routeTo,
+      caller: name || company,
+      company: company,
+      phone: phone,
+      notes: (_isExistingAccount ? '⚠️ EXISTING CUSTOMER — ' : '🔥 NEW LEAD — ') + (notes || 'No notes'),
+      source: _notifBadge + ' via Reception',
+      loggedBy: (_rcpUser && _rcpUser.name) || 'Reception',
+      ts: Date.now(),
+      read: false,
+      type: _notifType,
+      priority: _notifPriority,
+      badge: _notifBadge,
+      badgeColor: _notifColor,
+      is_existing_account: _isExistingAccount,
+      lead_id: call.matchedRecordId || null,
+      record_id: _notifRecordId,
+      tab: _notifTab,
+      dest_url: _notifDest,
+      call_id: call.id,
+    };
+    notifs.unshift(_routedNotif);
+    _notifStore_set(notifs);
+    // Callback queue: every routed call becomes a waiting-on-callback entry
+    // that ages visibly and escalates to management if nobody responds.
+    try {
+      var cbq = JSON.parse(localStorage.getItem('termac_callback_queue')||'[]');
+      cbq.unshift({
+        id: _routedNotif.id, ts: Date.now(),
+        caller: name || company, company: company, phone: phone,
+        routedTo: routeTo, notes: notes,
+        status: 'waiting', escalated: false, escalated2: false
+      });
+      localStorage.setItem('termac_callback_queue', JSON.stringify(cbq.slice(0,200)));
+      rcpUpdateCBBadge();
+    } catch(e) {}
+    // Cross-device: also push to the notification bridge so it reaches
+    // the recipient's own device, not just this one.
+    if (typeof notifySendCrossDevice === 'function') notifySendCrossDevice(_routedNotif);
+    if (typeof _fireInAppAlertBanner === 'function') {
+      _fireInAppAlertBanner({
+        recipientName: routeTo, caller: name || company, company: company,
+        phone: phone, notes: notes, source: 'Reception',
+        loggedBy: (_rcpUser && _rcpUser.name) || 'Reception'
+      });
+    }
+    // Immediate email to the assigned rep so they catch it even off-platform.
+    rcpEmailRepOnCall(call);
+  }
+  // Write to D1 leads table so the escalation worker can find it.
+  // Without this the call only exists in rcp_calls and nobody outside
+  // the reception portal ever sees it. is_hot=1 and is_new_lead=1
+  // are required for the escalation worker to send the emails.
+  try {
+    fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/leads', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
+      body: JSON.stringify({
+        id: call.id,
+        contact_name: call.callerName || '',
+        business: call.company || '',
+        phone: call.phone || '',
+        address: call.address || '',
+        zip: call.zip || '',
+        notes: call.notes || '',
+        source: 'Reception Call',
+        assigned_rep: call.routeTo || '',
+        is_hot: 1,
+        is_new_lead: 1,
+        notified_phase1: 0,
+        notified_phase2: 0,
+        created_at: call.ts,
+        updated_at: call.ts
+      })
+    }).catch(function(){});
+  } catch(e) {}
+
+  rcpToast('Call logged ✓');
+  rcpClearForm();
+  rcpRenderCallLog(document.getElementById('rcpPanel-incoming')||document.getElementById('rcpContent'));
+  rcpUpdateRail();
+}
+
+function rcpLogAndCreateLead(){
+  const name    = document.getElementById('rcpCallerName').value.trim();
+  const company = document.getElementById('rcpCallerCompany').value.trim();
+  const phone   = document.getElementById('rcpCallerPhone').value.trim();
+  const notes   = document.getElementById('rcpNotes').value.trim();
+  const type    = document.getElementById('rcpCallType').value;
+  const address = document.getElementById('rcpCallerAddress')?.value.trim() || '';
+  const zip     = document.getElementById('rcpCallerZip')?.value.trim() || '';
+  const routeEl = document.getElementById('rcpRouteTo');
+  const manualRoute = routeEl ? routeEl.value : '';
+
+  // Resolve territory -- may return multiple reps for shared zip zones.
+  const territoryReps = rcpTerritoryReps(zip);
+  const primaryRep = territoryReps.length ? territoryReps[0].rep : null;
+
+  // If reception manually selected a named rep, honour that over territory.
+  // If they left it on 'Sales Rep (Territory)' or blank, use primary territory rep.
+  const allSalesReps = RCP_TERRITORY_MAP.map(function(t){ return t.rep; })
+    .filter(function(r,i,a){ return a.indexOf(r)===i; });
+  const assignedRep = (manualRoute && manualRoute !== 'Sales Rep (Territory)' && allSalesReps.indexOf(manualRoute) !== -1)
+    ? manualRoute
+    : (primaryRep || 'Unassigned');
+
+  // Build a note about all reps in the zone when there are multiples.
+  var territoryNote = '';
+  if (territoryReps.length > 1) {
+    territoryNote = 'Territory covers: ' + territoryReps.map(function(r){ return r.rep; }).join(', ') + '.';
+  }
+  const fullNotes = [notes, territoryNote].filter(Boolean).join('\n');
+
+  if(!company&&!name){rcpToast('Enter at least a name or company to create a lead');return;}
+  rcpLogCall();
+  const lead = {
+    id: 'RCP' + Date.now() + '_' + Math.random().toString(36).slice(2,5),
+    name: name || company, business: company || name,
+    phone, address, zip,
+    notes: fullNotes, source: 'Reception Call',
+    lifecycleStage: 'lead', status: 'new',
+    assignedRep: assignedRep,
+    ownedBy: assignedRep,
+    createdBy: _rcpUser.name,
+    created: Date.now(), updated: Date.now(),
+    activityLog: [{
+      ts: Date.now(), icon: '📞', type: 'call',
+      title: 'Reception Call — routed to ' + assignedRep,
+      note: (type || 'Inbound call') + (fullNotes ? '\n' + fullNotes : ''),
+      who: _rcpUser.name
+    }]
+  };
+  const leads = crmLoad('leads');
+  leads.unshift(lead);
+  crmSave('leads', leads);
+  if (typeof TermacD1Sync !== 'undefined') {
+    TermacD1Sync.logTouchpoint('leads', lead.id, {
+      type: 'call', icon: '📞',
+      title: 'Reception Call — ' + (type || 'Inbound') + ' — routed to ' + assignedRep,
+      note: fullNotes, who: (_rcpUser && _rcpUser.name) || 'Reception',
+    });
+  }
+  rcpToast('Lead created \u2192 ' + assignedRep);
+  rcpNav('leads');
+}
+
+function rcpClearForm(){
+  ['rcpCallerName','rcpCallerCompany','rcpCallerPhone','rcpCallerAddress','rcpCallerZip','rcpNotes'].forEach(id=>{
+  (function(){var h=document.getElementById('rcpTerritoryHint');if(h)h.textContent='';})();
+    const el=document.getElementById(id);if(el)el.value='';
+  });
+  ['rcpCallType','rcpRouteTo'].forEach(id=>{
+    const el=document.getElementById(id);if(el)el.value='';
+  });
+  document.getElementById('rcpUrgency').value='Normal';
+  document.getElementById('rcpComplaintAlert').style.display='none';
+  document.getElementById('rcpCompanyDropdown').style.display='none';
+  document.getElementById('rcpPhoneDropdown').style.display='none';
+}
+
+// ── CRM VIEWS ──
+const RCP_STAGE_COLORS={lead:'#6B7280',contact:'#1B5FA8',opportunity:'#D97706',active:'#1E7B3C',site_visit:'#7C3AED'};
+const RCP_STAGE_BG={lead:'#F3F4F6',contact:'#DBEAFE',opportunity:'#FEF3C7',active:'#DCFCE7',site_visit:'#EDE9FE'};
+const RCP_STAGE_LABELS={lead:'Lead',contact:'Contact',opportunity:'Opportunity',active:'Active',site_visit:'Site Visit',close:'Closing',onboarding:'Onboarding'};
+const RCP_TAB_STAGES={leads:['lead'],contacts:['contact'],accounts:['active','close','onboarding','first_service','renewal']};
+
+function rcpRenderCRM(el, tab){
+  const stageKeys = RCP_TAB_STAGES[tab]||['lead'];
+  let data = crmLoad('leads').filter(r=>stageKeys.includes(r.lifecycleStage||'lead'));
+  if(tab==='accounts'){
+    const legacy = crmLoad('accounts').filter(r=>!data.find(x=>x.id===r.id));
+    data=[...data,...legacy];
+  }
+  if(tab==='contacts'){
+    const legacy = crmLoad('contacts').filter(r=>!data.find(x=>x.id===r.id));
+    data=[...data,...legacy];
+  }
+  const q = (document.getElementById('rcpCrmSearch')?.value||'').toLowerCase();
+  if(q) data=data.filter(r=>JSON.stringify(r).toLowerCase().includes(q));
+  data.sort((a,b)=>(b.updated||b.created||0)-(a.updated||a.created||0));
+
+  el.innerHTML=`
+  <div class="rcp-card-title" style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:16px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink);margin-bottom:14px">
+    ${tab==='leads'?'🎯 Leads':tab==='contacts'?'👤 Contacts':'🏢 Accounts'}
+    <span style="font-size:12px;font-weight:400;color:var(--soft);letter-spacing:0;text-transform:none;margin-left:8px">${data.length} records</span>
+  </div>
+  <div style="margin-bottom:14px">
+    <input id="rcpCrmSearch" class="dms-search" placeholder="Search by name, business, phone…" oninput="rcpRenderCRM(document.getElementById('rcpContent'),'${tab}')" value="${escH(q)}" style="max-width:320px;border:1.5px solid var(--line);border-radius:7px;padding:8px 12px;font-size:13px">
+  </div>
+  <div class="rcp-record-grid">
+    ${data.length===0
+      ? '<div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--soft)"><div style="font-size:32px;margin-bottom:10px">📭</div>No records found.</div>'
+      : data.map(r=>{
+          const stage=r.lifecycleStage||'lead';
+          const color=RCP_STAGE_COLORS[stage]||'#6B7280';
+          const bg=RCP_STAGE_BG[stage]||'#F3F4F6';
+          return `<div class="rcp-record" style="border-left-color:${color}">
+            <div class="rcp-rec-biz">${escH(r.business||r.name||'—')}</div>
+            <div class="rcp-rec-info">${escH(r.name||r.contact||'')}${r.phone?` · <a href="tel:${escH(r.phone)}" style="color:var(--blue)">${escH(r.phone)}</a>`:''}</div>
+            ${r.address?`<div class="rcp-rec-info" style="margin-top:3px">📍 ${escH(r.address)}</div>`:''}
+            ${r.siteNotes?`<div style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:6px;padding:6px 10px;margin-top:8px;font-size:11px;color:#78350F"><strong>🔶 Site Notes:</strong> ${escH(r.siteNotes)}</div>`:''}
+            <div style="margin-top:8px">
+              <span class="rcp-stage-pill" style="background:${bg};color:${color}">${RCP_STAGE_LABELS[stage]||stage}</span>
+              <span style="font-size:11px;color:var(--soft);margin-left:8px">${escH(r.assignedRep||r.ownedBy||'Unassigned')}</span>
+            </div>
+          </div>`;}).join('')}
+  </div>`;
+  if(q) document.getElementById('rcpCrmSearch').value=q;
+}
+
+
+function rcpRenderEmployee(el){
+  el.innerHTML = `
+  <button onclick="rcpNav('log')" style="display:inline-flex;align-items:center;gap:6px;padding:8px 16px;background:#fff;border:1.5px solid var(--line);border-radius:7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;cursor:pointer;color:var(--soft);letter-spacing:.04em;margin-bottom:18px">← Back to Call Log</button>
+  <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:20px;margin-bottom:4px">Employee Portal</div>
+  <div style="font-size:13px;color:var(--soft);margin-bottom:20px">Access HR, learning, and benefits.</div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px">
+    ${[
+      {icon:'📚',label:'Learning Center',sub:'Training modules & certifications',href:'learning-center-v2.html'},
+      {icon:'👥',label:'HR Portal',sub:'Time off, benefits, onboarding',href:'hr-portal.html'},
+    ].map(item=>`<a href="${item.href}" target="_blank" style="display:block;background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(26,29,33,.08),0 4px 14px rgba(26,29,33,.06);padding:20px;text-decoration:none;color:#1A1D21;transition:box-shadow .12s" onmouseover="this.style.boxShadow='0 4px 20px rgba(26,29,33,.14)'" onmouseout="this.style.boxShadow='0 1px 3px rgba(26,29,33,.08),0 4px 14px rgba(26,29,33,.06)'">
+      <div style="font-size:28px;margin-bottom:8px">${item.icon}</div>
+      <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:15px;margin-bottom:4px">${item.label}</div>
+      <div style="font-size:12px;color:#5A616B">${item.sub}</div>
+    </a>`).join('')}
+  </div>`;
+}
+
+// ── TOAST ──
+// ═══════════════ CALLBACK QUEUE ═══════════════
+// Every routed call waits here until the customer is confirmed reached.
+// Ages visibly (green <2h, amber 2-4h, red >4h) and auto-escalates to
+// management through the notification bridge — no email dependency.
+function rcpCBLoad(){ try { return JSON.parse(localStorage.getItem('termac_callback_queue')||'[]'); } catch(e){ return []; } }
+function rcpCBSave(q){ try { localStorage.setItem('termac_callback_queue', JSON.stringify(q.slice(0,200))); } catch(e){} }
+
+function rcpUpdateCBBadge(){
+  var waiting = rcpCBLoad().filter(function(c){ return c.status==='waiting'||c.status==='followup'; }).length;
+  var b = document.getElementById('rcpCBBadge');
+  if(b){ b.textContent = waiting; b.style.display = waiting ? '' : 'none'; }
+}
+
+function rcpCBAgeInfo(ts){
+  var mins = Math.floor((Date.now()-ts)/60000);
+  var label = mins < 60 ? mins+'m' : Math.floor(mins/60)+'h '+(mins%60)+'m';
+  var color = mins < 60 ? '#16A34A' : mins < 240 ? '#D97706' : '#DC2626';
+  return { mins: mins, label: label, color: color };
+}
+
+// ── Outcome modal ──────────────────────────────────────────────────────────
+// Shown when a rep taps "Log Outcome" on a call record in their sales portal,
+// or when reception uses the action menu on the callback queue.
+function rcpOpenOutcomeModal(id){
+  var old = document.getElementById('rcpOutcomeModal');
+  if(old) old.remove();
+  var c = rcpCBLoad().find(function(x){ return x.id===id; });
+  if(!c) return;
+  var wrap = document.createElement('div');
+  wrap.id = 'rcpOutcomeModal';
+  wrap.setAttribute('style','position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px');
+  var inp = 'width:100%;box-sizing:border-box;padding:9px 11px;border:1.5px solid #D1D5DB;border-radius:8px;font-size:13px;font-family:inherit;margin-bottom:12px';
+  wrap.innerHTML =
+    '<div style="background:#fff;border-radius:14px;max-width:460px;width:100%;padding:24px;box-shadow:0 8px 32px rgba(0,0,0,.18)">'
+    + '<div style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:16px;letter-spacing:.06em;margin-bottom:4px">Log Call Outcome</div>'
+    + '<div style="font-size:12px;color:#6B7280;margin-bottom:16px">'+escH(c.caller||c.company||'Unknown')+' &mdash; routed to '+escH(c.routedTo||'')+'</div>'
+    + '<div style="font-size:11px;font-weight:700;color:#374151;margin-bottom:8px;text-transform:uppercase;letter-spacing:.07em">What happened?</div>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:16px">'
+    + ['spoke','voicemail','no-answer'].map(function(v,i){
+        var labels = ['Spoke with Someone','Left Voicemail','No Answer'];
+        var icons  = ['\uD83D\uDCAC','\uD83D\uDCF2','\uD83D\uDD07'];
+        var colors = ['#16A34A','#2563EB','#D97706'];
+        return '<label style="cursor:pointer;border:2px solid #E5E7EB;border-radius:10px;padding:12px 8px;text-align:center;transition:border .15s" onclick="rcpOutcomeSelect(this,\''+v+'\')">'
+          + '<input type="radio" name="rcpOutcomeType" value="'+v+'" style="display:none">'
+          + '<div style="font-size:22px;margin-bottom:4px">'+icons[i]+'</div>'
+          + '<div style="font-size:11px;font-weight:700;color:'+colors[i]+'">'+labels[i]+'</div>'
+          + '</label>';
+      }).join('')
+    + '</div>'
+    + '<textarea id="rcpOutcomeNotes" placeholder="Notes on what was discussed, next steps, etc." style="'+inp+'height:80px;resize:vertical"></textarea>'
+    + '<div id="rcpOutcomeFollowupRow" style="display:none;margin-bottom:12px">'
+    + '<div style="font-size:11px;font-weight:700;color:#374151;margin-bottom:6px;text-transform:uppercase;letter-spacing:.07em">Follow-up reminder</div>'
+    + '<input type="datetime-local" id="rcpOutcomeFollowupAt" style="'+inp+'">'
+    + '</div>'
+    + '<div style="display:flex;gap:10px">'
+    + '<button onclick="rcpSubmitOutcome(\''+id+'\')" style="flex:1;background:#1B5FA8;color:#fff;border:none;border-radius:8px;padding:11px;font-size:13px;font-weight:700;cursor:pointer">Save Outcome</button>'
+    + '<button onclick="document.getElementById(\'rcpOutcomeModal\').remove()" style="background:#F3F4F6;color:#374151;border:none;border-radius:8px;padding:11px 18px;font-size:13px;font-weight:700;cursor:pointer">Cancel</button>'
+    + '</div></div>';
+  document.body.appendChild(wrap);
+  // Pre-set follow-up times when outcome type changes
+  rcpOutcomePresetFollowup();
+}
+
+function rcpOutcomeSelect(label, val){
+  document.querySelectorAll('#rcpOutcomeModal label').forEach(function(l){
+    l.style.borderColor = '#E5E7EB'; l.style.background = '#fff';
+  });
+  label.style.borderColor = '#1B5FA8'; label.style.background = '#EFF6FF';
+  var radio = label.querySelector('input[type=radio]');
+  if(radio) radio.checked = true;
+  rcpOutcomePresetFollowup(val);
+}
+
+function rcpOutcomePresetFollowup(val){
+  val = val || (function(){ var r = document.querySelector('#rcpOutcomeModal input[name=rcpOutcomeType]:checked'); return r ? r.value : ''; })();
+  var row = document.getElementById('rcpOutcomeFollowupRow');
+  var inp = document.getElementById('rcpOutcomeFollowupAt');
+  if(!row||!inp) return;
+  if(val==='spoke'){ row.style.display='none'; return; }
+  row.style.display='';
+  var base = new Date();
+  if(val==='voicemail'){
+    // 24h from now, clamped to 9am-5pm next business day
+    base.setDate(base.getDate()+1);
+    var h = base.getHours();
+    if(h < 9) base.setHours(9,0,0,0);
+    else if(h >= 17) { base.setDate(base.getDate()+1); base.setHours(9,0,0,0); }
+  } else {
+    // No answer: 2h from now, clamped to 9am-5pm
+    base.setTime(base.getTime() + 2*60*60*1000);
+    var h2 = base.getHours();
+    if(h2 < 9) base.setHours(9,0,0,0);
+    else if(h2 >= 17) { base.setDate(base.getDate()+1); base.setHours(9,0,0,0); }
+  }
+  // datetime-local format: YYYY-MM-DDTHH:MM
+  inp.value = base.getFullYear()+'-'
+    + String(base.getMonth()+1).padStart(2,'0')+'-'
+    + String(base.getDate()).padStart(2,'0')+'T'
+    + String(base.getHours()).padStart(2,'0')+':'
+    + String(base.getMinutes()).padStart(2,'0');
+}
+
+function rcpSubmitOutcome(id){
+  var outcomeEl = document.querySelector('#rcpOutcomeModal input[name=rcpOutcomeType]:checked');
+  if(!outcomeEl){ rcpToast('Select an outcome first'); return; }
+  var outcome = outcomeEl.value;
+  var notes   = (document.getElementById('rcpOutcomeNotes')||{}).value||'';
+  var fuAt    = (document.getElementById('rcpOutcomeFollowupAt')||{}).value||'';
+
+  var q = rcpCBLoad();
+  var c = q.find(function(x){ return x.id===id; });
+  if(!c){ rcpToast('Record not found'); return; }
+
+  var outcomeLabels = { 'spoke':'Spoke with someone', 'voicemail':'Left voicemail', 'no-answer':'No answer' };
+  var logEntry = {
+    ts: Date.now(),
+    outcome: outcome,
+    outcomeLabel: outcomeLabels[outcome]||outcome,
+    notes: notes,
+    by: (_rcpUser&&_rcpUser.name)||'Rep',
+    followupAt: fuAt ? new Date(fuAt).getTime() : null,
+  };
+
+  c.outcomeLog = c.outcomeLog || [];
+  c.outcomeLog.push(logEntry);
+  c.lastOutcome = logEntry;
+
+  if(outcome==='spoke'){
+    // Timer stops permanently. No escalation. Done.
+    c.status = 'resolved';
+    c.resolvedAt = Date.now();
+    c.resolvedBy = logEntry.by;
+    c.resolvedOutcome = 'spoke';
+  } else {
+    // VM or no-answer: stop current timer, set follow-up status.
+    c.status = 'followup';
+    c.followupAt = logEntry.followupAt || (Date.now() + (outcome==='voicemail' ? 86400000 : 7200000));
+    c.followupOutcome = outcome;
+    // Reset escalation flags so the follow-up window gets its own fresh 1h clock.
+    c.escalated = false;
+    c.escalated2 = false;
+    // The follow-up re-arms the timer at followupAt -- see rcpCheckCallbackEscalations.
+  }
+
+  rcpCBSave(q);
+
+  // Notify the rep of their follow-up via cross-device notification.
+  if(outcome !== 'spoke' && c.followupAt && typeof notifySendCrossDevice === 'function'){
+    var fuLabel = outcome==='voicemail' ? 'Follow up -- left VM yesterday' : 'Follow up -- no answer earlier';
+    setTimeout(function(){
+      notifySendCrossDevice({
+        id:'FU'+Date.now(), recipientName: c.routedTo, ts: Date.now(),
+        caller: c.caller, company: c.company, phone: c.phone,
+        notes: fuLabel + (notes ? '\nPrev notes: '+notes : ''),
+        source: 'Follow-up Reminder', loggedBy: 'Termac One'
+      });
+    }, Math.max(0, c.followupAt - Date.now()));
+  }
+
+  // Write outcome back to the lead/call activity log in D1 via the shared sync module.
+  if(typeof TermacD1Sync !== 'undefined' && c.leadId){
+    TermacD1Sync.logTouchpoint('leads', c.leadId, {
+      type: 'call', icon: outcome==='spoke' ? '\uD83D\uDCAC' : outcome==='voicemail' ? '\uD83D\uDCF2' : '\uD83D\uDD07',
+      title: outcomeLabels[outcome]||outcome,
+      note: notes, who: logEntry.by,
+    });
+  }
+
+  document.getElementById('rcpOutcomeModal').remove();
+  rcpRenderCallbacks();
+  rcpToast(outcomeLabels[outcome]+' logged \u2713');
+}
+
+// ── Render ─────────────────────────────────────────────────────────────────
+function rcpRenderCallbacks(){
+  rcpCheckCallbackEscalations();
+  var panel = document.getElementById('rcpPanel-callbacks');
+  if(!panel) return;
+  var q = rcpCBLoad();
+  var active   = q.filter(function(c){ return c.status==='waiting'||c.status==='followup'; });
+  var resolved = q.filter(function(c){ return c.status==='resolved'; }).slice(0,20);
+
+  var STATUS_META = {
+    'waiting':  { dot:'#DC2626', label:'Waiting',           desc:'Rep not yet responded' },
+    'followup': { dot:'#2563EB', label:'Follow-up Pending', desc:'Outcome logged, follow-up scheduled' },
+  };
+
+  function outcomeIcon(c){
+    if(!c.lastOutcome) return '';
+    var icons = { spoke:'\uD83D\uDCAC', voicemail:'\uD83D\uDCF2', 'no-answer':'\uD83D\uDD07' };
+    return icons[c.lastOutcome.outcome]||'';
+  }
+
+  function activeRow(c){
+    var age = rcpCBAgeInfo(c.status==='followup' ? c.followupAt : c.ts);
+    var esc = c.escalated2 ? ' \u00b7 \uD83D\uDEA8 escalated \u00d72' : c.escalated ? ' \u00b7 \u26A0 escalated' : '';
+    var sm  = STATUS_META[c.status]||STATUS_META['waiting'];
+    var fuStr = c.followupAt ? ' \u00b7 follow-up '+new Date(c.followupAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '';
+    var lastNote = c.lastOutcome && c.lastOutcome.notes ? '<div style="font-size:10px;color:#6B7280;margin-top:2px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escH(c.lastOutcome.notes)+'</div>' : '';
+    return '<tr style="border-bottom:1px solid #F3F4F6">'
+      + '<td style="padding:10px 12px"><div style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:'+sm.dot+';display:inline-block;flex-shrink:0"></span><div>'
+      + '<div style="font-weight:700;font-size:13px">'+escH(c.caller||c.company||'\u2014')+'</div>'
+      + '<div style="font-size:11px;color:#6B7280">'+escH(c.company||'')+'</div>'
+      + lastNote+'</div></div></td>'
+      + '<td style="padding:10px 12px;font-size:12px"><a href="tel:'+escH(c.phone||'')+'" style="color:#1B5FA8">'+escH(c.phone||'\u2014')+'</a></td>'
+      + '<td style="padding:10px 12px;font-size:12px">'+escH(c.routedTo||'\u2014')+'</td>'
+      + '<td style="padding:10px 12px"><div style="font-size:11px;font-weight:700;color:'+sm.dot+'">'+outcomeIcon(c)+' '+sm.label+'</div>'
+      + '<div style="font-size:10px;color:#6B7280">'+(c.status==='waiting'?age.label+' elapsed'+esc:fuStr+esc)+'</div></td>'
+      + '<td style="padding:10px 12px;white-space:nowrap">'
+      + '<button onclick="rcpOpenOutcomeModal(\''+c.id+'\')" style="background:#1B5FA8;color:#fff;border:none;border-radius:6px;padding:6px 11px;font-size:11px;font-weight:700;cursor:pointer;margin-right:5px">\uD83D\uDCAC Log Outcome</button>'
+      + '<button onclick="rcpRenotifyRep(\''+c.id+'\')" style="background:#fff;color:#6B7280;border:1.5px solid #E5E7EB;border-radius:6px;padding:5px 9px;font-size:11px;font-weight:700;cursor:pointer">\u21BB Re-ping</button>'
+      + '</td></tr>';
+  }
+
+  // Manager summary legend
+  var counts = { waiting:0, followup:0 };
+  active.forEach(function(c){ if(counts[c.status]!==undefined) counts[c.status]++; });
+  var legend = Object.keys(counts).filter(function(k){ return counts[k]>0; }).map(function(k){
+    var sm = STATUS_META[k];
+    return '<span style="display:inline-flex;align-items:center;gap:5px;margin-right:12px;font-size:11px;color:#374151">'
+      + '<span style="width:8px;height:8px;border-radius:50%;background:'+sm.dot+';display:inline-block"></span>'
+      + counts[k]+' '+sm.label+'</span>';
+  }).join('');
+
+  panel.innerHTML =
+    // Active queue
+    '<div class="rcp-card" style="padding:0;overflow:hidden;margin-bottom:14px">'
+    + '<div style="padding:12px 16px;border-bottom:1px solid #E5E7EB;background:#F8F9FA;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">'
+    + '<span style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#6B7280">Active Calls &mdash; '+active.length+'</span>'
+    + '<div>'+legend+'</div>'
+    + '<span style="font-size:11px;color:#6B7280">Rep emails immediately &mdash; escalates at 1h &amp; 4h if no outcome logged</span></div>'
+    + (active.length
+      ? '<table style="width:100%;border-collapse:collapse"><thead><tr style="background:#F8F9FA">'
+        + ['Caller','Phone','Rep','Status','Action'].map(function(h){return '<th style="padding:7px 12px;font-size:10px;font-weight:700;color:#6B7280;text-align:left;border-bottom:1px solid #E5E7EB">'+h+'</th>';}).join('')
+        + '</tr></thead><tbody>'+active.map(activeRow).join('')+'</tbody></table>'
+      : '<div style="padding:24px;text-align:center;color:#6B7280;font-size:13px">All clear \u2014 no active calls waiting \uD83C\uDF89</div>')
+    + '</div>'
+    // Manager resolved view
+    + (resolved.length
+      ? '<div class="rcp-card" style="padding:0;overflow:hidden">'
+        + '<div style="padding:10px 16px;border-bottom:1px solid #E5E7EB;background:#F8F9FA">'
+        + '<span style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#6B7280">Recently Resolved</span></div>'
+        + '<table style="width:100%;border-collapse:collapse"><tbody>'
+        + resolved.map(function(c){
+            var lo = c.lastOutcome||{};
+            var outcomeLabels = { spoke:'Spoke with someone', voicemail:'Left voicemail', 'no-answer':'No answer' };
+            var icons = { spoke:'\uD83D\uDCAC', voicemail:'\uD83D\uDCF2', 'no-answer':'\uD83D\uDD07' };
+            var icon = icons[lo.outcome]||'\u2713';
+            var label = outcomeLabels[lo.outcome]||'Resolved';
+            var resolvedTime = new Date(c.resolvedAt||c.ts).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+            return '<tr style="border-bottom:1px solid #F9FAFB">'
+              + '<td style="padding:8px 12px"><div style="font-size:13px;font-weight:600">'+icon+' '+escH(c.caller||c.company||'\u2014')+'</div>'
+              + '<div style="font-size:11px;color:#6B7280">'+escH(lo.notes||'')+'</div></td>'
+              + '<td style="padding:8px 12px;font-size:12px;color:#374151">'+escH(c.routedTo||'\u2014')+'</td>'
+              + '<td style="padding:8px 12px;font-size:11px;color:#16A34A;font-weight:700">'+label+'</td>'
+              + '<td style="padding:8px 12px;font-size:11px;color:#6B7280">'+resolvedTime+'</td>'
+              + '<td style="padding:8px 12px;font-size:11px;color:#6B7280">by '+escH(lo.by||c.resolvedBy||'\u2014')+'</td>'
+              + '</tr>';
+          }).join('')
+        + '</tbody></table></div>'
+      : '');
+  rcpUpdateCBBadge();
+}
+
+function rcpRenotifyRep(id){
+  var c = rcpCBLoad().find(function(x){ return x.id===id; });
+  if(!c) return;
+  if (typeof notifySendCrossDevice === 'function') notifySendCrossDevice({
+    id: 'CBR'+Date.now(), recipientName: c.routedTo, ts: Date.now(),
+    caller: c.caller, company: c.company, phone: c.phone,
+    notes: 'REMINDER: please log an outcome for this call ('+rcpCBAgeInfo(c.ts).label+' elapsed). '+(c.notes||''),
+    source: 'Callback Queue', loggedBy: (_rcpUser&&_rcpUser.name)||'Reception'
+  });
+  rcpToast('Reminder sent to '+c.routedTo);
+}
+
+function rcpCheckCallbackEscalations(){
+  var q = rcpCBLoad(); var changed = false;
+  q.forEach(function(c){
+    // Only escalate 'waiting' records and 'followup' records whose follow-up time has passed.
+    var isActive = c.status==='waiting'
+      || (c.status==='followup' && c.followupAt && Date.now() > c.followupAt + 3600000);
+    if(!isActive) return;
+    // For followup records, measure from the followupAt time, not the original call time.
+    var clockStart = (c.status==='followup' && c.followupAt) ? c.followupAt : c.ts;
+    var mins = Math.floor((Date.now()-clockStart)/60000);
+
+    if(mins >= 60 && !c.escalated){
+      c.escalated = true; changed = true;
+      if (typeof notifySendCrossDevice === 'function') ['Manager','Jim Kennedy'].forEach(function(who){
+        notifySendCrossDevice({ id:'CBE'+Date.now()+who.slice(0,2), recipientName: who, ts: Date.now(),
+          caller: c.caller, company: c.company, phone: c.phone,
+          notes: '\u26A0 No outcome logged after 1h. Routed to: '+c.routedTo+(c.followupAt?' (follow-up window)':'')+'. Customer not yet reached.',
+          source: 'Callback Escalation', loggedBy: 'Reception' });
+      });
+      if (typeof sendOrMailto === 'function') {
+        var isFollowup = c.status==='followup';
+        var esc1Subject = '\u26A0 ' + (isFollowup?'Follow-up':'Call') + ' Not Responded \u2014 1 Hour \u2014 '+(c.caller||c.company||'Unknown');
+        var esc1Body = (isFollowup?'A scheduled follow-up call':'A routed call')+' has not had an outcome logged after 1 hour.\n\n'
+          + 'Caller: '+(c.caller||'\u2014')+'\n'
+          + 'Company: '+(c.company||'\u2014')+'\n'
+          + 'Phone: '+(c.phone||'\u2014')+'\n'
+          + 'Assigned rep: '+(c.routedTo||'\u2014')+'\n'
+          + (isFollowup?'Follow-up due: ':'Call logged: ')+new Date(clockStart).toLocaleString('en-US',{weekday:'short',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})+'\n'
+          + 'Elapsed: '+mins+' minutes\n\n'
+          + 'Last outcome: '+(c.lastOutcome?c.lastOutcome.outcomeLabel+' \u2014 '+c.lastOutcome.notes:'None logged')+'\n\n'
+          + 'View in Termac One: https://sales.mytermac.com/reception-portal';
+        sendOrMailto(RCP_ESCALATION_EMAILS, esc1Subject, esc1Body);
+      }
+    }
+    if(mins >= 240 && !c.escalated2){
+      c.escalated2 = true; changed = true;
+      if (typeof notifySendCrossDevice === 'function') ['Manager','Jim Kennedy'].forEach(function(who){
+        notifySendCrossDevice({ id:'CBF'+Date.now()+who.slice(0,2), recipientName: who, ts: Date.now(),
+          caller: c.caller, company: c.company, phone: c.phone,
+          notes: '\uD83D\uDEA8 Still no outcome after 4h. Rep: '+c.routedTo+'. Needs immediate attention.',
+          source: 'Callback Escalation', loggedBy: 'Reception' });
+      });
+      if (typeof sendOrMailto === 'function') {
+        var esc2Subject = '\uD83D\uDEA8 URGENT: No Outcome After 4 Hours \u2014 '+(c.caller||c.company||'Unknown');
+        var esc2Body = 'URGENT: No outcome has been logged after 4 hours.\n\n'
+          + 'Caller: '+(c.caller||'\u2014')+'\n'
+          + 'Company: '+(c.company||'\u2014')+'\n'
+          + 'Phone: '+(c.phone||'\u2014')+'\n'
+          + 'Assigned rep: '+(c.routedTo||'\u2014')+'\n'
+          + 'Elapsed: '+mins+' minutes\n\n'
+          + 'Last outcome: '+(c.lastOutcome?c.lastOutcome.outcomeLabel+' \u2014 '+c.lastOutcome.notes:'None logged')+'\n\n'
+          + 'Immediate action required: https://sales.mytermac.com/reception-portal';
+        sendOrMailto(RCP_ESCALATION_EMAILS, esc2Subject, esc2Body);
+      }
+    }
+  });
+  if(changed) rcpCBSave(q);
+  rcpUpdateCBBadge();
+}
+
+// ═══════════════ EMERGENCY FAST PATH ═══════════════
+// Fire protection emergencies (system discharge, failed inspection, kitchen
+// down) skip the normal form: three fields, one button, instant alert to
+// management through the notification bridge.
+function rcpOpenEmergency(){
+  var old = document.getElementById('rcpEmergencyModal');
+  if(old) old.remove();
+  var wrap = document.createElement('div');
+  wrap.id = 'rcpEmergencyModal';
+  wrap.setAttribute('style','position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99998;display:flex;align-items:center;justify-content:center;padding:20px');
+  wrap.innerHTML =
+    '<div style="background:#fff;border-radius:14px;max-width:440px;width:100%;padding:22px;border-top:6px solid #C8102E">'
+    + '<div style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:18px;letter-spacing:.06em;color:#C8102E;margin-bottom:4px">\ud83d\udea8 EMERGENCY CALL</div>'
+    + '<div style="font-size:12px;color:var(--soft);margin-bottom:14px">System discharge, failed inspection, kitchen down \u2014 this alerts management instantly.</div>'
+    + '<label style="font-size:11px;font-weight:700">Caller / Business</label>'
+    + '<input id="rcpEmBiz" type="text" placeholder="Who is calling" style="width:100%;margin:4px 0 10px;padding:10px;border:1.5px solid var(--line);border-radius:8px;font-size:14px">'
+    + '<label style="font-size:11px;font-weight:700">Callback Phone</label>'
+    + '<input id="rcpEmPhone" type="tel" placeholder="(215) 555-0100" style="width:100%;margin:4px 0 10px;padding:10px;border:1.5px solid var(--line);border-radius:8px;font-size:14px">'
+    + '<label style="font-size:11px;font-weight:700">Division</label>'
+    + '<select id="rcpEmDiv" style="width:100%;margin:4px 0 10px;padding:10px;border:1.5px solid var(--line);border-radius:8px;font-size:14px">'
+    + ['UniPro Fire Protection','Quality III Fire Protection','GTO Grease Trap','Filter Man','AllPro Fabrication','Termac Dish Machines'].map(function(d){return '<option>'+d+'</option>';}).join('')
+    + '</select>'
+    + '<label style="font-size:11px;font-weight:700">What happened</label>'
+    + '<textarea id="rcpEmWhat" rows="2" placeholder="Suppression system discharged, AHJ on site, kitchen shut down..." style="width:100%;margin:4px 0 14px;padding:10px;border:1.5px solid var(--line);border-radius:8px;font-size:14px;resize:vertical"></textarea>'
+    + '<div style="display:flex;gap:10px">'
+    + '<button onclick="rcpSubmitEmergency()" style="flex:1;background:#C8102E;color:#fff;border:none;border-radius:8px;padding:12px;font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:14px;letter-spacing:.06em;cursor:pointer">\ud83d\udea8 ALERT MANAGEMENT NOW</button>'
+    + '<button onclick="document.getElementById(\'rcpEmergencyModal\').remove()" style="background:#fff;border:1.5px solid var(--line);border-radius:8px;padding:12px 16px;font-size:13px;cursor:pointer">Cancel</button>'
+    + '</div></div>';
+  document.body.appendChild(wrap);
+  setTimeout(function(){ var el=document.getElementById('rcpEmBiz'); if(el) el.focus(); }, 60);
+}
+
+function rcpSubmitEmergency(){
+  var biz = document.getElementById('rcpEmBiz')?.value.trim() || '';
+  var phone = document.getElementById('rcpEmPhone')?.value.trim() || '';
+  var div = document.getElementById('rcpEmDiv')?.value || '';
+  var what = document.getElementById('rcpEmWhat')?.value.trim() || '';
+  if(!biz && !phone){ rcpToast('Enter at least the caller and phone'); return; }
+
+  var entry = { id:'EM'+Date.now(), ts:Date.now(), business:biz, phone:phone, division:div, details:what,
+    loggedBy:(_rcpUser&&_rcpUser.name)||'Reception' };
+  try {
+    var log = (crmLoad('emergency_log') || []);
+    log.unshift(entry);
+    crmSave('emergency_log', log.slice(0,100));
+  } catch(e){}
+
+  // Alert management on their own devices via the notification bridge
+  if (typeof notifySendCrossDevice === 'function') ['Manager','Jim Kennedy'].forEach(function(who){
+    notifySendCrossDevice({ id: entry.id+who.slice(0,2), recipientName: who, ts: entry.ts,
+      caller: biz, company: biz, phone: phone,
+      notes: '\ud83d\udea8 EMERGENCY \u2014 '+div+': '+(what||'details with reception')+' \u2014 CALL BACK: '+phone,
+      source: '\ud83d\udea8 EMERGENCY', loggedBy: entry.loggedBy });
+  });
+  if (typeof _fireInAppAlertBanner === 'function') _fireInAppAlertBanner({
+    recipientName:'Management', caller: biz, company: biz, phone: phone,
+    notes: '\ud83d\udea8 EMERGENCY \u2014 '+div+': '+what, source:'EMERGENCY', loggedBy: entry.loggedBy });
+
+  var m = document.getElementById('rcpEmergencyModal'); if(m) m.remove();
+  rcpToast('\ud83d\udea8 Management alerted \u2014 emergency logged', 4000);
+}
+
+// ═══════════════ NEXT SERVICE LOOKUP ═══════════════
+// Answers "when is my next inspection?" at a glance, right on the account
+// row — scans every division's job pool plus appointments for the earliest
+// upcoming visit for that account.
+function rcpNextService(acct){
+  var pools = ['unipro_jobs','gto_invoices','filterman_invoices','termac_scheduled_jobs'];
+  var today = new Date().toISOString().slice(0,10);
+  var bizNorm = String(acct.business||acct.bizName||acct.businessName||acct.name||'').toLowerCase().trim();
+  var best = null;
+  function scan(jobs){
+    jobs.forEach(function(j){
+      var d = j.date || j.scheduledDate || j.apptDate || '';
+      if(!d || d < today) return;
+      var matches = (j.accountId && j.accountId === acct.id)
+        || (bizNorm && String(j.accountName||j.account||j.business||j.bizName||'').toLowerCase().trim() === bizNorm);
+      if(matches && (!best || d < best)) best = d;
+    });
+  }
+  pools.forEach(function(key){
+    var jobs = [];
+    try { jobs = JSON.parse(localStorage.getItem(key)||'[]'); } catch(e){ return; }
+    scan(jobs);
+  });
+  // Appointments now live in the synced crmLoad/crmSave store, not the
+  // old raw 'termac_appointments' key — that key is no longer written
+  // to as of 2026-07-10, so it's read here via the canonical path.
+  try { scan(crmLoad('appointments') || []); } catch(e) {}
+  return best;
+}
+
+// ═══════════════ TERRITORY ROUTING ═══════════════
+// ZIP prefix -> territory reps. Built from live D1 account data (July 2026).
+// Each entry has a prefix (longest match wins per rep), rep name, and
+// priority (lower = primary when multiple reps share a zip).
+// Multiple reps CAN share a zip -- all matches are returned.
+// Exact ZIP-level territory map from Lead_Distribution_Zip_List_122025.xlsx
+// Chris Carzo ZIPs route to Tom Pittakas per Ted 2026-07-28.
+// Terence O'Reilly ZIPs corrected to TJ O'Reilly.
+// Exact ZIP-level territory map. One rep per ZIP. No overlaps.
+// Source: Lead_Distribution_Zip_List_122025.xlsx + P3_TERRITORY.xlsx
+// Chris Carzo ZIPs -> Tom Pittakas (Chris out on medical, Tom covers)
+// Last rebuilt: 2026-07-28
+var RCP_ZIP_TERRITORY_MAP = {
+  "Brad Fickes": ["07821","07825","07832","07843","07850","07851","07856","07857","07860","07874","12770","17026","17038","17048","17815","17820","17824","17832","17834","17840","17851","17866","17872","17878","17888","17901","17920","17921","17922","17923","17925","17929","17930","17931","17933","17934","17935","17936","17938","17941","17943","17945","17948","17949","17952","17953","17954","17957","17959","17960","17961","17963","17964","17965","17967","17968","17970","17972","17974","17976","17978","17979","17980","17981","17982","17983","17985","18014","18018","18030","18032","18035","18037","18038","18052","18053","18058","18059","18065","18066","18067","18069","18071","18078","18079","18080","18086","18088","18102","18103","18104","18109","18201","18202","18210","18211","18214","18216","18218","18219","18220","18221","18222","18224","18225","18229","18230","18231","18232","18234","18235","18237","18240","18241","18242","18244","18245","18246","18248","18249","18250","18252","18254","18255","18256","18301","18302","18320","18321","18322","18323","18324","18325","18326","18327","18328","18330","18331","18332","18333","18334","18336","18337","18340","18344","18346","18347","18349","18350","18353","18354","18355","18357","18360","18370","18371","18372","18403","18405","18407","18411","18413","18414","18415","18416","18417","18419","18420","18421","18424","18425","18426","18427","18428","18430","18431","18433","18434","18435","18436","18438","18439","18440","18441","18443","18444","18445","18446","18447","18451","18452","18453","18456","18458","18460","18463","18464","18469","18470","18471","18472","18473","18503","18504","18505","18507","18508","18509","18510","18512","18515","18517","18518","18519","18602","18603","18610","18612","18615","18617","18618","18621","18622","18624","18631","18634","18635","18636","18640","18641","18642","18643","18644","18651","18654","18655","18656","18657","18660","18661","18701","18702","18704","18705","18706","18707","18708","18709","18711","18765","18824","18826","19529","19534","19549"],
+  "Dan Rini": ["07001","07002","07003","07004","07005","07006","07008","07009","07010","07011","07012","07013","07014","07016","07017","07018","07020","07021","07022","07023","07024","07026","07027","07028","07029","07030","07031","07032","07033","07034","07035","07036","07039","07040","07041","07042","07043","07044","07045","07046","07047","07050","07052","07054","07055","07057","07058","07059","07060","07062","07063","07064","07065","07066","07067","07068","07069","07070","07071","07072","07073","07074","07075","07076","07077","07078","07079","07080","07081","07082","07083","07086","07087","07088","07090","07092","07093","07094","07095","07097","07099","07102","07103","07104","07105","07106","07107","07108","07109","07110","07111","07112","07114","07201","07202","07203","07204","07205","07206","07208","07302","07304","07305","07306","07307","07310","07311","07401","07403","07405","07407","07410","07416","07417","07418","07419","07420","07421","07422","07423","07424","07430","07432","07435","07436","07438","07439","07440","07442","07444","07446","07450","07452","07456","07457","07458","07460","07461","07462","07463","07465","07470","07480","07481","07495","07501","07502","07503","07504","07505","07506","07508","07512","07513","07514","07522","07524","07601","07603","07604","07605","07606","07607","07608","07620","07621","07624","07626","07627","07628","07630","07631","07632","07640","07641","07642","07643","07644","07645","07646","07647","07648","07649","07650","07652","07656","07657","07660","07661","07662","07663","07666","07670","07675","07676","07677","07701","07702","07703","07704","07711","07712","07716","07717","07718","07719","07720","07721","07722","07723","07724","07727","07730","07732","07733","07734","07735","07737","07738","07739","07740","07746","07747","07748","07750","07751","07753","07755","07756","07757","07758","07760","07762","07764","07801","07803","07822","07826","07827","07834","07836","07847","07848","07849","07852","07866","07869","07871","07876","07878","07885","07901","07920","07922","07924","07926","07927","07928","07930","07931","07932","07933","07935","07936","07940","07945","07946","07950","07960","07974","07976","07980","07981","08502","08720","08730","08736","08742","08750","08805","08807","08812","08816","08817","08820","08823","08824","08830","08832","08835","08836","08837","08840","08844","08846","08850","08853","08854","08857","08859","08861","08863","08869","08872","08873","08876","08879","08880","08882","08884","08887","08899","08901","08902","08904","10301","10302","10303","10304","10305","10306","10307","10308","10309","10310","10311","10312","10314","10901","10913","10925","10931","10952","10954","10962","10964","10965","10969","10974","10976","10977","10983","10987","10990","10994","10998","12771"],
+  "Joe McDonnell": ["07726","07728","07731","08001","08002","08003","08004","08005","08006","08007","08008","08009","08010","08012","08014","08015","08016","08019","08020","08021","08022","08023","08026","08027","08028","08029","08030","08031","08032","08033","08034","08035","08036","08037","08038","08039","08041","08043","08045","08046","08048","08049","08050","08051","08052","08053","08054","08055","08056","08059","08060","08061","08062","08063","08065","08066","08067","08068","08069","08070","08071","08072","08075","08078","08079","08080","08081","08083","08084","08085","08086","08087","08088","08089","08090","08091","08092","08093","08094","08097","08098","08102","08103","08104","08105","08106","08107","08108","08109","08110","08201","08202","08203","08204","08205","08210","08212","08214","08215","08221","08223","08224","08225","08226","08230","08232","08234","08240","08241","08242","08243","08244","08245","08247","08251","08260","08270","08302","08310","08311","08312","08314","08315","08316","08317","08318","08319","08321","08322","08323","08324","08326","08327","08328","08329","08330","08332","08340","08341","08343","08344","08345","08346","08348","08349","08350","08352","08353","08360","08361","08401","08402","08403","08406","08501","08505","08510","08511","08512","08514","08515","08520","08525","08527","08528","08533","08534","08535","08536","08540","08542","08550","08551","08553","08555","08558","08560","08561","08562","08609","08610","08611","08618","08619","08620","08628","08629","08638","08640","08641","08648","08690","08691","08701","08721","08722","08723","08724","08731","08732","08733","08734","08735","08738","08740","08741","08751","08752","08753","08755","08757","08758","08759","08810","08828","08831","08852"],
+  "Matt Belz": ["08057","08077","08096","08530","11563","11802","18042","18292","18466","18901","18902","18910","18912","18913","18914","18920","18925","18928","18929","18931","18932","18933","18936","18938","18940","18942","18943","18946","18947","18954","18966","18974","18976","18977","18980","19001","19002","19003","19004","19006","19007","19009","19012","19013","19020","19021","19022","19025","19027","19030","19031","19034","19038","19039","19040","19044","19046","19047","19050","19053","19054","19055","19056","19057","19067","19075","19087","19090","19091","19095","19102","19110","19111","19114","19115","19116","19118","19120","19126","19134","19135","19136","19149","19152","19154","19399","19401","19403","19422","19428","19438","19454","19462","19477","19609","19806","19866","19876","36693","45011"],
+  "TJ O'Reilly": ["19103","19104","19119","19121","19127","19128","19129","19130","19131","19132","19138","19139","19140","19141","19142","19143","19144","19145","19146","19150","19151","19153"],
+  "Todd Grill": ["17039","17042","17046","17067","17073","17087","17088","17501","17505","17507","17508","17509","17516","17517","17519","17520","17522","17527","17529","17532","17535","17536","17538","17540","17543","17545","17551","17555","17557","17560","17562","17565","17566","17569","17572","17576","17578","17579","17581","17584","17601","17602","17603","18011","18031","18036","18041","18046","18049","18051","18054","18056","18062","18070","18073","18074","18076","18087","18092","18106","18915","18964","18969","19310","19316","19320","19330","19335","19341","19343","19344","19365","19372","19421","19425","19426","19435","19440","19446","19453","19460","19464","19465","19468","19473","19475","19492","19501","19503","19504","19505","19506","19507","19508","19510","19511","19512","19518","19519","19520","19522","19523","19525","19526","19530","19533","19535","19536","19539","19540","19541","19543","19544","19547","19550","19551","19555","19560","19562","19565","19567","19601","19602","19604","19605","19606","19607","19608","19610","19611"],
+  "Tom Jordan": ["19106","19107","19112","19122","19123","19124","19125","19133","19137","19147","19148"],
+  "Tom Pittakas": ["07823","07828","07830","07838","07840","07853","07863","07865","07880","07882","07921","07934","07979","08559","08801","08802","08804","08809","08822","08825","08826","08827","08829","08833","08848","08865","08867","08886","08889","18013","18015","18017","18020","18034","18040","18045","18055","18063","18064","18072","18077","18081","18083","18085","18091","18343","18351","18917","18923","18927","18930","18944","18951","18955","18960","18972","19008","19010","19014","19015","19017","19018","19023","19026","19029","19032","19033","19035","19036","19041","19043","19060","19061","19063","19064","19066","19070","19072","19073","19074","19076","19078","19079","19081","19082","19083","19085","19086","19094","19096","19113","19301","19311","19312","19317","19319","19333","19342","19348","19350","19352","19355","19363","19373","19374","19380","19382","19383","19390","19405","19406","19444","19701","19702","19703","19707","19709","19711","19713","19720","19731","19734","19801","19802","19803","19804","19805","19807","19808","19809","19810","19884","19901","19902","19904","19930","19933","19934","19938","19939","19940","19941","19943","19944","19945","19946","19947","19950","19951","19952","19953","19954","19956","19958","19960","19961","19962","19963","19964","19966","19968","19970","19971","19973","19975","19977","19979"],
+};
+
+function rcpRepForZip(zip) {
+  zip = String(zip||"").replace(/\D/g,"").slice(0,5);
+  if (zip.length < 5) return null;
+  for (var rep in RCP_ZIP_TERRITORY_MAP) {
+    if (RCP_ZIP_TERRITORY_MAP[rep].indexOf(zip) >= 0) return rep;
+  }
+  return null;
+}
+
+// Backward compat aliases
+function rcpTerritoryRep(zip) { return rcpRepForZip(zip); }
+function rcpTerritoryReps(zip) {
+  var rep = rcpRepForZip(zip);
+  return rep ? [{ rep: rep, priority: 1 }] : [];
+}
+var RCP_TERRITORY_MAP = Object.keys(RCP_ZIP_TERRITORY_MAP).map(function(rep) {
+  return { rep: rep, prefix: "" };
+});
+
+
+function rcpResolveTerritory(zip) {
+  var hint  = document.getElementById('rcpTerritoryHint');
+  var route = document.getElementById('rcpRouteTo');
+  var reps  = rcpTerritoryReps(zip);
+  if (reps.length) {
+    var names = reps.map(function(r){ return r.rep; });
+    if (hint) hint.textContent = '\u2192 ' + names.join(' / ');
+    // Auto-select primary rep if reception hasn't manually picked someone yet.
+    if (route && (route.value === '' || route.value === 'Sales Rep (Territory)')) {
+      var primary = names[0];
+      var opt = Array.from(route.options).find(function(o){ return o.value === primary || o.text === primary; });
+      if (opt) route.value = opt.value || opt.text;
+    }
+  } else {
+    if (hint) hint.textContent = String(zip||'').length >= 5 ? '\u2192 territory unassigned' : '';
+  }
+}
+
+// Address + business autocomplete using Google Places.
+// 2026-07-27: replaced the ORS geocoder which returns addresses only.
+// Google Places returns business names and addresses together, so Kate
+// can type "Dunkin" and see "Dunkin Donuts, 123 Main St, Warminster PA"
+// rather than having to know the street address first.
+// API key is loaded from RCP_GOOGLE_PLACES_KEY below -- drop in the real
+// key and the feature is live. While the key is the placeholder, the
+// function falls back to the ORS geocoder silently so nothing breaks.
+var RCP_GOOGLE_PLACES_KEY = 'REPLACE_WITH_GOOGLE_PLACES_API_KEY';
+
+var _rcpAcTimer = null;
+var _rcpAcSession = null;
+
+function rcpAttachAddressAutocomplete(){
+  var input = document.getElementById('rcpCallerAddress');
+  if (!input || input.dataset.acAttached) return;
+  // 2026-07-27: replaced the bespoke Google Places implementation with the
+  // shared termacAddressAutocomplete function from termac-d1-sync.js.
+  // The API key now lives in a Cloudflare Worker secret (GOOGLE_MAPS_KEY on
+  // unipro-ai-proxy) and never appears in browser source. All address fields
+  // across the platform use the same function, so any update fixes everywhere.
+  if (typeof termacAddressAutocomplete === 'function') {
+    termacAddressAutocomplete(input, {
+      fillZip: 'rcpCallerZip',
+      fillCompany: 'rcpCallerCompany',
+      fillPhone: 'rcpCallerPhone',
+      onSelect: function(result) {
+        if (result.zip) rcpResolveTerritory(result.zip);
+      }
+    });
+  }
+}
+
+function rcpToast(msg,dur=2800){
+  const el=document.getElementById('rcpToast');
+  el.textContent=msg;el.style.opacity='1';
+  clearTimeout(el._t);
+  el._t=setTimeout(()=>el.style.opacity='0',dur);
+}
+
+// ── INIT ──
+document.addEventListener('DOMContentLoaded',()=>{
+  // 2026-07-15 per Ted: real login required now, same as every other
+  // portal. This used to unconditionally auto-enter as a generic
+  // "Receptionist" placeholder with no session behind it at all --
+  // removed rather than reworked, since shared-station use just means
+  // whoever's at the desk stays logged in until they tap Sign Out, same
+  // persistent-login behavior already in place everywhere else.
+  var session = null;
+  try { session = JSON.parse(localStorage.getItem('termac_staff_session') || 'null'); } catch(e) {}
+  if (!session || !session.name) {
+    var here = window.location.pathname.split('/').pop() + window.location.search;
+    window.location.href = 'staff-login.html?dest=' + encodeURIComponent(here);
+    return;
+  }
+
+  // 2026-07-17 per Ted: role-based lock, same pattern as sales-portal.html.
+  var _portals = Array.isArray(session.portals) ? session.portals : [];
+  var _hasAccess = session.role === 'admin' || session.role === 'owner' ||
+    _portals.indexOf('admin') !== -1 || _portals.indexOf('reception') !== -1;
+  if (!_hasAccess) {
+    window.location.href = 'employee-portal.html?denied=reception';
+    return;
+  }
+  var loggedInName = session.name;
+  try { localStorage.setItem('termac_current_user', loggedInName); } catch(e) {}
+  _rcpUser = RCP_STAFF[loggedInName]
+    ? { ...RCP_STAFF[loggedInName], name: loggedInName }
+    : { initials: loggedInName.split(' ').map(function(w){return w[0]||'';}).join('').slice(0,2).toUpperCase(), name: loggedInName, role: 'Reception' };
+
+  rcpEnterPortal();
+  document.addEventListener('click',e=>{
+    if(!e.target.closest('.rcp-lookup-wrap')){
+      document.querySelectorAll('.rcp-lookup-dropdown').forEach(d=>d.style.display='none');
+    }
+  });
+
+  // FIX 2026-07-12 (Ted): this portal never pulled from D1 -- no hydrate,
+  // no sweep, matching the crmSave fix above. Same pattern used by every
+  // correctly-wired portal (Sales, Warehouse, DMS).
+  if (typeof TermacD1Sync !== 'undefined') {
+    TermacD1Sync.startCrmSyncSweep(30000, function () {
+      if (typeof rcpRenderCurrentView === 'function') rcpRenderCurrentView();
+    });
+  }
+});
+</script>
+
+
+
+<script>
+// ── Termac role-page navigation ──
+(function() {
+  var RETURN_KEY = 'trnReturnUrl';
+
+  // Store where we came from so Employee Portal overlay can send us
+// ── Call log helpers ──
+var _rcpFilter = 'today';
+
+function rcpCallCard(c) {
+  var d = new Date(c.ts);
+  var dateStr = d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
+  var timeStr = d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+  return '<div class="rcp-log-item '+(c.type==='Complaint'?'complaint':'')+'">' +
+    '<div class="rcp-log-time">'+dateStr+' '+timeStr+' · '+escH(c.loggedBy||'')+'</div>' +
+    '<div class="rcp-log-caller">'+escH(c.callerName||c.name||'Unknown')+(c.company?' — '+escH(c.company):'')+'</div>' +
+    '<div class="rcp-log-detail">'+escH(c.type||'')+' · Routed to: '+escH(c.routeTo||'—')+' · '+escH(c.urgency||'Normal')+'</div>' +
+    (c.notes?'<div style="font-size:12px;color:var(--soft);margin-top:4px">'+escH(c.notes)+'</div>':'')+
+    '</div>';
+}
+
+function rcpFilteredCalls(log, filter) {
+  var now = new Date();
+  var todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  var weekStart  = todayStart - (now.getDay() * 86400000);
+  var monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  if (filter === 'today')  return log.filter(c => c.ts >= todayStart);
+  if (filter === 'week')   return log.filter(c => c.ts >= weekStart);
+  if (filter === 'month')  return log.filter(c => c.ts >= monthStart);
+  if (filter === 'custom') {
+    var from = document.getElementById('rcpDateFrom');
+    var to   = document.getElementById('rcpDateTo');
+    var fromTs = from && from.value ? new Date(from.value).getTime() : 0;
+    var toTs   = to   && to.value   ? new Date(to.value).getTime() + 86399999 : Date.now();
+    return log.filter(c => c.ts >= fromTs && c.ts <= toTs);
+  }
+  return log; // 'all'
+}
+
+function rcpSetFilter(filter) {
+  _rcpFilter = filter;
+  // Update button styles
+  ['today','week','month','all'].forEach(function(f) {
+    var btn = document.getElementById('rcpFlt-'+f);
+    if (!btn) return;
+    if (f === filter) btn.classList.add('rcpFltActive');
+    else btn.classList.remove('rcpFltActive');
+  });
+  // Re-render the list
+  var allCalls = (typeof crmLoad === 'function') ? crmLoad('rcp_calls') : JSON.parse(localStorage.getItem('termac_crm_rcp_calls')||'[]');
+  var filtered = rcpFilteredCalls(allCalls, filter);
+  var countEl = document.getElementById('rcpHistCount');
+  if (countEl) countEl.textContent = filtered.length;
+  var listEl = document.getElementById('rcpCallLogList');
+  if (!listEl) return;
+  if (filtered.length === 0) {
+    listEl.innerHTML = '<div style="color:var(--soft);font-size:13px;text-align:center;padding:20px">No calls in this period.</div>';
+  } else {
+    listEl.innerHTML = [...filtered].reverse().map(rcpCallCard).join('');
+  }
+}
+  window.trnNavigateTo = function(url) {
+    sessionStorage.setItem(RETURN_KEY, window.location.href);
+    window.location.href = url;
+  };
+
+  // Back: use browser window.location.href='termac-os.html' — works for same-tab rail navigation
+  // and for returning from Employee Portal (which uses trnNavigateTo)
+  window.trnBack = function() {
+    if (history.length > 1) {
+      window.location.href='termac-os.html';
+    } else {
+      window.location.href = 'termac-os.html';
+    }
+  };
+})();
+</script>
+
+<!-- ══ TERMAC INTERNAL MESSAGING ══ -->
+<script>
+/* ═══════════════════════════════════════════════════════════════
+   TERMAC ONE — INTERNAL MESSAGING SYSTEM
+   Group channels + Direct Messages
+   Storage: Cloudflare KV (primary) → localStorage (fallback)
+   Inject into any role page via <script src="termac-chat.js">
+═══════════════════════════════════════════════════════════════ */
+
+(function() {
+'use strict';
+
+// ── CONFIG ───────────────────────────────────────────────────
+const WORKER_URL = 'https://cms-cors-proxy.termac-one.workers.dev';
+const LS_KEY     = 'termac_chat_messages';
+const POLL_MS    = 8000; // poll for new messages every 8 seconds
+
+const CHANNELS = [
+  { id:'all',        name:'All Staff',     icon:'📢', desc:'Company-wide announcements' },
+  { id:'sales',      name:'Sales Team',    icon:'📊', desc:'Reps & territory updates' },
+  { id:'dms',        name:'DMS Team',      icon:'📋', desc:'Cold call & outreach team' },
+  { id:'unipro',     name:'UniPro Techs',  icon:'🔧', desc:'Fire & suppression field team' },
+  { id:'scheduling', name:'Scheduling',    icon:'🗓', desc:'Jobs, routes & dispatch' },
+  { id:'dispatch',   name:'Dispatch',      icon:'🚨', desc:'Emergency & driver coordination' },
+  { id:'office',     name:'Office',        icon:'🏢', desc:'Quotes, billing & admin' },
+];
+
+// All known staff for DM list
+const STAFF_LIST = [
+  'Ted Scholl','Tom Pittakas','TJ O\'Reilly','Brad Fickes','Dan Rini',
+  'Chrystal Bush','Tara Colona','Amanda McGowan','Gina Kluge','Kim Reinhart','Donna Meyer',
+  'Paul Brahan',
+  'Marcus Williams','Jake Torres','Priya Nair','Sam Chen','Derek Walsh',
+];
+
+// ── STATE ────────────────────────────────────────────────────
+let _chatOpen    = false;
+let _activeRoom  = 'all'; // channel id or 'dm:Name'
+let _currentUser = null;
+let _messages    = {};    // { roomId: [msg, ...] }
+let _unread      = {};    // { roomId: count }
+let _pollTimer   = null;
+let _lastMsgTs   = 0;
+
+// ── DETECT CURRENT USER ──────────────────────────────────────
+function detectUser() {
+  // Try various globals set by each portal
+  if (window._spRep)   return { name: window._spRep.name,   role: 'Sales Rep' };
+  if (window._dmsUser) return { name: window._dmsUser.name, role: 'DMS' };
+  if (window._rcpUser) return { name: 'Receptionist', role: 'Reception' };
+  if (window._tech)    return { name: window._tech.name,    role: 'Tech' };
+  if (window._driver)  return { name: window._driver,       role: 'Driver' };
+  if (window._currentUser) return { name: window._currentUser.name, role: window._currentUser.role || 'Staff' };
+  return { name: 'Staff', role: 'Staff' };
+}
+
+// ── STORAGE ──────────────────────────────────────────────────
+async function loadMessages(roomId) {
+  try {
+    const resp = await fetch(`${WORKER_URL}/chat/${encodeURIComponent(roomId)}`, {
+      headers: { 'Content-Type': 'application/json' }
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      _messages[roomId] = data.messages || [];
+      return _messages[roomId];
+    }
+  } catch(e) {}
+  // Fallback to localStorage
+  const ls = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
+  _messages[roomId] = ls[roomId] || [];
+  return _messages[roomId];
+}
+
+async function saveMessage(roomId, msg) {
+  const msgs = _messages[roomId] || [];
+  msgs.push(msg);
+  _messages[roomId] = msgs;
+
+  // Save to localStorage immediately (fast)
+  const ls = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
+  ls[roomId] = msgs.slice(-200); // keep last 200 per room
+  localStorage.setItem(LS_KEY, JSON.stringify(ls));
+
+  // Try to save to KV worker
+  try {
+    await fetch(`${WORKER_URL}/chat/${encodeURIComponent(roomId)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: msg })
+    });
+  } catch(e) {}
+}
+
+// Poll for new messages
+async function pollMessages() {
+  if (!_chatOpen || !_activeRoom) return;
+  const msgs = await loadMessages(_activeRoom);
+  const newMsgs = msgs.filter(m => m.ts > _lastMsgTs);
+  if (newMsgs.length > 0) {
+    renderMessages();
+    _lastMsgTs = Math.max(...msgs.map(m => m.ts));
+  }
+}
+
+// ── CSS ──────────────────────────────────────────────────────
+function injectCSS() {
+  if (document.getElementById('termac-chat-css')) return;
+  const style = document.createElement('style');
+  style.id = 'termac-chat-css';
+  style.textContent = `
+/* ── Chat FAB ── */
+#tcFab{position:fixed;bottom:20px;right:20px;width:52px;height:52px;background:#C8102E;border-radius:50%;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:22px;box-shadow:0 4px 16px rgba(200,16,46,.4);z-index:8000;transition:transform .15s}
+#tcFab:hover{transform:scale(1.08)}
+#tcBadge{position:absolute;top:-4px;right:-4px;background:#F2B705;color:#1A1D21;border-radius:99px;padding:1px 6px;font-size:10px;font-weight:900;font-family:'Barlow Condensed',sans-serif;display:none;min-width:18px;text-align:center}
+
+/* ── Chat Panel ── */
+#tcPanel{position:fixed;bottom:82px;right:20px;width:min(420px,96vw);height:min(600px,80vh);background:#fff;border-radius:14px;box-shadow:0 8px 40px rgba(0,0,0,.22);z-index:8000;display:none;flex-direction:row;overflow:hidden;border:1px solid #E5E7EB}
+
+/* ── Sidebar ── */
+#tcSidebar{width:180px;background:#1A1D21;display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto}
+#tcSidebarTop{padding:12px 10px;border-bottom:1px solid #2A2E33}
+#tcAppName{font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:13px;letter-spacing:.10em;text-transform:uppercase;color:#F2B705}
+#tcUserName{font-size:11px;color:#6B7280;margin-top:2px}
+.tc-section-hdr{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:#4B5563;padding:10px 10px 4px}
+.tc-room-btn{display:flex;align-items:center;gap:7px;padding:7px 10px;cursor:pointer;border-radius:6px;margin:1px 6px;transition:background .1s}
+.tc-room-btn:hover{background:#2A2E33}
+.tc-room-btn.active{background:#C8102E}
+.tc-room-icon{font-size:14px;flex-shrink:0}
+.tc-room-name{font-size:12px;color:#D1D5DB;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tc-room-btn.active .tc-room-name{color:#fff}
+.tc-room-badge{background:#F2B705;color:#1A1D21;border-radius:99px;padding:0 5px;font-size:9px;font-weight:900;min-width:16px;text-align:center}
+
+/* ── Chat Main ── */
+#tcMain{flex:1;display:flex;flex-direction:column;min-width:0}
+#tcHeader{padding:10px 14px;border-bottom:1px solid #F3F4F6;display:flex;align-items:center;gap:8px;flex-shrink:0}
+#tcRoomTitle{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:14px;color:#1A1D21;flex:1}
+#tcRoomDesc{font-size:11px;color:#6B7280}
+#tcMessages{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px}
+.tc-msg{display:flex;flex-direction:column;gap:2px;max-width:88%}
+.tc-msg.mine{align-self:flex-end;align-items:flex-end}
+.tc-msg.theirs{align-self:flex-start}
+.tc-msg-meta{font-size:10px;color:#9CA3AF;display:flex;gap:6px;align-items:center}
+.tc-msg.mine .tc-msg-meta{flex-direction:row-reverse}
+.tc-msg-sender{font-weight:700;color:#6B7280}
+.tc-msg-bubble{padding:8px 12px;border-radius:12px;font-size:13px;line-height:1.5;word-break:break-word}
+.tc-msg.mine .tc-msg-bubble{background:#C8102E;color:#fff;border-bottom-right-radius:3px}
+.tc-msg.theirs .tc-msg-bubble{background:#F3F4F6;color:#1A1D21;border-bottom-left-radius:3px}
+.tc-msg-date-divider{text-align:center;font-size:10px;color:#9CA3AF;font-weight:600;letter-spacing:.04em;margin:4px 0}
+
+/* ── Input ── */
+#tcInputArea{padding:10px 12px;border-top:1px solid #F3F4F6;display:flex;gap:8px;align-items:flex-end;flex-shrink:0}
+#tcInput{flex:1;border:1.5px solid #E5E7EB;border-radius:10px;padding:8px 12px;font-size:13px;font-family:inherit;resize:none;max-height:100px;min-height:38px;outline:none;line-height:1.4}
+#tcInput:focus{border-color:#C8102E}
+#tcSendBtn{background:#C8102E;color:#fff;border:none;border-radius:10px;padding:8px 14px;cursor:pointer;font-weight:700;font-size:13px;flex-shrink:0;align-self:flex-end;transition:background .1s}
+#tcSendBtn:hover{background:#A30D25}
+#tcEmpty{text-align:center;color:#9CA3AF;font-size:13px;padding:40px 20px;flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px}
+  `;
+  document.head.appendChild(style);
+}
+
+// ── HTML ─────────────────────────────────────────────────────
+function injectHTML() {
+  if (document.getElementById('tcPanel')) return;
+
+  const html = `
+<button id="tcFab" onclick="tcToggle()" title="Team Messages">
+  💬
+  <span id="tcBadge"></span>
+</button>
+
+<div id="tcPanel">
+  <!-- Sidebar -->
+  <div id="tcSidebar">
+    <div id="tcSidebarTop">
+      <div id="tcAppName">Termac Chat</div>
+      <div id="tcUserName">Loading…</div>
+    </div>
+
+    <div class="tc-section-hdr">Channels</div>
+    ${CHANNELS.map(ch => `
+    <div class="tc-room-btn${ch.id==='all'?' active':''}" id="tcRoom_${ch.id}" onclick="tcSelectRoom('${ch.id}','#${ch.name}','${ch.desc}')">
+      <span class="tc-room-icon">${ch.icon}</span>
+      <span class="tc-room-name">#${ch.name}</span>
+      <span class="tc-room-badge" id="tcBadge_${ch.id}" style="display:none"></span>
+    </div>`).join('')}
+
+    <div class="tc-section-hdr">Direct Messages</div>
+    <div id="tcDmList"></div>
+  </div>
+
+  <!-- Main chat area -->
+  <div id="tcMain">
+    <div id="tcHeader">
+      <div>
+        <div id="tcRoomTitle">#All Staff</div>
+        <div id="tcRoomDesc">Company-wide announcements</div>
+      </div>
+    </div>
+    <div id="tcMessages"><div id="tcEmpty"><span style="font-size:32px">💬</span>No messages yet. Say hello!</div></div>
+    <div id="tcInputArea">
+      <textarea id="tcInput" placeholder="Message…" rows="1"
+        oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'"
+        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();tcSend()}"></textarea>
+      <button id="tcSendBtn" onclick="tcSend()">Send</button>
+    </div>
+  </div>
+</div>`;
+
+  document.body.insertAdjacentHTML('beforeend', html);
+
+  // Build DM list
+  buildDmList();
+}
+
+function buildDmList() {
+  const list = document.getElementById('tcDmList');
+  if (!list) return;
+  const staffNames = STAFF_LIST.filter(n => n !== (_currentUser?.name || ''));
+  list.innerHTML = staffNames.map(name => {
+    const initials = name.split(' ').map(w=>w[0]).join('').slice(0,2);
+    const roomId = dmRoomId(name);
+    return `<div class="tc-room-btn" id="tcRoom_dm_${name.replace(/[^a-z]/gi,'_')}" onclick="tcSelectRoom('${roomId}','${escChat(name)}','Direct message')">
+      <span class="tc-room-icon" style="background:#2A2E33;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:#9CA3AF;flex-shrink:0">${initials}</span>
+      <span class="tc-room-name">${escChat(name)}</span>
+      <span class="tc-room-badge" id="tcBadge_${roomId.replace(/[^a-z]/gi,'_')}" style="display:none"></span>
+    </div>`;
+  }).join('');
+}
+
+function dmRoomId(otherName) {
+  const me = _currentUser?.name || 'Staff';
+  const names = [me, otherName].sort();
+  return 'dm:' + names.join(':');
+}
+
+function escChat(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── TOGGLE ───────────────────────────────────────────────────
+window.tcToggle = function() {
+  _chatOpen = !_chatOpen;
+  const panel = document.getElementById('tcPanel');
+  if (panel) panel.style.display = _chatOpen ? 'flex' : 'none';
+  if (_chatOpen) {
+    _currentUser = detectUser();
+    const unEl = document.getElementById('tcUserName');
+    if (unEl) unEl.textContent = _currentUser.name;
+    tcSelectRoom(_activeRoom);
+    if (!_pollTimer) _pollTimer = setInterval(pollMessages, POLL_MS);
+  } else {
+    if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
+  }
+};
+
+// ── SELECT ROOM ──────────────────────────────────────────────
+window.tcSelectRoom = async function(roomId, title, desc) {
+  _activeRoom = roomId;
+
+  // Update sidebar active state
+  document.querySelectorAll('.tc-room-btn').forEach(b => b.classList.remove('active'));
+  const safeId = roomId.replace(/[^a-z0-9]/gi,'_');
+  const activeBtn = document.getElementById('tcRoom_' + safeId) ||
+                    document.getElementById('tcRoom_' + roomId) ||
+                    document.getElementById('tcRoom_dm_' + safeId);
+  if (activeBtn) activeBtn.classList.add('active');
+
+  // Update header
+  const ch = CHANNELS.find(c => c.id === roomId);
+  const titleEl = document.getElementById('tcRoomTitle');
+  const descEl  = document.getElementById('tcRoomDesc');
+  if (titleEl) titleEl.textContent = title || (ch ? '#'+ch.name : roomId);
+  if (descEl)  descEl.textContent  = desc  || (ch ? ch.desc : '');
+
+  // Clear unread
+  _unread[roomId] = 0;
+  updateBadges();
+
+  // Load messages
+  const msgs = document.getElementById('tcMessages');
+  if (msgs) msgs.innerHTML = '<div id="tcEmpty" style="text-align:center;padding:30px;color:#9CA3AF;font-size:13px">Loading…</div>';
+
+  await loadMessages(roomId);
+  renderMessages();
+  _lastMsgTs = Math.max(0, ...(_messages[roomId]||[]).map(m=>m.ts));
+
+  // Focus input
+  const inp = document.getElementById('tcInput');
+  if (inp) inp.focus();
+};
+
+// ── RENDER MESSAGES ──────────────────────────────────────────
+function renderMessages() {
+  const container = document.getElementById('tcMessages');
+  if (!container) return;
+  const msgs = _messages[_activeRoom] || [];
+  if (msgs.length === 0) {
+    container.innerHTML = '<div style="text-align:center;padding:40px 20px;color:#9CA3AF;font-size:13px;display:flex;flex-direction:column;align-items:center;gap:8px"><span style="font-size:32px">💬</span>No messages yet — say something!</div>';
+    return;
+  }
+
+  const me = _currentUser?.name || 'Staff';
+  let html = '';
+  let lastDate = '';
+
+  msgs.forEach(m => {
+    const d = new Date(m.ts);
+    const dateStr = d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
+    if (dateStr !== lastDate) {
+      html += `<div class="tc-msg-date-divider">${dateStr}</div>`;
+      lastDate = dateStr;
+    }
+    const isMine = m.sender === me;
+    const timeStr = d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+    html += `<div class="tc-msg ${isMine?'mine':'theirs'}">
+      <div class="tc-msg-meta">
+        ${!isMine?`<span class="tc-msg-sender">${escChat(m.sender)}</span>`:''}
+        <span>${timeStr}</span>
+      </div>
+      <div class="tc-msg-bubble">${escChat(m.text)}</div>
+    </div>`;
+  });
+
+  container.innerHTML = html;
+  container.scrollTop = container.scrollHeight;
+}
+
+// ── SEND ─────────────────────────────────────────────────────
+window.tcSend = async function() {
+  const inp = document.getElementById('tcInput');
+  if (!inp) return;
+  const text = inp.value.trim();
+  if (!text) return;
+
+  _currentUser = detectUser();
+  const msg = { ts: Date.now(), sender: _currentUser.name, role: _currentUser.role, text };
+
+  inp.value = '';
+  inp.style.height = 'auto';
+
+  await saveMessage(_activeRoom, msg);
+  renderMessages();
+};
+
+// ── BADGES ───────────────────────────────────────────────────
+function updateBadges() {
+  let total = 0;
+  Object.entries(_unread).forEach(([room, count]) => {
+    const safeId = room.replace(/[^a-z0-9]/gi,'_');
+    const badge = document.getElementById('tcBadge_'+safeId) || document.getElementById('tcBadge_'+room);
+    if (badge) { badge.textContent = count; badge.style.display = count ? 'block' : 'none'; }
+    total += count;
+  });
+  const fab = document.getElementById('tcBadge');
+  if (fab) { fab.textContent = total; fab.style.display = total ? 'block' : 'none'; }
+}
+
+// ── INIT ─────────────────────────────────────────────────────
+function init() {
+  injectCSS();
+  injectHTML();
+  // Load unread counts from localStorage
+  const saved = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
+  _messages = saved;
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
+
+})();
+
+
+
+/* ══ COLD CALLS TAB ════════════════════════════════════════════ */
+
+
+function rcpRenderColdCalls(){
+  const panel = document.getElementById('rcpPanel-coldcalls');
+  if(!panel) return;
+  const data = crmLoad('dms_coldcall');
+  const today = new Date().toISOString().slice(0,10);
+  const worked = data.filter(r=>r.dmsContactedToday===today).length;
+  const target = 20;
+  const pct = Math.min(100,Math.round(worked/target*100));
+  const filtered = data.slice(0,target);
+
+  panel.innerHTML = `
+    <div class="rcp-cc-progress">
+      <span style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px">📋 ${worked} / ${target} called today</span>
+      <div class="rcp-cc-bar"><div class="rcp-cc-fill" style="width:${pct}%"></div></div>
+      <span style="font-size:12px;color:var(--soft);white-space:nowrap">${pct}%</span>
+    </div>
+    ${data.length===0
+      ? `<div class="rcp-card" style="text-align:center;padding:32px;color:var(--soft)">
+           <div style="font-size:32px;margin-bottom:10px">📋</div>
+           <div style="font-weight:700;margin-bottom:8px">No cold call leads loaded yet</div>
+           <div style="font-size:12px;margin-bottom:14px">Leads from the DMS cold call pool will appear here.<br>A manager can load leads into the pool from the Manager Portal → CRM → Leads.</div>
+         </div>`
+      : filtered.length===0
+      ? '<div class="rcp-card" style="text-align:center;padding:32px;color:var(--soft)"><div style="font-size:32px;margin-bottom:10px">📭</div>All 20 calls worked today — great job!</div>'
+      : `<div class="rcp-card" style="padding:0;overflow:hidden">
+          <table class="rcp-call-table">
+            <thead><tr>
+              <th style="width:28px">✓</th>
+              <th style="min-width:130px">Business</th>
+              <th style="width:120px">Phone</th>
+              <th style="width:14%">Lines</th>
+              <th style="width:155px">Outcome</th>
+              <th>Notes</th>
+            </tr></thead>
+            <tbody>${filtered.map(r=>rcpColdRow(r,today)).join('')}</tbody>
+          </table>
+        </div>`
+    }`;
+  rcpUpdateRail();
+}
+
+function rcpColdRow(r, today){
+  const contacted = r.dmsContactedToday===today;
+  const outcome = r.status||'';
+  const outClass = outcome==='hot'?'hot':outcome==='callback'?'callback':outcome==='not_interested'?'not_interested':'';
+  const divBtns = RCP_DIVISIONS.map(d=>{
+    const on = (r.divisions||[]).includes(d);
+    const col = RCP_DIV_COLORS[d]||'#6B7280';
+    return `<button class="rcp-div-btn${on?' on':''}" style="${on?'background:'+col+';border-color:'+col+';':''}"
+      onclick="rcpColdDivToggle('${r.id||''}','${d}',this)">${d}</button>`;
+  }).join(' ');
+
+  return `<tr id="rcp-row-${r.id||''}" class="${contacted?'':''}">
+    <td><input type="checkbox" class="rcp-check" ${contacted?'checked':''} onchange="rcpColdToggle('${r.id||''}',this.checked)"></td>
+    <td>
+      <div style="font-weight:700;font-size:13px;color:var(--ink)">${escH(r.bizName||r.businessName||'Unknown')}</div>
+      <div style="font-size:11px;color:#6B7280">${escH(r.city||'')}${r.zip?' · '+escH(r.zip):''}</div>
+    </td>
+    <td><a href="tel:${escH(r.phone||'')}" style="color:var(--blue);font-size:12px;font-weight:600">${escH(r.phone||'—')}</a></td>
+    <td><div style="display:flex;flex-wrap:wrap;gap:3px">${divBtns}</div></td>
+    <td>
+      <select class="rcp-outcome-sel ${outClass}" id="rcp-out-${r.id||''}"
+        onchange="rcpColdOutcome('${r.id||''}',this.value,this)">
+        <option value="">— Outcome —</option>
+        <option value="hot" ${outcome==='hot'?'selected':''}>🔥 Hot Lead</option>
+        <option value="callback" ${outcome==='callback'?'selected':''}>📅 Call Back</option>
+        <option value="warm" ${outcome==='warm'?'selected':''}>🌤 Warm</option>
+        <option value="voicemail" ${outcome==='voicemail'?'selected':''}>📬 Voicemail</option>
+        <option value="no_answer" ${outcome==='no_answer'?'selected':''}>📵 No Answer</option>
+        <option value="not_interested" ${outcome==='not_interested'?'selected':''}>✗ Not Interested</option>
+        <option value="wrong_number" ${outcome==='wrong_number'?'selected':''}>🚫 Wrong #</option>
+        <option value="do_not_call" ${outcome==='do_not_call'?'selected':''}>⛔ DNC</option>
+      </select>
+    </td>
+    <td><textarea class="rcp-notes-inp" placeholder="Notes…" onblur="rcpColdSaveNotes('${r.id||''}',this.value)">${escH(r.dmsNotes||r.notes||'')}</textarea></td>
+  </tr>`;
+}
+
+function rcpColdToggle(id, checked){
+  const data = crmLoad('dms_coldcall');
+  const r = data.find(x=>x.id===id); if(!r) return;
+  const today = new Date().toISOString().slice(0,10);
+  r.dmsContactedToday = checked ? today : null;
+  r.dmsRep = _rcpUser?.name||'Reception';
+  r.updated = Date.now();
+  crmSave('dms_coldcall', data);
+  rcpUpdateRail();
+}
+
+function rcpColdOutcome(id, outcome, selEl){
+  const data = crmLoad('dms_coldcall');
+  const r = data.find(x=>x.id===id); if(!r) return;
+  r.status = outcome;
+  r.dmsRep = _rcpUser?.name||'Reception';
+  r.updated = Date.now();
+  // Auto-mark contacted
+  const today = new Date().toISOString().slice(0,10);
+  if(outcome && outcome!=='') r.dmsContactedToday = today;
+  crmSave('dms_coldcall', data);
+  // Update select styling
+  selEl.className = 'rcp-outcome-sel ' + (outcome==='hot'?'hot':outcome==='callback'?'callback':outcome==='not_interested'?'not_interested':'');
+  // Check the checkbox
+  const row = document.getElementById('rcp-row-'+id);
+  if(row){ const cb=row.querySelector('.rcp-check'); if(cb) cb.checked=true; }
+  if(outcome==='hot') rcpToast('🔥 Hot lead flagged — will appear in CRM pipeline!');
+  rcpUpdateRail();
+}
+
+function rcpColdSaveNotes(id, notes){
+  const data = crmLoad('dms_coldcall');
+  const r = data.find(x=>x.id===id); if(!r) return;
+  r.dmsNotes = notes;
+  r.notes = notes;
+  r.updated = Date.now();
+  crmSave('dms_coldcall', data);
+}
+
+function rcpColdDivToggle(id, div, btn){
+  const data = crmLoad('dms_coldcall');
+  const r = data.find(x=>x.id===id); if(!r) return;
+  if(!r.divisions) r.divisions=[];
+  const idx = r.divisions.indexOf(div);
+  if(idx===-1){ r.divisions.push(div); btn.classList.add('on'); const col=RCP_DIV_COLORS[div]||'#6B7280'; btn.style.background=col; btn.style.borderColor=col; }
+  else { r.divisions.splice(idx,1); btn.classList.remove('on'); btn.style.background=''; btn.style.borderColor=''; }
+  crmSave('dms_coldcall', data);
+}
+
+/* ══ ALL CRM TAB ════════════════════════════════════════════════ */
+function rcpRenderAllCRM(){
+  const panel = document.getElementById('rcpPanel-crm');
+  if(!panel) return;
+  const q = (document.getElementById('rcpCRMSearch')?.value||'').toLowerCase();
+  const leads = crmLoad('dms_coldcall').filter(r=>r.status==='hot'||r.status==='warm'||r.status==='callback'||r.status==='new');
+  const contacts = crmLoad('contacts');
+  const accounts = crmLoad('accounts');
+
+  const filterRecs = (arr) => q ? arr.filter(r=>JSON.stringify(r).toLowerCase().includes(q)) : arr;
+
+  panel.innerHTML = `
+    <div class="rcp-crm-search-bar">
+      <input class="rcp-crm-search" id="rcpCRMSearch" placeholder="Search all records by name, phone, business…" oninput="rcpRenderAllCRM()" value="${escH(q)}">
+      <span style="font-size:12px;color:var(--soft);white-space:nowrap">${filterRecs(leads).length + filterRecs(contacts).length + filterRecs(accounts).length} records</span>
+    </div>
+    ${rcpCRMSection('🔥 Active Leads', filterRecs(leads), 'lead')}
+    ${rcpCRMSection('👤 Contacts', filterRecs(contacts), 'contact')}
+    ${rcpCRMSection('🏢 Accounts', filterRecs(accounts), 'account')}
+  `;
+  if(q) document.getElementById('rcpCRMSearch').value=q;
+}
+
+function rcpCRMSection(title, records, type){
+  if(!records.length) return `<div class="rcp-card" style="padding:12px 16px;margin-bottom:10px"><div class="rcp-card-title">${title}</div><div style="color:var(--soft);font-size:13px;text-align:center;padding:12px">No records</div></div>`;
+  const colors={'lead':'#F59E0B','contact':'#7C3AED','account':'#1B5FA8'};
+  return `<div class="rcp-card" style="padding:0;overflow:hidden;margin-bottom:12px">
+    <div style="padding:10px 14px;border-bottom:1px solid var(--line);background:#F8F9FA">
+      <span style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--soft)">${title}</span>
+      <span style="margin-left:8px;background:${colors[type]||'#6B7280'};color:#fff;border-radius:99px;padding:1px 8px;font-size:10px;font-weight:700">${records.length}</span>
+    </div>
+    <table style="width:100%;border-collapse:collapse">
+      <thead><tr style="background:#F8F9FA">
+        <th style="padding:7px 12px;font-size:10px;font-weight:700;color:var(--soft);text-align:left;border-bottom:1px solid var(--line)">Name / Business</th>
+        <th style="padding:7px 12px;font-size:10px;font-weight:700;color:var(--soft);text-align:left;border-bottom:1px solid var(--line)">Phone</th>
+        <th style="padding:7px 12px;font-size:10px;font-weight:700;color:var(--soft);text-align:left;border-bottom:1px solid var(--line)">Status</th>
+        ${type==='account'?'<th style="padding:7px 12px;font-size:10px;font-weight:700;color:var(--soft);text-align:left;border-bottom:1px solid var(--line)">Next Service</th>':''}
+        <th style="padding:7px 12px;font-size:10px;font-weight:700;color:var(--soft);text-align:left;border-bottom:1px solid var(--line)">Notes</th>
+      </tr></thead>
+      <tbody>${records.slice(0,20).map(r=>`<tr class="rcp-crm-row" onclick="rcpOpenRecordDetail('${escH(r.id||'')}','${type}')">
+        <td style="padding:9px 12px">
+          <div style="font-weight:700;font-size:13px">${escH(r.bizName||r.businessName||r.name||r.business||'—')}</div>
+          <div style="font-size:11px;color:var(--soft)">${escH(r.contactName||r.contact||'')}</div>
+        </td>
+        <td style="padding:9px 12px"><a href="tel:${escH(r.phone||'')}" onclick="event.stopPropagation()" style="color:var(--blue);font-size:12px;font-weight:600">${escH(r.phone||'—')}</a></td>
+        <td style="padding:9px 12px"><span style="background:${colors[type]||'#E5E7EB'};color:#fff;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:700">${escH(r.status||type)}</span></td>
+        ${type==='account'?(function(){var ns=rcpNextService(r);return '<td style="padding:9px 12px;font-size:12px;font-weight:700;color:'+(ns?'#16A34A':'#9CA3AF')+'">'+(ns?new Date(ns+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}):'None scheduled')+'</td>';})():''}
+        <td style="padding:9px 12px;font-size:12px;color:var(--soft);max-width:200px">${escH((r.notes||r.dmsNotes||'').slice(0,80))}${(r.notes||r.dmsNotes||'').length>80?'…':''}</td>
+      </tr>`).join('')}</tbody>
+    </table>
+  </div>`;
+}
+
+/* ══ LEFT RAIL ══════════════════════════════════════════════════ */
+function rcpUpdateRail(){
+  const callLog = crmLoad('rcp_calls');
+  const today = new Date().toISOString().slice(0,10);
+  const todayCalls = callLog.filter(c=>c.ts&&new Date(c.ts).toISOString().slice(0,10)===today);
+  const urgent = todayCalls.filter(c=>c.urgency==='Urgent'||c.urgency==='Emergency');
+  const todayLeads = crmLoad('dms_coldcall').filter(r=>r.dmsContactedToday===today);
+
+  // Stats
+  const eById = id => document.getElementById(id);
+  if(eById('railCallsLogged')) eById('railCallsLogged').textContent = todayCalls.length;
+  if(eById('railLeadsCreated')) eById('railLeadsCreated').textContent = crmLoad('dms_coldcall').filter(r=>r.createdToday===today).length;
+  if(eById('railColdWorked')) eById('railColdWorked').textContent = todayLeads.length;
+  if(eById('railUrgent')) eById('railUrgent').textContent = urgent.length;
+
+  // Urgent flags
+  const urgEl = eById('rcpRailUrgent');
+  if(urgEl){
+    if(urgent.length){
+      urgEl.innerHTML = urgent.slice(0,3).map(c=>`<div class="rcp-flag-item">
+        <div class="rcp-flag-biz">🚨 ${escH(c.callerName||'Unknown')} — ${escH(c.company||'')}</div>
+        <div class="rcp-flag-meta">${escH(c.callType||'')} · ${new Date(c.ts).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</div>
+      </div>`).join('');
+    } else {
+      urgEl.innerHTML = '<div style="font-size:10px;color:#4B5563;text-align:center;padding:8px">No urgent items</div>';
+    }
+  }
+
+  // Recent calls
+  const recentEl = eById('rcpRailRecent');
+  if(recentEl){
+    if(todayCalls.length){
+      recentEl.innerHTML = todayCalls.slice(-5).reverse().map(c=>`<div style="padding:7px 0;border-bottom:1px solid #2A2E33;font-size:11px">
+        <div style="font-weight:700;color:#BFC4CA">${escH(c.callerName||'Unknown')}</div>
+        <div style="color:#4B5563">${escH(c.company||'')} · ${escH(c.callType||'')}</div>
+        <div style="color:#4B5563">${new Date(c.ts).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</div>
+      </div>`).join('');
+    } else {
+      recentEl.innerHTML = '<div style="font-size:10px;color:#4B5563;text-align:center;padding:8px">No calls yet today</div>';
+    }
+  }
+
+  // Update cold call badge
+  const ccBadge = eById('rcpCCBadge');
+  if(ccBadge) ccBadge.textContent = Math.max(0, 20 - todayLeads.length) + ' left';
+}
+
+function rcpRailSearch(q){
+  const el = document.getElementById('rcpRailResults');
+  if(!el) return;
+  if(!q || q.length < 2){ el.innerHTML='<div style="font-size:10px;color:#4B5563;text-align:center;padding:8px">Type to search all records</div>'; return; }
+  const ql = q.toLowerCase();
+  const match = r => JSON.stringify(r).toLowerCase().includes(ql);
+  const leads = crmLoad('dms_coldcall').filter(match).slice(0,4);
+  const contacts = crmLoad('contacts').filter(match).slice(0,3);
+  const accounts = crmLoad('accounts').filter(match).slice(0,3);
+  const all = [
+    ...leads.map(r=>({...r,_type:'lead'})),
+    ...contacts.map(r=>({...r,_type:'contact'})),
+    ...accounts.map(r=>({...r,_type:'account'}))
+  ].slice(0,8);
+  if(!all.length){ el.innerHTML='<div style="font-size:10px;color:#4B5563;text-align:center;padding:8px">No matches found</div>'; return; }
+  const colors={'lead':'#F59E0B','contact':'#7C3AED','account':'#1B5FA8'};
+  el.innerHTML = all.map(r=>`<div class="rcp-search-result" onclick="rcpFillFromSearch('${escH(r.id||'')}','${r._type}')">
+    <div class="rcp-search-biz">${escH(r.bizName||r.businessName||r.name||r.business||'Unknown')}</div>
+    <div class="rcp-search-meta">
+      <span class="rcp-search-pill" style="background:${colors[r._type]};color:#fff">${r._type}</span>
+      ${escH(r.phone||'')} ${escH(r.contactName||r.contact||'')}
+    </div>
+  </div>`).join('');
+}
+
+function rcpFillFromSearch(id, type){
+  // Switch to incoming tab and fill the form
+  rcpSwitchTab('incoming');
+  const data = crmLoad(type==='lead'?'dms_coldcall':type==='contact'?'contacts':'accounts');
+  const r = data.find(x=>x.id===id); if(!r) return;
+  const nameEl = document.getElementById('rcpCallerName');
+  const compEl = document.getElementById('rcpCompany');
+  const phoneEl = document.getElementById('rcpPhone');
+  if(nameEl) nameEl.value = r.contactName||r.contact||r.name||'';
+  if(compEl) compEl.value = r.bizName||r.businessName||r.name||r.business||'';
+  if(phoneEl) phoneEl.value = r.phone||'';
+  document.getElementById('rcpRailSearch').value = '';
+  document.getElementById('rcpRailResults').innerHTML = '<div style="font-size:10px;color:#4B5563;text-align:center;padding:8px">✓ Form filled from record</div>';
+  rcpToast('Record loaded into call form ✓');
+}
+
+// ── RECORD DETAIL MODAL (Leads & Accounts tab) ──────────────────────────
+// Read-only view so reception can actually look something up when a
+// caller mentions an account, instead of the list being a dead end.
+function rcpOpenRecordDetail(id, type){
+  // Reception needs the FULL record — next inspection due, open invoices,
+  // complete history — so clicking a name goes straight to the record page
+  // in the OS instead of an info card.
+  if (type === 'account') { window.location.href = 'termac-os.html?open=accounts&id=' + encodeURIComponent(id) + '&from=reception'; return; }
+  if (type === 'contact') { window.location.href = 'termac-os.html?open=contacts&id=' + encodeURIComponent(id) + '&from=reception'; return; }
+  if (type === 'lead') {
+    // Reception's lead list comes from the DMS cold-call pool. If the lead
+    // was promoted into the CRM, jump to that record; match by id first,
+    // then by phone or business name. Otherwise fall back to the info card
+    // (a cold-call entry has no account page yet).
+    const dms = crmLoad('dms_coldcall').find(x => x.id === id);
+    const crmLeads = crmLoad('leads');
+    let match = crmLeads.find(x => x.id === id);
+    if (!match && dms) {
+      const norm = s => String(s||'').replace(/\D/g, '');
+      const biz = String(dms.bizName || dms.businessName || dms.business || '').toLowerCase().trim();
+      match = crmLeads.find(x =>
+        (dms.phone && norm(x.phone) && norm(x.phone) === norm(dms.phone)) ||
+        (biz && String(x.business || x.bizName || x.businessName || '').toLowerCase().trim() === biz)
+      );
+    }
+    if (match) { window.location.href = 'termac-os.html?open=leads&id=' + encodeURIComponent(match.id) + '&from=reception'; return; }
+  }
+  _rcpShowRecordCard(id, type);
+}
+
+function _rcpShowRecordCard(id, type){
+  const data = crmLoad(type==='lead'?'dms_coldcall':type==='contact'?'contacts':'accounts');
+  const r = data.find(x=>x.id===id);
+  if(!r){ rcpToast('Record not found'); return; }
+
+  const biz = r.bizName||r.businessName||r.name||r.business||'—';
+  const contact = r.contactName||r.contact||r.name||'';
+  const phone = r.phone||'';
+  const email = r.email||r.contactEmail||'';
+  // Accounts carry address on a locations[] array (Company/Location split);
+  // leads/contacts carry it flat.
+  const loc = (r.locations && r.locations[0]) || r;
+  const address = [loc.address, loc.city, loc.state, loc.zip].filter(Boolean).join(', ');
+  const notes = r.notes||r.dmsNotes||r.siteNotes||'';
+  const status = r.status||type;
+  const owner = r.ownerName||'';
+  const assignedRep = r.assignedRep||r.ownedBy||'';
+
+  const rows = [
+    ['Business', r.business||r.bizName||r.businessName||'—'],
+    ['Contact', contact || '—'],
+    ['Phone', phone ? `<a href="tel:${escH(phone)}" style="color:var(--blue);font-weight:600">${escH(phone)}</a>` : '—'],
+    ['Email', email ? `<a href="mailto:${escH(email)}" style="color:var(--blue);font-weight:600">${escH(email)}</a>` : '—'],
+    ['Address', address || '—'],
+    ['Owner', owner || '—'],
+    ['Assigned Rep', assignedRep || '—'],
+    ['Status', status],
+  ].map(([label,val]) => `<div style="display:flex;padding:8px 0;border-bottom:1px solid var(--line)">
+      <div style="width:120px;flex-shrink:0;font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em">${escH(label)}</div>
+      <div style="font-size:13px">${typeof val==='string'&&val.startsWith('<')?val:escH(val)}</div>
+    </div>`).join('');
+
+  const html = `
+    <div class="rcp-detail-backdrop" onclick="rcpCloseRecordDetail()"></div>
+    <div class="rcp-detail-modal">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:16px;text-transform:uppercase;letter-spacing:.04em">${escH(biz)}</div>
+        <button onclick="rcpCloseRecordDetail()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--soft)">✕</button>
+      </div>
+      ${rows}
+      ${notes ? `<div style="margin-top:14px"><div style="font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px">Notes</div><div style="font-size:13px;background:#F8F9FA;border-radius:8px;padding:10px 12px">${escH(notes)}</div></div>` : ''}
+      <button onclick="rcpCloseRecordDetail()" style="margin-top:16px;width:100%;background:var(--purple);color:#fff;border:none;border-radius:8px;padding:11px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer">Close</button>
+    </div>`;
+
+  let container = document.getElementById('rcpDetailContainer');
+  if(!container){
+    container = document.createElement('div');
+    container.id = 'rcpDetailContainer';
+    document.body.appendChild(container);
+  }
+  container.innerHTML = html;
+}
+function rcpCloseRecordDetail(){
+  const container = document.getElementById('rcpDetailContainer');
+  if(container) container.innerHTML = '';
+}
+
+// Auto-refresh rail every 30s
+setInterval(rcpUpdateRail, 30000);
+
+</script>
+<script src="termac-messaging.js"></script>
+</body>
+</html>
