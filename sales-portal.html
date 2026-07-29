@@ -16084,17 +16084,25 @@ function spOpenNotifPanel(){
 // (via the OS deep link) when one can be found by company/account name;
 // otherwise expand the row in place with every detail on the notification.
 function spNotifDrillById(id) {
-  // Find notification by ID -- immune to list reordering
-  var notifs = [];
-  try { notifs = JSON.parse(localStorage.getItem('termac_hotlead_notifs')||'[]'); } catch(e) {}
-  var n = notifs.find(function(x){ return x.id === id; });
-  if (!n) return;
-  var inlineId = n.lead_id || n.record_id || null;
-  var inlineTab = n.tab || 'leads';
-  if (inlineId) {
-    spCloseNotifPanel();
-    spViewRecord(inlineId, inlineTab);
-  }
+  // Find notification by ID from D1 notifications table -- D1 is the only source of truth
+  d1Query('SELECT lead_id, record_id, tab FROM notifications WHERE id=? LIMIT 1', [id])
+  .then(function(res) {
+    var n = res.ok && res.results && res.results[0];
+    // Fall back to localStorage notif cache only if D1 has nothing
+    if (!n) {
+      try {
+        var local = JSON.parse(localStorage.getItem('termac_hotlead_notifs')||'[]');
+        n = local.find(function(x){ return x.id === id; });
+      } catch(e) {}
+    }
+    if (!n) return;
+    var inlineId = n.lead_id || n.record_id || null;
+    var inlineTab = n.tab || 'leads';
+    if (inlineId) {
+      spCloseNotifPanel();
+      spViewRecord(inlineId, inlineTab);
+    }
+  });
 }
 
 function spNotifDrill(idx){
