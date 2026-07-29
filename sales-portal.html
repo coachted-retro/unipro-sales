@@ -7564,7 +7564,37 @@ var _spAcctFilterTimer = null;
 // Waits 280ms after the user stops typing before re-rendering -- prevents focus loss on every keystroke
 function spDebouncedCrmSearch(tab) {
   clearTimeout(_spCrmSearchTimer);
-  _spCrmSearchTimer = setTimeout(function() { spRenderCRM(tab); }, 280);
+  _spCrmSearchTimer = setTimeout(function() {
+    var q = (document.getElementById('spCrmSearch')?.value || '').trim();
+    if (q.length >= 2 && tab === 'leads') {
+      // Search D1 directly -- not localStorage
+      spSearchD1Leads(q);
+    } else {
+      spRenderCRM(tab);
+    }
+  }, 280);
+}
+
+function spSearchD1Leads(q) {
+  var el = document.getElementById('spContent');
+  if (el) el.innerHTML = '<div style="padding:24px;color:#6B7280">Searching...</div>';
+  var repName = _spRep ? _spRep.name : '';
+  fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/query', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json','X-API-Secret':'termac2026'},
+    body: JSON.stringify({
+      sql: "SELECT * FROM leads WHERE assigned_rep=? AND (business LIKE ? OR contact_name LIKE ? OR phone LIKE ? OR address LIKE ? OR zip LIKE ?) AND (status != 'archived' OR status IS NULL) ORDER BY updated_at DESC LIMIT 100",
+      params: [repName, '%'+q+'%', '%'+q+'%', '%'+q+'%', '%'+q+'%', '%'+q+'%']
+    })
+  }).then(function(r){return r.json();}).then(function(res) {
+    if (!res.ok || !res.results) { spRenderCRM('leads'); return; }
+    var data = res.results.map(function(r){ return (typeof TermacD1Sync !== 'undefined' && TermacD1Sync.d1ReverseMap) ? TermacD1Sync.d1ReverseMap('leads', r) : r; });
+    var html = data.length
+      ? data.map(function(r){ return spRenderRecord(r, 'leads'); }).join('')
+      : '<div style="padding:24px;color:#6B7280;text-align:center">No leads found for "'+escH(q)+'"</div>';
+    var el = document.getElementById('spContent');
+    if (el) el.innerHTML = '<div style="padding:12px">' + html + '</div>';
+  }).catch(function(){ spRenderCRM('leads'); });
 }
 
 // Debounced wrapper for the Locations tab search
