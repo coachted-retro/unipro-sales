@@ -32,26 +32,24 @@ const ACTION_GRACE_MS = {
 };
 const DEFAULT_GRACE_MS = 2 * 60 * 60 * 1000;
 
-const MANAGEMENT = [
-  { name: 'Jim Kennedy',      email: 'jkennedy@termac.com'  },
-  { name: 'Tom Pittakas',     email: 'tpittakas@termac.com' },
-  { name: "Sean O'Reilly",    email: 'soreilly@termac.com'  },
-  { name: "Terence O'Reilly", email: 'toreilly@termac.com'  },
-];
-
-const REP_EMAILS = {
-  'Ted Scholl':    'tscholl@termac.com',
-  'Brad Fickes':   'bfickes@termac.com',
-  'Chris Carzo':   'ccarzo@termac.com',
-  'Dan Rini':      'drini@termac.com',
-  'Joe McDonnell': 'jmcdonnell@termac.com',
-  'Matt Belz':     'mbelz@termac.com',
-  "TJ O'Reilly":   'tjoreilly@termac.com',
-  'Todd Grill':    'tgrill@termac.com',
-  'Tom Jordan':    'tjordan@termac.com',
-  'Tom Pittakas':  'tpittakas@termac.com',
-  'Paul Brahan':   'pbrahan@termac.com',
-};
+// EMAILS COME FROM D1 ONLY. No hardcoded lists. Ever.
+// To change any email: update staff_auth in D1. Done.
+async function getStaffFromD1(env) {
+  const res = await d1Fetch(env, 'POST', '/db/query', {
+    sql: "SELECT name, email, role FROM staff_auth WHERE email IS NOT NULL AND email != ''",
+    params: []
+  });
+  if (!res.ok || !Array.isArray(res.results)) return { repMap: {}, management: [] };
+  const repMap = {};
+  const management = [];
+  for (const s of res.results) {
+    repMap[s.name] = s.email;
+    if (['owner','admin','manager'].includes(s.role)) {
+      management.push({ name: s.name, email: s.email });
+    }
+  }
+  return { repMap, management };
+}
 
 async function d1Fetch(env, method, path, body) {
   const opts = {
@@ -92,6 +90,7 @@ async function sendNotif(env, recipientName, recipientEmail, lead, subject, note
 
 async function runEscalationCheck(env) {
   const now = Date.now();
+  const { repMap, management: MANAGEMENT } = await getStaffFromD1(env);
   const result = await d1Fetch(env, 'GET', '/api/leads?limit=500');
   if (!result.ok || !Array.isArray(result.results)) {
     return { checked: 0, phase1: 0, phase2: 0, error: result.error || 'D1 query failed' };
@@ -119,7 +118,7 @@ async function runEscalationCheck(env) {
 
     const ageMs   = now - (lead.created_at || now);
     const repName = lead.assigned_rep || '';
-    const repEmail = REP_EMAILS[repName] || null;
+    const repEmail = repMap[repName] || null;
     const sentTo  = new Set();
 
     // ── PHASE 1: immediate, fires once per lead ─────────────────────────
