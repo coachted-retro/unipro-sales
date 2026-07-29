@@ -1062,7 +1062,40 @@ function spEnterPortal() {
     // records that already exist locally -- so stale location_id and
     // contact_id values would persist forever without this.
     var D1_PROXY = 'https://unipro-ai-proxy.termac-one.workers.dev';
-    ['opportunities','locations'].forEach(function(table) {
+
+    // REP ISOLATION: opportunities are scoped to THIS rep only.
+    // Fetch by both name and email so legacy rows stored either way resolve.
+    // The Worker supports URL-param filters natively (assigned_rep = ?).
+    // We run two fetches (one per form) and merge by id to cover both.
+    (function spScopeOpportunities() {
+      var repName  = (_spRep && _spRep.name)  ? encodeURIComponent(_spRep.name)  : '';
+      var repEmail = (_spRep && _spRep.email) ? encodeURIComponent(_spRep.email) : '';
+      if (!repName && !repEmail) return; // no session yet, skip
+      var fetches = [];
+      if (repName)  fetches.push(fetch(D1_PROXY + '/db/opportunities?assigned_rep=' + repName  + '&limit=500', { headers: {'X-API-Secret': 'termac2026'} }).then(function(r){ return r.json(); }));
+      if (repEmail && repEmail !== repName) fetches.push(fetch(D1_PROXY + '/db/opportunities?assigned_rep=' + repEmail + '&limit=500', { headers: {'X-API-Secret': 'termac2026'} }).then(function(r){ return r.json(); }));
+      Promise.all(fetches).then(function(results) {
+        var seen = {}; var merged = [];
+        results.forEach(function(d) {
+          if (d && d.ok && Array.isArray(d.results)) {
+            d.results.forEach(function(o) { if (o && o.id && !seen[o.id]) { seen[o.id] = true; merged.push(o); } });
+          }
+        });
+        if (merged.length) {
+          // Replace the in-memory cache and localStorage with rep-scoped data only.
+          // Any cross-rep rows that landed here from a previous unscoped load are evicted.
+          if (window.TermacD1Sync && window.TermacD1Sync.crmSave) {
+            window.TermacD1Sync.crmSave('opportunities', merged);
+          } else {
+            try { localStorage.setItem('termac_crm_opportunities', JSON.stringify(merged)); } catch(e) {}
+          }
+        }
+      }).catch(function(){});
+    })();
+
+    // Locations: no rep scoping needed (reps need to search all locations to
+    // avoid creating duplicates -- search-before-create is a standing rule).
+    ['locations'].forEach(function(table) {
       fetch(D1_PROXY + '/db/' + table + '?limit=500', {
         headers: {'X-API-Secret': 'termac2026'}
       })
@@ -1330,13 +1363,19 @@ async function spRenderOpportunitiesTab() {
   // Show loading state
   el.innerHTML = '<div style="padding:40px;text-align:center;color:var(--soft);font-size:14px;">Loading opportunities...</div>';
 
+  // REP ISOLATION: only load this rep's own opportunities.
+  // Match both "Ted Scholl" and "tscholl@termac.com" forms so legacy rows
+  // stored by email still resolve correctly to the right person.
+  var _repName  = (_spRep && _spRep.name)  ? _spRep.name  : '';
+  var _repEmail = (_spRep && _spRep.email) ? _spRep.email : '';
+
   var opps = [];
   try {
-    var sql = "SELECT * FROM opportunities WHERE resolution_status != 'archived' ORDER BY created_at DESC LIMIT 200";
+    var sql = "SELECT * FROM opportunities WHERE resolution_status != 'archived' AND (assigned_rep = ? OR assigned_rep = ?) ORDER BY created_at DESC LIMIT 200";
     var res = await fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/query', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
-      body: JSON.stringify({ sql: sql, params: [] })
+      body: JSON.stringify({ sql: sql, params: [_repName, _repEmail] })
     });
     var data = await res.json();
     opps = (data.results || []).map(function(r) {
@@ -11873,6 +11912,9 @@ document.addEventListener('DOMContentLoaded', () => {
   _spRep = SP_REPS[loggedInName]
     ? { ...SP_REPS[loggedInName], name: loggedInName }
     : { initials: loggedInName.split(' ').map(function(w){return w[0]||'';}).join('').slice(0,2).toUpperCase(), territory: [], division: session.division || '', name: loggedInName };
+  // Always carry the Entra email onto _spRep so rep-isolation SQL can
+  // match against both "Ted Scholl" and "tscholl@termac.com" forms.
+  if (session.email) _spRep.email = session.email;
   // Carry the coverage flag from staff_auth into the rep object so any
   // filter that checks _spRep can include the absent rep's records.
   if (session.coveringFor) _spRep.coveringFor = session.coveringFor;
