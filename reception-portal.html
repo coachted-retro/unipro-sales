@@ -931,7 +931,7 @@ function rcpLogCall(){
   // Notify whoever this call was routed to — a routed call with no
   // notification is a silent drop, so this fires for every logged call,
   // not just ones that also create a new lead.
-  if (routeTo && typeof _notifStore_get === 'function' && typeof _notifStore_set === 'function') {
+  if (!window._rcpSendLeadEmail && routeTo && typeof _notifStore_get === 'function' && typeof _notifStore_set === 'function') {
     var notifs = _notifStore_get();
     // Determine if this is an existing account/contact/lead or a brand new caller.
     // This drives the notification type, priority badge, and routing urgency.
@@ -1083,17 +1083,34 @@ function rcpLogAndCreateLead(){
   const leads = crmLoad('leads');
   leads.unshift(lead);
   crmSave('leads', leads);
-  window._rcpPendingLeadId = lead.id; // so notification can reference real lead ID
-  // Update the notification that rcpLogCall just created with the real lead ID
-  try {
-    var _notifs = _notifStore_get ? _notifStore_get() : [];
-    if (_notifs.length) {
-      _notifs[0].record_id = lead.id;
-      _notifs[0].lead_id = lead.id;
-      _notifs[0].tab = 'leads';
-      if (_notifStore_set) _notifStore_set(_notifs);
-    }
-  } catch(e) {}
+  window._rcpPendingLeadId = lead.id;
+  // Create the notification here with the correct lead ID
+  if (typeof _notifStore_get === 'function' && typeof _notifStore_set === 'function') {
+    try {
+      var _notifs2 = _notifStore_get();
+      var _newNotif = {
+        id: 'HL' + Date.now(),
+        recipientName: assignedRep,
+        caller: name || company,
+        company: company,
+        phone: phone,
+        notes: '🔥 NEW LEAD — ' + (fullNotes || 'No notes'),
+        source: '🔥 NEW LEAD via Reception',
+        loggedBy: (_rcpUser && _rcpUser.name) || 'Reception',
+        ts: Date.now(),
+        read: false,
+        type: 'new_lead',
+        priority: 'hot',
+        badge: '🔥 NEW LEAD',
+        lead_id: lead.id,
+        record_id: lead.id,
+        tab: 'leads',
+      };
+      _notifs2.unshift(_newNotif);
+      _notifStore_set(_notifs2);
+      if (typeof notifySendCrossDevice === 'function') notifySendCrossDevice(_newNotif);
+    } catch(e) {}
+  }
   if (typeof TermacD1Sync !== 'undefined') {
     TermacD1Sync.logTouchpoint('leads', lead.id, {
       type: 'call', icon: '📞',
