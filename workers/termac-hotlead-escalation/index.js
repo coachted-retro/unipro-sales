@@ -36,7 +36,7 @@ const DEFAULT_GRACE_MS = 2 * 60 * 60 * 1000;
 // To change any email: update staff_auth in D1. Done.
 async function getStaffFromD1(env) {
   const res = await d1Fetch(env, 'POST', '/db/query', {
-    sql: "SELECT name, email, role FROM staff_auth WHERE email IS NOT NULL AND email != ''",
+    sql: "SELECT name, email, role, lead_escalation_cc FROM staff_auth WHERE email IS NOT NULL AND email != ''",
     params: []
   });
   if (!res.ok || !Array.isArray(res.results)) return { repMap: {}, management: [] };
@@ -44,7 +44,9 @@ async function getStaffFromD1(env) {
   const management = [];
   for (const s of res.results) {
     repMap[s.name] = s.email;
-    if (['owner','admin','manager'].includes(s.role)) {
+    // Only staff with lead_escalation_cc=1 get notified on leads
+    // Sean O'Reilly, Terence O'Reilly, Tom Pittakas, Jim Kennedy -- set in D1
+    if (s.lead_escalation_cc == 1) {
       management.push({ name: s.name, email: s.email });
     }
   }
