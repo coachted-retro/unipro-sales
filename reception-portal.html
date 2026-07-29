@@ -1099,12 +1099,19 @@ function rcpLogAndCreateLead(){
       var repEmail = staffMap[assignedRep] || null;
       if (!repEmail) { rcpToast('WARNING: No email for ' + assignedRep + ' in D1. Lead saved.'); return; }
       var allRecipients = [repEmail].concat(mgmtEmails.filter(function(e){ return e !== repEmail; }));
-      // Use sendBeacon so email fires even if page navigates away immediately
-      var blob = new Blob([JSON.stringify({recipients: allRecipients, subject: subject, html: bodyHtml})], {type:'application/json'});
-      var sent = navigator.sendBeacon('https://termac-notify.termac-one.workers.dev/send-report', blob);
-      rcpToast(sent
-        ? 'Lead emailed to ' + allRecipients.length + ' people'
-        : 'WARNING: Email may not have sent -- lead is saved. Call Ted or Jim.');
+      // keepalive:true survives page navigation -- guaranteed delivery
+      fetch('https://termac-notify.termac-one.workers.dev/send-report', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({recipients: allRecipients, subject: subject, html: bodyHtml}),
+        keepalive: true
+      }).then(function(r){return r.json();}).then(function(d){
+        rcpToast(d && d.ok
+          ? 'Lead emailed to ' + allRecipients.length + ' people'
+          : 'WARNING: Email FAILED -- lead saved. Call Ted or Jim immediately.');
+      }).catch(function(){
+        rcpToast('WARNING: Email FAILED -- network error. Lead is saved.');
+      });
     }).catch(function(){ rcpToast('WARNING: Email FAILED -- network error. Lead is saved.'); });
   })();
 
