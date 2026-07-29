@@ -159,7 +159,7 @@ async function handleSsoExchange(request, env) {
   // Accept the redirect URI from the browser so any registered mytermac.com
   // subdomain works without a Worker secret change. Validate it is one of
   // our known domains before sending to Azure.
-  const ALLOWED_REDIRECT_ORIGINS = ['https://sales.mytermac.com', 'https://my.mytermac.com', 'https://unipro-sales.pages.dev', 'https://sbx.unipro-sales.pages.dev'];
+  const ALLOWED_REDIRECT_ORIGINS = ['https://sales.mytermac.com', 'https://my.mytermac.com', 'https://v2.mytermac.com', 'https://termac-one-v2.pages.dev', 'https://unipro-sales.pages.dev', 'https://sbx.unipro-sales.pages.dev'];
   let redirectUri = (body.redirect_uri || '').trim();
   const originOk = ALLOWED_REDIRECT_ORIGINS.some(o => redirectUri.startsWith(o));
   if (!redirectUri || !originOk) {
