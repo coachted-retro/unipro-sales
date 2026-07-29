@@ -16104,22 +16104,26 @@ function spNotifDrillById(id) {
       n = notifs.find(function(x){ return x.id === id; });
     } catch(e) {}
   }
-  // 3. If we have the notification, open the lead directly
+  // 3. If we have the notification, navigate instantly
   if (n && (n.lead_id || n.record_id)) {
     var inlineId = n.lead_id || n.record_id;
     var inlineTab = n.tab || 'leads';
     spCloseNotifPanel();
-    spViewRecord(inlineId, inlineTab);
+    // Navigate to leads tab immediately, then open the record
+    // spNav is instant -- no wait, no async
+    spNav(inlineTab);
+    // Open record after tab renders -- 200ms is enough for the grid to paint
+    setTimeout(function(){ spViewRecord(inlineId, inlineTab); }, 200);
     return;
   }
-  // 4. Last resort -- fetch from D1 notifications table
+  // 4. Last resort -- D1 lookup
   d1Query('SELECT lead_id, record_id, tab FROM notifications WHERE id=? LIMIT 1', [id])
   .then(function(res) {
     var row = res.ok && res.results && res.results[0];
     if (!row) return;
     var inlineId = row.lead_id || row.record_id || null;
     var inlineTab = row.tab || 'leads';
-    if (inlineId) { spCloseNotifPanel(); spViewRecord(inlineId, inlineTab); }
+    if (inlineId) { spCloseNotifPanel(); spNav(inlineTab); setTimeout(function(){ spViewRecord(inlineId, inlineTab); }, 200); }
   });
 }
 
