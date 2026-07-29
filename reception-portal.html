@@ -975,36 +975,10 @@ function rcpLogCall(){
         loggedBy: (_rcpUser && _rcpUser.name) || 'Reception'
       });
     }
-    // Immediate email to the assigned rep so they catch it even off-platform.
-    rcpEmailRepOnCall(call);
+    // NOTE: email to rep fires from rcpLogAndCreateLead only, not here.
+    // Log Call is just a log. Log + Create Lead is what notifies the rep.
   }
-  // Write to D1 leads table so the escalation worker can find it.
-  // Without this the call only exists in rcp_calls and nobody outside
-  // the reception portal ever sees it. is_hot=1 and is_new_lead=1
-  // are required for the escalation worker to send the emails.
-  try {
-    fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/leads', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-API-Secret': 'termac2026' },
-      body: JSON.stringify({
-        id: call.id,
-        contact_name: call.callerName || '',
-        business: call.company || '',
-        phone: call.phone || '',
-        address: call.address || '',
-        zip: call.zip || '',
-        notes: call.notes || '',
-        source: 'Reception Call',
-        assigned_rep: call.routeTo || '',
-        is_hot: 1,
-        is_new_lead: 1,
-        notified_phase1: 0,
-        notified_phase2: 0,
-        created_at: call.ts,
-        updated_at: call.ts
-      })
-    }).catch(function(){});
-  } catch(e) {}
+  // Log Call only saves to rcp_calls. No lead, no email, no rep notification.
 
   rcpToast('Call logged ✓');
   rcpClearForm();
@@ -1071,6 +1045,44 @@ function rcpLogAndCreateLead(){
       note: fullNotes, who: (_rcpUser && _rcpUser.name) || 'Reception',
     });
   }
+  // Write to D1 as hot lead so escalation worker can find it
+  fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/leads', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json','X-API-Secret':'termac2026'},
+    body: JSON.stringify({
+      id: lead.id,
+      contact_name: name || '',
+      business: company || name || '',
+      phone: phone || '',
+      address: address || '',
+      zip: zip || '',
+      notes: fullNotes || '',
+      source: 'Reception Call',
+      assigned_rep: assignedRep,
+      is_hot: 1,
+      is_new_lead: 1,
+      notified_phase1: 0,
+      notified_phase2: 0,
+      created_at: lead.created,
+      updated_at: lead.updated
+    })
+  }).catch(function(){});
+
+  // Fire email instantly to rep + Sean + Terence + Tom + Jim
+  rcpEmailRepOnCall({
+    id: lead.id,
+    routeTo: assignedRep,
+    callerName: name,
+    company: company,
+    phone: phone,
+    address: address,
+    callType: type,
+    urgency: document.getElementById('rcpUrgency')?.value || 'Normal',
+    notes: fullNotes,
+    loggedBy: (_rcpUser && _rcpUser.name) || 'Reception',
+    ts: lead.created
+  });
+
   rcpToast('Lead created \u2192 ' + assignedRep);
   rcpNav('leads');
 }
