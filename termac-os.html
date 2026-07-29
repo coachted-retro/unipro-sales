@@ -15665,9 +15665,36 @@ function renderLifecyclePanel() {
 function renderHotLeadPanel() {
   const body = document.getElementById('hotleadPanelBody');
   if (!body) return;
+  body.innerHTML = '<div style="color:#6B7280;font-size:11px">Loading hot leads from D1...</div>';
 
-  let notifs = [];
-  try { notifs = JSON.parse(localStorage.getItem('termac_hotlead_notifs') || '[]'); } catch(e) {}
+  // Pull hot leads directly from D1 -- source of truth, not localStorage
+  fetch('https://unipro-ai-proxy.termac-one.workers.dev/db/query', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json','X-API-Secret':'termac2026'},
+    body: JSON.stringify({sql: "SELECT id, business, contact_name, phone, assigned_rep, source, created_at, is_hot FROM leads WHERE is_hot=1 AND (status != 'archived' OR status IS NULL) ORDER BY created_at DESC LIMIT 50", params: []})
+  }).then(r => r.json()).then(res => {
+    if (!res.ok || !res.results) { body.innerHTML = '<div style="color:#C8102E">Could not load from D1</div>'; return; }
+    const d1Leads = res.results;
+    // Convert D1 leads to notif format for display
+    let notifs = d1Leads.map(l => ({
+      id: l.id, type: 'hot_lead', read: false,
+      title: (l.source && l.source.indexOf('Reception') !== -1 ? '🔥 NEW LEAD via Reception' : '🔥 Hot Lead') + ' — ' + (l.business || l.contact_name || 'Unknown'),
+      body: (l.business || '') + ' · ' + (l.assigned_rep || 'Unassigned'),
+      record_id: l.id, lead_id: l.id, tab: 'leads',
+      ts: l.created_at || Date.now(),
+      loggedBy: l.assigned_rep || ''
+    }));
+    renderHotLeadPanelFromNotifs(notifs, body);
+  }).catch(() => {
+    // Fallback to localStorage if D1 unreachable
+    let notifs = [];
+    try { notifs = JSON.parse(localStorage.getItem('termac_hotlead_notifs') || '[]'); } catch(e) {}
+    renderHotLeadPanelFromNotifs(notifs, body);
+  });
+}
+
+function renderHotLeadPanelFromNotifs(notifs, body) {
+  if (!body) return;
 
   // Update badge
   const badge = document.getElementById('notifBadge');
